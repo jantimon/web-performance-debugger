@@ -2,7 +2,7 @@
 
 <p align="center">
   <img
-    src="TODO"
+    src="https://github.com/user-attachments/assets/2375c323-59f5-4e65-9b21-3eef00a59281"
     alt="wpd query cpu attributes SSR renderToString self-time to react-dom, the styling library (tailwind-merge), and your component, each down to a source line"
     width="900">
 </p>
