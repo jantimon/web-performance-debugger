@@ -1,0 +1,81 @@
+{
+  "name": "@jantimon/web-performance-debugger",
+  "version": "0.1.0",
+  "description": "Drive Chrome (Puppeteer) to attribute layout/paint/invalidation work back to source lines, with isolated timing and CI gating",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "web-performance-debugger": "dist/cli.js",
+    "wpd": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint src --fix",
+    "format": "oxfmt --write \"src/**/*.ts\" \"examples/*.mjs\"",
+    "format:check": "oxfmt --check \"src/**/*.ts\" \"examples/*.mjs\"",
+    "pretest": "npm run build",
+    "test": "node --test test/unit.test.mjs",
+    "pretest:e2e": "npm run build",
+    "test:e2e": "WPD_E2E_REQUIRED=1 node --test test/cli.e2e.test.mjs",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "npm run build && changeset publish",
+    "prepublishOnly": "npm run build",
+    "start": "node dist/cli.js"
+  },
+  "keywords": [
+    "chrome",
+    "puppeteer",
+    "performance",
+    "layout",
+    "reflow",
+    "forced-reflow",
+    "layout-thrashing",
+    "inp",
+    "profiling",
+    "cli"
+  ],
+  "author": "Jan Nicklas",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jantimon/web-performance-debugger.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jantimon/web-performance-debugger/issues"
+  },
+  "homepage": "https://github.com/jantimon/web-performance-debugger#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
+    "@toon-format/toon": "^2.3.0",
+    "commander": "^15.0.0",
+    "puppeteer": "^25.2.1"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@types/node": "^24.0.0",
+    "oxfmt": "^0.56.0",
+    "oxlint": "^1.71.0",
+    "typescript": "^6.0.3"
+  }
+}

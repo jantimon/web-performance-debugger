@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      # Lint/format/build/unit tests don't launch a browser, so skip the Chromium download.
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run build
+      - run: npm test
+
+  e2e:
+    # Drives the real CLI against headless Chrome end-to-end (record -> query, trace + CPU).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # No PUPPETEER_SKIP_DOWNLOAD here, so `npm ci` downloads the Chrome the test drives.
+      - run: npm ci
+      - run: npm run test:e2e

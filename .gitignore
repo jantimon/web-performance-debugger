@@ -1,0 +1,7 @@
+node_modules/
+dist/
+recordings/
+*.png
+examples/demo-gif/demo.gif
+*.tsbuildinfo
+.DS_Store
