@@ -154,6 +154,12 @@ async function resolveCallFrame(
   // node builtins (node:internal/..., node:fs, ...) are not on disk and not a dependency
   if (file.startsWith("node:")) return { fn, minified, source: file, file, package: "(node)" };
   const source = `${file}${frame.line != null ? `:${frame.line}` : ""}`;
+  // blob: scripts (e.g. a same-process iframe built from a Blob, like an embedded dashboard)
+  // are not on disk and not fetchable. Without this they fall through to the local-path branch
+  // and packageForFile walks the fs up to a stray package.json, mis-blaming the iframe's cost on
+  // an unrelated package (often wpd's own). Bucket them as "(blob)" instead; names stay minified
+  // (blob bundles carry no fetchable sourcemap).
+  if (file.startsWith("blob:")) return { fn, minified, source, file, package: "(blob)" };
   // Remote frames aren't on disk, so derive the package from the path string (node_modules
   // deps resolve; app/bundle code falls to "app"). Local resolved sources read package.json.
   if (frame.remote)

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 recordings/
+.wpd-profile/
 *.png
 examples/demo-gif/demo.gif
 *.tsbuildinfo
