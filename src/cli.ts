@@ -66,6 +66,19 @@ program
   .option("--cpu-profile", "also capture a V8 CPU sampling profile (.cpuprofile + .cpu model)")
   .option("--cpu-interval <us>", "CPU sampler interval in microseconds (default 50)", toInt)
   .option(
+    "--protocol-timeout <ms>",
+    "CDP protocol timeout in ms (default 180000); raise it when a heavy traced interaction pins the main thread",
+    toInt,
+  )
+  .option(
+    "--no-invalidation-tracking",
+    "drop the invalidationTracking trace category (much lower overhead on invalidation-heavy pages; keeps paint + forced-reflow blame, loses the invalidation rollup)",
+  )
+  .option(
+    "--no-trace",
+    "skip the trace pass: counts from CDP (+ optional --cpu-profile) only, no paint/forced/invalidation detail. Use when the trace pass hangs on a pathological interaction",
+  )
+  .option(
     "--runtime <env>",
     "chrome (default) | node: run the module in-process under node's V8 profiler (CPU only, no DOM)",
     "chrome",
@@ -120,6 +133,9 @@ program
       // node runtime is a CPU-only lane; the profile is its sole output, so always capture it
       cpuProfile: node || !!cmdOpts.cpuProfile,
       cpuIntervalUs: cmdOpts.cpuInterval,
+      protocolTimeoutMs: cmdOpts.protocolTimeout,
+      trace: cmdOpts.trace,
+      invalidationTracking: cmdOpts.invalidationTracking,
     };
     try {
       await recordAndReport(opts);

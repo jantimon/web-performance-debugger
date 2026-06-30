@@ -182,6 +182,60 @@ test("buildCpuModel: self/total time, recursion-safe totals, system buckets, edg
   assert.equal(model.edges.length, 2);
 });
 
+// Pseudo-URLs (inline data: modules, blob:, wasm, V8/extension internals) are not on disk.
+// They must bucket by scheme, never fs-walk to a stray package.json (which would mis-blame
+// them on the tool's own cwd package, as seen profiling blob-iframe SPAs).
+function pseudoUrlProfile() {
+  const frame = (functionName, url, lineNumber) => ({
+    functionName,
+    scriptId: "1",
+    url,
+    lineNumber,
+    columnNumber: 0,
+  });
+  return {
+    startTime: 0,
+    endTime: 5000,
+    nodes: [
+      { id: 1, callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 }, children: [2, 3, 4, 5, 6] },
+      // an inline ESM data-URI module (the dashboard's own bundle reports like this)
+      { id: 2, callFrame: frame("createElement", "data:text/javascript;base64,dmFyIHg9MTs=", 4), children: [] },
+      { id: 3, callFrame: frame("render", "blob:null/2737de37-cf4c-4d3e", 0), children: [] },
+      { id: 4, callFrame: frame("compiled", "wasm://wasm/88844f8e:1", 0), children: [] },
+      { id: 5, callFrame: frame("SafeBuiltins", "extensions::SafeBuiltins", 7), children: [] },
+      { id: 6, callFrame: frame("appfn", "node:app", 0), children: [] },
+    ],
+    samples: [2, 3, 4, 5, 6],
+    timeDeltas: [1000, 1000, 1000, 1000, 1000],
+  };
+}
+
+test("pseudo-URL frames bucket by scheme, never on the cwd package", async () => {
+  const model = await buildCpuModel(pseudoUrlProfile(), {
+    profilePath: "synthetic.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: 50,
+    root: os.tmpdir(),
+    runtime: "node",
+  });
+
+  const pkgOf = (fnName) => model.functions.find((entry) => entry.fn === fnName)?.package;
+  assert.equal(pkgOf("createElement"), "(inline)");
+  assert.equal(pkgOf("render"), "(blob)");
+  assert.equal(pkgOf("compiled"), "(wasm)");
+  assert.equal(pkgOf("SafeBuiltins"), "(native)");
+  assert.equal(pkgOf("appfn"), "(node)");
+
+  // the giant base64 payload must not leak into the stored source
+  const inline = model.functions.find((entry) => entry.fn === "createElement");
+  assert.ok(!inline.source.includes("base64"), "inline source must be trimmed");
+
+  // every bucket is a synthetic "(...)" group; nothing resolved to a real package name
+  for (const group of packageRollup(model)) {
+    assert.match(group.key, /^\(.+\)$/, `unexpected real package bucket: ${group.key}`);
+  }
+});
+
 test("functionJoinKey joins on file, not source line (cpu-diff stays stable across line shifts)", () => {
   const before = { fn: "render", file: "src/app.js", source: "src/app.js:40", package: "app" };
   const after = { fn: "render", file: "src/app.js", source: "src/app.js:47", package: "app" };

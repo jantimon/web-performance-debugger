@@ -5,7 +5,7 @@ import { startStaticServer, type StaticServer } from "../browser/server.js";
 import { runHarness } from "../browser/harness.js";
 import { runDriver, type DriverStep } from "../browser/driver.js";
 import { applyCpuThrottle, applyNetworkPreset } from "../browser/throttle.js";
-import { TRACE_CATEGORIES } from "../trace/categories.js";
+import { traceCategories } from "../trace/categories.js";
 import { parseTrace, findWindow, findSteps, type StepWindow } from "../trace/parse.js";
 import { attachStacks } from "../trace/stacks.js";
 import { markForced } from "../trace/analysis.js";
@@ -67,6 +67,12 @@ export interface RecordOptions {
   cpuIntervalUs?: number;
   /** execution runtime: "chrome" (default, Puppeteer page) or "node" (in-process V8, CPU only) */
   runtime?: "chrome" | "node";
+  /** CDP protocol timeout (ms); raise above the 180s default for heavy traced interactions */
+  protocolTimeoutMs?: number;
+  /** run the trace pass (default true); false = counts-only (CDP + optional CPU), no paint/forced/invalidation */
+  trace?: boolean;
+  /** include the invalidationTracking trace category (default true); false drops it to cut overhead on invalidation-heavy pages */
+  invalidationTracking?: boolean;
 }
 
 interface PassSpec {
@@ -154,6 +160,7 @@ async function runPass(
   const { browser, page, client } = await launchBrowser({
     headless: opts.headless,
     userDataDir: opts.userDataDir,
+    protocolTimeoutMs: opts.protocolTimeoutMs,
   });
   const screenshots: ScreenshotRefs = {};
   try {
@@ -322,12 +329,20 @@ export async function record(opts: RecordOptions): Promise<{
 
   // Pass isolation: heavy invalidationTracking distorts timing, so measure timing
   // in a tracing-free pass and the paint/invalidation detail in a separate pass.
+  const wantTrace = opts.trace !== false;
+  const traceCats = traceCategories({ invalidationTracking: opts.invalidationTracking !== false });
+  const traceSpec: PassSpec = { name: "trace", categories: traceCats };
+  const timingSpec: PassSpec = { name: "timing", categories: null };
+  // --no-trace skips the heavy trace pass entirely: counts come from CDP (timing
+  // pass) and optionally a CPU profile, with no paint/forced/invalidation detail.
+  // The fallback for pages whose invalidationTracking pass pins the main thread.
   const specs: PassSpec[] = opts.isolate
-    ? [
-        { name: "timing", categories: null },
-        { name: "trace", categories: TRACE_CATEGORIES },
-      ]
-    : [{ name: "trace", categories: TRACE_CATEGORIES }];
+    ? wantTrace
+      ? [timingSpec, traceSpec]
+      : [timingSpec]
+    : wantTrace
+      ? [traceSpec]
+      : [timingSpec];
   // CPU sampling is heavy, so it gets its own isolated pass (tracing stays off in it).
   if (opts.cpuProfile) specs.push({ name: "cpu", categories: null, cpu: true });
 
