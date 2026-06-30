@@ -1,11 +1,7 @@
 ---
-"@jantimon/web-performance-debugger": patch
+"@jantimon/web-performance-debugger": minor
 ---
 
-cpu: attribute `blob:` scripts to a `(blob)` package instead of mis-blaming an unrelated package.
+cpu: bucket non-fetchable script URLs by scheme — `blob:`, inline `data:`/`javascript;` ESM modules, `wasm://`, and `v8/`/`extensions::` internals now group as `(blob)`/`(inline)`/`(wasm)`/`(native)`. Previously only `blob:` was handled; the rest fell through to filesystem package resolution and mis-attributed their CPU self-time to an unrelated package (often wpd's own). The base64 payload is also trimmed from the stored source.
 
-A same-process iframe built from a Blob (e.g. an embedded dashboard) reports `blob:` script URLs.
-These are not on disk and not fetchable, but they previously fell through to the local-path branch,
-where package resolution walked the filesystem up to the nearest `package.json` and mis-attributed
-the iframe's CPU self-time to an unrelated package (often wpd's own). They now bucket as `(blob)` in
-`query cpu`. Function names stay minified (blob bundles carry no fetchable sourcemap).
+record: add `--no-trace` (counts-only via CDP + optional `--cpu-profile`, for pages whose trace pass is pathological), `--no-invalidation-tracking` (drop the heavy invalidationTracking category), and `--protocol-timeout <ms>`.

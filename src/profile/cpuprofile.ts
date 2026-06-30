@@ -59,6 +59,41 @@ function frameKey(callFrame: RawCallFrame): string {
   );
 }
 
+/** Trim a pseudo-URL for display: inline data:/blob: payloads can be tens of KB, so keep
+ * only a short head. (A base64 ESM module URL would otherwise blow out table widths.) */
+function shortPseudoLabel(url: string): string {
+  return url.length > 64 ? `${url.slice(0, 48)}…` : url;
+}
+
+/**
+ * Pseudo-URLs that are not on disk and not fetchable. They must be bucketed by their
+ * scheme and never handed to packageForFile, which would fs-walk and mis-blame their
+ * cost on a stray package.json (often the tool's own cwd package). Returns the bucket
+ * name plus a short display label, or null for a normal local/remote file URL.
+ *
+ *   blob:                          Blob object URL (e.g. a same-process iframe bundle)
+ *   data: / javascript;base64,...  inline ESM data-URI module
+ *   wasm://                        a WebAssembly module
+ *   v8/, extensions::, chrome*     V8 / browser-internal pseudo-frames
+ */
+function classifyPseudoUrl(url: string | undefined): { package: string; label: string } | null {
+  if (!url) return null;
+  if (url.startsWith("blob:")) return { package: "(blob)", label: shortPseudoLabel(url) };
+  if (url.startsWith("data:") || url.startsWith("javascript:") || url.startsWith("javascript;")) {
+    return { package: "(inline)", label: "(inline)" };
+  }
+  if (url.startsWith("wasm://")) return { package: "(wasm)", label: shortPseudoLabel(url) };
+  if (
+    url.startsWith("v8/") ||
+    url.startsWith("extensions::") ||
+    url.startsWith("chrome://") ||
+    url.startsWith("chrome-extension://")
+  ) {
+    return { package: "(native)", label: shortPseudoLabel(url) };
+  }
+  return null;
+}
+
 /** The package name for a path inside node_modules; pnpm-safe (uses the LAST segment). */
 function packageFromNodeModules(filePath: string): string | null {
   const at = filePath.lastIndexOf("node_modules");
@@ -153,13 +188,23 @@ async function resolveCallFrame(
   if (!file) return { fn, minified, package: "(native)" };
   // node builtins (node:internal/..., node:fs, ...) are not on disk and not a dependency
   if (file.startsWith("node:")) return { fn, minified, source: file, file, package: "(node)" };
+  // Pseudo-URLs (blob:/data:/inline/wasm/v8/extension) are not on disk and not fetchable:
+  // bucket by scheme and never fs-walk them, or packageForFile climbs to a stray package.json
+  // and mis-blames their cost on an unrelated package (often wpd's own cwd package). Check the
+  // ORIGINAL script URL too, since an inline data: module can carry a sourcemap that fills
+  // frame.source and would otherwise hide the scheme.
+  const pseudo = classifyPseudoUrl(callFrame.url) ?? classifyPseudoUrl(frame.source);
+  if (pseudo) {
+    const lineSuffix = frame.line != null ? `:${frame.line}` : "";
+    return {
+      fn,
+      minified,
+      source: `${pseudo.label}${lineSuffix}`,
+      file: pseudo.label,
+      package: pseudo.package,
+    };
+  }
   const source = `${file}${frame.line != null ? `:${frame.line}` : ""}`;
-  // blob: scripts (e.g. a same-process iframe built from a Blob, like an embedded dashboard)
-  // are not on disk and not fetchable. Without this they fall through to the local-path branch
-  // and packageForFile walks the fs up to a stray package.json, mis-blaming the iframe's cost on
-  // an unrelated package (often wpd's own). Bucket them as "(blob)" instead; names stay minified
-  // (blob bundles carry no fetchable sourcemap).
-  if (file.startsWith("blob:")) return { fn, minified, source, file, package: "(blob)" };
   // Remote frames aren't on disk, so derive the package from the path string (node_modules
   // deps resolve; app/bundle code falls to "app"). Local resolved sources read package.json.
   if (frame.remote)
