@@ -16,6 +16,7 @@ import {
 import { attachStacks } from "../dist/trace/stacks.js";
 import { SourceMapResolver } from "../dist/trace/sourcemap.js";
 import { findWindow } from "../dist/trace/parse.js";
+import { labelWindows, mergeSteps } from "../dist/trace/steps.js";
 import { diffCmd } from "../dist/commands/diff.js";
 import { assertCmd } from "../dist/commands/assert.js";
 import { createServer } from "node:http";
@@ -439,6 +440,85 @@ test("functionJoinKey joins on file, not source line (cpu-diff stays stable acro
   const after = { fn: "render", file: "src/app.js", source: "src/app.js:47", package: "app" };
   assert.equal(functionJoinKey(before), functionJoinKey(after));
   assert.equal(functionJoinKey(before), "render src/app.js");
+});
+
+// --- Cross-pass step merge (label-keyed; indices are per-pass and not comparable) ---
+
+const driverStep = (index, label) => ({
+  index,
+  label,
+  wallMs: 10 + index,
+  inpMs: null,
+  cdpDelta: { LayoutCount: index },
+});
+
+test("labelWindows re-keys a pass's own windows from index to label", () => {
+  const steps = [driverStep(0, "mount"), driverStep(1, "hydrate"), driverStep(2, "inp")];
+  // findSteps returns windows sorted by index; the trace can lose marks but never invent them,
+  // so a window with no step (index 9) is dropped rather than paired with anything.
+  const windows = [
+    { index: 0, startTs: 100, endTs: 200 },
+    { index: 2, startTs: 500, endTs: null },
+    { index: 9, startTs: 900, endTs: 999 },
+  ];
+  assert.deepEqual(labelWindows(steps, windows), [
+    { label: "mount", startTs: 100, endTs: 200 },
+    { label: "inp", startTs: 500, endTs: null },
+  ]);
+});
+
+test("mergeSteps pairs by label, not by position", () => {
+  // The trace pass is a separate browser run: its windows arrive in a different order than the
+  // timing pass's steps. A positional/index-keyed merge would attach "inp"'s window to "mount".
+  const timing = [driverStep(0, "mount"), driverStep(1, "hydrate"), driverStep(2, "inp")];
+  const traced = [
+    { label: "inp", startTs: 500, endTs: 600 },
+    { label: "mount", startTs: 100, endTs: 200 },
+    { label: "hydrate", startTs: 300, endTs: 400 },
+  ];
+  const merged = mergeSteps(timing, traced);
+  assert.deepEqual(
+    merged.map((step) => [step.label, step.startTs, step.endTs]),
+    [
+      ["mount", 100, 200],
+      ["hydrate", 300, 400],
+      ["inp", 500, 600],
+    ],
+  );
+  // the timing pass still owns wall/CDP; only the window comes from the trace pass
+  assert.equal(merged[0].wallMs, 10);
+  assert.deepEqual(merged[0].cdpDelta, { LayoutCount: 0 });
+});
+
+test("mergeSteps throws when the passes recorded different steps (never emits a null window)", () => {
+  const timing = [driverStep(0, "mount"), driverStep(1, "hydrate"), driverStep(2, "inp")];
+  // The trace pass took a different path and skipped "hydrate". Index-keyed, "inp" would silently
+  // inherit "hydrate"'s window and every count for the unmatched step would read 0 -- which
+  // `assert --max-forced 0` reads as a pass.
+  const traced = [
+    { label: "mount", startTs: 100, endTs: 200 },
+    { label: "inp", startTs: 300, endTs: 400 },
+  ];
+  assert.throws(() => mergeSteps(timing, traced), /different steps.*only in the timing pass: hydrate/s);
+});
+
+test("mergeSteps rejects duplicate labels rather than joining the wrong pair", () => {
+  const timing = [driverStep(0, "mount"), driverStep(1, "mount")];
+  assert.throws(() => mergeSteps(timing, undefined), /Duplicate step label "mount"/);
+});
+
+test("mergeSteps degrades (no throw) when the detail pass collected no windows at all", () => {
+  // A lane without tracing (e.g. Firefox without --cpu-profile) has nothing to pair with. That is
+  // absence, not divergence.
+  const timing = [driverStep(0, "mount"), driverStep(1, "inp")];
+  const merged = mergeSteps(timing, undefined);
+  assert.deepEqual(
+    merged.map((step) => [step.label, step.startTs, step.endTs]),
+    [
+      ["mount", null, null],
+      ["inp", null, null],
+    ],
+  );
 });
 
 // --- Firefox Gecko profile converter (against a real trimmed shutdown dump) ---

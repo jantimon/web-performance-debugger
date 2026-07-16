@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 import type { CDPSession, Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
 import { snapshotMetricsIfAvailable, metricsDelta } from "../metrics/cdp.js";
+import { duplicateLabelError } from "../trace/steps.js";
 
 export interface DriverStep {
   index: number;
@@ -101,9 +102,24 @@ export async function runDriver(
   }
 
   const steps: DriverStep[] = [];
+  const usedLabels = new Set<string>();
   let nextIndex = 0;
+  // cleanup() is deliberately called by record.ts AFTER tracing stops, so a step measured there
+  // can never have a trace window; see the throw in measure().
+  let inCleanup = false;
 
   async function measure(label: string, action: () => unknown, until: Until): Promise<void> {
+    if (inCleanup) {
+      throw new Error(
+        `measureStep(${JSON.stringify(label)}) cannot be used in cleanup(): teardown runs after ` +
+          `tracing has stopped, so the step is never traced and its layout/paint/forced-layout ` +
+          `counts would all read 0 as if it were clean. Measure it in run() instead.`,
+      );
+    }
+    // Fail here rather than at the cross-pass merge: this fires on the offending call, before
+    // the rest of the flow and the second pass have run.
+    if (usedLabels.has(label)) throw duplicateLabelError(label);
+    usedLabels.add(label);
     const index = nextIndex++;
     await page.evaluate(() => ((window as any).__cpInp = []));
     await mark(`wpd:step:${index}:start`);
@@ -158,6 +174,11 @@ export async function runDriver(
     steps,
     lifecycle,
     cdpBefore,
-    cleanup: cleanup ? () => cleanup({ page, ctx, measureStep }) : undefined,
+    cleanup: cleanup
+      ? () => {
+          inCleanup = true;
+          return cleanup({ page, ctx, measureStep });
+        }
+      : undefined,
   };
 }
