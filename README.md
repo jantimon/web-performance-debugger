@@ -358,9 +358,17 @@ did not measure in `meta.notes` (never fake zeros)
 | Wall / per-iteration timing | ✓ | ✓ | ✓ |
 | Real user flows, in-page bench, screenshots | — | ✓ | ✓ |
 | Forced layout/style blame to source | — | ✓ (with `--cpu-profile`) | ✓ |
+| INP per step | — | ✓ | ✓ |
 | Exact rendering counts + invalidation rollup | — | — | ✓ (CDP) |
-| INP per step, long tasks | — | — | ✓ |
+| Long tasks | — | — | ✓ |
 | `--cpu-throttle` / `--network` slowdowns | — | — | ✓ |
+
+INP comes from an in-page Event Timing observer, so **both engines measure it** (long tasks do not:
+they are counted from the DevTools trace, which Firefox has no equivalent of). Both span the
+interaction through the next paint and round to 8 ms, but they are **not interchangeable**: for
+identical work Firefox reports a systematically lower number than Chrome, because presentation delay
+is genuinely engine-specific. Compare a browser against itself across your change, not one engine
+against the other
 
 ```bash
 # the same probe, verified in both engines:

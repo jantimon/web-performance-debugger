@@ -21,9 +21,28 @@ regenerate a full one, launch Firefox via Puppeteer with the `MOZ_PROFILER_*` en
   `"CDP support is required for this feature. The current browser does not support CDP."`
   So: no CDP counters, no DevTools trace, no CPU/network throttling, no invalidationTracking.
   Every CDP touchpoint is capability-gated behind `capsFor(browser).cdpCounts/trace/throttle`.
-- `PerformanceObserver({ type: "event" })` `.observe()` does **not** throw, but Firefox does not
-  populate Event Timing entries, so per-step INP stays `null`. Degrades cleanly (the driver's
-  existing null handling already covers it).
+- `PerformanceObserver({ type: "event" })` **works**, and per-step INP is real. An earlier version of
+  this doc claimed Firefox does not populate Event Timing entries and that INP stays `null`; that was
+  wrong, and the wrong claim reached users via `meta.notes`. Measured on Firefox 152 / Chrome 150:
+  - `supportedEntryTypes` includes `event`, `first-input`, `largest-contentful-paint`, `paint`
+    (and `PerformanceEventTiming.interactionId` exists). It does **not** include `layout-shift`,
+    `longtask`, or `element`, so CLS and long tasks cannot be sourced in-page here. wpd's long tasks
+    come from the DevTools trace anyway, which Gecko has no equivalent of.
+  - The driver's exact observer config is honoured: `durationThreshold: 16` and `buffered: true`
+    neither throw nor silently drop entries.
+  - One 100 ms click handler, identical page: chrome `duration` 160 ms (processing 112.2 +
+    presentation 47.4) vs firefox 128 ms (processing 111.0 + presentation 16.0). **Both include the
+    next paint and round to 8 ms** -- firefox is NOT a processing-only lower bound. The gap is real
+    presentation-delay difference, so firefox reads systematically lower for identical work:
+    comparable in direction, not interchangeable.
+  - Coverage differs but loses nothing: chrome emits the whole pointer sequence (every entry sharing
+    one duration to the same next paint), firefox emits only the events that did work
+    (`pointerdown`/`mousedown`, or `keydown`/`keypress` when the handler lives there). The driver's
+    `Math.max` over entries therefore finds the work in both engines.
+  - Puppeteer dispatches a synthetic click's events within ~0.2 ms, so max-over-entries picks the
+    same value as the `click` entry alone; there is no anchoring gap in practice.
+  - A `null` INP on Firefox means what it means on chrome: no interaction crossed the 16 ms
+    threshold (a fast or visually idempotent interaction), not an engine limitation.
 
 ## Gecko profiler via env vars (verified)
 
@@ -115,5 +134,10 @@ modes (both already emit those marks).
 ## What is NOT measured on Firefox (reported honestly, never as fake zeros)
 
 CDP counters (exact layout/style/script counts), paint counts, invalidation tracking + rollup,
-long-task attribution from a DevTools trace, CPU/network throttling, and INP. `meta.notes` and the
+long-task attribution from a DevTools trace, and CPU/network throttling. `meta.notes` and the
 terminal report say so; `assert` on those metrics fails rather than passing on a fake 0.
+
+**INP is not on this list**: it never came from CDP, so it works here (see the BiDi section above).
+Its honest caveat is a different one -- the number is real in both engines but not interchangeable
+between them, because presentation delay is engine-specific. Under-claiming a metric wpd does
+measure is the same failure as faking a zero, in the opposite direction.

@@ -482,7 +482,13 @@ export async function record(opts: RecordOptions): Promise<{
   const notes: string[] = [];
   if (browserName === "firefox") {
     notes.push(
-      "Firefox backend (WebDriver BiDi): no CDP, so exact layout/style/script counts, paint counts, invalidation tracking, CPU/network throttling, and INP are NOT measured. Wall timing rides performance.now (directional). Layout/style blame comes from the Gecko profiler's Reflow/Styles markers and needs --cpu-profile.",
+      "Firefox backend (WebDriver BiDi): no CDP, so exact layout/style/script counts, paint counts, invalidation tracking, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and CPU/network throttling are NOT measured. Wall timing rides performance.now (directional). Layout/style blame comes from the Gecko profiler's Reflow/Styles markers and needs --cpu-profile.",
+    );
+    // INP is deliberately NOT in the caps list above: it never came from CDP. It is the same
+    // in-page Event Timing observer Chrome uses, so it works here; the honest caveat is that the
+    // two engines' numbers are not interchangeable, not that Firefox cannot measure it.
+    notes.push(
+      "INP IS measured on Firefox (in-page Event Timing, the same observer Chrome uses). The two engines' values are not interchangeable: both span the interaction through the next paint and round to 8 ms, but Firefox reports a systematically lower number for identical work because presentation delay differs by engine. Compare a browser against itself across a change, not one engine against the other.",
     );
     if (!opts.cpuProfile) {
       notes.push(
