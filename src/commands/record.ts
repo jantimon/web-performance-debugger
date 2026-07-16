@@ -1,7 +1,10 @@
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { launchBrowser } from "../browser/launch.js";
+import { launchBrowser, GECKO_MIN_INTERVAL_MS } from "../browser/launch.js";
+import { capsFor, type BrowserName } from "../browser/backend.js";
 import { startStaticServer, type StaticServer } from "../browser/server.js";
+import { parseGecko, geckoToRawCpuProfile, geckoToRenderingEvents } from "../profile/gecko.js";
 import { runHarness } from "../browser/harness.js";
 import { runDriver, type DriverStep } from "../browser/driver.js";
 import { applyCpuThrottle, applyNetworkPreset } from "../browser/throttle.js";
@@ -11,7 +14,7 @@ import { attachStacks } from "../trace/stacks.js";
 import { markForced } from "../trace/analysis.js";
 import {
   enableMetrics,
-  snapshotMetrics,
+  snapshotMetricsIfAvailable,
   metricsDelta,
   startCpuProfile,
   stopCpuProfile,
@@ -39,10 +42,13 @@ import type {
 } from "../model/recording.js";
 
 const DEFAULT_CPU_INTERVAL_US = 50;
+const US_PER_MS = 1000;
 
 export interface RecordOptions {
   module: string;
   fn: string;
+  /** browser backend: "chrome" (default, full CDP) or "firefox" (BiDi + Gecko profiler) */
+  browser?: BrowserName;
   html?: string;
   url?: string;
   iterations: number;
@@ -81,6 +87,9 @@ interface PassSpec {
   categories: string[] | null;
   /** capture a CPU sampling profile during this pass (tracing stays off) */
   cpu?: boolean;
+  /** Firefox: run under the Gecko profiler; the shutdown dump yields CPU samples AND
+   * layout/style markers (blame) from this one pass. */
+  gecko?: boolean;
 }
 
 interface PassResult {
@@ -102,6 +111,12 @@ interface PassResult {
   stepWindows?: StepWindow[];
   /** raw V8 CPU sampling profile (only on the cpu pass) */
   cpuProfile?: RawCpuProfile;
+  /** Firefox: temp path of the raw Gecko shutdown dump, copied verbatim to the
+   * .geckoprofile.json artifact and removed. Kept as a path, not a string: the dump can be
+   * hundreds of MB and holding it would pin that for the rest of the run. */
+  geckoDumpPath?: string;
+  /** interval the CPU sampler actually ran at, read back from the profile itself */
+  cpuSampleIntervalUs?: number;
 }
 
 /** A step merged across passes: label+timing from the timing pass, window from the trace pass. */
@@ -148,6 +163,51 @@ function shorterPath(root: string, absPath: string | undefined): string | null {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** How long to wait for Firefox to flush its shutdown dump before giving up. Generous: a large
+ * ring buffer serializes to a multi-hundred-MB file on a slow disk. */
+const GECKO_DUMP_TIMEOUT_MS = 15_000;
+/** Poll cadence while waiting for the dump. */
+const GECKO_DUMP_POLL_MS = 250;
+/** Consecutive equal sizes that count as "done growing" (the dump is written incrementally). */
+const GECKO_DUMP_STABLE_READS = 3;
+
+/** The Gecko sampling interval for this run: --cpu-interval is expressed in microseconds (the V8
+ * unit) and Gecko takes milliseconds, clamped up to its ~1ms floor by geckoEnv. Unset => the floor. */
+function geckoIntervalMs(opts: RecordOptions): number {
+  return opts.cpuIntervalUs != null
+    ? Math.max(GECKO_MIN_INTERVAL_MS, opts.cpuIntervalUs / US_PER_MS)
+    : GECKO_MIN_INTERVAL_MS;
+}
+
+/** Firefox writes the Gecko shutdown dump asynchronously after browser.close(); wait for the
+ * file to exist AND stop growing (stable across reads) before parsing it. */
+async function waitForGeckoDump(
+  dumpPath: string,
+  timeoutMs = GECKO_DUMP_TIMEOUT_MS,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = -1;
+  let stableReads = 0;
+  while (Date.now() < deadline) {
+    let size = -1;
+    try {
+      size = (await fs.stat(dumpPath)).size;
+    } catch {
+      size = -1;
+    }
+    if (size > 0 && size === lastSize) {
+      if (++stableReads >= GECKO_DUMP_STABLE_READS) return fs.readFile(dumpPath, "utf8");
+    } else {
+      stableReads = 0;
+    }
+    lastSize = size;
+    await sleep(GECKO_DUMP_POLL_MS);
+  }
+  throw new Error(
+    `Gecko profile dump was not written to ${dumpPath} within ${timeoutMs}ms (Firefox --cpu-profile pass).`,
+  );
+}
+
 async function runPass(
   server: StaticServer,
   root: string,
@@ -157,16 +217,35 @@ async function runPass(
   absModule: string,
   shots: { before: boolean; after: boolean; dir: string; base: string } | null,
 ): Promise<PassResult> {
+  const browserName: BrowserName = opts.browser ?? "chrome";
+  const caps = capsFor(browserName);
+  // Firefox: the Gecko pass profiles for its whole lifetime and dumps on exit; a fresh temp
+  // file per pass keeps concurrent/retried runs from colliding.
+  const geckoDumpPath = spec.gecko
+    ? path.join(
+        os.tmpdir(),
+        `wpd-gecko-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+      )
+    : undefined;
   const { browser, page, client } = await launchBrowser({
+    browser: browserName,
     headless: opts.headless,
     userDataDir: opts.userDataDir,
     protocolTimeoutMs: opts.protocolTimeoutMs,
+    gecko: geckoDumpPath
+      ? { dumpPath: geckoDumpPath, intervalMs: geckoIntervalMs(opts) }
+      : undefined,
   });
+  // On Firefox client is null; every CDP call is guarded by the caps object or this helper.
+  const countsClient = caps.cdpCounts ? client : null;
+  const snapshot = () => snapshotMetricsIfAvailable(countsClient);
   const screenshots: ScreenshotRefs = {};
+  let result: PassResult;
   try {
-    await enableMetrics(client);
-    if (opts.cpuThrottle) await applyCpuThrottle(client, opts.cpuThrottle);
-    if (opts.network) await applyNetworkPreset(client, opts.network);
+    if (countsClient) await enableMetrics(countsClient);
+    if (opts.cpuThrottle && client && caps.throttle)
+      await applyCpuThrottle(client, opts.cpuThrottle);
+    if (opts.network && client && caps.throttle) await applyNetworkPreset(client, opts.network);
 
     const moduleUrl = toServedUrl(server, root, absModule);
 
@@ -199,8 +278,8 @@ async function runPass(
     const cpuIntervalUs = opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
 
     if (opts.driver) {
-      if (spec.categories) await page.tracing.start({ categories: spec.categories });
-      if (spec.cpu) await startCpuProfile(client, cpuIntervalUs);
+      if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
+      if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
       // runDriver snapshots cdpBefore at run:start (after prepare()), so setup DOM work stays
       // out of the authoritative counts (consistent with bench mode below).
       const driverResult = await runDriver(page, client, absModule, opts.fn);
@@ -221,9 +300,9 @@ async function runPass(
       // them and disagree with the trace-window-scoped forced/paint counts).
       const setup = await page.evaluate(runHarness, { ...harnessArg, phase: "setup" as const });
       lifecycle = setup.lifecycle;
-      cdpBefore = await snapshotMetrics(client);
-      if (spec.categories) await page.tracing.start({ categories: spec.categories });
-      if (spec.cpu) await startCpuProfile(client, cpuIntervalUs);
+      cdpBefore = await snapshot();
+      if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
+      if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
       const timed = await page.evaluate(runHarness, { ...harnessArg, phase: "timed" as const });
       perIteration = timed.perIteration;
       runCleanup = () => page.evaluate(runHarness, { ...harnessArg, phase: "cleanup" as const });
@@ -232,13 +311,13 @@ async function runPass(
     // Let asynchronous paint/composite work flush before we stop tracing.
     await sleep(opts.settleMs);
 
-    if (spec.cpu) cpuProfile = await stopCpuProfile(client);
+    if (spec.cpu && client && caps.cpuProfile) cpuProfile = await stopCpuProfile(client);
 
     let events: NormalizedEvent[] = [];
     let windowStart: number | null = null;
     let windowEnd: number | null = null;
     let stepWindows: StepWindow[] | undefined;
-    if (spec.categories) {
+    if (spec.categories && caps.trace) {
       const buf = await page.tracing.stop();
       events = parseTrace(buf ? new TextDecoder("utf-8").decode(buf) : "[]");
       // Rewrite trace stack urls back to local source files for blame/source lookup.
@@ -251,7 +330,7 @@ async function runPass(
       if (opts.driver) stepWindows = findSteps(events);
     }
 
-    const cdpAfter = await snapshotMetrics(client);
+    const cdpAfter = await snapshot();
 
     // Teardown now; tracing is stopped and both counters are captured, so cleanup work
     // stays out of the measured window (the after-screenshot still shows post-cleanup).
@@ -275,7 +354,7 @@ async function runPass(
       return { marks: markEntries, measures: measureEntries };
     })) as { marks: TimingEntry[]; measures: TimingEntry[] };
 
-    return {
+    result = {
       name: spec.name,
       events,
       windowStart,
@@ -293,8 +372,31 @@ async function runPass(
       cpuProfile,
     };
   } finally {
+    // Closing Firefox flushes the Gecko shutdown dump, so the parse below must run after this.
     await browser.close();
   }
+
+  // Firefox: parse the shutdown dump into the same shapes the Chrome path produces. One gecko
+  // pass yields BOTH the CPU samples (RawCpuProfile) and layout/style blame events (from Reflow/
+  // Styles markers). The run window comes from the wpd:run UserTiming marks inside the profile.
+  if (spec.gecko && geckoDumpPath) {
+    // Parse from a scoped string so the dump (potentially hundreds of MB) is collectable once
+    // the model is built; the artifact is copied straight from the file by the caller.
+    const geckoContext = parseGecko(JSON.parse(await waitForGeckoDump(geckoDumpPath)));
+    result.geckoDumpPath = geckoDumpPath;
+    result.cpuProfile = geckoToRawCpuProfile(geckoContext);
+    // The interval the sampler actually ran at, not what we asked for.
+    result.cpuSampleIntervalUs = geckoContext.intervalMs * US_PER_MS;
+    const renderingEvents = geckoToRenderingEvents(geckoContext);
+    await attachStacks(renderingEvents, server.url, root);
+    markForced(renderingEvents);
+    result.events = renderingEvents;
+    const geckoWindow = findWindow(renderingEvents);
+    result.windowStart = geckoWindow.startTs;
+    result.windowEnd = geckoWindow.endTs;
+    if (opts.driver) result.stepWindows = findSteps(renderingEvents);
+  }
+  return result;
 }
 
 export async function record(opts: RecordOptions): Promise<{
@@ -312,6 +414,7 @@ export async function record(opts: RecordOptions): Promise<{
     throw new Error(`Module not found: ${absModule}`);
   });
 
+  const browserName: BrowserName = opts.browser ?? "chrome";
   const mode: "module" | "html" | "url" = opts.url ? "url" : opts.html ? "html" : "module";
 
   const outPath = opts.out
@@ -336,15 +439,23 @@ export async function record(opts: RecordOptions): Promise<{
   // --no-trace skips the heavy trace pass entirely: counts come from CDP (timing
   // pass) and optionally a CPU profile, with no paint/forced/invalidation detail.
   // The fallback for pages whose invalidationTracking pass pins the main thread.
-  const specs: PassSpec[] = opts.isolate
-    ? wantTrace
-      ? [timingSpec, traceSpec]
-      : [timingSpec]
-    : wantTrace
-      ? [traceSpec]
-      : [timingSpec];
-  // CPU sampling is heavy, so it gets its own isolated pass (tracing stays off in it).
-  if (opts.cpuProfile) specs.push({ name: "cpu", categories: null, cpu: true });
+  let specs: PassSpec[];
+  if (browserName === "firefox") {
+    // Firefox has no CDP trace/counters: a clean timing pass, plus (only with --cpu-profile) one
+    // Gecko-profiler pass that yields CPU samples AND layout/style markers (blame) together.
+    specs = [timingSpec];
+    if (opts.cpuProfile) specs.push({ name: "gecko", categories: null, gecko: true });
+  } else {
+    specs = opts.isolate
+      ? wantTrace
+        ? [timingSpec, traceSpec]
+        : [timingSpec]
+      : wantTrace
+        ? [traceSpec]
+        : [timingSpec];
+    // CPU sampling is heavy, so it gets its own isolated pass (tracing stays off in it).
+    if (opts.cpuProfile) specs.push({ name: "cpu", categories: null, cpu: true });
+  }
 
   const server = await startStaticServer(root);
   const results: PassResult[] = [];
@@ -362,11 +473,23 @@ export async function record(opts: RecordOptions): Promise<{
   }
 
   const timing = results.find((pass) => pass.name === "timing") ?? results[0];
-  const detail = results.find((pass) => pass.name === "trace") ?? results[results.length - 1];
+  const detail =
+    results.find((pass) => pass.name === "trace") ??
+    results.find((pass) => pass.name === "gecko") ??
+    results[results.length - 1];
   const screenshots = results.find((pass) => pass.screenshots)?.screenshots;
 
   const notes: string[] = [];
-  if (opts.isolate) {
+  if (browserName === "firefox") {
+    notes.push(
+      "Firefox backend (WebDriver BiDi): no CDP, so exact layout/style/script counts, paint counts, invalidation tracking, CPU/network throttling, and INP are NOT measured. Wall timing rides performance.now (directional). Layout/style blame comes from the Gecko profiler's Reflow/Styles markers and needs --cpu-profile.",
+    );
+    if (!opts.cpuProfile) {
+      notes.push(
+        "No --cpu-profile: this run captured wall timing only. Add --cpu-profile for source-attributed layout/style (Reflow/Styles markers) plus CPU self-time by package/file/function.",
+      );
+    }
+  } else if (opts.isolate) {
     notes.push(
       "Timing/stats come from a low-overhead pass with tracing OFF; paint & invalidation counts come from a separate heavy-instrumentation pass. Do not compare durations across the two.",
     );
@@ -385,7 +508,9 @@ export async function record(opts: RecordOptions): Promise<{
   // the ENTIRE trace (page load, nav, prepare, teardown) as the measured region, silently
   // inflating every trace-derived count by an order of magnitude while looking normal. Treat
   // those counts as not-measured (0) and say so loudly; CDP counters are unaffected.
-  const traceWindowMissing = detail.windowStart == null;
+  // Firefox has its own honest notes (above) and no DevTools trace, so this Chrome-specific
+  // trace-buffer warning does not apply there.
+  const traceWindowMissing = detail.windowStart == null && browserName !== "firefox";
   if (traceWindowMissing) {
     notes.push(
       "WARNING: trace run-window markers (wpd:run:start/end) were not found, so paint/forced-layout/invalidation/long-task counts are NOT measured for this run and are reported as 0. CDP counters (layout/style/scripting) are unaffected. This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce work or raise --settle-ms if it persists.",
@@ -413,14 +538,25 @@ export async function record(opts: RecordOptions): Promise<{
     passes: results.map((pass) => pass.name),
     notes,
     driver: opts.driver,
+    // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome".
+    browser: browserName === "firefox" ? "firefox" : undefined,
     throttle,
     screenshots,
   };
 
+  // Firefox timing-only runs have no trace/gecko window; fall back to the wpd:run marks
+  // (performance.now ms) so wall time is still reported. Chrome behavior is untouched.
+  const wallFromMarks = (): number | null => {
+    const start = timing.marks.find((entry) => entry.name === "wpd:run:start")?.startTime;
+    const end = timing.marks.find((entry) => entry.name === "wpd:run:end")?.startTime;
+    return start != null && end != null ? end - start : null;
+  };
   const runWallMs =
     detail.windowStart != null && detail.windowEnd != null
       ? (detail.windowEnd - detail.windowStart) / 1000
-      : null;
+      : browserName === "firefox"
+        ? wallFromMarks()
+        : null;
   // overall INP = worst interaction across driver steps
   const overallInp =
     timing.driverSteps && timing.driverSteps.length
@@ -558,12 +694,23 @@ export async function record(opts: RecordOptions): Promise<{
   let cpuModel: CpuModel | undefined;
   const cpuPass = results.find((pass) => pass.cpuProfile);
   if (cpuPass?.cpuProfile) {
-    cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
-    await fs.writeFile(cpuProfilePath, JSON.stringify(cpuPass.cpuProfile), "utf8");
+    if (cpuPass.geckoDumpPath) {
+      // Firefox: the authoritative raw artifact is the Gecko dump (loads at profiler.firefox.com);
+      // CpuModel.profile points at it. The model is built from the converted V8-shaped profile.
+      // Copy rather than round-trip through a string: the dump can be very large.
+      cpuProfilePath = path.join(outDir, `${base}.geckoprofile.json`);
+      await fs.copyFile(cpuPass.geckoDumpPath, cpuProfilePath);
+      await fs.rm(cpuPass.geckoDumpPath, { force: true });
+    } else {
+      cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
+      await fs.writeFile(cpuProfilePath, JSON.stringify(cpuPass.cpuProfile), "utf8");
+    }
     cpuModel = await buildCpuModel(cpuPass.cpuProfile, {
       profilePath: cpuProfilePath,
       meta,
-      sampleIntervalUs: opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
+      // Firefox reports the interval the Gecko sampler actually ran at; V8 honours what we asked for.
+      sampleIntervalUs:
+        cpuPass.cpuSampleIntervalUs ?? opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
       serverUrl: server.url,
       root,
     });
@@ -654,7 +801,11 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     console.log(
       `CPU model:  ${dim(`${cpuModelPath}  ← 'query cpu latest' for the hot-function overview`)}`,
     );
-    console.log(`CPU raw:    ${dim(`${cpuProfilePath}  ← opens in Chrome DevTools / Speedscope`)}`);
+    const rawHint =
+      recording.meta.browser === "firefox"
+        ? "opens at profiler.firefox.com"
+        : "opens in Chrome DevTools / Speedscope";
+    console.log(`CPU raw:    ${dim(`${cpuProfilePath}  ← ${rawHint}`)}`);
   }
   if (recording.meta.screenshots?.before)
     console.log(`Before png: ${dim(recording.meta.screenshots.before)}`);

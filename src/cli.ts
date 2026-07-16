@@ -44,6 +44,11 @@ program
   )
   .argument("<module>", "path to a JS/ESM module exporting `run` (and optional prepare/cleanup)")
   .option("--fn <name>", "exported function to run", "run")
+  .option(
+    "--browser <name>",
+    "browser backend: chrome (default, full CDP) | firefox (WebDriver BiDi + Gecko profiler; timing + --cpu-profile only)",
+    "chrome",
+  )
   .option("--html <file>", "host page: load this local HTML, then run the module against it")
   .option("--url <url>", "host page: load this live URL, then run the module against it")
   .option(
@@ -91,8 +96,30 @@ program
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
     if (!["chrome", "node"].includes(cmdOpts.runtime))
       program.error("--runtime must be chrome or node");
+    if (!["chrome", "firefox"].includes(cmdOpts.browser))
+      program.error("--browser must be chrome or firefox");
     const bench = !!cmdOpts.bench;
     const node = cmdOpts.runtime === "node";
+    const firefox = cmdOpts.browser === "firefox";
+    if (firefox) {
+      if (node) {
+        program.error(
+          "--browser firefox and --runtime node are mutually exclusive (node is an in-process CPU lane with no browser).",
+        );
+      }
+      // Firefox is driven over BiDi with no CDP: these features have no Gecko equivalent.
+      const unsupported = [
+        cmdOpts.cpuThrottle && "--cpu-throttle",
+        cmdOpts.network && "--network",
+        cmdOpts.protocolTimeout != null && "--protocol-timeout",
+        cmdOpts.invalidationTracking === false && "--no-invalidation-tracking",
+      ].filter(Boolean);
+      if (unsupported.length) {
+        program.error(
+          `--browser firefox has no CDP, so these are unsupported: ${unsupported.join(", ")}. See the browser-support matrix in the README.`,
+        );
+      }
+    }
     if (node) {
       const browserOnly = [
         cmdOpts.url && "--url",
@@ -115,6 +142,7 @@ program
     const opts: RecordOptions = {
       module,
       fn: cmdOpts.fn,
+      browser: firefox ? "firefox" : "chrome",
       html: cmdOpts.html,
       url: cmdOpts.url,
       iterations: cmdOpts.iterations,

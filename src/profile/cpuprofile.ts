@@ -27,14 +27,14 @@ export interface RawCpuProfile {
   timeDeltas: number[];
 }
 
-interface RawProfileNode {
+export interface RawProfileNode {
   id: number;
   callFrame: RawCallFrame;
   hitCount?: number;
   children?: number[];
 }
 
-interface RawCallFrame {
+export interface RawCallFrame {
   functionName: string;
   scriptId: string;
   url: string;

@@ -2,7 +2,7 @@ import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import type { CDPSession, Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
-import { snapshotMetrics, metricsDelta } from "../metrics/cdp.js";
+import { snapshotMetricsIfAvailable, metricsDelta } from "../metrics/cdp.js";
 
 export interface DriverStep {
   index: number;
@@ -41,10 +41,13 @@ interface StepOpts {
  */
 export async function runDriver(
   page: Page,
-  client: CDPSession,
+  client: CDPSession | null,
   absModule: string,
   fnName: string,
 ): Promise<DriverResult> {
+  // Firefox (BiDi) has no CDP session: per-step CDP counter deltas are unavailable, so they
+  // read as {}. Everything else (marks, settle, INP observer) works over BiDi.
+  const snapshot = () => snapshotMetricsIfAvailable(client);
   const mod: any = await import(pathToFileURL(absModule).href);
   const pick = (...names: string[]) => {
     for (const name of names) if (typeof mod[name] === "function") return mod[name];
@@ -104,12 +107,12 @@ export async function runDriver(
     const index = nextIndex++;
     await page.evaluate(() => ((window as any).__cpInp = []));
     await mark(`wpd:step:${index}:start`);
-    const before = await snapshotMetrics(client);
+    const before = await snapshot();
     const t0 = performance.now();
     await action();
     await waitDone(until);
     const wallMs = performance.now() - t0;
-    const after = await snapshotMetrics(client);
+    const after = await snapshot();
     await mark(`wpd:step:${index}:end`);
     // Event-Timing entries reach the observer on a later task, after the frame is
     // presented. Flush a frame + a macrotask so a slow interaction's entry lands before
@@ -144,7 +147,7 @@ export async function runDriver(
 
   // Snapshot CDP counters at run:start, after prepare(), so setup DOM work isn't folded into
   // the overall recording's authoritative counts (matches bench mode's post-setup snapshot).
-  const cdpBefore = await snapshotMetrics(client);
+  const cdpBefore = await snapshot();
   await mark("wpd:run:start");
   await run({ page, ctx, measureStep });
   await mark("wpd:run:end");

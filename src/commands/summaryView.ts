@@ -9,7 +9,7 @@ export function printSummary(rec: Recording): void {
     : `${meta.mode}:${meta.target}`;
   console.log(`\n${meta.tool} — ${title}  (fn: ${meta.fn})`);
   console.log(
-    `passes: ${meta.passes.join(" + ")}   driver: ${meta.driver}   lifecycle: ${meta.lifecycle.join("→") || "run"}`,
+    `browser: ${meta.browser ?? "chrome"}   passes: ${meta.passes.join(" + ")}   driver: ${meta.driver}   lifecycle: ${meta.lifecycle.join("→") || "run"}`,
   );
 
   console.log("\nRendering work (counts are authoritative; durations are coarse)\n");
@@ -47,10 +47,12 @@ export function printSummary(rec: Recording): void {
     console.log("  ⚠ layout thrashing — run `query blame --forced` to see the source lines");
   }
 
-  // Detect a run that recorded no layout/paint/style/event activity at all.
+  // Detect a run that recorded no layout/paint/style/event activity at all. On Firefox without a
+  // Gecko pass, rendering is simply not collected (not a sign of a broken run), so skip the hint.
   const didWork =
     summary.layoutCount + summary.paintCount + summary.styleCount + summary.totalEvents;
-  if (didWork === 0) {
+  const firefoxNoDetail = meta.browser === "firefox" && !meta.passes.includes("gecko");
+  if (didWork === 0 && !firefoxNoDetail) {
     console.log(
       "  ⚠ no rendering work recorded — did your run/step actually do anything (selector correct)?",
     );

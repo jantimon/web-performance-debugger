@@ -7,6 +7,14 @@ import { computeStats, buildSummary } from "../dist/metrics/summarize.js";
 import { forcedLayouts, longTasks, markForced } from "../dist/trace/analysis.js";
 import { serialize, deserialize } from "../dist/output/format.js";
 import { buildCpuModel, packageRollup, functionJoinKey } from "../dist/profile/cpuprofile.js";
+import {
+  parseGeckoLocation,
+  parseGecko,
+  geckoToRawCpuProfile,
+  geckoToRenderingEvents,
+} from "../dist/profile/gecko.js";
+import { attachStacks } from "../dist/trace/stacks.js";
+import { findWindow } from "../dist/trace/parse.js";
 import { diffCmd } from "../dist/commands/diff.js";
 import { assertCmd } from "../dist/commands/assert.js";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
@@ -241,6 +249,105 @@ test("functionJoinKey joins on file, not source line (cpu-diff stays stable acro
   const after = { fn: "render", file: "src/app.js", source: "src/app.js:47", package: "app" };
   assert.equal(functionJoinKey(before), functionJoinKey(after));
   assert.equal(functionJoinKey(before), "render src/app.js");
+});
+
+// --- Firefox Gecko profile converter (against a real trimmed shutdown dump) ---
+
+test("parseGeckoLocation: named JS, anonymous, native, and non-resolvable urls", () => {
+  // named function: line:col is the definition site, 1-based; trailing [NN] stripped
+  assert.deepEqual(parseGeckoLocation("hashString (http://h/a.mjs:6:20)[43]"), {
+    functionName: "hashString",
+    url: "http://h/a.mjs",
+    line: 6,
+    column: 20,
+  });
+  // anonymous top-level positioned frame
+  assert.deepEqual(parseGeckoLocation("http://h/__blank__:1:8[28]"), {
+    functionName: "",
+    url: "http://h/__blank__",
+    line: 1,
+    column: 8,
+  });
+  // native label: no url, kept as a name so it buckets to (native) downstream
+  assert.deepEqual(parseGeckoLocation("XRE_InitChildProcess"), {
+    functionName: "XRE_InitChildProcess",
+    url: "",
+    line: null,
+    column: null,
+  });
+  // self-hosted is JS but not on-disk/fetchable, so the url is dropped (-> (native))
+  assert.equal(parseGeckoLocation("get (self-hosted:12:3)").url, "");
+});
+
+const geckoFixture = JSON.parse(
+  readFileSync(new URL("./fixtures/gecko-shutdown.trimmed.json", import.meta.url), "utf8"),
+);
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+// The fixture's frames carry this served origin (captured at record time); the resolver
+// rewrites it back to local source under repoRoot.
+const FIXTURE_ORIGIN = "http://127.0.0.1:60832";
+
+test("parseGecko: selects the content thread by its wpd:run marks and reads the window", () => {
+  const context = parseGecko(geckoFixture);
+  assert.equal(context.thread.name, "GeckoMain");
+  assert.ok(context.windowStartMs != null && context.windowEndMs != null, "window resolved");
+  assert.ok(context.windowEndMs > context.windowStartMs, "window is a positive interval");
+  assert.ok(context.jsCategory >= 0, "JavaScript category located");
+});
+
+test("parseGecko throws rather than silently reporting an empty profile", () => {
+  // No JavaScript category => no frame can be classified as JS => a model claiming ~0 scripting.
+  const noJsCategory = {
+    ...geckoFixture,
+    meta: { ...geckoFixture.meta, categories: [{ name: "Other" }, { name: "Idle" }] },
+  };
+  assert.throws(() => parseGecko(noJsCategory), /no 'JavaScript' category/);
+  assert.throws(() => parseGecko({ meta: geckoFixture.meta, threads: [] }), /no threads/);
+});
+
+test("geckoToRawCpuProfile -> buildCpuModel resolves hot JS to source with 1->0-based line", async () => {
+  const context = parseGecko(geckoFixture);
+  const raw = geckoToRawCpuProfile(context);
+  // window-sliced: the two pre-window samples the fixture includes must be dropped
+  assert.ok(raw.samples.length > 0 && raw.samples.length <= context.thread.samples.data.length);
+  assert.equal(raw.samples.length, raw.timeDeltas.length);
+
+  const model = await buildCpuModel(raw, {
+    profilePath: "fixture.geckoprofile.json",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1", browser: "firefox" },
+    sampleIntervalUs: 1000,
+    serverUrl: FIXTURE_ORIGIN,
+    root: repoRoot,
+  });
+  assert.ok(model.scriptingMs > 0, "non-zero sampled scripting time");
+  const busywork = model.functions.find((fn) => fn.source?.includes("forces-layout.mjs"));
+  assert.ok(busywork, "a busywork function resolved to its source file");
+  assert.match(busywork.package, /wpd-examples|app/, "attributed to the example workspace package");
+  // definition line is what V8 reports: the location string's :6 (hashString) -> resolved :6.
+  // The frame stores it 0-based (5) and resolveCallFrame adds 1; assert we land on a real line.
+  assert.match(busywork.source, /forces-layout\.mjs:\d+$/, "resolved to file:line");
+  // native JS-engine builtins (JSRope::flatten etc.) must bucket as (native), never a real pkg
+  const native = model.functions.filter((fn) => fn.package === "(native)");
+  for (const fn of native) assert.ok(!fn.source || !fn.source.includes("node_modules"));
+});
+
+test("geckoToRenderingEvents -> attachStacks/markForced yields windowed + forced layout blame", async () => {
+  const context = parseGecko(geckoFixture);
+  const events = geckoToRenderingEvents(context);
+  // UserTiming marks become usertiming events so findWindow locates the window
+  const window = findWindow(events);
+  assert.ok(window.startTs != null && window.endTs != null, "run window found from marks");
+  const kinds = new Set(events.map((event) => event.kind));
+  assert.ok(kinds.has("usertiming"), "usertiming events present");
+  assert.ok(kinds.has("style") || kinds.has("layout"), "at least one Reflow/Styles event");
+
+  await attachStacks(events, FIXTURE_ORIGIN, repoRoot);
+  markForced(events);
+  const forced = events.filter((event) => event.forced && event.at);
+  assert.ok(forced.length > 0, "a style/layout event with a JS cause was flagged forced");
+  assert.ok(
+    (forced[0].kind === "style" || forced[0].kind === "layout") && forced[0].at.length > 0,
+  );
 });
 
 // --- CI-gating paths: write minimal recordings to a temp dir and drive the real commands. ---

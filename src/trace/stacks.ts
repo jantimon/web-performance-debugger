@@ -96,6 +96,9 @@ export function isToolFrameUrl(url: string | undefined): boolean {
     url.startsWith("debugger://") ||
     // page.evaluate'd code (our harness, incl. the post-run layout flush)
     url.includes("__puppeteer_evaluation_script__") ||
+    // Firefox/BiDi attributes page.evaluate code to the served host page url, so the
+    // bench harness loop lands on the blank host page; drop it (not user code).
+    url.includes("/__wpd_blank__") ||
     // the in-process node-runtime driver loop (not user code)
     url.includes("/runtime/node.")
   );
