@@ -47,10 +47,12 @@ npx @jantimon/web-performance-debugger query cpu latest
 
 By default `record` runs your flow **twice**: once with tracing off for clean timing, once fully
 instrumented for counts and attribution (that split is why the numbers stay honest, see
-[the trust table](#the-numbers-and-how-far-to-trust-them)). It writes the full recording plus a
-small **digest** (the summary and worst offenders, each carrying an `id` to drill into) and a
-`latest` pointer, so every `query` verb accepts `latest` instead of a file path. Start at the
-digest, then drill in by id.
+[the trust table](#the-numbers-and-how-far-to-trust-them)). It writes into `./recordings/` (or
+name the run with `--out`): the full recording (`<timestamp>.json`), a small **digest** next to it
+(the summary and worst offenders, each carrying an `id` to drill into), a `.cpu.json` model when
+CPU profiling, and a per-step index for driver runs. A `latest` pointer tracks the newest run, so
+every `query` verb accepts `latest` instead of a file path. Start at the digest, then drill in by
+id.
 
 ## Your `run` module
 
@@ -60,21 +62,24 @@ exports, so only `run` is measured. The file must live under the current working
 export up to three hooks:
 
 ```js
-export async function prepare(arg) {} // optional, once, before the measured window (alias: setup)
+export async function prepare(arg) {} // optional, before the measured window (alias: setup)
 export async function run(arg) {}     // the measured part
-export async function cleanup(arg) {} // optional, once, after the window (alias: teardown)
+export async function cleanup(arg) {} // optional, after the window (alias: teardown)
 ```
 
-`prepare` and `cleanup` run once per `record` pass (not per `--iterations` iteration) and
-**outside** the measured window, so setup and teardown never pollute the numbers. All three hooks
-receive the same argument; what it is depends on the lane:
+`prepare` and `cleanup` run **outside** the measured window, so setup and teardown never pollute
+the numbers: once around all `--iterations`, per pass. Because `record` replays the whole flow for
+each of its 2-3 passes, hooks should be idempotent (safe to run again on a fresh browser). All
+three hooks receive the same argument, which depends on the lane. Note the asymmetry: in driver
+mode `ctx` is a *property* of the argument; in the other lanes it *is* the argument.
 
 - **driver** (default): `run({ page, ctx, measureStep })` executes in Node, `page` is a Puppeteer page.
 - **`--bench`**: `run(ctx)` executes inside the browser page, with live `document`/`window`.
 - **`--runtime node`**: `run(ctx)` executes in this Node process.
 
 `ctx` starts as an empty object and is shared across the hooks: stash things in `prepare` (a
-handle, a prebuilt DOM node, test data) and read them in `run`.
+handle, a prebuilt DOM node, test data) and read them in `run`. `--iterations` / `--warmup`
+(defaults 1 / 0) repeat `run` in the bench and node lanes; a driver flow runs once per pass.
 
 ## Which problem do you have?
 
@@ -160,9 +165,8 @@ wpd query index latest
 1  type query  88.6     56      9       2       18     12
 ```
 
-`wall ms` is the whole step (action + settle); `inp ms` is the user-perceived latency inside it
-(interaction to next paint). A step can have a long wall but a fine INP when the work happens off
-the interaction path.
+`wall ms` is the whole step (action + settle); `inp ms` is the user-perceived latency inside it. A
+step can have a long wall but a fine INP when the work happens off the interaction path.
 
 Omitting `until` waits for the page to **settle**: two animation frames, each followed by an idle
 callback, which covers the usual state-update → render → cleanup pattern. Pass `until` when your
@@ -290,8 +294,7 @@ wpd cpu-diff runs/before.json runs/after.json --fail-on-regression
 
 `record` prints a summary and tells you what to look at next (for example, `⚠ layout thrashing: run
 query blame --forced`). A full recording can be megabytes, so drill from the small digest by event
-id. `latest` always points at your most recent run. For the thrashing probe above, `query digest
-latest` prints (trimmed):
+id. For the thrashing probe above, `query digest latest` prints (trimmed):
 
 ```
 Hotspots
@@ -327,17 +330,6 @@ wpd query get    latest 100
 
 ## Reference
 
-### The three lanes
-
-| Lane | Flag | `run` contract | Measures |
-| --- | --- | --- | --- |
-| driver | (default) | `run({ page, ctx, measureStep })` in Node | rendering work + INP per step; cold boot |
-| bench | `--bench` | `run()` inside the page | rendering work + CPU, iterated in isolation |
-| node | `--runtime node` | `run()` in this Node process | CPU self-time only (no DOM) |
-
-`--iterations` / `--warmup` apply to `bench` and `node`. All lanes support optional `prepare` /
-`cleanup` exports (aliases `setup` / `teardown`).
-
 ### What each target gives you
 
 wpd is additive: the core promise (attribute cost to the source line that caused it) works
@@ -356,11 +348,9 @@ quirk. Firefox rides the **Gecko profiler**: add `--cpu-profile` to a Firefox ru
 produce blame (one profiler pass yields both the CPU samples and the layout/style markers), and
 the raw profile lands as `<base>.geckoprofile.json`, ready to open at profiler.firefox.com.
 
-**Target Chrome: all of that, plus the exact CDP layer on top.** Authoritative
-layout/style/paint/composite counts and the invalidation rollup, INP per interaction, long-task
-attribution, and artificial slowdowns (`--cpu-throttle`, `--network`). These ride Chrome's DevTools
-protocol; the flags that need it error out on other targets, and a Firefox recording lists the
-metrics it did not measure in `meta.notes` (never fake zeros).
+**Target Chrome: all of that, plus the exact CDP layer on top** (the last three table rows below).
+The flags that need CDP error out on other targets, and a Firefox recording lists the metrics it
+did not measure in `meta.notes` (never fake zeros).
 
 | Signal | node | firefox | chrome |
 | --- | --- | --- | --- |
@@ -408,10 +398,11 @@ always plain, so CI and scripts are unaffected.
 | Wall and INP times | `performance.now()`, browser-clamped | directional: good for "~2x worse?", not "1.3 ms" |
 | CPU self-time | the sampler's own clock (V8 microsecond; Gecko ~1 ms floor on Firefox) | real: trustworthy in aggregate (a few % noise) |
 
-To keep timing honest, `record` runs twice by default: once with tracing off (clean timing) and once
-with full instrumentation (the counts and source attribution). `--cpu-profile` adds a third, isolated
-sampling pass. `--no-isolate` collapses to one faster but noisier pass. Slow things down to surface
-jank with `--cpu-throttle 4` or `--network slow-3g`.
+The two default passes exist to keep this table honest: heavy instrumentation distorts timing, so
+timing is measured with tracing off and the counts/attribution in a separate instrumented pass.
+`--cpu-profile` adds a third, isolated sampling pass; `--no-isolate` collapses everything into one
+faster but noisier pass. Slow things down to surface jank with `--cpu-throttle 4` or
+`--network slow-3g`.
 
 ### Consuming the JSON
 
