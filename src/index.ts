@@ -16,6 +16,7 @@ export type {
   TimingEntry,
   MetricsBlock,
   BenchStats,
+  StepTiming,
   RecordingSummary,
   RecordingWindow,
   ScreenshotRefs,

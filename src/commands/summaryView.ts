@@ -74,18 +74,16 @@ export function printSummary(rec: Recording): void {
     console.log(`trend  ${sparkline(summary.perIteration)}`);
   }
 
-  // Steps are heterogeneous, so this is a labelled list, not a stats block or a sparkline:
-  // there is no trend across "mount" and "inp". Optional chaining: recordings written before
-  // perStep existed have no such field.
+  // Steps are heterogeneous, so this is a labelled list, not one stats block or a sparkline:
+  // there is no trend across "mount" and "inp". A driver flow runs once per pass, so each step
+  // holds exactly one sample; when a step can be repeated, this grows a stats view.
+  // Optional chaining: recordings written before perStep existed have no such field.
   if (summary.perStep?.length) {
     console.log("\nPer-step wall time (coarse — single sample per step)\n");
     console.log(
       table(
         ["step", "wall ms"],
-        summary.perStep.map((step) => [
-          step.label,
-          step.wallMs == null ? "—" : num(step.wallMs, 3),
-        ]),
+        summary.perStep.map((step) => [step.label, num(step.perIteration[0], 3)]),
       ),
     );
   }

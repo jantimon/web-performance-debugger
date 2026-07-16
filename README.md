@@ -413,9 +413,22 @@ faster but noisier pass. Slow things down to surface jank with `--cpu-throttle 4
 navigation, `prepare`, every step, and the `--settle` wait. On a driver flow that is routinely
 orders of magnitude larger than the thing you clicked. For per-interaction wall read
 `summary.perStep` (labelled, one entry per `measureStep`) or `query index`, both of which report
-each step's own window. In `--bench` / `--runtime node`, `--iterations` fills `summary.perIteration`
-and `summary.stats` (min/median/mean/max) instead; those stay empty in driver mode, because a
-median across heterogeneous steps would not mean anything
+each step's own window:
+
+```json
+"perStep": [
+  { "label": "open menu",  "perIteration": [31.2], "stats": null },
+  { "label": "type query", "perIteration": [88.6], "stats": null }
+]
+```
+
+Each step keeps its **raw samples** rather than only a statistic, and aggregates only against
+itself: `stats` is that step's own min/median/mean/max, `null` below 2 samples. There is
+deliberately no median *across* steps — "mount" and "inp" measure different work, so pooling them
+would produce a real-looking number that means nothing. A driver flow runs once per pass today, so
+`perIteration` holds one sample per step; treat it as directional, not a precise median. In
+`--bench` / `--runtime node`, `--iterations` fills the top-level `summary.perIteration` /
+`summary.stats` instead, and those stay empty in driver mode
 
 ### Consuming the JSON
 

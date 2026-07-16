@@ -587,8 +587,11 @@ export async function record(opts: RecordOptions): Promise<{
       // their walls go to perStep instead and are never summarized into a median.
       perIteration: opts.driver ? [] : timing.perIteration,
       // From the timing pass (tracing off), same as perIteration: clean, uninstrumented walls.
+      // One sample per step: a driver flow runs once per pass. See StepTiming for why it is an
+      // array. buildSummary derives the stats; never pass a statistic in from here.
       perStep:
-        timing.driverSteps?.map((step) => ({ label: step.label, wallMs: step.wallMs })) ?? [],
+        timing.driverSteps?.map((step) => ({ label: step.label, perIteration: [step.wallMs] })) ??
+        [],
       // wallMs is the measured run window for both modes (was null for in-page, which
       // silently disabled `assert --max-wall`).
       wallMs: runWallMs,

@@ -2,7 +2,7 @@ import type {
   BenchStats,
   NormalizedEvent,
   RecordingSummary,
-  StepWall,
+  StepTiming,
 } from "../model/recording.js";
 import { invalidationKind } from "../trace/classify.js";
 import { LONG_TASK_MS, inWindow } from "../trace/analysis.js";
@@ -36,8 +36,12 @@ export interface SummaryInputs {
   inpMs?: number | null;
   /** bench (in-page iterations) per-iteration wall times */
   perIteration?: number[];
-  /** driver (stepped) per-step wall times; never summarized into stats (see RecordingSummary) */
-  perStep?: StepWall[];
+  /**
+   * driver (stepped) raw per-iteration wall times per step. `stats` is omitted because it is
+   * derived here, not by the caller: every stats block in the model then comes from the one
+   * computeStats contract, and no caller can invent a statistic that bypasses it.
+   */
+  perStep?: Omit<StepTiming, "stats">[];
 }
 
 export function buildSummary(input: SummaryInputs): RecordingSummary {
@@ -126,6 +130,12 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     totalEvents: total,
     perIteration,
     stats: computeStats(perIteration),
-    perStep: input.perStep ?? [],
+    perStep: (input.perStep ?? []).map(
+      (step): StepTiming => ({
+        label: step.label,
+        perIteration: step.perIteration,
+        stats: computeStats(step.perIteration),
+      }),
+    ),
   };
 }
