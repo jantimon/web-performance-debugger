@@ -8,7 +8,7 @@
 </p>
 
 Trace every rendering and JS cost back to the **source line** that caused it, with numbers you can
-trust. It drives real Chrome (or pure Node), runs headless, and is built to gate in CI.
+trust. It drives real Chrome or Firefox (or pure Node), runs headless, and is built to gate in CI.
 
 Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use the short `wpd`.
 
@@ -18,8 +18,8 @@ Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use 
 - **Chrome** is downloaded automatically by Puppeteer on install. To skip the browser entirely, use
   the `--runtime node` lane (CPU profiling only, no DOM/layout/paint).
 - **Firefox** is optional (`--browser firefox`): install it once with
-  `npx puppeteer browsers install firefox`. See [Browser support](#browser-support) for what it
-  measures.
+  `npx puppeteer browsers install firefox`. See
+  [What each target gives you](#what-each-target-gives-you).
 - For `--url`, **your dev/preview server must already be running** at that URL; wpd does not start it.
 - Modules and `--html` files must live **under the current working directory** (they are served to
   the browser from there).
@@ -240,35 +240,46 @@ wpd query get    latest 42
 `--iterations` / `--warmup` apply to `bench` and `node`. All lanes support optional `prepare` /
 `cleanup` exports (aliases `setup` / `teardown`).
 
-### Browser support
+### What each target gives you
 
-`--browser chrome` (default) or `--browser firefox`. Chrome is driven over CDP and measures
-everything below. Firefox is driven over WebDriver BiDi, which has no CDP, so it captures a
-smaller, honest subset via the **Gecko profiler** instead. Install the Firefox build once with
-`npx puppeteer browsers install firefox`.
+wpd is additive: the core promise (attribute cost to the source line that caused it) works
+everywhere, and each richer target stacks more signals on top.
 
-| Capability | Chrome | Firefox |
-| --- | --- | --- |
-| Wall / per-iteration timing (bench + driver) | yes | yes (directional) |
-| CPU self-time by package / file / function (`--cpu-profile`) | yes (V8 sampler) | yes (Gecko profiler) |
-| Forced layout / style blame to source (`query blame --forced`) | yes | yes, **only with `--cpu-profile`** (from Gecko Reflow/Styles markers) |
-| Exact layout/style/script counts, paint counts, invalidation rollup | yes (CDP) | no (not measured) |
-| INP per interaction | yes | no (Firefox has no Event Timing) |
-| `--cpu-throttle` / `--network` / `--protocol-timeout` / `--no-invalidation-tracking` | yes | no (rejected with an error) |
+**Target Node (`--runtime node`), no browser at all:** CPU self-time attributed to source line,
+file, and owning package, plus per-iteration timing and `cpu-diff` regression gates. If your cost
+is pure JS (SSR, hot loops), this is already the whole story.
 
-On Firefox, `record` runs a clean timing pass, plus one Gecko-profiler pass when `--cpu-profile`
-is set (that single pass yields both CPU samples and the layout/style markers used for blame).
-Metrics Firefox cannot measure are reported honestly in `meta.notes`, never as fake zeros. The raw
-profile is written as `<base>.geckoprofile.json` (loads at profiler.firefox.com); the resolved
-`<base>.cpu.json` model and all `query` verbs work identically to Chrome.
+**Target a browser (`--browser chrome`, default, or `--browser firefox`): all of that, plus the
+real DOM.** Drive real user flows (`measureStep`) or benchmark DOM-touching modules in-page
+(`--bench`), measure wall time per step, take screenshots, and get **forced layout/style blame**
+pointing at the offending statement. The same modules, recording format, and query verbs work in
+both browsers, so you can verify an optimization in both engines instead of tuning for a Chromium
+quirk. Firefox rides the **Gecko profiler**: add `--cpu-profile` to a Firefox run that should
+produce blame (one profiler pass yields both the CPU samples and the layout/style markers), and
+the raw profile lands as `<base>.geckoprofile.json`, ready to open at profiler.firefox.com.
+
+**Target Chrome: all of that, plus the exact CDP layer on top.** Authoritative
+layout/style/paint/composite counts and the invalidation rollup, INP per interaction, long-task
+attribution, and artificial slowdowns (`--cpu-throttle`, `--network`). These ride Chrome's DevTools
+protocol; the flags that need it error out on other targets, and a Firefox recording lists the
+metrics it did not measure in `meta.notes` (never fake zeros).
+
+| Signal | node | firefox | chrome |
+| --- | --- | --- | --- |
+| CPU self-time by package / file / function | ✓ (V8) | ✓ (Gecko) | ✓ (V8) |
+| Wall / per-iteration timing | ✓ | ✓ | ✓ |
+| Real user flows, in-page bench, screenshots | — | ✓ | ✓ |
+| Forced layout/style blame to source | — | ✓ (with `--cpu-profile`) | ✓ |
+| Exact rendering counts + invalidation rollup | — | — | ✓ (CDP) |
+| INP per step, long tasks | — | — | ✓ |
+| `--cpu-throttle` / `--network` slowdowns | — | — | ✓ |
 
 ```bash
-# CPU self-time attributed to source on Firefox
-wpd record examples/cpu-busywork.mjs --bench --browser firefox --cpu-profile --iterations 20
-wpd query cpu latest
+# the same probe, verified in both engines:
+wpd record examples/forces-layout.mjs --bench --cpu-profile
+wpd query blame latest --forced
 
-# forced-layout thrashing attributed to source on Firefox (needs --cpu-profile)
-wpd record examples/forces-layout.mjs --bench --browser firefox --cpu-profile
+wpd record examples/forces-layout.mjs --bench --cpu-profile --browser firefox
 wpd query blame latest --forced
 ```
 
@@ -296,7 +307,7 @@ always plain, so CI and scripts are unaffected.
 | Signal | Source | Trust |
 | --- | --- | --- |
 | Counts (layout / paint / style / invalidation) | CDP | exact: compare freely |
-| Wall and INP times | `performance.now()`, Chrome-clamped | directional: good for "~2x worse?", not "1.3 ms" |
+| Wall and INP times | `performance.now()`, browser-clamped | directional: good for "~2x worse?", not "1.3 ms" |
 | CPU self-time | the sampler's own clock (V8 microsecond; Gecko ~1 ms floor on Firefox) | real: trustworthy in aggregate (a few % noise) |
 
 To keep timing honest, `record` runs twice by default: once with tracing off (clean timing) and once
