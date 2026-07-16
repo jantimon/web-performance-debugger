@@ -14,9 +14,11 @@ import {
   geckoToRenderingEvents,
 } from "../dist/profile/gecko.js";
 import { attachStacks } from "../dist/trace/stacks.js";
+import { SourceMapResolver } from "../dist/trace/sourcemap.js";
 import { findWindow } from "../dist/trace/parse.js";
 import { diffCmd } from "../dist/commands/diff.js";
 import { assertCmd } from "../dist/commands/assert.js";
+import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -241,6 +243,153 @@ test("pseudo-URL frames bucket by scheme, never on the cwd package", async () =>
   // every bucket is a synthetic "(...)" group; nothing resolved to a real package name
   for (const group of packageRollup(model)) {
     assert.match(group.key, /^\(.+\)$/, `unexpected real package bucket: ${group.key}`);
+  }
+});
+
+// A minified bundle served over http is the case that matters most and was untested: every
+// existing test dodges the remote path via node:/pseudo urls or a dead FIXTURE_ORIGIN. These
+// serve real bundles and drive the real fetch.
+//
+// One segment ("AAAAA" = genCol 0 -> source 0, line 0, col 0, name 0) is enough: a CDP frame at
+// lineNumber 0 / columnNumber 0 becomes line 1 / column 1, and resolveFrame looks up line 1,
+// column 0 -- exactly this segment.
+function sourcemapFor(source, name) {
+  return JSON.stringify({
+    version: 3,
+    file: "bundle.js",
+    sources: [source],
+    names: [name],
+    mappings: "AAAAA",
+  });
+}
+
+/** Five bundles, each a different sourcemap-acquisition story. */
+async function startBundleServer() {
+  const routes = {
+    // the map is announced by the conventional trailing comment
+    "/comment.js": ["function Bh(){}\n//# sourceMappingURL=comment.js.map", {}],
+    "/comment.js.map": [sourcemapFor("node_modules/lodash/lodash.js", "lodashInner"), {}],
+    // no comment at all: the map is announced ONLY by the response header, as many
+    // production builds do (they strip the comment and keep the header)
+    "/header.js": ["function zv(){}", { SourceMap: "/header.js.map" }],
+    "/header.js.map": [sourcemapFor("node_modules/react-dom/index.js", "reactRender"), {}],
+    // resolves, but to app code outside node_modules
+    "/app.js": ["function Wl(){}\n//# sourceMappingURL=app.js.map", {}],
+    "/app.js.map": [sourcemapFor("src/App.tsx", "AppRoot"), {}],
+    // carries no map reference whatsoever
+    "/nomap.js": ["function Qk(){}", {}],
+    // names a map that is not deployed (404)
+    "/brokenmap.js": ["function Xy(){}\n//# sourceMappingURL=gone.js.map", {}],
+  };
+  const server = createServer((request, response) => {
+    const route = routes[request.url];
+    if (!route) {
+      response.writeHead(404);
+      response.end("not found");
+      return;
+    }
+    const [body, headers] = route;
+    response.writeHead(200, { "content-type": "application/javascript", ...headers });
+    response.end(body);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
+
+function remoteBundleProfile(origin) {
+  const frame = (functionName, file) => ({
+    functionName,
+    scriptId: "1",
+    url: `${origin}/${file}`,
+    lineNumber: 0,
+    columnNumber: 0,
+  });
+  return {
+    startTime: 0,
+    endTime: 5000,
+    nodes: [
+      {
+        id: 1,
+        callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+        children: [2, 3, 4, 5, 6],
+      },
+      { id: 2, callFrame: frame("Bh", "comment.js"), children: [] },
+      { id: 3, callFrame: frame("zv", "header.js"), children: [] },
+      { id: 4, callFrame: frame("Wl", "app.js"), children: [] },
+      { id: 5, callFrame: frame("Qk", "nomap.js"), children: [] },
+      { id: 6, callFrame: frame("Xy", "brokenmap.js"), children: [] },
+    ],
+    samples: [2, 3, 4, 5, 6],
+    timeDeltas: [1000, 1000, 1000, 1000, 1000],
+  };
+}
+
+test("remote sourcemaps resolve packages via comment AND SourceMap header; failures are honest", async () => {
+  const server = await startBundleServer();
+  try {
+    const maps = new SourceMapResolver();
+    const model = await buildCpuModel(remoteBundleProfile(server.origin), {
+      profilePath: "remote.cpuprofile",
+      meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+      sampleIntervalUs: 50,
+      // Deliberately NOT the serving origin: makeSourceResolver flags a frame remote only when
+      // its url does not start with serverUrl. Passing the real origin would rewrite these to
+      // local paths and never exercise the remote path at all.
+      serverUrl: "http://127.0.0.1:1",
+      root: os.tmpdir(),
+      maps,
+    });
+
+    const pkgOf = (fnName) => model.functions.find((entry) => entry.fn === fnName)?.package;
+    // mapped into node_modules => the real dependency, despite the minified frame name
+    assert.equal(pkgOf("lodashInner"), "lodash");
+    // ...and the header-only bundle resolves identically
+    assert.equal(pkgOf("reactRender"), "react-dom");
+    // mapped, but outside node_modules => the app really is the owner
+    assert.equal(pkgOf("AppRoot"), "app");
+
+    // Unmapped frames keep their minified names and must NOT be blamed on "app": their owner is
+    // genuinely unknown, so they bucket by origin.
+    const host = new URL(server.origin).host;
+    assert.equal(pkgOf("Qk"), `(${host})`);
+    assert.equal(pkgOf("Xy"), `(${host})`);
+
+    // the minified name is kept as a secondary label when the map renamed the function
+    assert.equal(model.functions.find((entry) => entry.fn === "lodashInner").minified, "Bh");
+
+    const diagnostics = maps.diagnostics();
+    assert.equal(diagnostics.scripts, 5);
+    assert.equal(diagnostics.resolved, 3);
+    assert.deepEqual(diagnostics.failed, {
+      "no-sourcemap-url": [`${server.origin}/nomap.js`],
+      "map-fetch-failed": [`${server.origin}/brokenmap.js`],
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test("one shared resolver fetches each script once across passes", async () => {
+  const server = await startBundleServer();
+  try {
+    const maps = new SourceMapResolver();
+    const context = {
+      profilePath: "remote.cpuprofile",
+      meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+      sampleIntervalUs: 50,
+      serverUrl: "http://127.0.0.1:1",
+      root: os.tmpdir(),
+      maps,
+    };
+    await buildCpuModel(remoteBundleProfile(server.origin), context);
+    await buildCpuModel(remoteBundleProfile(server.origin), context);
+    // Still 5, not 10: the second build reused the cache rather than refetching every bundle.
+    assert.equal(maps.diagnostics().scripts, 5);
+  } finally {
+    await server.close();
   }
 });
 

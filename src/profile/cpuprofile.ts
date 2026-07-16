@@ -94,6 +94,21 @@ function classifyPseudoUrl(url: string | undefined): { package: string; label: s
   return null;
 }
 
+/**
+ * Bucket for a remote script whose sourcemap did not resolve: we know its origin and nothing
+ * else. Blaming it on "app" would be a guess, and a wrong one for every third-party script
+ * (analytics, CDN widgets), whose cost would land in the user's own bucket. Parenthesized to
+ * match the other "not a real package" buckets ((blob)/(inline)/(wasm)/(node)/(native)).
+ */
+function unmappedOriginBucket(url: string | undefined): string {
+  if (!url) return "(unmapped)";
+  try {
+    return `(${new URL(url).host})`;
+  } catch {
+    return "(unmapped)";
+  }
+}
+
 /** The package name for a path inside node_modules; pnpm-safe (uses the LAST segment). */
 function packageFromNodeModules(filePath: string): string | null {
   const at = filePath.lastIndexOf("node_modules");
@@ -205,14 +220,24 @@ async function resolveCallFrame(
     };
   }
   const source = `${file}${frame.line != null ? `:${frame.line}` : ""}`;
-  // Remote frames aren't on disk, so derive the package from the path string (node_modules
-  // deps resolve; app/bundle code falls to "app"). Local resolved sources read package.json.
-  if (frame.remote)
-    return { fn, minified, source, file, package: packageFromNodeModules(file) ?? "app" };
+  // Remote frames aren't on disk, so derive the package from the path string. Three cases, and
+  // the difference between the last two is the whole point: frame.source is set only when the
+  // sourcemap resolved, so an unmapped frame is still pointing at the bundle url and we do NOT
+  // know whose code it is. Calling that "app" silently blames every unmapped third-party script
+  // on the user's own bundle.
+  if (frame.remote) {
+    const dependency = packageFromNodeModules(file);
+    const owner = dependency ?? (frame.source != null ? "app" : unmappedOriginBucket(frame.url));
+    return { fn, minified, source, file, package: owner };
+  }
   const isLocalPath = frame.source != null;
   // Resolve the owning package from the absolute path (reads package.json), then store the
   // path relative to root: smaller model, portable, and a stable cpu-diff join key.
-  const owner = isLocalPath ? await packageForFile(file, packageCache) : "app";
+  // Not-on-disk and not flagged remote means the frame was never rewritten to a local path
+  // (e.g. --runtime node handed an http url): unknown owner, so bucket it rather than guess "app".
+  const owner = isLocalPath
+    ? await packageForFile(file, packageCache)
+    : unmappedOriginBucket(frame.url);
   const relFile = relativizeSource(file, root) ?? file;
   return {
     fn,
@@ -239,6 +264,8 @@ export async function buildCpuModel(
     root: string;
     /** "node" rewrites file:// frames to local paths; default "chrome" */
     runtime?: "chrome" | "node";
+    /** share one resolver (cache + diagnostics) with the run's stack resolution; omit for a fresh one */
+    maps?: SourceMapResolver;
   },
 ): Promise<CpuModel> {
   const byId = new Map<number, RawProfileNode>();
@@ -311,7 +338,7 @@ export async function buildCpuModel(
     context.runtime === "node"
       ? makeNodeSourceResolver()
       : makeSourceResolver(context.serverUrl ?? "", context.root);
-  const maps = new SourceMapResolver();
+  const maps = context.maps ?? new SourceMapResolver();
   const resolvedByKey = new Map<string, ResolvedFrame>();
   const packageCache = new Map<string, string | null>();
   for (const [key, callFrame] of callFrameByKey)

@@ -11,6 +11,7 @@ import { applyCpuThrottle, applyNetworkPreset } from "../browser/throttle.js";
 import { traceCategories } from "../trace/categories.js";
 import { parseTrace, findWindow, findSteps, type StepWindow } from "../trace/parse.js";
 import { attachStacks } from "../trace/stacks.js";
+import { SourceMapResolver } from "../trace/sourcemap.js";
 import { markForced } from "../trace/analysis.js";
 import {
   enableMetrics,
@@ -36,6 +37,8 @@ import type {
   Recording,
   RecordingMeta,
   ScreenshotRefs,
+  SourceMapDiagnostics,
+  SourceMapFailure,
   StepIndex,
   StepIndexEntry,
   TimingEntry,
@@ -161,6 +164,33 @@ function shorterPath(root: string, absPath: string | undefined): string | null {
   return relative && relative.length < absPath.length ? relative : absPath;
 }
 
+/** Plain-English remedy per failure reason, so the note says what to actually do. */
+const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
+  "no-sourcemap-url":
+    "the bundle carries no sourceMappingURL comment and no SourceMap response header (many production builds strip both)",
+  "script-fetch-failed": "the script could not be fetched (auth, CORS, or it is no longer served)",
+  "map-fetch-failed": "the .map it names could not be fetched (commonly not deployed alongside it)",
+  "map-parse-failed": "the .map it names is not a readable sourcemap",
+};
+
+/**
+ * One honest sentence about sourcemap resolution. WARNING only when NOTHING resolved: that is the
+ * silently-wrong-number case, where every package bucket is a minified bundle wearing a real name.
+ * A partial failure is normal (third-party scripts rarely ship maps) and only worth a note.
+ */
+function sourcemapNote(diagnostics: SourceMapDiagnostics): string {
+  const { scripts, resolved } = diagnostics;
+  const reasons = Object.keys(diagnostics.failed ?? {}) as SourceMapFailure[];
+  const why = reasons.map((reason) => `${reason} (${SOURCEMAP_REMEDY[reason]})`).join("; ");
+  if (resolved === 0) {
+    return `WARNING: no sourcemap resolved for any of the ${scripts} script(s) profiled, so CPU self-time is attributed to minified bundle names and 'query cpu --by package' cannot split by real package. Unmapped scripts are bucketed by origin, not as your app. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
+  }
+  if (reasons.length) {
+    return `Sourcemaps resolved for ${resolved} of ${scripts} script(s); the rest keep minified names and are bucketed by origin. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
+  }
+  return `Sourcemaps resolved for all ${scripts} script(s): CPU self-time is attributed to original sources.`;
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** How long to wait for Firefox to flush its shutdown dump before giving up. Generous: a large
@@ -216,6 +246,7 @@ async function runPass(
   mode: "module" | "html" | "url",
   absModule: string,
   shots: { before: boolean; after: boolean; dir: string; base: string } | null,
+  maps: SourceMapResolver,
 ): Promise<PassResult> {
   const browserName: BrowserName = opts.browser ?? "chrome";
   const caps = capsFor(browserName);
@@ -321,7 +352,7 @@ async function runPass(
       const buf = await page.tracing.stop();
       events = parseTrace(buf ? new TextDecoder("utf-8").decode(buf) : "[]");
       // Rewrite trace stack urls back to local source files for blame/source lookup.
-      await attachStacks(events, server.url, root);
+      await attachStacks(events, server.url, root, maps);
       // Flag forced (synchronous) layout/style: the layout-thrashing signal.
       markForced(events);
       const runWindow = findWindow(events);
@@ -388,7 +419,7 @@ async function runPass(
     // The interval the sampler actually ran at, not what we asked for.
     result.cpuSampleIntervalUs = geckoContext.intervalMs * US_PER_MS;
     const renderingEvents = geckoToRenderingEvents(geckoContext);
-    await attachStacks(renderingEvents, server.url, root);
+    await attachStacks(renderingEvents, server.url, root, maps);
     markForced(renderingEvents);
     result.events = renderingEvents;
     const geckoWindow = findWindow(renderingEvents);
@@ -458,6 +489,10 @@ export async function record(opts: RecordOptions): Promise<{
   }
 
   const server = await startStaticServer(root);
+  // One resolver for the whole run: every pass's stack resolution and the CPU model share its
+  // cache (a remote script + map is fetched once, not once per pass) and its diagnostics, so
+  // `maps.diagnostics()` below sees every script the run tried to map.
+  const maps = new SourceMapResolver();
   const results: PassResult[] = [];
   try {
     for (let index = 0; index < specs.length; index++) {
@@ -466,7 +501,7 @@ export async function record(opts: RecordOptions): Promise<{
         index === 0 && (wantBefore || wantAfter)
           ? { before: wantBefore, after: wantAfter, dir: outDir, base }
           : null;
-      results.push(await runPass(server, root, specs[index], opts, mode, absModule, shots));
+      results.push(await runPass(server, root, specs[index], opts, mode, absModule, shots, maps));
     }
   } finally {
     await server.close();
@@ -591,7 +626,55 @@ export async function record(opts: RecordOptions): Promise<{
     }),
   };
 
+  // CPU profile: write the raw .cpuprofile (for DevTools/Speedscope) + a resolved,
+  // self-contained model the query/cpu-diff verbs read. server.url is still valid here
+  // (the server object is closed but its url string is captured for frame rewriting).
+  // Built BEFORE any artifact is serialized: it resolves the last of the run's frames, so
+  // meta.sourcemaps below is only complete once it has run, and `meta` is shared by reference
+  // with every artifact written after this point.
+  let cpuProfilePath: string | undefined;
+  let cpuModelPath: string | undefined;
+  let cpuModel: CpuModel | undefined;
+  const cpuPass = results.find((pass) => pass.cpuProfile);
+  if (cpuPass?.cpuProfile) {
+    if (cpuPass.geckoDumpPath) {
+      // Firefox: the authoritative raw artifact is the Gecko dump (loads at profiler.firefox.com);
+      // CpuModel.profile points at it. The model is built from the converted V8-shaped profile.
+      // Copy rather than round-trip through a string: the dump can be very large.
+      cpuProfilePath = path.join(outDir, `${base}.geckoprofile.json`);
+      await fs.copyFile(cpuPass.geckoDumpPath, cpuProfilePath);
+      await fs.rm(cpuPass.geckoDumpPath, { force: true });
+    } else {
+      cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
+      await fs.writeFile(cpuProfilePath, JSON.stringify(cpuPass.cpuProfile), "utf8");
+    }
+    cpuModel = await buildCpuModel(cpuPass.cpuProfile, {
+      profilePath: cpuProfilePath,
+      meta,
+      // Firefox reports the interval the Gecko sampler actually ran at; V8 honours what we asked for.
+      sampleIntervalUs:
+        cpuPass.cpuSampleIntervalUs ?? opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
+      serverUrl: server.url,
+      root,
+      maps,
+    });
+  }
+
+  // Every frame the run will ever resolve has now been resolved, so the tally is final. A failed
+  // map is otherwise silent: frames keep their minified names and bundle path, and per-package CPU
+  // numbers look plausible while attributing everything to the bundle. Mutating `meta` here (not
+  // at construction) is what lets every artifact below carry the same verdict.
+  const sourcemaps = maps.diagnostics();
+  if (sourcemaps.scripts > 0) {
+    meta.sourcemaps = sourcemaps;
+    notes.push(sourcemapNote(sourcemaps));
+  }
+
   await fs.writeFile(outPath, serialize(recording, opts.format), "utf8");
+  if (cpuModel && cpuProfilePath) {
+    cpuModelPath = path.join(outDir, `${base}.cpu${extFor(opts.format)}`);
+    await fs.writeFile(cpuModelPath, serialize(cpuModel, opts.format), "utf8");
+  }
 
   // Small, context-friendly entry point that points back into the big file by id.
   const digestPath = path.join(outDir, `${base}.digest${extFor(opts.format)}`);
@@ -686,38 +769,6 @@ export async function record(opts: RecordOptions): Promise<{
     await fs.writeFile(indexPath, serialize(index, opts.format), "utf8");
   }
 
-  // CPU profile: write the raw .cpuprofile (for DevTools/Speedscope) + a resolved,
-  // self-contained model the query/cpu-diff verbs read. server.url is still valid here
-  // (the server object is closed but its url string is captured for frame rewriting).
-  let cpuProfilePath: string | undefined;
-  let cpuModelPath: string | undefined;
-  let cpuModel: CpuModel | undefined;
-  const cpuPass = results.find((pass) => pass.cpuProfile);
-  if (cpuPass?.cpuProfile) {
-    if (cpuPass.geckoDumpPath) {
-      // Firefox: the authoritative raw artifact is the Gecko dump (loads at profiler.firefox.com);
-      // CpuModel.profile points at it. The model is built from the converted V8-shaped profile.
-      // Copy rather than round-trip through a string: the dump can be very large.
-      cpuProfilePath = path.join(outDir, `${base}.geckoprofile.json`);
-      await fs.copyFile(cpuPass.geckoDumpPath, cpuProfilePath);
-      await fs.rm(cpuPass.geckoDumpPath, { force: true });
-    } else {
-      cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
-      await fs.writeFile(cpuProfilePath, JSON.stringify(cpuPass.cpuProfile), "utf8");
-    }
-    cpuModel = await buildCpuModel(cpuPass.cpuProfile, {
-      profilePath: cpuProfilePath,
-      meta,
-      // Firefox reports the interval the Gecko sampler actually ran at; V8 honours what we asked for.
-      sampleIntervalUs:
-        cpuPass.cpuSampleIntervalUs ?? opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
-      serverUrl: server.url,
-      root,
-    });
-    cpuModelPath = path.join(outDir, `${base}.cpu${extFor(opts.format)}`);
-    await fs.writeFile(cpuModelPath, serialize(cpuModel, opts.format), "utf8");
-  }
-
   // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime).
   await writePointer({
     recording: outPath,
@@ -771,6 +822,20 @@ function printNodeReport(result: {
   );
 }
 
+/** One line qualifying the package table above it: were the frames mapped back to real sources? */
+function printSourcemapLine(diagnostics: SourceMapDiagnostics | undefined): void {
+  if (!diagnostics || diagnostics.scripts === 0) return;
+  const { scripts, resolved } = diagnostics;
+  const reasons = Object.keys(diagnostics.failed ?? {}).join(", ");
+  const hint =
+    resolved === scripts
+      ? "packages resolved from original sources"
+      : resolved === 0
+        ? `${reasons} — packages below are minified bundles, not real packages`
+        : `${reasons} — unresolved scripts are bucketed by origin`;
+  console.log(`Sourcemaps: ${dim(`${resolved}/${scripts} resolved  ← ${hint}`)}`);
+}
+
 export async function recordAndReport(opts: RecordOptions): Promise<void> {
   if (opts.runtime === "node") {
     const { recordNode } = await import("../runtime/node.js");
@@ -783,7 +848,11 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
   printSummary(recording);
   // When CPU profiling was requested, lead with its headline; the layout/paint summary
   // above is not the signal the user asked for (and its scripting-ms can read 0).
-  if (cpuModel) printCpuHeadline(cpuModel);
+  if (cpuModel) {
+    printCpuHeadline(cpuModel);
+    // Directly under the package table, because it says whether that table can be believed.
+    printSourcemapLine(recording.meta.sourcemaps);
+  }
   if (recording.meta.throttle) {
     const throttle = recording.meta.throttle;
     console.log(
