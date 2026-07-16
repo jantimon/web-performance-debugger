@@ -1,3 +1,11 @@
+/**
+ * Convert a Firefox Gecko "raw" shutdown-dump profile (format version 34) into the shapes the
+ * rest of wpd already understands: a V8-style `RawCpuProfile` (fed to `buildCpuModel`) and, for
+ * blame, `NormalizedEvent[]` from Reflow/Styles markers. Every field assumption here was verified
+ * against a real dump; docs/dev/gecko-profile-format.md has the format details and the reasoning
+ * behind each choice (thread selection, 1-based line/col, JS-only pruning, marker cause stacks).
+ */
+
 import type { NormalizedEvent } from "../model/recording.js";
 import type { RawCallFrame, RawCpuProfile, RawProfileNode } from "./cpuprofile.js";
 
@@ -8,14 +16,6 @@ interface RawStackFrame {
   lineNumber?: number;
   columnNumber?: number;
 }
-
-/**
- * Convert a Firefox Gecko "raw" shutdown-dump profile (format version 34) into the shapes the
- * rest of wpd already understands: a V8-style `RawCpuProfile` (fed to `buildCpuModel`) and, for
- * blame, `NormalizedEvent[]` from Reflow/Styles markers. Every field assumption here was verified
- * against a real dump; see docs/dev/gecko-profile-format.md for the format details and the reasoning behind each
- * choice (thread selection, 1-based line/col, JS-only frame pruning, marker cause stacks).
- */
 
 interface Table {
   schema: Record<string, number>;
@@ -53,6 +53,10 @@ export interface GeckoContext {
 
 /** wpd marks land on the same ms clock; NormalizedEvent.ts is the microsecond trace clock. */
 const MS_TO_US = 1000;
+
+/** Cycle guard for stackTable prefix walks: far above any real JS stack, so a corrupt
+ * self-referencing dump cannot hang the converter. */
+const MAX_STACK_DEPTH = 1024;
 
 /** Parsed frame location: a resolvable JS url (http/https/file) keeps `url`; everything else
  * (native labels, self-hosted, resource:// internals, bare addresses) has an empty url and is
@@ -141,8 +145,17 @@ export function parseGecko(profile: GeckoContainer): GeckoContext {
   const jsCategory = categories.findIndex((category) => category.name === "JavaScript");
   const idleCategory = categories.findIndex((category) => category.name === "Idle");
   const intervalMs = profile.meta?.interval ?? 1;
+  // Without the JavaScript category no frame can be classified as JS, which would yield an
+  // empty-but-valid CPU model reporting ~0 scripting time. Fail loudly instead of lying.
+  if (jsCategory < 0) {
+    throw new Error(
+      "Gecko profile has no 'JavaScript' category: the dump is not a profile wpd can read (unsupported format version, or the 'js' profiler feature was off).",
+    );
+  }
 
   const threads = allThreads(profile);
+  if (threads.length === 0)
+    throw new Error("Gecko profile contains no threads: the dump is empty or not a Gecko profile.");
   let chosen: GeckoThread | undefined;
   let window = { startMs: null as number | null, endMs: null as number | null };
   for (const thread of threads) {
@@ -156,10 +169,8 @@ export function parseGecko(profile: GeckoContainer): GeckoContext {
   // Fallback: no wpd marks found (should not happen in practice). Use the thread with the most
   // samples so the CPU model is still populated, and leave the window open (unsliced).
   if (!chosen) {
-    chosen = threads.reduce(
-      (best, thread) =>
-        thread.samples.data.length > (best?.samples.data.length ?? -1) ? thread : best,
-      threads[0],
+    chosen = threads.reduce((best, thread) =>
+      thread.samples.data.length > best.samples.data.length ? thread : best,
     );
   }
   return {
@@ -216,7 +227,7 @@ function jsChainRootFirst(
   const leafFirst: ParsedLocation[] = [];
   let current: number | null = stackIndex;
   let guard = 0;
-  while (current != null && guard++ < 1024) {
+  while (current != null && guard++ < MAX_STACK_DEPTH) {
     const stackRow = thread.stackTable.data[current];
     const info = readFrame(context, stackRow[schema.frame] as number);
     if (info.isJs) leafFirst.push(info.parsed);
@@ -239,7 +250,8 @@ function toRawCallFrame(parsed: ParsedLocation): RawCallFrame {
   };
 }
 
-const SYSTEM_CALL_FRAME = (name: string): RawCallFrame => ({
+/** A synthetic V8-style bookkeeping frame ((root)/(program)/(idle)): no url, no position. */
+const systemCallFrame = (name: string): RawCallFrame => ({
   functionName: name,
   scriptId: "0",
   url: "",
@@ -271,9 +283,9 @@ export function geckoToRawCpuProfile(context: GeckoContext): RawCpuProfile {
     childSets.push(new Set());
     return id;
   };
-  const rootId = addNode(SYSTEM_CALL_FRAME("(root)"));
-  const programId = addNode(SYSTEM_CALL_FRAME("(program)"));
-  const idleId = addNode(SYSTEM_CALL_FRAME("(idle)"));
+  const rootId = addNode(systemCallFrame("(root)"));
+  const programId = addNode(systemCallFrame("(program)"));
+  const idleId = addNode(systemCallFrame("(idle)"));
   childSets[rootId].add(programId);
   childSets[rootId].add(idleId);
 
@@ -357,7 +369,7 @@ function causeStackFrames(context: GeckoContext, stackIndex: number): RawStackFr
   const frames: RawStackFrame[] = [];
   let current: number | null = stackIndex;
   let guard = 0;
-  while (current != null && guard++ < 1024) {
+  while (current != null && guard++ < MAX_STACK_DEPTH) {
     const stackRow = thread.stackTable.data[current];
     const info = readFrame(context, stackRow[schema.frame] as number);
     if (info.isJs && info.parsed.url) {
@@ -372,7 +384,8 @@ function causeStackFrames(context: GeckoContext, stackIndex: number): RawStackFr
     }
     current = stackRow[schema.prefix] as number | null;
   }
-  return frames; // leaf-first already (stack walks child -> parent)
+  // Already leaf-first: the stack walk goes child -> parent.
+  return frames;
 }
 
 /**
@@ -393,8 +406,8 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
   // Reflow markers split into phase-2 (start, has the cause) / phase-3 (end) rows; pair them via
   // a stack keyed by marker name so nested reflows match. Styles use a single phase-1 interval.
   const openStarts = new Map<string, { startMs: number; causeIndex: number | null }[]>();
+  // Ids are assigned in ts order once the markers are sorted below, so push a placeholder here.
   const events: NormalizedEvent[] = [];
-  let nextId = 0;
 
   for (const markerRow of thread.markers.data) {
     const markerName = String(thread.stringTable[markerRow[schema.name] as number] ?? "");
@@ -412,7 +425,7 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
       if (!/^wpd:(run|step:\d+):(start|end)$/.test(label)) continue;
       if (!inWindow(startTime)) continue;
       events.push({
-        id: nextId++,
+        id: 0,
         name: label,
         ts: startTime * MS_TO_US,
         dur: 0,
@@ -447,14 +460,15 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
       effectiveStartMs = startTime;
       effectiveEndMs = endTime;
     } else {
-      continue; // instant rendering markers carry no duration; skip
+      // Instant rendering markers carry no duration.
+      continue;
     }
     if (!inWindow(effectiveStartMs)) continue;
 
     const durationMs = Math.max(0, effectiveEndMs - effectiveStartMs);
     const stackTrace = effectiveCause != null ? causeStackFrames(context, effectiveCause) : [];
     events.push({
-      id: nextId++,
+      id: 0,
       name: rendering.name,
       ts: effectiveStartMs * MS_TO_US,
       dur: durationMs * MS_TO_US,

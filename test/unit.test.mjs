@@ -295,6 +295,16 @@ test("parseGecko: selects the content thread by its wpd:run marks and reads the 
   assert.ok(context.jsCategory >= 0, "JavaScript category located");
 });
 
+test("parseGecko throws rather than silently reporting an empty profile", () => {
+  // No JavaScript category => no frame can be classified as JS => a model claiming ~0 scripting.
+  const noJsCategory = {
+    ...geckoFixture,
+    meta: { ...geckoFixture.meta, categories: [{ name: "Other" }, { name: "Idle" }] },
+  };
+  assert.throws(() => parseGecko(noJsCategory), /no 'JavaScript' category/);
+  assert.throws(() => parseGecko({ meta: geckoFixture.meta, threads: [] }), /no threads/);
+});
+
 test("geckoToRawCpuProfile -> buildCpuModel resolves hot JS to source with 1->0-based line", async () => {
   const context = parseGecko(geckoFixture);
   const raw = geckoToRawCpuProfile(context);

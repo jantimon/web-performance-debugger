@@ -11,6 +11,14 @@ export async function snapshotMetrics(client: CDPSession): Promise<Record<string
   return out;
 }
 
+/** `snapshotMetrics` for callers that may have no CDP session (Firefox/BiDi) or no counter
+ * capability: an absent client yields no counters rather than a fake zeroed set. */
+export function snapshotMetricsIfAvailable(
+  client: CDPSession | null,
+): Promise<Record<string, number>> {
+  return client ? snapshotMetrics(client) : Promise.resolve({});
+}
+
 export async function enableMetrics(client: CDPSession): Promise<void> {
   try {
     await client.send("Performance.enable", { timeDomain: "timeTicks" });

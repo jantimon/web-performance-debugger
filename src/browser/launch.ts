@@ -9,25 +9,33 @@ export interface BrowserHandle {
   client: CDPSession | null;
 }
 
+/** Gecko's sampling floor: asking for less just yields this. Also the default when the caller
+ * does not pin an interval. */
+export const GECKO_MIN_INTERVAL_MS = 1;
+
+/** Ring-buffer size in 8-byte entries (~128MB/process). Large enough that the measured window
+ * survives until the shutdown dump, which is the whole point of the startup profiler. */
+const GECKO_PROFILER_ENTRIES = 16_000_000;
+
 /** Gecko profiler options for the Firefox CPU pass (dumped to `dumpPath` on browser exit). */
 export interface GeckoLaunch {
   dumpPath: string;
-  /** sampling interval in ms (Gecko floor is ~1ms); default 1 */
+  /** sampling interval in ms; clamped up to the ~1ms Gecko floor */
   intervalMs?: number;
 }
 
 /** Environment for a Firefox launch that starts the Gecko profiler at startup and dumps
  * the raw profile JSON to `dumpPath` when the browser exits. See docs/dev/gecko-profile-format.md. */
 function geckoEnv(base: NodeJS.ProcessEnv, gecko: GeckoLaunch): NodeJS.ProcessEnv {
+  const intervalMs = Math.max(GECKO_MIN_INTERVAL_MS, gecko.intervalMs ?? GECKO_MIN_INTERVAL_MS);
   return {
     ...base,
     MOZ_PROFILER_STARTUP: "1",
     MOZ_PROFILER_SHUTDOWN: gecko.dumpPath,
     // js: JS stacks + UserTiming markers (windowing) + Reflow/Styles cause stacks (blame).
     MOZ_PROFILER_STARTUP_FEATURES: "js",
-    MOZ_PROFILER_STARTUP_INTERVAL: String(gecko.intervalMs ?? 1),
-    // Large ring buffer so the measured window is not overwritten before shutdown.
-    MOZ_PROFILER_STARTUP_ENTRIES: "16000000",
+    MOZ_PROFILER_STARTUP_INTERVAL: String(intervalMs),
+    MOZ_PROFILER_STARTUP_ENTRIES: String(GECKO_PROFILER_ENTRIES),
   };
 }
 

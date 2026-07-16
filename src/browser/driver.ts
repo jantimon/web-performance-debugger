@@ -2,7 +2,7 @@ import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import type { CDPSession, Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
-import { snapshotMetrics, metricsDelta } from "../metrics/cdp.js";
+import { snapshotMetricsIfAvailable, metricsDelta } from "../metrics/cdp.js";
 
 export interface DriverStep {
   index: number;
@@ -47,8 +47,7 @@ export async function runDriver(
 ): Promise<DriverResult> {
   // Firefox (BiDi) has no CDP session: per-step CDP counter deltas are unavailable, so they
   // read as {}. Everything else (marks, settle, INP observer) works over BiDi.
-  const snapshot = (): Promise<Record<string, number>> =>
-    client ? snapshotMetrics(client) : Promise.resolve({});
+  const snapshot = () => snapshotMetricsIfAvailable(client);
   const mod: any = await import(pathToFileURL(absModule).href);
   const pick = (...names: string[]) => {
     for (const name of names) if (typeof mod[name] === "function") return mod[name];

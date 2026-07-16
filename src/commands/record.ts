@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { launchBrowser } from "../browser/launch.js";
+import { launchBrowser, GECKO_MIN_INTERVAL_MS } from "../browser/launch.js";
 import { capsFor, type BrowserName } from "../browser/backend.js";
 import { startStaticServer, type StaticServer } from "../browser/server.js";
 import { parseGecko, geckoToRawCpuProfile, geckoToRenderingEvents } from "../profile/gecko.js";
@@ -14,7 +14,7 @@ import { attachStacks } from "../trace/stacks.js";
 import { markForced } from "../trace/analysis.js";
 import {
   enableMetrics,
-  snapshotMetrics,
+  snapshotMetricsIfAvailable,
   metricsDelta,
   startCpuProfile,
   stopCpuProfile,
@@ -42,6 +42,7 @@ import type {
 } from "../model/recording.js";
 
 const DEFAULT_CPU_INTERVAL_US = 50;
+const US_PER_MS = 1000;
 
 export interface RecordOptions {
   module: string;
@@ -110,8 +111,12 @@ interface PassResult {
   stepWindows?: StepWindow[];
   /** raw V8 CPU sampling profile (only on the cpu pass) */
   cpuProfile?: RawCpuProfile;
-  /** Firefox: the raw Gecko shutdown dump JSON, written verbatim as the .geckoprofile.json artifact */
-  geckoRawJson?: string;
+  /** Firefox: temp path of the raw Gecko shutdown dump, copied verbatim to the
+   * .geckoprofile.json artifact and removed. Kept as a path, not a string: the dump can be
+   * hundreds of MB and holding it would pin that for the rest of the run. */
+  geckoDumpPath?: string;
+  /** interval the CPU sampler actually ran at, read back from the profile itself */
+  cpuSampleIntervalUs?: number;
 }
 
 /** A step merged across passes: label+timing from the timing pass, window from the trace pass. */
@@ -158,9 +163,28 @@ function shorterPath(root: string, absPath: string | undefined): string | null {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** How long to wait for Firefox to flush its shutdown dump before giving up. Generous: a large
+ * ring buffer serializes to a multi-hundred-MB file on a slow disk. */
+const GECKO_DUMP_TIMEOUT_MS = 15_000;
+/** Poll cadence while waiting for the dump. */
+const GECKO_DUMP_POLL_MS = 250;
+/** Consecutive equal sizes that count as "done growing" (the dump is written incrementally). */
+const GECKO_DUMP_STABLE_READS = 3;
+
+/** The Gecko sampling interval for this run: --cpu-interval is expressed in microseconds (the V8
+ * unit) and Gecko takes milliseconds, clamped up to its ~1ms floor by geckoEnv. Unset => the floor. */
+function geckoIntervalMs(opts: RecordOptions): number {
+  return opts.cpuIntervalUs != null
+    ? Math.max(GECKO_MIN_INTERVAL_MS, opts.cpuIntervalUs / US_PER_MS)
+    : GECKO_MIN_INTERVAL_MS;
+}
+
 /** Firefox writes the Gecko shutdown dump asynchronously after browser.close(); wait for the
  * file to exist AND stop growing (stable across reads) before parsing it. */
-async function waitForGeckoDump(dumpPath: string, timeoutMs = 15000): Promise<string> {
+async function waitForGeckoDump(
+  dumpPath: string,
+  timeoutMs = GECKO_DUMP_TIMEOUT_MS,
+): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let lastSize = -1;
   let stableReads = 0;
@@ -172,12 +196,12 @@ async function waitForGeckoDump(dumpPath: string, timeoutMs = 15000): Promise<st
       size = -1;
     }
     if (size > 0 && size === lastSize) {
-      if (++stableReads >= 3) return fs.readFile(dumpPath, "utf8");
+      if (++stableReads >= GECKO_DUMP_STABLE_READS) return fs.readFile(dumpPath, "utf8");
     } else {
       stableReads = 0;
     }
     lastSize = size;
-    await sleep(250);
+    await sleep(GECKO_DUMP_POLL_MS);
   }
   throw new Error(
     `Gecko profile dump was not written to ${dumpPath} within ${timeoutMs}ms (Firefox --cpu-profile pass).`,
@@ -208,15 +232,17 @@ async function runPass(
     headless: opts.headless,
     userDataDir: opts.userDataDir,
     protocolTimeoutMs: opts.protocolTimeoutMs,
-    gecko: geckoDumpPath ? { dumpPath: geckoDumpPath } : undefined,
+    gecko: geckoDumpPath
+      ? { dumpPath: geckoDumpPath, intervalMs: geckoIntervalMs(opts) }
+      : undefined,
   });
   // On Firefox client is null; every CDP call is guarded by the caps object or this helper.
-  const snapshot = (): Promise<Record<string, number>> =>
-    client && caps.cdpCounts ? snapshotMetrics(client) : Promise.resolve({});
+  const countsClient = caps.cdpCounts ? client : null;
+  const snapshot = () => snapshotMetricsIfAvailable(countsClient);
   const screenshots: ScreenshotRefs = {};
   let result: PassResult;
   try {
-    if (client && caps.cdpCounts) await enableMetrics(client);
+    if (countsClient) await enableMetrics(countsClient);
     if (opts.cpuThrottle && client && caps.throttle)
       await applyCpuThrottle(client, opts.cpuThrottle);
     if (opts.network && client && caps.throttle) await applyNetworkPreset(client, opts.network);
@@ -253,7 +279,7 @@ async function runPass(
 
     if (opts.driver) {
       if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
-      if (spec.cpu && client) await startCpuProfile(client, cpuIntervalUs);
+      if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
       // runDriver snapshots cdpBefore at run:start (after prepare()), so setup DOM work stays
       // out of the authoritative counts (consistent with bench mode below).
       const driverResult = await runDriver(page, client, absModule, opts.fn);
@@ -276,7 +302,7 @@ async function runPass(
       lifecycle = setup.lifecycle;
       cdpBefore = await snapshot();
       if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
-      if (spec.cpu && client) await startCpuProfile(client, cpuIntervalUs);
+      if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
       const timed = await page.evaluate(runHarness, { ...harnessArg, phase: "timed" as const });
       perIteration = timed.perIteration;
       runCleanup = () => page.evaluate(runHarness, { ...harnessArg, phase: "cleanup" as const });
@@ -285,7 +311,7 @@ async function runPass(
     // Let asynchronous paint/composite work flush before we stop tracing.
     await sleep(opts.settleMs);
 
-    if (spec.cpu && client) cpuProfile = await stopCpuProfile(client);
+    if (spec.cpu && client && caps.cpuProfile) cpuProfile = await stopCpuProfile(client);
 
     let events: NormalizedEvent[] = [];
     let windowStart: number | null = null;
@@ -354,11 +380,13 @@ async function runPass(
   // pass yields BOTH the CPU samples (RawCpuProfile) and layout/style blame events (from Reflow/
   // Styles markers). The run window comes from the wpd:run UserTiming marks inside the profile.
   if (spec.gecko && geckoDumpPath) {
-    const rawJson = await waitForGeckoDump(geckoDumpPath);
-    await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
-    const geckoContext = parseGecko(JSON.parse(rawJson));
-    result.geckoRawJson = rawJson;
+    // Parse from a scoped string so the dump (potentially hundreds of MB) is collectable once
+    // the model is built; the artifact is copied straight from the file by the caller.
+    const geckoContext = parseGecko(JSON.parse(await waitForGeckoDump(geckoDumpPath)));
+    result.geckoDumpPath = geckoDumpPath;
     result.cpuProfile = geckoToRawCpuProfile(geckoContext);
+    // The interval the sampler actually ran at, not what we asked for.
+    result.cpuSampleIntervalUs = geckoContext.intervalMs * US_PER_MS;
     const renderingEvents = geckoToRenderingEvents(geckoContext);
     await attachStacks(renderingEvents, server.url, root);
     markForced(renderingEvents);
@@ -666,11 +694,13 @@ export async function record(opts: RecordOptions): Promise<{
   let cpuModel: CpuModel | undefined;
   const cpuPass = results.find((pass) => pass.cpuProfile);
   if (cpuPass?.cpuProfile) {
-    if (cpuPass.geckoRawJson) {
+    if (cpuPass.geckoDumpPath) {
       // Firefox: the authoritative raw artifact is the Gecko dump (loads at profiler.firefox.com);
       // CpuModel.profile points at it. The model is built from the converted V8-shaped profile.
+      // Copy rather than round-trip through a string: the dump can be very large.
       cpuProfilePath = path.join(outDir, `${base}.geckoprofile.json`);
-      await fs.writeFile(cpuProfilePath, cpuPass.geckoRawJson, "utf8");
+      await fs.copyFile(cpuPass.geckoDumpPath, cpuProfilePath);
+      await fs.rm(cpuPass.geckoDumpPath, { force: true });
     } else {
       cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
       await fs.writeFile(cpuProfilePath, JSON.stringify(cpuPass.cpuProfile), "utf8");
@@ -678,9 +708,9 @@ export async function record(opts: RecordOptions): Promise<{
     cpuModel = await buildCpuModel(cpuPass.cpuProfile, {
       profilePath: cpuProfilePath,
       meta,
-      // Gecko's sampling floor is ~1ms; the V8 default (50us) does not apply to the Firefox lane.
+      // Firefox reports the interval the Gecko sampler actually ran at; V8 honours what we asked for.
       sampleIntervalUs:
-        browserName === "firefox" ? 1000 : (opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US),
+        cpuPass.cpuSampleIntervalUs ?? opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
       serverUrl: server.url,
       root,
     });
