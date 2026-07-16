@@ -143,6 +143,8 @@ export interface RecordingMeta {
   notes: string[];
   /** driver (puppeteer) mode: run executed in Node with { page, ctx, measureStep } */
   driver: boolean;
+  /** browser backend: "chrome" (default, CDP) or "firefox" (BiDi + Gecko profiler). Absent => chrome. */
+  browser?: "chrome" | "firefox";
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
   runtime?: "chrome" | "node";
   /** artificial slowdown applied during the run */

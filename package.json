@@ -34,6 +34,8 @@
     "test": "node --test test/unit.test.mjs",
     "pretest:e2e": "npm run build",
     "test:e2e": "WPD_E2E_REQUIRED=1 node --test test/cli.e2e.test.mjs",
+    "pretest:e2e:firefox": "npm run build",
+    "test:e2e:firefox": "node --test test/firefox.e2e.test.mjs",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "npm run build && changeset publish",
