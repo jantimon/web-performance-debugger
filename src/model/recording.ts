@@ -147,6 +147,30 @@ export interface ScreenshotRefs {
   after?: string;
 }
 
+/** Why a script's sourcemap could not be applied. */
+export type SourceMapFailure =
+  | /** the script carries neither a sourceMappingURL comment nor a SourceMap header */ "no-sourcemap-url"
+  | /** the script itself could not be fetched/read */ "script-fetch-failed"
+  | /** the script named a map, but it could not be fetched/read */ "map-fetch-failed"
+  | /** the map was fetched but is not valid JSON/not a sourcemap */ "map-parse-failed";
+
+/**
+ * What happened to every script a run tried to map. Failure is otherwise invisible: frames keep
+ * their minified names and bundle path, so per-package CPU numbers look plausible while
+ * attributing everything to the bundle.
+ */
+export interface SourceMapDiagnostics {
+  /** scripts a map was attempted for */
+  scripts: number;
+  /** of those, how many resolved */
+  resolved: number;
+  /**
+   * failing script urls grouped by reason. Capped per reason (a page can carry hundreds of
+   * unmapped third-party scripts), so `scripts`/`resolved` are the authoritative totals.
+   */
+  failed?: Partial<Record<SourceMapFailure, string[]>>;
+}
+
 export interface RecordingMeta {
   tool: string;
   /** the package version that wrote this artifact (e.g. "0.1.0") */
@@ -167,6 +191,14 @@ export interface RecordingMeta {
   /** measurement passes run in isolation, e.g. ["timing","trace"] (>1 => isolated) */
   passes: string[];
   notes: string[];
+  /**
+   * Sourcemap resolution for this run: how many scripts a map was attempted for, how many
+   * resolved, and why the rest did not. Absent on runs that attempted none (and on recordings
+   * written before this field existed). When resolution fails, CPU self-time is attributed to
+   * minified bundle names rather than the originating package, so this is the field that says
+   * whether `query cpu --by package` can be trusted.
+   */
+  sourcemaps?: SourceMapDiagnostics;
   /** driver (puppeteer) mode: run executed in Node with { page, ctx, measureStep } */
   driver: boolean;
   /** browser backend: "chrome" (default, CDP) or "firefox" (BiDi + Gecko profiler). Absent => chrome. */
@@ -242,7 +274,13 @@ export interface CpuFunction {
   source?: string;
   /** bare resolved file path (no line), for the by-file rollup */
   file?: string;
-  /** owning npm/workspace package, e.g. "react-dom", "next-yak", "app", "(native)" */
+  /**
+   * Owning npm/workspace package, e.g. "react-dom", "next-yak", "app". Parenthesized buckets are
+   * not real packages: "(native)"/"(node)"/"(blob)"/"(inline)"/"(wasm)", and "(<host>)" for a
+   * remote script whose sourcemap did not resolve (its owner is genuinely unknown; see
+   * RecordingMeta.sourcemaps). "app" means code that IS the profiled app: a resolved source
+   * outside node_modules.
+   */
   package: string;
   /** the minified V8 name, when `fn` is the sourcemap-resolved original (else absent) */
   minified?: string;

@@ -272,10 +272,37 @@ wpd record render.mjs --bench --cpu-profile --iterations 50
 
 Either lane writes a `.cpu.json` model (read by the verbs) and a raw `.cpuprofile` that opens in
 Chrome DevTools (Performance, Load profile) or Speedscope. On a `--url` site each remote bundle's
-sourcemap is auto-fetched from its `sourceMappingURL`; with no map you still get a ranked
-hot-function list, just without per-package attribution. For compile-time CSS-in-JS (next-yak,
-Linaria, ...) bundle from your build's already-compiled output, not raw source: wpd profiles what you
-ship
+sourcemap is auto-fetched (from its `sourceMappingURL` comment, or the `SourceMap` response header
+if the build stripped the comment), so **minification is not a problem**: a minified single bundle
+still splits per package, as long as its map is reachable. See
+[When per-package attribution can't work](#when-per-package-attribution-cant-work) for when it isn't.
+For compile-time CSS-in-JS (next-yak, Linaria, ...) bundle from your build's already-compiled output,
+not raw source: wpd profiles what you ship
+
+### When per-package attribution can't work
+
+Splitting a bundle by package needs its sourcemap. When a map can't be fetched, wpd says so instead
+of guessing: the run prints a `Sourcemaps: 0/1 resolved` line, `meta.sourcemaps` records every
+script it tried and why each failed, and the affected frames are bucketed by **origin**
+(`(cdn.example.com)`) rather than blamed on your `app`:
+
+```
+package            self ms  self %  fns
+─────────────────  ───────  ──────  ───
+(127.0.0.1:51986)  7.5      6.2%    64
+Sourcemaps: 0/1 resolved  ← no-sourcemap-url — packages below are minified bundles, not real packages
+```
+
+| `meta.sourcemaps.failed` reason | What to do |
+| --- | --- |
+| `no-sourcemap-url` | The bundle has no `sourceMappingURL` comment and no `SourceMap` header. Turn sourcemaps on in your production build, or serve the header |
+| `map-fetch-failed` | It names a `.map` that isn't deployed (commonly uploaded to an error tracker instead). Serve it, even if only on a preview deploy |
+| `script-fetch-failed` | wpd couldn't fetch the script itself: auth, CORS, or bot protection. Profile a preview deploy without the gate |
+| `map-parse-failed` | The `.map` isn't a readable sourcemap |
+
+A partial failure is normal and healthy: third-party scripts (analytics, chat widgets) rarely ship
+maps, and bucketing them by origin is the honest answer — their cost is real, but it is not yours.
+Only `0 of N` means the package table can't be believed at all
 
 ## Did my change regress a budget
 

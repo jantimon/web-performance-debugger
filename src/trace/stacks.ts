@@ -135,14 +135,20 @@ export function topLocation(stack: StackFrame[] | undefined): string | undefined
   return undefined;
 }
 
-/** Attach resolved stacks + top location to every event that carries one. */
+/**
+ * Attach resolved stacks + top location to every event that carries one.
+ *
+ * Pass `maps` to share one resolver (its cache, and its diagnostics) across every call in a run:
+ * a `record --cpu-profile` run resolves stacks twice and builds a CPU model, and each would
+ * otherwise re-fetch the same remote script and map.
+ */
 export async function attachStacks(
   events: NormalizedEvent[],
   serverUrl: string,
   root: string,
+  maps: SourceMapResolver = new SourceMapResolver(),
 ): Promise<void> {
   const resolve = makeSourceResolver(serverUrl, root);
-  const maps = new SourceMapResolver();
   for (const event of events) {
     const stack = extractStack(event.args);
     if (!stack) continue;

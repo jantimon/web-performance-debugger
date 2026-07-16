@@ -1,7 +1,7 @@
 import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
-import type { StackFrame } from "../model/recording.js";
+import type { SourceMapDiagnostics, SourceMapFailure, StackFrame } from "../model/recording.js";
 
 /** ms before a remote .js / .map fetch is abandoned (keeps a hung CDN from stalling a run). */
 const FETCH_TIMEOUT_MS = 5000;
@@ -42,6 +42,11 @@ function sourceMappingURLOf(js: string): string | null {
   return last;
 }
 
+/** Per reason, so one broken CDN cannot flood the recording with thousands of urls. */
+const MAX_URLS_PER_REASON = 20;
+
+type RawMap = { raw: string } | { failure: SourceMapFailure };
+
 /** Decode a `data:application/json[;base64],...` sourcemap reference to raw JSON. */
 function decodeDataUriMap(reference: string): string | null {
   const base64 = reference.match(/^data:application\/json;(?:charset=[^;]+;)?base64,(.*)$/s);
@@ -51,17 +56,21 @@ function decodeDataUriMap(reference: string): string | null {
   return null;
 }
 
-async function fetchText(url: string): Promise<string | null> {
+async function fetchWithHeaders(url: string): Promise<{ text: string; headers: Headers } | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(url, { signal: controller.signal });
-    return response.ok ? await response.text() : null;
+    return response.ok ? { text: await response.text(), headers: response.headers } : null;
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchText(url: string): Promise<string | null> {
+  return (await fetchWithHeaders(url))?.text ?? null;
 }
 
 /**
@@ -71,39 +80,92 @@ async function fetchText(url: string): Promise<string | null> {
  */
 export class SourceMapResolver {
   private cache = new Map<string, TraceMap | null>();
+  /** per attempted script: null = resolved, else why it failed. Keyed like `cache`, so each
+   * script counts once no matter how many frames point at it. */
+  private outcomes = new Map<string, SourceMapFailure | null>();
 
-  private async loadLocalMap(jsFile: string): Promise<string | null> {
+  private async loadLocalMap(jsFile: string): Promise<RawMap> {
     try {
-      return await fs.readFile(`${jsFile}.map`, "utf8");
+      return { raw: await fs.readFile(`${jsFile}.map`, "utf8") };
     } catch {
-      const js = await fs.readFile(jsFile, "utf8");
-      const reference = sourceMappingURLOf(js);
-      return reference && reference.startsWith("data:") ? decodeDataUriMap(reference) : null;
+      // no sibling .map; fall back to an inline data-URI map in the JS itself
     }
+    let js: string;
+    try {
+      js = await fs.readFile(jsFile, "utf8");
+    } catch {
+      return { failure: "script-fetch-failed" };
+    }
+    const reference = sourceMappingURLOf(js);
+    if (!reference) return { failure: "no-sourcemap-url" };
+    // A non-data reference here means the sibling read above already missed the file it names.
+    if (!reference.startsWith("data:")) return { failure: "map-fetch-failed" };
+    const decoded = decodeDataUriMap(reference);
+    return decoded ? { raw: decoded } : { failure: "map-parse-failed" };
   }
 
-  private async loadRemoteMap(jsUrl: string): Promise<string | null> {
-    const js = await fetchText(jsUrl);
-    if (!js) return null;
-    const reference = sourceMappingURLOf(js);
-    if (!reference) return null;
-    if (reference.startsWith("data:")) return decodeDataUriMap(reference);
-    return fetchText(new URL(reference, jsUrl).href);
+  private async loadRemoteMap(jsUrl: string): Promise<RawMap> {
+    const script = await fetchWithHeaders(jsUrl);
+    if (!script) return { failure: "script-fetch-failed" };
+    // DevTools honours the SourceMap response header as well as the trailing comment, and
+    // production builds commonly emit the header while stripping the comment. Headers.get is
+    // case-insensitive, so the canonical `SourceMap` and legacy `X-SourceMap` both land here.
+    const reference =
+      sourceMappingURLOf(script.text) ??
+      script.headers.get("sourcemap") ??
+      script.headers.get("x-sourcemap");
+    if (!reference) return { failure: "no-sourcemap-url" };
+    if (reference.startsWith("data:")) {
+      const decoded = decodeDataUriMap(reference);
+      return decoded ? { raw: decoded } : { failure: "map-parse-failed" };
+    }
+    const raw = await fetchText(new URL(reference, jsUrl).href);
+    return raw ? { raw } : { failure: "map-fetch-failed" };
   }
 
   private async loadMap(target: string): Promise<TraceMap | null> {
     if (this.cache.has(target)) return this.cache.get(target)!;
     let map: TraceMap | null = null;
+    let failure: SourceMapFailure | undefined;
     try {
-      const raw = isHttpUrl(target)
+      const result = isHttpUrl(target)
         ? await this.loadRemoteMap(target)
         : await this.loadLocalMap(target);
-      if (raw) map = new TraceMap(raw);
+      if ("raw" in result) {
+        try {
+          map = new TraceMap(result.raw);
+        } catch {
+          failure = "map-parse-failed";
+        }
+      } else {
+        failure = result.failure;
+      }
     } catch {
-      map = null;
+      failure = "map-parse-failed";
     }
     this.cache.set(target, map);
+    this.outcomes.set(target, failure ?? null);
     return map;
+  }
+
+  /**
+   * What happened to every script this resolver tried to map. Scripts skipped before an attempt
+   * (non-JS targets, frames with no line) are not counted: nothing was tried for them.
+   */
+  diagnostics(): SourceMapDiagnostics {
+    const failed: Partial<Record<SourceMapFailure, string[]>> = {};
+    let resolved = 0;
+    for (const [target, failure] of this.outcomes) {
+      if (failure == null) {
+        resolved++;
+        continue;
+      }
+      const urls = (failed[failure] ??= []);
+      if (urls.length < MAX_URLS_PER_REASON) urls.push(target);
+    }
+    const diagnostics: SourceMapDiagnostics = { scripts: this.outcomes.size, resolved };
+    if (Object.keys(failed).length) diagnostics.failed = failed;
+    return diagnostics;
   }
 
   /** Mutate a frame in place, mapping `.source:line:col` to original source. */
