@@ -527,7 +527,17 @@ export async function record(opts: RecordOptions): Promise<{
   const notes: string[] = [];
   if (browserName === "firefox") {
     notes.push(
-      "Firefox backend (WebDriver BiDi): no CDP, so exact layout/style/script counts, paint counts, invalidation tracking, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and CPU/network throttling are NOT measured. Wall timing rides performance.now (directional). Layout/style blame comes from the Gecko profiler's Reflow/Styles markers and needs --cpu-profile.",
+      "Firefox backend (WebDriver BiDi): no CDP, so no exact counters and no CPU/network throttling. Wall timing rides performance.now (directional).",
+    );
+    // The counts are NOT simply absent on Firefox: with a gecko pass, summarize falls back to
+    // counting Reflow/Styles markers, so layoutCount/styleCount/forcedLayoutCount carry real
+    // numbers. Saying "not measured" would hide a working signal; leaving them unqualified would
+    // invite diffing them against Chrome's CDP counts, which count a differently-batched thing.
+    // Name which fields are real, which are a hard 0, and what the real ones may be compared to.
+    notes.push(
+      opts.cpuProfile
+        ? "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's CDP counts: read them against another Firefox run. NOT measured at all and reported as 0: paintCount/compositeCount, invalidation counts, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and scriptingMs. A 0 in those means unmeasured, not clean."
+        : "Rendering counts on Firefox need --cpu-profile (they come from the Gecko profiler's Reflow/Styles markers). Without it EVERY rendering count in this recording is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint/composite, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.",
     );
     // INP is deliberately NOT in the caps list above: it never came from CDP. It is the same
     // in-page Event Timing observer Chrome uses, so it works here; the honest caveat is that the
@@ -537,7 +547,7 @@ export async function record(opts: RecordOptions): Promise<{
     );
     if (!opts.cpuProfile) {
       notes.push(
-        "No --cpu-profile: this run captured wall timing only. Add --cpu-profile for source-attributed layout/style (Reflow/Styles markers) plus CPU self-time by package/file/function.",
+        "Add --cpu-profile to get source-attributed layout/style blame plus CPU self-time by package/file/function.",
       );
     }
   } else if (opts.isolate) {
