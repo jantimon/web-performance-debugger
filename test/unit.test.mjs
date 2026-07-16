@@ -19,6 +19,7 @@ import { findWindow } from "../dist/trace/parse.js";
 import { labelWindows, mergeSteps } from "../dist/trace/steps.js";
 import { diffCmd } from "../dist/commands/diff.js";
 import { assertCmd } from "../dist/commands/assert.js";
+import { countProvenance } from "../dist/commands/summaryView.js";
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -519,6 +520,29 @@ test("mergeSteps degrades (no throw) when the detail pass collected no windows a
       ["inp", null, null],
     ],
   );
+});
+
+// --- Count provenance (the same number means different things per target) ---
+
+test("countProvenance never calls a non-CDP count authoritative", () => {
+  const recording = (meta) => ({ meta: { passes: ["timing"], ...meta }, summary: {} });
+
+  // Chrome: CDP counters, the only exact ones.
+  assert.match(countProvenance(recording({ passes: ["timing", "trace"] })), /authoritative/);
+  assert.match(countProvenance(recording({ browser: "chrome" })), /authoritative/);
+
+  // Firefox + gecko pass: summarize falls back to counting Reflow/Styles markers, so the counts
+  // are real -- but Gecko batches layout differently, so they must not read as comparable.
+  const gecko = countProvenance(recording({ browser: "firefox", passes: ["timing", "gecko"] }));
+  assert.match(gecko, /Gecko markers/);
+  assert.match(gecko, /not comparable to Chrome/);
+  assert.doesNotMatch(gecko, /authoritative/);
+
+  // Firefox with no gecko pass: nothing counts anything, so every count is 0. Saying so is the
+  // difference between "clean" and "unmeasured".
+  const none = countProvenance(recording({ browser: "firefox", passes: ["timing"] }));
+  assert.match(none, /NOT measured/);
+  assert.doesNotMatch(none, /authoritative/);
 });
 
 // --- Firefox Gecko profile converter (against a real trimmed shutdown dump) ---

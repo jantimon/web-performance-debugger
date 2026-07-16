@@ -1,5 +1,24 @@
 import type { Recording } from "../model/recording.js";
 import { kv, num, sparkline, table } from "../output/ascii.js";
+import { capsFor } from "../browser/backend.js";
+
+/**
+ * Where the count column came from, which differs by lane and must not be asserted blindly:
+ * only CDP counters are exact. Without CDP, summarize falls back to counting trace/marker
+ * events, which on Firefox means Gecko Reflow/Styles markers: real, but batched by a different
+ * engine, so calling them "authoritative" invites diffing them against Chrome's as though the
+ * two counted the same thing. With no counting mechanism at all the column is all zeros, and
+ * saying so beats letting a reader take them for a clean run.
+ */
+export function countProvenance(rec: Recording): string {
+  if (capsFor(rec.meta.browser ?? "chrome").cdpCounts) {
+    return "counts are authoritative; durations are coarse";
+  }
+  if (rec.meta.passes.includes("gecko")) {
+    return "counts come from Gecko markers — approximate, not comparable to Chrome; durations are coarse";
+  }
+  return "counts NOT measured on this lane and shown as 0 — add --cpu-profile; see notes";
+}
 
 export function printSummary(rec: Recording): void {
   const summary = rec.summary;
@@ -12,7 +31,7 @@ export function printSummary(rec: Recording): void {
     `browser: ${meta.browser ?? "chrome"}   passes: ${meta.passes.join(" + ")}   driver: ${meta.driver}   lifecycle: ${meta.lifecycle.join("→") || "run"}`,
   );
 
-  console.log("\nRendering work (counts are authoritative; durations are coarse)\n");
+  console.log(`\nRendering work (${countProvenance(rec)})\n`);
   console.log(
     table(
       ["metric", "count", "ms"],

@@ -380,9 +380,11 @@ quirk. Firefox rides the **Gecko profiler**: add `--cpu-profile` to a Firefox ru
 produce blame (one profiler pass yields both the CPU samples and the layout/style markers), and
 the raw profile lands as `<base>.geckoprofile.json`, ready to open at profiler.firefox.com
 
-**Target Chrome: all of that, plus the exact CDP layer on top** (the last three table rows below).
-The flags that need CDP error out on other targets, and a Firefox recording lists the metrics it
-did not measure in `meta.notes` (never fake zeros)
+**Target Chrome: all of that, plus the exact CDP layer on top** (the last rows below). The flags
+that need CDP error out on other targets, and a Firefox recording names in `meta.notes` both what
+it measured differently and what it did not measure at all. Read that note before trusting a
+number: a metric Firefox cannot measure is currently reported as **`0`**, which looks identical to
+a genuinely clean run
 
 | Signal | node | firefox | chrome |
 | --- | --- | --- | --- |
@@ -391,9 +393,16 @@ did not measure in `meta.notes` (never fake zeros)
 | Real user flows, in-page bench, screenshots | — | ✓ | ✓ |
 | Forced layout/style blame to source | — | ✓ (with `--cpu-profile`) | ✓ |
 | INP per step | — | ✓ | ✓ |
-| Exact rendering counts + invalidation rollup | — | — | ✓ (CDP) |
+| Layout / style / forced-layout counts | — | ~ (Gecko, with `--cpu-profile`) | ✓ (CDP) |
+| Paint / composite counts + invalidation rollup | — | — | ✓ (CDP + trace) |
 | Long tasks | — | — | ✓ |
 | `--cpu-throttle` / `--network` slowdowns | — | — | ✓ |
+
+`~` means measured, but not by the same mechanism: Firefox counts layout/style from the Gecko
+profiler's Reflow/Styles markers rather than CDP counters, and Gecko batches layout differently
+than Blink. Those counts are real and useful **against another Firefox run**; comparing them to
+Chrome's counts compares two different definitions. Everything marked `—` is reported as `0` on
+that target
 
 INP comes from an in-page Event Timing observer, so **both engines measure it** (long tasks do not:
 they are counted from the DevTools trace, which Firefox has no equivalent of). Both span the
