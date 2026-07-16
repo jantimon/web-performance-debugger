@@ -247,8 +247,6 @@ async function runPass(
       await applyCpuThrottle(client, opts.cpuThrottle);
     if (opts.network && client && caps.throttle) await applyNetworkPreset(client, opts.network);
 
-    const moduleUrl = toServedUrl(server, root, absModule);
-
     if (mode === "html") {
       await page.goto(toServedUrl(server, root, path.resolve(opts.html!)), {
         waitUntil: "load",
@@ -282,6 +280,9 @@ async function runPass(
       if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
       // runDriver snapshots cdpBefore at run:start (after prepare()), so setup DOM work stays
       // out of the authoritative counts (consistent with bench mode below).
+      // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
+      // just won't resolve through makeSourceResolver (which keys off the served-url prefix),
+      // so its own frames stay unresolved; the page's frames are unaffected.
       const driverResult = await runDriver(page, client, absModule, opts.fn);
       cdpBefore = driverResult.cdpBefore;
       driverSteps = driverResult.steps;
@@ -290,7 +291,9 @@ async function runPass(
       runCleanup = driverResult.cleanup;
     } else {
       const harnessArg = {
-        moduleUrl,
+        // Bench mode only: the module is import()ed INSIDE the page, so it must be servable.
+        // Driver mode imports it in Node (see runDriver above) and needs no url.
+        moduleUrl: toServedUrl(server, root, absModule),
         fnName: opts.fn,
         iterations: opts.iterations,
         warmup: opts.warmup,
@@ -579,7 +582,13 @@ export async function record(opts: RecordOptions): Promise<{
     metrics: { before: timing.cdpBefore, after: timing.cdpAfter, delta: timing.cdpDelta },
     events: detail.events,
     summary: buildSummary({
+      // perIteration is bench-only: it feeds computeStats, which is only meaningful over
+      // repetitions of the SAME work. Driver steps are heterogeneous ("mount" vs "inp"), so
+      // their walls go to perStep instead and are never summarized into a median.
       perIteration: opts.driver ? [] : timing.perIteration,
+      // From the timing pass (tracing off), same as perIteration: clean, uninstrumented walls.
+      perStep:
+        timing.driverSteps?.map((step) => ({ label: step.label, wallMs: step.wallMs })) ?? [],
       // wallMs is the measured run window for both modes (was null for in-page, which
       // silently disabled `assert --max-wall`).
       wallMs: runWallMs,

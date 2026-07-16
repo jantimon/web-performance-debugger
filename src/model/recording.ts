@@ -106,6 +106,17 @@ export interface RecordingSummary {
   /** bench (in-page iterations) only: per-iteration wall times + their stats */
   perIteration: number[];
   stats: BenchStats | null;
+  /**
+   * driver (stepped) only: the measured wall of each step, labelled. Steps are heterogeneous
+   * ("mount" vs "inp"), so these are NOT summarized into `stats` the way `perIteration` is:
+   * a median across different steps would be meaningless. Empty in bench/node runs.
+   */
+  perStep: StepWall[];
+}
+
+export interface StepWall {
+  label: string;
+  wallMs: number | null;
 }
 
 export interface RecordingWindow {

@@ -58,8 +58,7 @@ id
 
 `record <module>` takes a plain JS file and imports it as an ESM module (`.mjs`, or `.js` in a
 `"type": "module"` package). It is not a script that runs top-to-bottom: wpd calls the hooks it
-exports, so only `run` is measured. The file must live under the current working directory and can
-export up to three hooks:
+exports, so only `run` is measured. It can export up to three hooks:
 
 ```js
 export async function prepare(arg) {} // optional, before the measured window (alias: setup)
@@ -79,7 +78,12 @@ mode `ctx` is a *property* of the argument; in the other lanes it *is* the argum
 
 `ctx` starts as an empty object and is shared across the hooks: stash things in `prepare` (a
 handle, a prebuilt DOM node, test data) and read them in `run`. `--iterations` / `--warmup`
-(defaults 1 / 0) repeat `run` in the bench and node lanes; a driver flow runs once per pass
+(defaults 1 / 0) repeat `run` in the bench and node lanes and are **ignored in driver mode** (a
+driver flow runs once per pass); `record` prints a note if you pass them anyway
+
+In `--bench` the module is imported *inside the page*, so it must live under the current working
+directory to be servable. Driver and `--runtime node` modules are imported in Node and can live
+anywhere
 
 ## Which problem do you have?
 
@@ -403,6 +407,14 @@ timing is measured with tracing off and the counts/attribution in a separate ins
 `--cpu-profile` adds a third, isolated sampling pass; `--no-isolate` collapses everything into one
 faster but noisier pass. Slow things down to surface jank with `--cpu-throttle 4` or
 `--network slow-3g`
+
+**`summary.wallMs` is not your interaction.** It is the whole `wpd:run` window of one pass:
+navigation, `prepare`, every step, and the `--settle` wait. On a driver flow that is routinely
+orders of magnitude larger than the thing you clicked. For per-interaction wall read
+`summary.perStep` (labelled, one entry per `measureStep`) or `query index`, both of which report
+each step's own window. In `--bench` / `--runtime node`, `--iterations` fills `summary.perIteration`
+and `summary.stats` (min/median/mean/max) instead; those stay empty in driver mode, because a
+median across heterogeneous steps would not mean anything
 
 ### Consuming the JSON
 

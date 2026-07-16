@@ -40,7 +40,9 @@ export function printSummary(rec: Recording): void {
       ["forced layout/style", `${summary.forcedLayoutCount}  (${num(summary.forcedLayoutMs)} ms)`],
       ["long tasks ≥50ms", `${summary.longTaskCount}  (longest ${num(summary.longestTaskMs)} ms)`],
       ["INP (worst interaction)", summary.inpMs == null ? "—" : `${num(summary.inpMs)} ms`],
-      ["wall", summary.wallMs == null ? "—" : `${num(summary.wallMs)} ms`],
+      // The whole wpd:run window (navigation + prepare + every step + settle), NOT one
+      // interaction. Per-interaction wall is the perStep table below / `query index`.
+      ["wall (whole run window)", summary.wallMs == null ? "—" : `${num(summary.wallMs)} ms`],
     ]),
   );
   if (summary.forcedLayoutCount > 0) {
@@ -70,6 +72,22 @@ export function printSummary(rec: Recording): void {
       ]),
     );
     console.log(`trend  ${sparkline(summary.perIteration)}`);
+  }
+
+  // Steps are heterogeneous, so this is a labelled list, not a stats block or a sparkline:
+  // there is no trend across "mount" and "inp". Optional chaining: recordings written before
+  // perStep existed have no such field.
+  if (summary.perStep?.length) {
+    console.log("\nPer-step wall time (coarse — single sample per step)\n");
+    console.log(
+      table(
+        ["step", "wall ms"],
+        summary.perStep.map((step) => [
+          step.label,
+          step.wallMs == null ? "—" : num(step.wallMs, 3),
+        ]),
+      ),
+    );
   }
 
   console.log(

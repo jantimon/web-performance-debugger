@@ -1,4 +1,9 @@
-import type { BenchStats, NormalizedEvent, RecordingSummary } from "../model/recording.js";
+import type {
+  BenchStats,
+  NormalizedEvent,
+  RecordingSummary,
+  StepWall,
+} from "../model/recording.js";
 import { invalidationKind } from "../trace/classify.js";
 import { LONG_TASK_MS, inWindow } from "../trace/analysis.js";
 // inWindow is start-onward by design; see the note in analysis.ts.
@@ -31,6 +36,8 @@ export interface SummaryInputs {
   inpMs?: number | null;
   /** bench (in-page iterations) per-iteration wall times */
   perIteration?: number[];
+  /** driver (stepped) per-step wall times; never summarized into stats (see RecordingSummary) */
+  perStep?: StepWall[];
 }
 
 export function buildSummary(input: SummaryInputs): RecordingSummary {
@@ -119,5 +126,6 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     totalEvents: total,
     perIteration,
     stats: computeStats(perIteration),
+    perStep: input.perStep ?? [],
   };
 }
