@@ -9,7 +9,8 @@ import { runHarness } from "../browser/harness.js";
 import { runDriver, type DriverStep } from "../browser/driver.js";
 import { applyCpuThrottle, applyNetworkPreset } from "../browser/throttle.js";
 import { traceCategories } from "../trace/categories.js";
-import { parseTrace, findWindow, findSteps, type StepWindow } from "../trace/parse.js";
+import { parseTrace, findWindow, findSteps } from "../trace/parse.js";
+import { labelWindows, mergeSteps, type LabelledWindow } from "../trace/steps.js";
 import { attachStacks } from "../trace/stacks.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { markForced } from "../trace/analysis.js";
@@ -110,8 +111,8 @@ interface PassResult {
   screenshots?: ScreenshotRefs;
   /** driver mode: per-step wall time + clean CDP delta (from timing pass) */
   driverSteps?: DriverStep[];
-  /** driver mode: per-step trace windows (from the trace pass) */
-  stepWindows?: StepWindow[];
+  /** driver mode: this pass's own trace windows, already re-keyed from index to label */
+  stepWindows?: LabelledWindow[];
   /** raw V8 CPU sampling profile (only on the cpu pass) */
   cpuProfile?: RawCpuProfile;
   /** Firefox: temp path of the raw Gecko shutdown dump, copied verbatim to the
@@ -120,17 +121,6 @@ interface PassResult {
   geckoDumpPath?: string;
   /** interval the CPU sampler actually ran at, read back from the profile itself */
   cpuSampleIntervalUs?: number;
-}
-
-/** A step merged across passes: label+timing from the timing pass, window from the trace pass. */
-interface MergedStep {
-  index: number;
-  label: string;
-  wallMs: number;
-  inpMs: number | null;
-  cdpDelta: Record<string, number>;
-  startTs: number | null;
-  endTs: number | null;
 }
 
 function slug(label: string): string {
@@ -350,7 +340,7 @@ async function runPass(
     let events: NormalizedEvent[] = [];
     let windowStart: number | null = null;
     let windowEnd: number | null = null;
-    let stepWindows: StepWindow[] | undefined;
+    let stepWindows: LabelledWindow[] | undefined;
     if (spec.categories && caps.trace) {
       const buf = await page.tracing.stop();
       events = parseTrace(buf ? new TextDecoder("utf-8").decode(buf) : "[]");
@@ -361,7 +351,9 @@ async function runPass(
       const runWindow = findWindow(events);
       windowStart = runWindow.startTs;
       windowEnd = runWindow.endTs;
-      if (opts.driver) stepWindows = findSteps(events);
+      // Re-key this pass's windows from index to label immediately: the index is only meaningful
+      // inside the pass that produced it, and both sides are right here.
+      if (opts.driver && driverSteps) stepWindows = labelWindows(driverSteps, findSteps(events));
     }
 
     const cdpAfter = await snapshot();
@@ -428,7 +420,8 @@ async function runPass(
     const geckoWindow = findWindow(renderingEvents);
     result.windowStart = geckoWindow.startTs;
     result.windowEnd = geckoWindow.endTs;
-    if (opts.driver) result.stepWindows = findSteps(renderingEvents);
+    if (opts.driver && result.driverSteps)
+      result.stepWindows = labelWindows(result.driverSteps, findSteps(renderingEvents));
   }
   return result;
 }
@@ -516,6 +509,20 @@ export async function record(opts: RecordOptions): Promise<{
     results.find((pass) => pass.name === "gecko") ??
     results[results.length - 1];
   const screenshots = results.find((pass) => pass.screenshots)?.screenshots;
+
+  // Merge the passes' steps HERE, before anything is written. mergeSteps rejects a flow whose
+  // passes disagree, and that rejection has to happen before the recording, the digest and the
+  // `latest` pointer exist: a run that failed after writing artifacts but before repointing
+  // `latest` would leave `assert latest` silently gating the PREVIOUS run instead.
+  // Pair by LABEL: the two passes are separate browser runs with independent step counters, so
+  // their indices are not comparable. A detail pass with no run window found nothing to pair with
+  // (no tracing on this lane, or the markers were lost); that is absence, reported by the
+  // traceWindowMissing note below, so pass undefined rather than an empty list, which would read
+  // as divergence.
+  const mergedSteps =
+    opts.driver && timing.driverSteps?.length
+      ? mergeSteps(timing.driverSteps, detail.windowStart == null ? undefined : detail.stepWindows)
+      : undefined;
 
   const notes: string[] = [];
   if (browserName === "firefox") {
@@ -701,21 +708,9 @@ export async function record(opts: RecordOptions): Promise<{
 
   // Driver/stepped runs: split the report into one file per step + an index.
   let indexPath: string | undefined;
-  if (opts.driver && timing.driverSteps && timing.driverSteps.length) {
+  if (mergedSteps) {
     const ext = extFor(opts.format);
-    const windows = detail.stepWindows ?? [];
-    const steps: MergedStep[] = timing.driverSteps.map((step) => {
-      const stepWindow = windows.find((candidate) => candidate.index === step.index);
-      return {
-        index: step.index,
-        label: step.label,
-        wallMs: step.wallMs,
-        inpMs: step.inpMs,
-        cdpDelta: step.cdpDelta, // clean, from timing pass
-        startTs: stepWindow?.startTs ?? null,
-        endTs: stepWindow?.endTs ?? null,
-      };
-    });
+    const steps = mergedSteps;
 
     const entries: StepIndexEntry[] = [];
     for (const step of steps) {
