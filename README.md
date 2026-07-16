@@ -26,6 +26,15 @@ Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use 
 
 ## 30-second quickstart
 
+Every run starts from a small JS file you write that exports a `run` function (the contract:
+[Your `run` module](#your-run-module)). Pick the lane by what you are measuring:
+
+- **A real user flow in a real app** → the default **driver** lane: `run` gets a Puppeteer `page`
+  and drives your `--url`.
+- **An isolated DOM-touching snippet** → `--bench`: `run` executes inside the page, repeated with
+  `--iterations`.
+- **Pure JS, no DOM (SSR, hot loops)** → `--runtime node`: no browser at all.
+
 ```bash
 # 1. forced-layout (thrashing) attribution, in-page:
 npx @jantimon/web-performance-debugger record probe.mjs --bench --iterations 5
@@ -36,8 +45,35 @@ npx @jantimon/web-performance-debugger record render.entry.js --runtime node --i
 npx @jantimon/web-performance-debugger query cpu latest
 ```
 
-`record` writes a small **digest** plus a `latest` pointer; the `query` verbs read `latest` (or any
-file path). Start at the digest, then drill in by id.
+By default `record` runs your flow **twice**: once with tracing off for clean timing, once fully
+instrumented for counts and attribution (that split is why the numbers stay honest, see
+[the trust table](#the-numbers-and-how-far-to-trust-them)). It writes the full recording plus a
+small **digest** (the summary and worst offenders, each carrying an `id` to drill into) and a
+`latest` pointer, so every `query` verb accepts `latest` instead of a file path. Start at the
+digest, then drill in by id.
+
+## Your `run` module
+
+`record <module>` takes a plain JS file and imports it as an ESM module (`.mjs`, or `.js` in a
+`"type": "module"` package). It is not a script that runs top-to-bottom: wpd calls the hooks it
+exports, so only `run` is measured. The file must live under the current working directory and can
+export up to three hooks:
+
+```js
+export async function prepare(arg) {} // optional, once, before the measured window (alias: setup)
+export async function run(arg) {}     // the measured part
+export async function cleanup(arg) {} // optional, once, after the window (alias: teardown)
+```
+
+`prepare` and `cleanup` run **outside** the measured window, so setup and teardown never pollute
+the numbers. All three hooks receive the same argument; what it is depends on the lane:
+
+- **driver** (default): `run({ page, ctx, measureStep })` executes in Node, `page` is a Puppeteer page.
+- **`--bench`**: `run(ctx)` executes inside the browser page, with live `document`/`window`.
+- **`--runtime node`**: `run(ctx)` executes in this Node process.
+
+`ctx` starts as an empty object and is shared across the hooks: stash things in `prepare` (a
+handle, a prebuilt DOM node, test data) and read them in `run`.
 
 ## Which problem do you have?
 
@@ -50,6 +86,17 @@ file path). Start at the digest, then drill in by id.
 | Did my change regress a budget | `assert`, `diff`, `cpu-diff` |
 
 Each section below is one of these problems: reproduce it, read the result, fix the line.
+
+### Compared to the tools you already have
+
+- **Chrome DevTools**: the same underlying data, but scripted and repeatable instead of a manual
+  session, and already attributed to source lines instead of a flame chart to read. When you do
+  want the flame chart, the raw `.cpuprofile` wpd writes opens right in DevTools.
+- **Lighthouse**: audits a page load and scores it. wpd measures the specific interaction or
+  module *you* define, names the source line responsible, and fails CI when it regresses.
+- **React Profiler**: component-level render timing inside React. wpd is framework-agnostic
+  self-time across the whole stack (react-dom, your styling library, your code, each as its own
+  bucket), plus rendering signals React cannot see, like forced layout.
 
 ## A line forces synchronous layout
 
@@ -86,7 +133,8 @@ Line 5, `void el.offsetWidth`, caught red-handed. `blame --all` lists every attr
 ## A page janks on a real interaction
 
 By default `record` drives the page through Puppeteer: your `run` receives `{ page, ctx, measureStep }`,
-and each `measureStep` becomes one report (counts plus INP).
+and each `measureStep` becomes one report: counts plus INP (Interaction to Next Paint, the time
+from the interaction until the next frame reaches the screen).
 
 ```js
 // flow.mjs
@@ -109,6 +157,10 @@ wpd query index latest
 0  open menu   31.2     24      3       0       5      4
 1  type query  88.6     56      9       2       18     12
 ```
+
+Omitting `until` waits for the page to **settle**: two animation frames, each followed by an idle
+callback, which covers the usual state-update → render → cleanup pattern. Pass `until` when your
+step ends on something specific (a selector appearing, a promise resolving).
 
 Works against `--url` (any local or remote server) or `--html somefile.html`. Each step also gets its
 own digest you can drill into.
@@ -148,11 +200,20 @@ export function run() {
 }
 ```
 
+In a real app, `./your-compiled-output.js` is your component compiled to plain JS (node can't
+import JSX/TS directly). One esbuild call does it; keep dependencies **external** so node resolves
+`react-dom` & co from `node_modules` and wpd attributes them per package:
+
+```bash
+esbuild src/pages/Product.tsx --bundle --packages=external --platform=node \
+  --format=esm --sourcemap --outfile=your-compiled-output.js
+```
+
 ```bash
 wpd record render.entry.js --runtime node --iterations 50
 # hot functions + by-package rollup
 wpd query cpu   latest
-# drill one function: callers + callees      
+# drill one function; 0 = the id column of `query cpu`
 wpd query frame latest 0  
 ```
 
@@ -194,21 +255,19 @@ ship.
 ## Did my change regress a budget
 
 `assert` fails the build when a budget is blown; `diff` and `cpu-diff` compare two recordings.
+Name each run with `--out` (the recording is written to exactly that path; the digest and the
+`.cpu.json` model land next to it), or just rely on `latest`:
 
 ```bash
+wpd record probe.mjs --bench --out runs/before.json
+# ...apply your change, rebuild...
+wpd record probe.mjs --bench --out runs/after.json
+
 # exit 1 on violation:
-wpd assert  latest --max-forced 0 --max-inp 200      
-wpd diff     before.json after.json --fail-on-regression
+wpd assert   latest --max-forced 0 --max-inp 200
+wpd diff     runs/before.json runs/after.json --fail-on-regression
 # per-function self-time deltas, noise filtered
-wpd cpu-diff before.json after.json --fail-on-regression   
-```
-
-Give each run a name with `--out` so you can compare by path instead of `latest`:
-
-```bash
-wpd record a.mjs --runtime node --out runs/a
-wpd record b.mjs --runtime node --out runs/b
-wpd cpu-diff runs/a runs/b
+wpd cpu-diff runs/before.json runs/after.json --fail-on-regression
 ```
 
 ## Read a result
@@ -223,7 +282,7 @@ wpd query digest latest
 # rendering work grouped by source line
 wpd query blame  latest --forced   
 wpd query events latest --kind task --top 10
-# one event: full stack + args
+# one event: full stack + args (42 = an id from the digest or an events/blame row)
 wpd query get    latest 42         
 ```
 
