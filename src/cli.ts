@@ -10,6 +10,18 @@ import { cpuDiffCmd } from "./commands/cpudiff.js";
 import { setColorEnabled } from "./output/color.js";
 import { VERSION, TOOL } from "./version.js";
 
+/**
+ * Puppeteer's protocol-timeout error tells the user to "increase the 'protocolTimeout' setting in
+ * launch/connect calls" -- an API a CLI user never touches. Name the flag that actually fixes it.
+ * A heavy traced interaction pinning the main thread is the usual cause.
+ */
+function recordFailureMessage(error: Error): string {
+  const protocolTimedOut =
+    error.name === "ProtocolTimeoutError" || /protocolTimeout/i.test(error.message);
+  if (!protocolTimedOut) return error.message;
+  return `${error.message}\n\nThe page did not answer CDP in time, usually because a traced interaction pinned the main thread. Retry with a higher --protocol-timeout (e.g. --protocol-timeout 600000), or measure less work per step.`;
+}
+
 const program = new Command();
 program
   .name(TOOL)
@@ -168,7 +180,7 @@ program
     try {
       await recordAndReport(opts);
     } catch (err) {
-      program.error(`record failed: ${(err as Error).message}`);
+      program.error(`record failed: ${recordFailureMessage(err as Error)}`);
     }
   });
 

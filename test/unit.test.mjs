@@ -91,6 +91,45 @@ test("buildSummary prefers CDP counts, falls back to trace", () => {
   assert.equal(noCdp.layoutCount, 1); // trace fallback
 });
 
+// Driver steps are heterogeneous ("mount" vs "inp"), so the ONLY meaningful aggregation is each
+// step against itself. A median pooled across steps, or leaking into the bench-shaped top-level
+// stats, would render a meaningless number as a real one.
+test("buildSummary: perStep aggregates each step against itself, never across steps", () => {
+  const base = { detailEvents: [], detailWindowStart: null, cdpDelta: {} };
+  const summary = buildSummary({
+    ...base,
+    perStep: [
+      { label: "mount", perIteration: [40, 44, 42] },
+      { label: "inp", perIteration: [5, 9, 7] },
+    ],
+  });
+
+  const stepOf = (label) => summary.perStep.find((step) => step.label === label);
+  // each step's own median, computed only from its own samples
+  assert.equal(stepOf("mount").stats.medianMs, 42);
+  assert.equal(stepOf("inp").stats.medianMs, 7);
+  assert.equal(stepOf("mount").stats.samples, 3);
+  // raw samples are kept, not collapsed to the statistic
+  assert.deepEqual(stepOf("inp").perIteration, [5, 9, 7]);
+
+  // per-step walls must not leak into the bench-shaped top-level stats either (pooling all six
+  // samples would yield a real-looking median of 24.5 that describes no actual work)
+  assert.deepEqual(summary.perIteration, []);
+  assert.equal(summary.stats, null);
+});
+
+test("buildSummary: a step measured once has stats null but keeps its sample", () => {
+  const summary = buildSummary({
+    detailEvents: [],
+    detailWindowStart: null,
+    cdpDelta: {},
+    perStep: [{ label: "mount", perIteration: [36.7] }],
+  });
+  // same contract as the bench stats: no statistic below 2 samples, rather than a fake one
+  assert.equal(summary.perStep[0].stats, null);
+  assert.deepEqual(summary.perStep[0].perIteration, [36.7]);
+});
+
 test("serialize/deserialize round-trips json and toon", () => {
   const obj = { a: 1, b: [{ x: 1 }, { x: 2 }], c: "hi" };
   assert.deepEqual(deserialize(serialize(obj, "json"), ".json"), obj);
@@ -113,7 +152,9 @@ test("package exports map points at files that exist", () => {
 
 test("published types declare the documented public shapes", () => {
   const dts = readFileSync(new URL("../dist/index.d.ts", import.meta.url), "utf8");
-  for (const name of ["CpuModel", "CpuOverview", "BlameEntry", "CpuDiffResult", "RawCpuProfile", "LastPointer"]) {
+  // StepTiming is the element type of the public RecordingSummary.perStep: without it a consumer
+  // cannot name the shape without importing from dist/model/, which this package calls internal.
+  for (const name of ["CpuModel", "CpuOverview", "BlameEntry", "CpuDiffResult", "RawCpuProfile", "LastPointer", "StepTiming"]) {
     assert.match(dts, new RegExp(`\\b${name}\\b`), `index.d.ts should re-export ${name}`);
   }
 });

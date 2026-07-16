@@ -39,6 +39,25 @@ function geckoEnv(base: NodeJS.ProcessEnv, gecko: GeckoLaunch): NodeJS.ProcessEn
   };
 }
 
+/**
+ * Puppeteer resolves a browser only at the exact build it pins, and tells the user to run
+ * `npx puppeteer browsers install <browser>` -- which installs whatever the AMBIENT puppeteer
+ * pins. That routinely differs from ours, so the same error survives the fix. Pinning the build
+ * explicitly (`@<build>`) is what makes the ambient version irrelevant.
+ *
+ * The build is scraped from puppeteer's own message ("Could not find Firefox (ver. stable_152.0.2)")
+ * rather than read from its PUPPETEER_REVISIONS export: that export is marked @internal and is
+ * absent from the public types. The message is the version puppeteer actually looked for, so it
+ * cannot drift from the real requirement.
+ */
+function missingBrowserMessage(error: Error, browser: BrowserName): Error {
+  const build = error.message.match(/could not find .*?\(ver\.\s*([^)\s]+)\)/i)?.[1];
+  if (!build) return error;
+  return new Error(
+    `${error.message}\n\nwpd pins ${browser} ${build}; the generic install command may fetch a different build. Install exactly this one:\n\n  npx puppeteer browsers install ${browser}@${build}\n`,
+  );
+}
+
 export async function launchBrowser(opts: {
   browser: BrowserName;
   headless: boolean;
@@ -47,6 +66,20 @@ export async function launchBrowser(opts: {
    * thread long enough that a routine evaluate would hit the 180s default. Chrome only. */
   protocolTimeoutMs?: number;
   /** Firefox only: start the Gecko profiler and dump it on exit. */
+  gecko?: GeckoLaunch;
+}): Promise<BrowserHandle> {
+  try {
+    return await launchOrThrow(opts);
+  } catch (error) {
+    throw missingBrowserMessage(error as Error, opts.browser);
+  }
+}
+
+async function launchOrThrow(opts: {
+  browser: BrowserName;
+  headless: boolean;
+  userDataDir?: string;
+  protocolTimeoutMs?: number;
   gecko?: GeckoLaunch;
 }): Promise<BrowserHandle> {
   if (opts.browser === "firefox") {

@@ -106,6 +106,32 @@ export interface RecordingSummary {
   /** bench (in-page iterations) only: per-iteration wall times + their stats */
   perIteration: number[];
   stats: BenchStats | null;
+  /**
+   * driver (stepped) only: each step's wall timing, labelled. Empty in bench/node runs.
+   *
+   * Deliberately NOT folded into the `stats` above: steps are heterogeneous ("mount" vs "inp"),
+   * so a median across them would be meaningless. Each step carries its own samples + stats
+   * instead, which is the only aggregation that means anything here.
+   */
+  perStep: StepTiming[];
+}
+
+/**
+ * One driver step's wall timing. Mirrors the bench shape (`perIteration` + `stats`) so a step
+ * block reads exactly like the top-level one, and so repeating a step later only lengthens the
+ * array rather than changing the type.
+ */
+export interface StepTiming {
+  label: string;
+  /**
+   * Raw per-iteration wall times for THIS step, in run order; never empty. Raw samples are kept
+   * rather than only the aggregate: a median hides bimodality (a GC spike in one iteration), and a
+   * consumer may want its own statistic. This array is the axis that grows when a step is repeated,
+   * so the shape holds either way.
+   */
+  perIteration: number[];
+  /** this step's own min/median/mean/max; null below 2 samples, same contract as the bench `stats` */
+  stats: BenchStats | null;
 }
 
 export interface RecordingWindow {
