@@ -1,9 +1,15 @@
-# Firefox support: empirical findings
+# Firefox backend: Gecko profile format notes (internal)
 
-Input for review of the `feat/firefox-support` branch. Everything below was verified against a
+> **Developer notes, not user documentation.** Nothing here is needed to *use* wpd; if you are
+> looking for how to run the tool, read the [README](../../README.md). This file records the
+> empirically-verified Gecko profile format facts that `src/profile/gecko.ts` depends on, for
+> whoever has to touch that code next (e.g. when a Firefox update bumps the format version).
+
+Everything below was verified against a
 real Gecko shutdown dump (Firefox 152.0.2 via Puppeteer 25 / WebDriver BiDi), not from docs alone.
-Probe scripts and the raw 26MB dump live in the scratch dir; a trimmed 26KB slice is checked in at
-`test/fixtures/gecko-shutdown.trimmed.json`.
+A trimmed slice of a real dump is checked in at `test/fixtures/gecko-shutdown.trimmed.json`; to
+regenerate a full one, launch Firefox via Puppeteer with the `MOZ_PROFILER_*` env vars from
+`src/browser/launch.ts` and close the browser.
 
 ## Puppeteer + Firefox capability probe (verified)
 

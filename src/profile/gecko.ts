@@ -13,7 +13,7 @@ interface RawStackFrame {
  * Convert a Firefox Gecko "raw" shutdown-dump profile (format version 34) into the shapes the
  * rest of wpd already understands: a V8-style `RawCpuProfile` (fed to `buildCpuModel`) and, for
  * blame, `NormalizedEvent[]` from Reflow/Styles markers. Every field assumption here was verified
- * against a real dump; see FIREFOX-NOTES.md for the format details and the reasoning behind each
+ * against a real dump; see docs/dev/gecko-profile-format.md for the format details and the reasoning behind each
  * choice (thread selection, 1-based line/col, JS-only frame pruning, marker cause stacks).
  */
 
@@ -64,7 +64,7 @@ interface ParsedLocation {
   column: number | null;
 }
 
-/** Only these url schemes are on-disk / fetchable source we resolve; see FIREFOX-NOTES.md. */
+/** Only these url schemes are on-disk / fetchable source we resolve; see docs/dev/gecko-profile-format.md. */
 function isResolvableUrl(url: string): boolean {
   return /^(https?|file):\/\//.test(url);
 }
@@ -134,7 +134,7 @@ function runWindow(thread: GeckoThread): { startMs: number | null; endMs: number
 /**
  * Locate the content thread that ran the module (the one carrying the wpd:run marks) and
  * compute the shared context. Selecting by marker, not by processType, is robust across the
- * several content processes Firefox spawns (see FIREFOX-NOTES.md).
+ * several content processes Firefox spawns (see docs/dev/gecko-profile-format.md).
  */
 export function parseGecko(profile: GeckoContainer): GeckoContext {
   const categories = profile.meta?.categories ?? [];

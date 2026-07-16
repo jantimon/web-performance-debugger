@@ -17,7 +17,7 @@ export interface GeckoLaunch {
 }
 
 /** Environment for a Firefox launch that starts the Gecko profiler at startup and dumps
- * the raw profile JSON to `dumpPath` when the browser exits. See FIREFOX-NOTES.md. */
+ * the raw profile JSON to `dumpPath` when the browser exits. See docs/dev/gecko-profile-format.md. */
 function geckoEnv(base: NodeJS.ProcessEnv, gecko: GeckoLaunch): NodeJS.ProcessEnv {
   return {
     ...base,

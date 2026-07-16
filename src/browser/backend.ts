@@ -4,7 +4,7 @@ export type BrowserName = "chrome" | "firefox";
  * What a browser backend can measure, so runPass stays one function with capability
  * guards (not a class hierarchy). Chrome drives everything through CDP; Firefox is
  * driven over WebDriver BiDi, where CDP is unavailable, so counts/trace/throttle are
- * off and CPU comes from the Gecko profiler instead. See FIREFOX-NOTES.md.
+ * off and CPU comes from the Gecko profiler instead. See docs/dev/gecko-profile-format.md.
  */
 export interface BrowserCaps {
   /** CDP Performance.getMetrics counters (exact layout/style/script counts) */
