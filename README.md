@@ -65,8 +65,9 @@ export async function run(arg) {}     // the measured part
 export async function cleanup(arg) {} // optional, once, after the window (alias: teardown)
 ```
 
-`prepare` and `cleanup` run **outside** the measured window, so setup and teardown never pollute
-the numbers. All three hooks receive the same argument; what it is depends on the lane:
+`prepare` and `cleanup` run once per `record` pass (not per `--iterations` iteration) and
+**outside** the measured window, so setup and teardown never pollute the numbers. All three hooks
+receive the same argument; what it is depends on the lane:
 
 - **driver** (default): `run({ page, ctx, measureStep })` executes in Node, `page` is a Puppeteer page.
 - **`--bench`**: `run(ctx)` executes inside the browser page, with live `document`/`window`.
@@ -123,12 +124,13 @@ wpd query blame latest --forced
 
 ```
 count  ms     kinds         source
-─────  ─────  ────────────  ─────────────────
-200    12.4   style,layout  probe.mjs:5:10
+─────  ─────  ────────────  ──────────────
+1000   9.97   style,layout  probe.mjs:6:13
 ```
 
-Line 5, `void el.offsetWidth`, caught red-handed. `blame --all` lists every attributed line with a
-`forced` column, so "ran but never forced" is a real answer too, not a guess.
+Line 6, `void el.offsetWidth`, caught red-handed: 100 loop reads forcing style + layout, times 5
+iterations. `blame --all` lists every attributed line with a `forced` column, so "ran but never
+forced" is a real answer too, not a guess.
 
 ## A page janks on a real interaction
 
@@ -158,9 +160,14 @@ wpd query index latest
 1  type query  88.6     56      9       2       18     12
 ```
 
+`wall ms` is the whole step (action + settle); `inp ms` is the user-perceived latency inside it
+(interaction to next paint). A step can have a long wall but a fine INP when the work happens off
+the interaction path.
+
 Omitting `until` waits for the page to **settle**: two animation frames, each followed by an idle
 callback, which covers the usual state-update → render → cleanup pattern. Pass `until` when your
-step ends on something specific (a selector appearing, a promise resolving).
+step ends on something specific: a selector to wait for, or a function or promise that wpd simply
+awaits.
 
 Works against `--url` (any local or remote server) or `--html somefile.html`. Each step also gets its
 own digest you can drill into.
@@ -201,8 +208,10 @@ export function run() {
 ```
 
 In a real app, `./your-compiled-output.js` is your component compiled to plain JS (node can't
-import JSX/TS directly). One esbuild call does it; keep dependencies **external** so node resolves
-`react-dom` & co from `node_modules` and wpd attributes them per package:
+import JSX/TS directly). Any bundler works; the requirements are plain ESM output, a sourcemap
+(for line attribution), and dependencies kept **external**, so node resolves `react-dom` & co from
+`node_modules` and wpd attributes them per package (a bundled-in dependency gets blamed on your
+app bucket instead). With esbuild:
 
 ```bash
 esbuild src/pages/Product.tsx --bundle --packages=external --platform=node \
@@ -234,10 +243,17 @@ The headline (`268.4 ms JS self-time`) is the **total** JS self-time across all 
 (here, 50), not a per-iteration or mean figure; divide by `--iterations` for a per-call cost. Because
 it is a total, comparing two builds is only fair when both runs use the **same `--iterations` and
 `--warmup`** (warmup iterations are excluded from the sampled window). `self %` is each function's
-share of that self-time.
+share of that self-time. In the sample, `next-yak` is a compile-time CSS-in-JS dependency and
+`app` is your own code.
 
-Need the browser's V8 instead (the code touches the DOM, or you want it where it ships)? Bundle to
-one ESM module with sourcemaps and use `--bench --cpu-profile`:
+Two lanes measure CPU self-time; pick by where the code runs in production:
+
+| Your code | Lane |
+| --- | --- |
+| Pure JS that runs in Node in production (SSR, tooling) | `--runtime node` |
+| JS that touches the DOM, or that ships to the browser | `--bench --cpu-profile` |
+
+For the browser lane, bundle to one ESM module with sourcemaps:
 
 ```bash
 esbuild render.entry.js --bundle --format=esm --sourcemap \
@@ -274,7 +290,30 @@ wpd cpu-diff runs/before.json runs/after.json --fail-on-regression
 
 `record` prints a summary and tells you what to look at next (for example, `⚠ layout thrashing: run
 query blame --forced`). A full recording can be megabytes, so drill from the small digest by event
-id. `latest` always points at your most recent run.
+id. `latest` always points at your most recent run. For the thrashing probe above, `query digest
+latest` prints (trimmed):
+
+```
+Hotspots
+
+forced layout/style      1000  (9.97 ms)
+long tasks ≥50ms         0  (longest 5.6 ms)
+wall                     18.09 ms
+  ⚠ layout thrashing — run `query blame --forced` to see the source lines
+
+Layout thrashing — forced layout/style by source:
+count  ms    source
+─────  ────  ──────────────
+1000   9.97  probe.mjs:6:13
+
+Slowest events:
+id    kind   name              ms     source
+────  ─────  ────────────────  ─────  ──────────────
+100   style  UpdateLayoutTree  0.984  probe.mjs:6:13
+```
+
+Every row carries an `id`: `query get latest 100` prints that `UpdateLayoutTree` event with its
+full stack and args.
 
 ```bash
 # summary + thrashing + long tasks + slowest events
@@ -282,8 +321,8 @@ wpd query digest latest
 # rendering work grouped by source line
 wpd query blame  latest --forced   
 wpd query events latest --kind task --top 10
-# one event: full stack + args (42 = an id from the digest or an events/blame row)
-wpd query get    latest 42         
+# one event: full stack + args (the id comes from the digest or an events row)
+wpd query get    latest 100        
 ```
 
 ## Reference
