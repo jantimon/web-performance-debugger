@@ -21,8 +21,9 @@ Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use 
   `npx puppeteer browsers install firefox`. See
   [What each target gives you](#what-each-target-gives-you)
 - For `--url`, **your dev/preview server must already be running** at that URL; wpd does not start it
-- Modules and `--html` files must live **under the current working directory** (they are served to
-  the browser from there)
+- `--html` files, and `--bench` modules, must live **under the current working directory** (they are
+  served to the browser from there). Driver and `--runtime node` modules are imported in Node and can
+  live anywhere
 
 ## 30-second quickstart
 
