@@ -17,6 +17,9 @@ Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use 
 - **Node 24+.**
 - **Chrome** is downloaded automatically by Puppeteer on install. To skip the browser entirely, use
   the `--runtime node` lane (CPU profiling only, no DOM/layout/paint).
+- **Firefox** is optional (`--browser firefox`): install it once with
+  `npx puppeteer browsers install firefox`. See [Browser support](#browser-support) for what it
+  measures.
 - For `--url`, **your dev/preview server must already be running** at that URL; wpd does not start it.
 - Modules and `--html` files must live **under the current working directory** (they are served to
   the browser from there).
@@ -237,6 +240,38 @@ wpd query get    latest 42
 `--iterations` / `--warmup` apply to `bench` and `node`. All lanes support optional `prepare` /
 `cleanup` exports (aliases `setup` / `teardown`).
 
+### Browser support
+
+`--browser chrome` (default) or `--browser firefox`. Chrome is driven over CDP and measures
+everything below. Firefox is driven over WebDriver BiDi, which has no CDP, so it captures a
+smaller, honest subset via the **Gecko profiler** instead. Install the Firefox build once with
+`npx puppeteer browsers install firefox`.
+
+| Capability | Chrome | Firefox |
+| --- | --- | --- |
+| Wall / per-iteration timing (bench + driver) | yes | yes (directional) |
+| CPU self-time by package / file / function (`--cpu-profile`) | yes (V8 sampler) | yes (Gecko profiler) |
+| Forced layout / style blame to source (`query blame --forced`) | yes | yes, **only with `--cpu-profile`** (from Gecko Reflow/Styles markers) |
+| Exact layout/style/script counts, paint counts, invalidation rollup | yes (CDP) | no (not measured) |
+| INP per interaction | yes | no (Firefox has no Event Timing) |
+| `--cpu-throttle` / `--network` / `--protocol-timeout` / `--no-invalidation-tracking` | yes | no (rejected with an error) |
+
+On Firefox, `record` runs a clean timing pass, plus one Gecko-profiler pass when `--cpu-profile`
+is set (that single pass yields both CPU samples and the layout/style markers used for blame).
+Metrics Firefox cannot measure are reported honestly in `meta.notes`, never as fake zeros. The raw
+profile is written as `<base>.geckoprofile.json` (loads at profiler.firefox.com); the resolved
+`<base>.cpu.json` model and all `query` verbs work identically to Chrome.
+
+```bash
+# CPU self-time attributed to source on Firefox
+wpd record examples/cpu-busywork.mjs --bench --browser firefox --cpu-profile --iterations 20
+wpd query cpu latest
+
+# forced-layout thrashing attributed to source on Firefox (needs --cpu-profile)
+wpd record examples/forces-layout.mjs --bench --browser firefox --cpu-profile
+wpd query blame latest --forced
+```
+
 ### The query verbs
 
 | Verb | Shows |
@@ -262,7 +297,7 @@ always plain, so CI and scripts are unaffected.
 | --- | --- | --- |
 | Counts (layout / paint / style / invalidation) | CDP | exact: compare freely |
 | Wall and INP times | `performance.now()`, Chrome-clamped | directional: good for "~2x worse?", not "1.3 ms" |
-| CPU self-time | the V8 sampler's own microsecond clock | real: trustworthy in aggregate (a few % noise) |
+| CPU self-time | the sampler's own clock (V8 microsecond; Gecko ~1 ms floor on Firefox) | real: trustworthy in aggregate (a few % noise) |
 
 To keep timing honest, `record` runs twice by default: once with tracing off (clean timing) and once
 with full instrumentation (the counts and source attribution). `--cpu-profile` adds a third, isolated
