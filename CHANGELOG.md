@@ -1,5 +1,72 @@
 # @jantimon/web-performance-debugger
 
+## 0.5.0
+
+### Minor Changes
+
+- 3f3b88f: **Breaking: rendering counts no longer scale with `--iterations`.** A count now describes the first
+  timed iteration, so `assert --max-layouts 30` means the same thing at `--iterations` 1 and 50. Expect
+  `layoutCount` and friends to drop by roughly your iteration count. `--no-isolate` and
+  `--target firefox` cannot separate counts from wall and now say so in `meta.notes` instead of
+  reporting totals silently.
+
+  **Breaking: bench `wallMs` is now the sum of the timed iterations, not a trace-pass window.** `wallMs`
+  excludes settle and is measured with tracing off, so it will differ from 0.5.x and `--max-wall`
+  thresholds may need re-baselining. `perIteration` and `stats` are unchanged.
+
+  Added: `--iterations` and `--warmup` now work in driver mode, not just `--bench`. Each iteration
+  re-measures every step, so a step reports the median of its samples plus min/max in the new
+  `StepIndexEntry.stats`, which `query index` prints. Step labels must be unique within an _iteration_
+  rather than the whole run, and every iteration must measure the same steps or the run fails.
+
+  Added: `meta.blameSemantic` records whether forced-layout blame names the `flush-site` (Chrome: the
+  geometry read) or the `invalidation-site` (Firefox: the write that dirtied the DOM), which is why
+  blame is not comparable across engines. `query blame` prints the semantic under the forced rows.
+
+  Fixed: numeric options reject non-integers instead of swallowing them. `--iterations abc` became
+  `NaN` and recorded a run reporting zero layouts; `--warmup 1.5` silently became `1`. Both now error,
+  as does any non-integer passed to `--settle`, `--cpu-interval`, `--top` or `--max-*`.
+
+- 7505d85: **Breaking: `--runtime` and `--browser` are replaced by one `--target chrome|firefox|node`.** Rename
+  `--runtime node` to `--target node`, and `--browser firefox` to `--target firefox`.
+
+  **Breaking: `--cpu-profile` is gone and CPU profiling is on by default on every target.** Drop the
+  flag from your commands. `--no-cpu-profile` opts out on chrome only; firefox and node refuse the flag,
+  because on those targets it would leave nothing to measure. Profiling costs no extra pass, but it
+  adds ~10% to reported wall time, so pass `--no-cpu-profile` when you need absolute wall numbers.
+
+  **Breaking: `--target node --bench` is now an error** instead of being silently ignored. `--bench`
+  imports the module inside a page and the node target has no page; `--iterations` already repeats
+  `run()` there.
+
+  `--cpu-interval` now defaults to 200us instead of 50us on every target.
+
+  Fixed: a firefox run without `--cpu-profile` used to report every rendering count as `0`,
+  indistinguishable from a clean run; `--target firefox` now yields counts and blame with no extra flag.
+  The "no sourcemap resolved" warning no longer fires for plain unbundled source, which needs no map,
+  and new `SourceMapDiagnostics.unmappedBundles` / `CpuModel.unmappedFrames` report what a missing map
+  actually costs you. With `--no-trace`, `meta.notes` no longer describes a trace pass that never ran.
+  A trace-window warning told you to raise `--settle-ms`, which is not a flag; the flag is `--settle`.
+  The `record` report now prints artifact paths relative to the current directory when that is shorter;
+  the paths stored inside the artifacts stay absolute, so `latest` still reopens from any directory.
+
+- fa2aca5: **Added:** a driver step now reports where its interaction's time went, split the way Core Web
+  Vitals splits INP: `summary.interaction` and `StepIndexEntry.interaction` carry `inputDelayMs` (main
+  thread busy at input), `processingMs` (your event handlers) and `presentationDelayMs` (rendering the
+  result). These come from the in-page Event Timing observer, so they describe the page, and they are
+  finer-grained than `inpMs`, which the spec rounds to 8ms: a 45ms handler reads `processingMs` 45.1.
+  `query index` gains a `processing ms` column.
+
+  **Changed:** `query index` leads with `inp ms` and `processing ms` and moves `wall ms` last, marked
+  as a bound. A step's wall is measured around the driver, so it includes dispatching the action and
+  waiting for the page to settle: identical work reports 40.5ms driven by `page.click` and 31.9ms by
+  `page.evaluate`, of which the page did 1.1ms. Leading with it invited reading the driver's cost as
+  the page's.
+
+  **Fixed:** `query index <recording>` died with `Cannot read properties of undefined (reading
+'length')`. It now says the file is a recording rather than a step index, and names the
+  `.index.json` to pass instead.
+
 ## 0.4.0
 
 ### Minor Changes
