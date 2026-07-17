@@ -553,6 +553,23 @@ page did, read `interaction` (the in-page Core Web Vitals split of `inpMs`) or t
 { "inpMs": 56, "interaction": { "inputDelayMs": 0.1, "processingMs": 45.1, "presentationDelayMs": 10.8 } }
 ```
 
+**If your step is programmatic, `--bench` is the lane you want.** `interaction` comes from Event
+Timing, which only observes *trusted* input, so a step that calls `page.evaluate(() => app.mount())`
+has no interaction to split — and its wall is dispatch plus the deliberate ~31 ms two-frame settle
+that `measureStep` waits out ([docs/dev/driver-timing.md](docs/dev/driver-timing.md) measures the
+split: 31.9 ms total, ~2 ms of it the action).
+
+`--bench --html host.html` runs the same module *inside* the page instead: `run(ctx)` gets live
+`document`/`window` (so it can call `window.__mount()` directly), and its wall is an in-page
+`performance.now` delta around `run()` alone. The two are not the same window — bench does not wait
+for the paint, so it prices your code rather than the frame it lands in. That is what you want when
+comparing implementations, and it is why the same work reads 1.1 ms in `--bench` against the
+driver's 31.9 ms on the same probe.
+
+For a real interaction you want to keep (a click, a navigation, INP), don't reach for `--bench` —
+read `interaction.processingMs` or the step's counts. Both are drive-independent, so neither carries
+the settle.
+
 ### Consuming the JSON
 
 Every artifact and `--format json|toon` output is typed. Import the types from the package root:

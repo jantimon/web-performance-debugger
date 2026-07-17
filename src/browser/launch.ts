@@ -62,8 +62,15 @@ export async function launchBrowser(opts: {
   browser: BrowserName;
   headless: boolean;
   userDataDir?: string;
-  /** CDP protocol timeout (ms). Raise it when a traced interaction pins the main
-   * thread long enough that a routine evaluate would hit the 180s default. Chrome only. */
+  /**
+   * Timeout (ms) for a single protocol call, on both browsers. Raise it when a traced interaction
+   * pins the main thread long enough that a routine evaluate would hit puppeteer's 180s default,
+   * or when a loaded machine makes Firefox's `session.new` handshake miss it at launch.
+   *
+   * Not CDP-specific, despite puppeteer's own docstring calling it "individual protocol (CDP)
+   * calls": puppeteer threads it into the BiDi connection too, where it governs every send()
+   * including `session.new`, which is a BiDi-only command with no CDP counterpart.
+   */
   protocolTimeoutMs?: number;
   /** Firefox only: start the Gecko profiler and dump it on exit. */
   gecko?: GeckoLaunch;
@@ -87,6 +94,7 @@ async function launchOrThrow(opts: {
       browser: "firefox",
       headless: opts.headless,
       userDataDir: opts.userDataDir,
+      protocolTimeout: opts.protocolTimeoutMs,
       env: opts.gecko ? geckoEnv(process.env, opts.gecko) : process.env,
     });
     const page = await browser.newPage();
