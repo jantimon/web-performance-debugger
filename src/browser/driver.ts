@@ -71,8 +71,8 @@ export interface RawEventTiming {
  * no epsilon; entries reaching the same paint from starts 0.1ms apart still share one duration
  * (measured: a plain click's pointerdown/pointerup/click all read 64).
  *
- * Non-negative by construction: `processingStart` is clamped into the paint (a handler cannot end
- * after the frame it delayed), mirroring web-vitals, which carries the same two guards.
+ * Non-negative by construction: paintTime is clamped to be >= processingStart, and processingEnd is
+ * clamped to be <= paintTime, mirroring the same two guards in web-vitals.
  *
  * Returns null when nothing carries an interactionId. That is not a failure and must not be 0: a
  * programmatic step (`page.evaluate`) fires untrusted events, which Event Timing does not observe at
