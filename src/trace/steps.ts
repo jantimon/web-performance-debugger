@@ -9,6 +9,10 @@ import type { StepWindow } from "./parse.js";
  */
 export interface LabelledWindow {
   label: string;
+  /** which timed iteration produced this window; only iteration 0 is used for counts/blame.
+   * Optional for hand-built windows, where absent is read as 0. A prepare() step is iteration 0
+   * too (it runs once, before the loop), so this filter keeps its window without a phase of its own. */
+  iteration?: number;
   startTs: number;
   endTs: number | null;
 }
@@ -17,11 +21,25 @@ export interface LabelledWindow {
 export interface MergedStep {
   index: number;
   label: string;
+  /**
+   * This step's wall for every timed iteration, in iteration order. Length 1 unless --iterations
+   * repeated the flow. Raw samples, not just the aggregate: a median hides the bimodality that
+   * says "the first iteration was cold", which is usually the finding.
+   */
+  perIteration: number[];
+  /** the median of `perIteration`; identical to the single sample when there is only one */
   wallMs: number;
   inpMs: number | null;
+  /** from the FIRST timed iteration, so counts never scale with --iterations */
   cdpDelta: Record<string, number>;
   startTs: number | null;
   endTs: number | null;
+}
+
+function median(samples: number[]): number {
+  const sorted = [...samples].sort((left, right) => left - right);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 /**
@@ -30,20 +48,74 @@ export interface MergedStep {
  */
 export function duplicateLabelError(label: string): Error {
   return new Error(
-    `Duplicate step label ${JSON.stringify(label)}. Step labels must be unique within a run: ` +
-      `the label is the only key that identifies a step across measurement passes, and two steps ` +
-      `sharing one would join the wrong timing to the wrong trace. Give them distinct labels ` +
-      `(e.g. ${JSON.stringify(`${label}@small`)} and ${JSON.stringify(`${label}@large`)}).`,
+    `Duplicate step label ${JSON.stringify(label)}. Step labels must be unique within an ` +
+      `iteration: the label is the only key that identifies a step across measurement passes, and ` +
+      `two steps sharing one would join the wrong timing to the wrong trace. Give them distinct ` +
+      `labels (e.g. ${JSON.stringify(`${label}@small`)} and ${JSON.stringify(`${label}@large`)}). ` +
+      `Repeating the SAME label across --iterations is fine: those are its samples.`,
   );
 }
 
-/** runDriver is the primary gate (it fails on the offending call); this is the backstop for
- * programmatic callers that hand-build steps and never go through it. */
-function assertUniqueLabels(labelled: { label: string }[]): void {
+/**
+ * runDriver is the primary gate (it fails on the offending call); this is the backstop for
+ * programmatic callers that hand-build steps and never go through it.
+ *
+ * Uniqueness is per ITERATION, not per run: with --iterations, "mount" legitimately appears once
+ * per iteration and those are its samples. Two "mount"s in the SAME iteration are still the
+ * original bug, where one label would join the wrong timing to the wrong trace.
+ */
+function assertUniqueLabels(labelled: { label: string; iteration?: number }[]): void {
   const seen = new Set<string>();
   for (const entry of labelled) {
-    if (seen.has(entry.label)) throw duplicateLabelError(entry.label);
-    seen.add(entry.label);
+    const key = `${entry.iteration ?? 0}\u0000${entry.label}`;
+    if (seen.has(key)) throw duplicateLabelError(entry.label);
+    seen.add(key);
+  }
+}
+
+/**
+ * Every iteration must measure the same steps, or a label's samples describe different amounts of
+ * work while presenting as one distribution. Ten "mount" samples where two iterations skipped it
+ * is a median over 8 labelled 10, which is the kind of plausible-looking wrong number this repo
+ * refuses to emit. Same idempotency requirement the cross-pass merge already has, checked here
+ * because --iterations is what makes it a within-pass concern too.
+ */
+function assertSameLabelsEachIteration(steps: DriverStep[]): void {
+  const byIteration = new Map<number, string[]>();
+  // prepare() runs once, before the loop, so a step it measured legitimately appears in no
+  // iteration but the first. Counting it here would fail every repeated run whose prepare()
+  // measured anything, blaming the user's flow for a rule this check invented.
+  for (const step of steps.filter((entry) => entry.phase !== "prepare")) {
+    const iterationIndex = step.iteration ?? 0;
+    const labels = byIteration.get(iterationIndex) ?? [];
+    labels.push(step.label);
+    byIteration.set(iterationIndex, labels);
+  }
+  const iterations = [...byIteration.keys()].sort((left, right) => left - right);
+  if (iterations.length < 2) return;
+  const first = byIteration.get(iterations[0])!;
+  const expected = [...first].sort();
+  for (const iterationIndex of iterations.slice(1)) {
+    const actual = [...byIteration.get(iterationIndex)!].sort();
+    const differs =
+      actual.length !== expected.length || actual.some((label, at) => label !== expected[at]);
+    if (differs) {
+      const missing = expected.filter((label) => !actual.includes(label));
+      const extra = actual.filter((label) => !expected.includes(label));
+      const detail = [
+        missing.length ? `missing: ${missing.join(", ")}` : null,
+        extra.length ? `unexpected: ${extra.join(", ")}` : null,
+      ]
+        .filter(Boolean)
+        .join("; ");
+      throw new Error(
+        `Iteration ${iterationIndex} measured different steps than iteration ${iterations[0]} (${detail}). ` +
+          `With --iterations, run() must take the same path every time: each label's samples are its ` +
+          `own repetitions, so a step that only runs sometimes would report a median over fewer ` +
+          `samples than it claims. Make the flow idempotent (no conditional or randomised ` +
+          `measureStep calls), or drop --iterations.`,
+      );
+    }
   }
 }
 
@@ -54,12 +126,22 @@ function assertUniqueLabels(labelled: { label: string }[]): void {
  * marks (buffer overflow) but cannot invent them, so an unmatched window is not a step we ran.
  */
 export function labelWindows(steps: DriverStep[], windows: StepWindow[]): LabelledWindow[] {
-  const labelByIndex = new Map(steps.map((step) => [step.index, step.label]));
+  // Keyed by markIndex, not index: with --iterations the same `index` recurs every iteration,
+  // while the mark name is what the trace actually carries and is unique within the pass. Falls
+  // back to `index` for hand-built steps (see assertUniqueLabels): for a single-iteration flow the
+  // two counters are identical, and defaulting keeps such a caller working instead of silently
+  // matching nothing and reporting every step as unwindowed.
+  const stepByMark = new Map(steps.map((step) => [step.markIndex ?? step.index, step]));
   const labelled: LabelledWindow[] = [];
   for (const window of windows) {
-    const label = labelByIndex.get(window.index);
-    if (label == null) continue;
-    labelled.push({ label, startTs: window.startTs, endTs: window.endTs });
+    const step = stepByMark.get(window.index);
+    if (step == null) continue;
+    labelled.push({
+      label: step.label,
+      iteration: step.iteration ?? 0,
+      startTs: window.startTs,
+      endTs: window.endTs,
+    });
   }
   return labelled;
 }
@@ -95,12 +177,23 @@ export function mergeSteps(
   tracedWindows: LabelledWindow[] | undefined,
 ): MergedStep[] {
   assertUniqueLabels(timingSteps);
-  const windowByLabel = new Map((tracedWindows ?? []).map((window) => [window.label, window]));
+  assertSameLabelsEachIteration(timingSteps);
+  // Counts and blame describe the FIRST timed iteration (see MergedStep.cdpDelta), so only its
+  // windows are paired. Later iterations' windows exist under --no-isolate, where the single pass
+  // runs every iteration; they are dropped rather than merged, because a step's events must come
+  // from the same iteration its counters did.
+  // Iteration 0 covers both the first timed iteration and anything prepare() measured (it runs
+  // once, before the loop, so its steps are iteration 0 as well). A prepare step's window is the
+  // only one it has: dropping it would leave the step unwindowed and report its counts as 0,
+  // which reads as "clean" rather than "not measured".
+  const isFirstPass = (entry: { iteration?: number }) => (entry.iteration ?? 0) === 0;
+  const firstIterationWindows = tracedWindows?.filter(isFirstPass);
+  const windowByLabel = new Map((firstIterationWindows ?? []).map((win) => [win.label, win]));
 
   if (tracedWindows != null) {
     assertUniqueLabels(tracedWindows);
-    const timingLabels = timingSteps.map((step) => step.label);
-    const tracedLabels = tracedWindows.map((window) => window.label);
+    const timingLabels = timingSteps.filter(isFirstPass).map((step) => step.label);
+    const tracedLabels = (firstIterationWindows ?? []).map((window) => window.label);
     // Labels are unique on both sides, so set equality is enough: a label-keyed join does not
     // care about order, which is exactly why the label survives across passes and the index does not.
     const diverged =
@@ -117,16 +210,41 @@ export function mergeSteps(
     }
   }
 
-  return timingSteps.map((step): MergedStep => {
-    const window = tracedWindows == null ? undefined : windowByLabel.get(step.label);
-    return {
-      index: step.index,
-      label: step.label,
-      wallMs: step.wallMs,
-      inpMs: step.inpMs,
-      cdpDelta: step.cdpDelta, // clean, from the timing pass
+  // One MergedStep per LABEL, not per measureStep call: with --iterations the same label recurs
+  // every iteration, and those repetitions are the samples that make its median mean anything.
+  const byLabel = new Map<string, DriverStep[]>();
+  for (const step of timingSteps) {
+    const group = byLabel.get(step.label) ?? [];
+    group.push(step);
+    byLabel.set(step.label, group);
+  }
+
+  const merged: MergedStep[] = [];
+  for (const [label, group] of byLabel) {
+    const ordered = [...group].sort(
+      (left, right) => (left.iteration ?? 0) - (right.iteration ?? 0),
+    );
+    const first = ordered[0];
+    const window = tracedWindows == null ? undefined : windowByLabel.get(label);
+    const perIteration = ordered.map((step) => step.wallMs);
+    // INP is the median across iterations, not the worst: the worst would climb with --iterations
+    // (more samples, more chances at a slow one), so raising --iterations to gain confidence would
+    // report a worse INP for unchanged code. That is the same bug the counts had.
+    const inpSamples = ordered
+      .map((step) => step.inpMs)
+      .filter((inpMs): inpMs is number => inpMs != null);
+    merged.push({
+      index: first.index,
+      label,
+      perIteration,
+      wallMs: median(perIteration),
+      inpMs: inpSamples.length ? median(inpSamples) : null,
+      // From the first timed iteration, matching the window above: counts and events must
+      // describe the same iteration, and neither may scale with --iterations.
+      cdpDelta: first.cdpDelta,
       startTs: window?.startTs ?? null,
       endTs: window?.endTs ?? null,
-    };
-  });
+    });
+  }
+  return merged;
 }

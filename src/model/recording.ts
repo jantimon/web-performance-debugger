@@ -103,7 +103,11 @@ export interface RecordingSummary {
   scriptingMs: number;
   totalEvents: number;
 
-  /** bench (in-page iterations) only: per-iteration wall times + their stats */
+  /**
+   * Per-iteration wall times of the measured unit + their stats. Bench: each timed run() call.
+   * A per-step recording: that step's repetitions under --iterations. Empty on the overall
+   * recording of a driver run, whose steps are heterogeneous (see perStep).
+   */
   perIteration: number[];
   stats: BenchStats | null;
   /**
@@ -277,8 +281,11 @@ export interface Digest {
 export interface StepIndexEntry {
   index: number;
   label: string;
+  /** median of this step's samples under --iterations; the single sample when there is one */
   wallMs: number | null;
   inpMs: number | null;
+  /** this step's own min/median/mean/max; null below 2 samples, same contract as elsewhere */
+  stats?: BenchStats | null;
   headline: {
     layoutCount: number;
     forcedLayoutCount: number;

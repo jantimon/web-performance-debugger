@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import path from "node:path";
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import { recordAndReport, type RecordOptions } from "./commands/record.js";
 import { queryBlame, queryDigest, queryEvents, queryGet, queryIndex } from "./commands/query.js";
 import { queryCpu, queryFrame } from "./commands/cpu.js";
@@ -47,7 +47,18 @@ program.hook("preAction", (thisCommand) => {
   setColorEnabled(on);
 });
 
-const toInt = (value: string) => parseInt(value, 10);
+/**
+ * Rejects what parseInt would quietly accept. Bare `parseInt` turns `abc` into NaN and `1.5` into
+ * 1, and every option below then carries that forward silently: NaN failed no range check (every
+ * comparison with NaN is false), so `--iterations abc` reached a `for (i = 0; i < NaN)` loop that
+ * never ran and recorded 0 layouts -- zeros indistinguishable from a clean page. Fail on the
+ * argument instead, once, for every option that parses a whole number.
+ */
+const toInt = (value: string) => {
+  if (!/^-?\d+$/.test(value.trim()))
+    throw new InvalidArgumentError(`'${value}' is not a whole number.`);
+  return parseInt(value, 10);
+};
 
 program
   .command("record")
@@ -67,8 +78,13 @@ program
     "--bench",
     "benchmark mode: import the module inside the page and call run() (no args); repeat with --iterations",
   )
-  .option("--iterations <n>", "bench mode (--bench): timed run() iterations", toInt, 1)
-  .option("--warmup <n>", "bench mode (--bench): untimed warmup iterations", toInt, 0)
+  .option(
+    "--iterations <n>",
+    "timed repetitions of run(); every step is re-measured, so each gets a median instead of one sample. Counts stay per-iteration. For a fresh page each time, page.goto() inside run() outside any measureStep",
+    toInt,
+    1,
+  )
+  .option("--warmup <n>", "untimed repetitions of run() before the timed ones", toInt, 0)
   .option("--out <file>", "output recording path (default recordings/<timestamp>.json)")
   .option("--no-headless", "run with a visible browser window")
   .option(
@@ -158,11 +174,10 @@ program
           "--target node is a CPU-profiling lane; --no-cpu-profile leaves it nothing to measure.",
         );
     }
-    if (!bench && !node && (cmdOpts.iterations > 1 || cmdOpts.warmup > 0)) {
-      console.error(
-        "note: --iterations/--warmup only apply in --bench mode; ignoring them for the default driver run.",
-      );
-    }
+    // toInt already rejected non-numbers, so these are range checks only. 0 iterations would run
+    // the flow zero times and report a page's worth of zeros.
+    if (cmdOpts.iterations < 1) program.error("--iterations must be at least 1");
+    if (cmdOpts.warmup < 0) program.error("--warmup cannot be negative");
     const opts: RecordOptions = {
       module,
       fn: cmdOpts.fn,

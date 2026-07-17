@@ -94,17 +94,37 @@ export function printSummary(rec: Recording): void {
   }
 
   // Steps are heterogeneous, so this is a labelled list, not one stats block or a sparkline:
-  // there is no trend across "mount" and "inp". A driver flow runs once per pass, so each step
-  // holds exactly one sample; when a step can be repeated, this grows a stats view.
+  // there is no trend across "mount" and "inp". Each step aggregates only against itself.
   // Optional chaining: recordings written before perStep existed have no such field.
   if (summary.perStep?.length) {
-    console.log("\nPer-step wall time (coarse — single sample per step)\n");
-    console.log(
-      table(
-        ["step", "wall ms"],
-        summary.perStep.map((step) => [step.label, num(step.perIteration[0], 3)]),
-      ),
-    );
+    const repeated = summary.perStep.some((step) => step.perIteration.length > 1);
+    if (repeated) {
+      console.log(
+        "\nPer-step wall time (median of --iterations samples; performance.now is coarse)\n",
+      );
+      console.log(
+        table(
+          ["step", "median ms", "min", "max", "samples"],
+          summary.perStep.map((step) => [
+            step.label,
+            num(step.stats?.medianMs ?? step.perIteration[0], 3),
+            num(step.stats?.minMs ?? step.perIteration[0], 3),
+            num(step.stats?.maxMs ?? step.perIteration[0], 3),
+            step.perIteration.length,
+          ]),
+        ),
+      );
+    } else {
+      // Name the remedy, not just the limit: one sample of a clamped clock cannot separate a
+      // regression from noise, and --iterations is the whole answer to that.
+      console.log("\nPer-step wall time (single sample per step; --iterations N for a median)\n");
+      console.log(
+        table(
+          ["step", "wall ms"],
+          summary.perStep.map((step) => [step.label, num(step.perIteration[0], 3)]),
+        ),
+      );
+    }
   }
 
   console.log(

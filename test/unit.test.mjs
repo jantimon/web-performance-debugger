@@ -26,7 +26,7 @@ import { labelWindows, mergeSteps } from "../dist/trace/steps.js";
 import { diffCmd } from "../dist/commands/diff.js";
 import { assertCmd } from "../dist/commands/assert.js";
 import { countProvenance } from "../dist/commands/summaryView.js";
-import { blameSemanticFor, noteBenchCountScope } from "../dist/commands/record.js";
+import { blameSemanticFor, noteCountScope } from "../dist/commands/record.js";
 import { capsFor } from "../dist/browser/backend.js";
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
@@ -470,10 +470,106 @@ test("labelWindows re-keys a pass's own windows from index to label", () => {
     { index: 2, startTs: 500, endTs: null },
     { index: 9, startTs: 900, endTs: 999 },
   ];
+  // iteration defaults to 0 for hand-built steps: a flow that ran once is iteration 0 by
+  // definition, and the merge reads absent as 0 rather than matching nothing.
   assert.deepEqual(labelWindows(steps, windows), [
-    { label: "mount", startTs: 100, endTs: 200 },
-    { label: "inp", startTs: 500, endTs: null },
+    { label: "mount", iteration: 0, startTs: 100, endTs: 200 },
+    { label: "inp", iteration: 0, startTs: 500, endTs: null },
   ]);
+});
+
+// --iterations repeats the flow, so the SAME label recurs once per iteration. Those repetitions
+// are the samples that make a median mean anything; keying the trace by `index` would collide
+// them, which is why the marks carry their own counter.
+test("labelWindows keys by markIndex, so a repeated label stays distinct per iteration", () => {
+  const steps = [
+    { index: 0, iteration: 0, markIndex: 0, label: "mount", wallMs: 10, inpMs: null, cdpDelta: {} },
+    { index: 0, iteration: 1, markIndex: 1, label: "mount", wallMs: 12, inpMs: null, cdpDelta: {} },
+  ];
+  const windows = [
+    { index: 0, startTs: 100, endTs: 200 },
+    { index: 1, startTs: 300, endTs: 400 },
+  ];
+  assert.deepEqual(labelWindows(steps, windows), [
+    { label: "mount", iteration: 0, startTs: 100, endTs: 200 },
+    { label: "mount", iteration: 1, startTs: 300, endTs: 400 },
+  ]);
+});
+
+test("mergeSteps: a repeated label becomes one step with its samples, counts from iteration 0", () => {
+  const step = (iteration, markIndex, label, wallMs, layouts) => ({
+    index: label === "mount" ? 0 : 1,
+    iteration,
+    markIndex,
+    label,
+    wallMs,
+    inpMs: null,
+    cdpDelta: { LayoutCount: layouts },
+  });
+  const timing = [
+    step(0, 0, "mount", 40, 7),
+    step(0, 1, "inp", 5, 2),
+    // later iterations are warm: faster, and (crucially) their counts must be ignored, not summed
+    step(1, 2, "mount", 30, 7),
+    step(1, 3, "inp", 9, 2),
+    step(2, 4, "mount", 32, 7),
+    step(2, 5, "inp", 7, 2),
+  ];
+  // The trace pass runs ONE iteration, so it contributes one window per label.
+  const traced = [
+    { label: "mount", iteration: 0, startTs: 100, endTs: 200 },
+    { label: "inp", iteration: 0, startTs: 300, endTs: 400 },
+  ];
+  const merged = mergeSteps(timing, traced);
+
+  assert.equal(merged.length, 2, "one merged step per label, not per measureStep call");
+  const mount = merged.find((entry) => entry.label === "mount");
+  assert.deepEqual(mount.perIteration, [40, 30, 32], "samples in iteration order, all kept");
+  assert.equal(mount.wallMs, 32, "headline is the median (32), not the cold first sample (40)");
+  assert.deepEqual(mount.cdpDelta, { LayoutCount: 7 }, "counts come from one iteration, not 21");
+  assert.equal(mount.startTs, 100, "window from the trace pass's single iteration");
+  assert.equal(merged.find((entry) => entry.label === "inp").wallMs, 7);
+});
+
+// The mirror of the counts rule, on the INP axis: taking the worst across iterations would make
+// INP climb with --iterations, so raising it to gain confidence would report a regression that
+// did not happen.
+test("mergeSteps: per-step INP is the median across iterations, not the worst", () => {
+  const step = (iteration, markIndex, inpMs) => ({
+    index: 0,
+    iteration,
+    markIndex,
+    label: "open menu",
+    wallMs: 10,
+    inpMs,
+    cdpDelta: {},
+  });
+  const merged = mergeSteps([step(0, 0, 100), step(1, 1, 40), step(2, 2, 48)], undefined);
+  assert.equal(merged[0].inpMs, 48, "median of 40/48/100, not the 100ms cold outlier");
+
+  // A step with no interaction stays null rather than becoming 0: they mean different things.
+  const noneMeasured = mergeSteps([step(0, 0, null), step(1, 1, null)], undefined);
+  assert.equal(noneMeasured[0].inpMs, null);
+});
+
+// A flow that measures different steps per iteration produces samples describing different work
+// while presenting as one distribution.
+test("mergeSteps throws when an iteration measured different steps", () => {
+  const step = (iteration, markIndex, label) => ({
+    index: 0,
+    iteration,
+    markIndex,
+    label,
+    wallMs: 10,
+    inpMs: null,
+    cdpDelta: {},
+  });
+  const timing = [
+    step(0, 0, "mount"),
+    step(0, 1, "inp"),
+    step(1, 2, "mount"), // "inp" skipped: a median over 1 sample would be labelled 2
+  ];
+  assert.throws(() => mergeSteps(timing, undefined), /Iteration 1 measured different steps.*missing: inp/s);
 });
 
 test("mergeSteps pairs by label, not by position", () => {
@@ -812,7 +908,7 @@ test("blameSemanticFor: names the engine's question, and stays absent when there
   assert.equal(blameSemanticFor([gecko, trace]), "invalidation-site", "gecko takes precedence");
 });
 
-test("noteBenchCountScope: describes the pass plan that ran, per lane", () => {
+test("noteCountScope: describes the pass plan that ran, per lane", () => {
   const timing = { name: "timing", categories: null, cpu: true, bracketFirstIteration: true };
   const tracePinned = { name: "trace", categories: ["devtools.timeline"], iterations: 1 };
   const traceAll = { name: "trace", categories: ["devtools.timeline"] };
@@ -822,30 +918,34 @@ test("noteBenchCountScope: describes the pass plan that ran, per lane", () => {
   const chrome = capsFor("chrome");
   const firefoxCaps = capsFor("firefox");
 
-  // Nothing to say: one iteration cannot scale, and driver steps carry their own brackets.
-  assert.equal(noteBenchCountScope([timing, tracePinned], bench(1), chrome), null);
-  assert.equal(
-    noteBenchCountScope([timing, tracePinned], { driver: true, iterations: 20 }, chrome),
-    null,
-  );
+  // Nothing to say at one iteration: there is nothing to scale.
+  assert.equal(noteCountScope([timing, tracePinned], bench(1), chrome), null);
+  assert.equal(noteCountScope([timing, tracePinned], { driver: true, iterations: 1 }, chrome), null);
 
-  const isolated = noteBenchCountScope([timing, tracePinned], bench(20), chrome);
+  // --iterations repeats run() in BOTH modes, so the scope question is real in both. Driver used
+  // to be exempted here, which left `record --iterations 4 --no-isolate` reporting overall counts
+  // totalled across 4 with nothing saying so (measured: layoutCount 28 vs 7 per iteration).
+  const driverTotals = noteCountScope([traceAll], { driver: true, iterations: 4 }, chrome);
+  assert.match(driverTotals, /TOTALS across all 4/);
+  assert.match(driverTotals, /Per-step counts are unaffected/, "per-step counts are still per-iteration");
+
+  const isolated = noteCountScope([timing, tracePinned], bench(20), chrome);
   assert.match(isolated, /FIRST timed iteration/, "default lane scopes counts to one iteration");
   assert.match(isolated, /trace pass runs a single iteration/);
 
   // --no-trace: no trace pass exists, so the note must not claim one runs a single iteration.
-  const noTrace = noteBenchCountScope([timing], bench(20), chrome);
+  const noTrace = noteCountScope([timing], bench(20), chrome);
   assert.match(noTrace, /FIRST timed iteration/);
   assert.doesNotMatch(noTrace, /trace pass/, "must not describe a pass that never ran");
 
   // --no-isolate: the only pass carries wall AND counts, so counts really are totals. Claiming
   // per-iteration here would be the mixed-window bug (layout from 1 iteration, forced from N).
-  const noIsolate = noteBenchCountScope([traceAll], bench(20), chrome);
+  const noIsolate = noteCountScope([traceAll], bench(20), chrome);
   assert.match(noIsolate, /TOTALS across all 20/);
   assert.match(noIsolate, /--no-isolate/);
 
   // Firefox: the gecko pass is the lane's CPU sampler, so it runs every iteration and totals.
-  const firefox = noteBenchCountScope([timing, gecko], bench(20), firefoxCaps);
+  const firefox = noteCountScope([timing, gecko], bench(20), firefoxCaps);
   assert.match(firefox, /TOTALS across all 20/);
   assert.match(firefox, /CPU sampler/);
 
@@ -854,8 +954,52 @@ test("noteBenchCountScope: describes the pass plan that ran, per lane", () => {
   // counters, so promising a CDP bracket here would describe a split that never ran -- next to a
   // sibling note saying every count on this lane is 0.
   assert.equal(
-    noteBenchCountScope([timing], bench(20), firefoxCaps),
+    noteCountScope([timing], bench(20), firefoxCaps),
     null,
     "no CDP counters means no bracket to describe",
   );
+});
+
+// prepare() runs ONCE, before the timed loop, so a step it measures has one sample no matter what
+// --iterations says. Counting it as part of iteration 0 made the idempotency check see an extra
+// label there and fail every repeated run whose prepare() measured anything -- telling the user
+// their flow was not idempotent when it was, and that the fix was to drop --iterations.
+test("mergeSteps: a step measured in prepare() is single-sample, not an idempotency violation", () => {
+  const prepared = {
+    index: 0,
+    iteration: 0,
+    phase: "prepare",
+    markIndex: 0,
+    label: "boot",
+    wallMs: 300,
+    inpMs: null,
+    cdpDelta: { LayoutCount: 9 },
+  };
+  const timed = (iteration, markIndex, wallMs) => ({
+    index: 1,
+    iteration,
+    phase: "timed",
+    markIndex,
+    label: "click",
+    wallMs,
+    inpMs: null,
+    cdpDelta: { LayoutCount: 2 },
+  });
+  const steps = [prepared, timed(0, 1, 50), timed(1, 2, 40), timed(2, 3, 42)];
+
+  const merged = mergeSteps(steps, undefined);
+  assert.equal(merged.length, 2);
+  const boot = merged.find((step) => step.label === "boot");
+  assert.deepEqual(boot.perIteration, [300], "prepare ran once, so it has one sample");
+  assert.equal(boot.wallMs, 300);
+  assert.equal(merged.find((step) => step.label === "click").perIteration.length, 3);
+
+  // Its window must still be paired: dropping it would report the step's counts as 0, which reads
+  // as "clean" rather than "not measured".
+  const windows = [
+    { label: "boot", iteration: 0, startTs: 10, endTs: 20 },
+    { label: "click", iteration: 0, startTs: 30, endTs: 40 },
+  ];
+  const withWindows = mergeSteps(steps, windows);
+  assert.equal(withWindows.find((step) => step.label === "boot").startTs, 10);
 });

@@ -118,9 +118,8 @@ interface PassSpec {
 }
 
 /**
- * Says what a bench run's counts are scoped to, but only when --iterations makes the question
- * real (at 1 there is nothing to scale) and only in bench mode (driver steps carry their own
- * per-step brackets).
+ * Says what a run's counts are scoped to, when --iterations makes the question real (at 1 there is
+ * nothing to scale). Applies to both modes: --iterations repeats run() in either.
  *
  * Counts answer "how much work does one iteration cause"; wall answers "how long does it take",
  * which needs repetition. Summing counts over --iterations conflates the two and silently rescales
@@ -128,12 +127,12 @@ interface PassSpec {
  * page (measured: layoutCount 22 -> 102 -> 202 at 1/5/10). The pass plan now keeps them apart, and
  * the lanes that cannot say so here.
  */
-export function noteBenchCountScope(
+export function noteCountScope(
   specs: PassSpec[],
   opts: RecordOptions,
   caps: BrowserCaps,
 ): string | null {
-  if (opts.driver || opts.iterations <= 1) return null;
+  if (opts.iterations <= 1) return null;
   const tracePass = specs.find((spec) => spec.name === "trace");
   const geckoPass = specs.find((spec) => spec.name === "gecko");
   // --no-isolate: one pass carries wall AND counts, so it must run every iteration and its counts
@@ -144,7 +143,14 @@ export function noteBenchCountScope(
     const why = geckoPass
       ? "the Gecko pass is also this lane's CPU sampler, so it runs every iteration"
       : "--no-isolate collapses to one pass, which must run every iteration for the wall samples";
-    return `Counts (layout/style/paint/forced) are TOTALS across all ${opts.iterations} iterations here, not one iteration's work: ${why}. A threshold like 'assert --max-layouts' therefore scales with --iterations. Use --iterations 1 to assert on counts.`;
+    // Driver per-step counts are unaffected: each measureStep brackets its own counters and
+    // mergeSteps keeps the first iteration's, so only THIS recording's overall counts total up.
+    // Saying "counts are totals" flatly would send a reader to re-derive per-step numbers that
+    // are already right.
+    const perStep = opts.driver
+      ? " Per-step counts are unaffected: they describe the first timed iteration."
+      : "";
+    return `Counts (layout/style/paint/forced) on this recording are TOTALS across all ${opts.iterations} iterations, not one iteration's work: ${why}. A threshold like 'assert --max-layouts' therefore scales with --iterations. Use --iterations 1 to assert on counts.${perStep}`;
   }
   // Name only the mechanisms that actually ran: under --no-trace there is no trace pass, and
   // claiming one "runs a single iteration" would describe a pass that does not exist. The caps
@@ -429,8 +435,16 @@ async function runPass(
       // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
       // just won't resolve through makeSourceResolver (which keys off the served-url prefix),
       // so its own frames stay unresolved; the page's frames are unaffected.
-      const driverResult = await runDriver(page, client, absModule, opts.fn);
+      const driverResult = await runDriver(page, client, absModule, opts.fn, {
+        iterations: spec.iterations ?? opts.iterations,
+        warmup: opts.warmup,
+      });
       cdpBefore = driverResult.cdpBefore;
+      // Same contract as the bench split: the overall counts describe the first timed iteration,
+      // so they mean the same at any --iterations. runDriver closes the bracket itself (its
+      // counter reads already happen in Node, so unlike bench there is nothing to split).
+      if (spec.bracketFirstIteration && caps.cdpCounts)
+        countsAfter = driverResult.cdpAfterFirstIteration;
       driverSteps = driverResult.steps;
       lifecycle = driverResult.lifecycle;
       perIteration = driverResult.steps.map((step) => step.wallMs);
@@ -755,8 +769,8 @@ export async function record(opts: RecordOptions): Promise<{
       );
     }
   }
-  const benchCountScope = noteBenchCountScope(specs, opts, capsFor(browserName));
-  if (benchCountScope) notes.push(benchCountScope);
+  const countScope = noteCountScope(specs, opts, capsFor(browserName));
+  if (countScope) notes.push(countScope);
   if (opts.cpuThrottle || opts.network) {
     notes.push(
       `Artificial slowdown applied (${[opts.cpuThrottle ? `cpu ${opts.cpuThrottle}x` : null, opts.network].filter(Boolean).join(", ")}); timings are not comparable to an unthrottled run.`,
@@ -838,15 +852,21 @@ export async function record(opts: RecordOptions): Promise<{
       : browserName === "firefox"
         ? wallFromMarks()
         : null;
-  // overall INP = worst interaction across driver steps
-  const overallInp =
-    timing.driverSteps && timing.driverSteps.length
-      ? timing.driverSteps.reduce<number | null>(
-          (worst, step) =>
-            step.inpMs != null && (worst == null || step.inpMs > worst) ? step.inpMs : worst,
-          null,
-        )
-      : null;
+  // Overall INP = the worst STEP, where each step is its own median across iterations.
+  //
+  // Read off mergedSteps, not timing.driverSteps: the latter holds one entry per measureStep call
+  // per iteration, so maxing it takes the worst sample of the worst step, and INP would climb with
+  // --iterations on unchanged code (more samples, more chances at a slow one). Measured before this
+  // was fixed: summary.inpMs 56 while every step's median was 24, i.e. the recording contradicting
+  // its own step index, and `assert --max-inp` getting stricter the more confidence you asked for.
+  // "Worst interaction" still means worst interaction; it just no longer means worst outlier.
+  const overallInp = mergedSteps?.length
+    ? mergedSteps.reduce<number | null>(
+        (worst, step) =>
+          step.inpMs != null && (worst == null || step.inpMs > worst) ? step.inpMs : worst,
+        null,
+      )
+    : null;
 
   const recording: Recording = {
     meta,
@@ -864,12 +884,12 @@ export async function record(opts: RecordOptions): Promise<{
       // repetitions of the SAME work. Driver steps are heterogeneous ("mount" vs "inp"), so
       // their walls go to perStep instead and are never summarized into a median.
       perIteration: opts.driver ? [] : timing.perIteration,
-      // From the timing pass (tracing off), same as perIteration: clean, uninstrumented walls.
-      // One sample per step: a driver flow runs once per pass. See StepTiming for why it is an
-      // array. buildSummary derives the stats; never pass a statistic in from here.
+      // From the timing pass (tracing off): clean, uninstrumented walls. One sample per step per
+      // --iterations, grouped by label in mergeSteps, which is the only place that knows a
+      // repeated label is a repetition rather than a collision. buildSummary derives the stats;
+      // never pass a statistic in from here.
       perStep:
-        timing.driverSteps?.map((step) => ({ label: step.label, perIteration: [step.wallMs] })) ??
-        [],
+        mergedSteps?.map((step) => ({ label: step.label, perIteration: step.perIteration })) ?? [],
       // wallMs is the measured run window for both modes (was null for in-page, which
       // silently disabled `assert --max-wall`).
       wallMs: runWallMs,
@@ -974,6 +994,9 @@ export async function record(opts: RecordOptions): Promise<{
           detailEvents: evs,
           detailWindowStart: step.startTs,
           cdpDelta: step.cdpDelta,
+          // This step's own repetitions, so a per-step recording carries the same samples+stats
+          // contract as a bench one: `wallMs` is their median, `stats` their spread.
+          perIteration: step.perIteration,
         }),
       };
       const stepBase = `${base}.step-${step.index}-${slug(step.label)}`;
@@ -990,6 +1013,7 @@ export async function record(opts: RecordOptions): Promise<{
         index: step.index,
         label: step.label,
         wallMs: step.wallMs,
+        stats: summary.stats,
         inpMs: step.inpMs,
         headline: {
           layoutCount: summary.layoutCount,

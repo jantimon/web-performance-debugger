@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>wpd driver probe</title>
+<!--
+  Host page for the driver e2e. Committed rather than generated into a temp dir because --html is
+  served by a static server rooted at the cwd, so the file has to live under the repo. Deliberately
+  dependency-free: the driver e2e used to point at examples/react-counter/dist, which is git-ignored
+  and never built in CI, so the test skipped itself and reported green.
+
+  Clicking #inc appends rows and reads geometry while layout is dirty, which forces synchronous
+  layout. That gives each measured step real, countable rendering work instead of an empty window.
+-->
+<button id="inc">add rows</button>
+<ul id="list"></ul>
+<script>
+  document.getElementById("inc").addEventListener("click", () => {
+    const list = document.getElementById("list");
+    for (let index = 0; index < 40; index++) {
+      const item = document.createElement("li");
+      item.textContent = `row ${index}`;
+      list.appendChild(item);
+      // Reading offsetWidth with a freshly appended sibling forces a synchronous layout.
+      item.style.width = item.offsetWidth > 0 ? "101px" : "100px";
+    }
+    list.textContent = "";
+  });
+</script>
