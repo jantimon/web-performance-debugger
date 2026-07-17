@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { launchBrowser, GECKO_MIN_INTERVAL_MS } from "../browser/launch.js";
-import { capsFor, type BrowserName } from "../browser/backend.js";
+import { capsFor, type BrowserCaps, type BrowserName } from "../browser/backend.js";
 import { startStaticServer, type StaticServer } from "../browser/server.js";
 import { parseGecko, geckoToRawCpuProfile, geckoToRenderingEvents } from "../profile/gecko.js";
 import { runHarness } from "../browser/harness.js";
@@ -37,6 +37,7 @@ import { serialize, extFor, type Format } from "../output/format.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 import type {
+  BlameSemantic,
   CpuModel,
   NormalizedEvent,
   Recording,
@@ -98,6 +99,83 @@ interface PassSpec {
   /** Firefox: run under the Gecko profiler; the shutdown dump yields CPU samples AND
    * layout/style markers (blame) from this one pass. */
   gecko?: boolean;
+  /**
+   * bench: timed iterations this pass runs, overriding --iterations. The trace pass runs 1
+   * because its numbers are counts, which describe one iteration's work and must not scale with
+   * --iterations; the timing pass runs them all because its numbers are wall samples, which only
+   * mean something in bulk. Unset => --iterations.
+   */
+  iterations?: number;
+  /**
+   * bench: close the CDP counter bracket after the first timed iteration instead of around the
+   * whole loop. Only for a pass that runs every iteration for wall yet whose counters should
+   * describe one (the timing pass). A pass that is ALSO the only count source must not set this:
+   * its trace-derived counts cover every iteration, so per-iteration CDP counts beside them put
+   * two different windows in one summary (measured under --no-isolate: layoutCount 22 from one
+   * iteration next to forcedLayoutCount 323 from eight).
+   */
+  bracketFirstIteration?: boolean;
+}
+
+/**
+ * Says what a run's counts are scoped to, when --iterations makes the question real (at 1 there is
+ * nothing to scale). Applies to both modes: --iterations repeats run() in either.
+ *
+ * Counts answer "how much work does one iteration cause"; wall answers "how long does it take",
+ * which needs repetition. Summing counts over --iterations conflates the two and silently rescales
+ * every threshold: `assert --max-layouts 30` passed at --iterations 1 and failed at 10 on the same
+ * page (measured: layoutCount 22 -> 102 -> 202 at 1/5/10). The pass plan now keeps them apart, and
+ * the lanes that cannot say so here.
+ */
+export function noteCountScope(
+  specs: PassSpec[],
+  opts: RecordOptions,
+  caps: BrowserCaps,
+): string | null {
+  if (opts.iterations <= 1) return null;
+  const tracePass = specs.find((spec) => spec.name === "trace");
+  const geckoPass = specs.find((spec) => spec.name === "gecko");
+  // --no-isolate: one pass carries wall AND counts, so it must run every iteration and its counts
+  // are totals. Gecko: that pass is also the lane's only CPU sampler, and pinning it to one
+  // iteration would starve the profile of samples, which costs more than the counts gain.
+  const totalling = (tracePass && tracePass.iterations !== 1) || geckoPass;
+  if (totalling) {
+    const why = geckoPass
+      ? "the Gecko pass is also this lane's CPU sampler, so it runs every iteration"
+      : "--no-isolate collapses to one pass, which must run every iteration for the wall samples";
+    // Driver per-step counts are unaffected: each measureStep brackets its own counters and
+    // mergeSteps keeps the first iteration's, so only THIS recording's overall counts total up.
+    // Saying "counts are totals" flatly would send a reader to re-derive per-step numbers that
+    // are already right.
+    const perStep = opts.driver
+      ? " Per-step counts are unaffected: they describe the first timed iteration."
+      : "";
+    return `Counts (layout/style/paint/forced) on this recording are TOTALS across all ${opts.iterations} iterations, not one iteration's work: ${why}. A threshold like 'assert --max-layouts' therefore scales with --iterations. Use --iterations 1 to assert on counts.${perStep}`;
+  }
+  // Name only the mechanisms that actually ran: under --no-trace there is no trace pass, and
+  // claiming one "runs a single iteration" would describe a pass that does not exist. The caps
+  // gate is not redundant with bracketFirstIteration: runPass also requires cdpCounts to split,
+  // so reading the spec alone would promise a CDP bracket on Firefox, where there are no CDP
+  // counters and the note two lines up says every count is 0.
+  const how: string[] = [];
+  if (caps.cdpCounts && specs.some((spec) => spec.bracketFirstIteration))
+    how.push("the CDP counters bracket the first iteration");
+  if (tracePass?.iterations === 1) how.push("the trace pass runs a single iteration");
+  if (!how.length) return null;
+  return `Counts describe the FIRST timed iteration, not all ${opts.iterations} (${how.join("; ")}), so they mean the same at any --iterations. Wall/stats still come from all ${opts.iterations}.`;
+}
+
+/**
+ * What this run's blame lines name, read off the pass plan that actually ran rather than the
+ * browser name: the gecko pass is what produces Gecko's invalidation-site stacks, and the trace
+ * pass is what produces Blink's flush-site ones, so a plan without either produces no blame and
+ * gets no semantic (--target node, or Chrome with --no-trace). Deriving this from `opts` instead
+ * would re-make the bug #12 fixed in the notes, where a flag implied a pass that never ran.
+ */
+export function blameSemanticFor(specs: PassSpec[]): BlameSemantic | undefined {
+  if (specs.some((spec) => spec.gecko)) return "invalidation-site";
+  if (specs.some((spec) => spec.categories)) return "flush-site";
+  return undefined;
 }
 
 interface PassResult {
@@ -342,6 +420,10 @@ async function runPass(
     // never inflates the measured counts.
     let runCleanup: (() => unknown | Promise<unknown>) | undefined;
     let cdpBefore: Record<string, number>;
+    // Set only when the timed phase was split: the counter snapshot taken right after the first
+    // timed iteration, which becomes this pass's authoritative `after` so the counts describe one
+    // iteration instead of --iterations of them.
+    let countsAfter: Record<string, number> | undefined;
     let cpuProfile: RawCpuProfile | undefined;
     const cpuIntervalUs = opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
 
@@ -353,19 +435,28 @@ async function runPass(
       // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
       // just won't resolve through makeSourceResolver (which keys off the served-url prefix),
       // so its own frames stay unresolved; the page's frames are unaffected.
-      const driverResult = await runDriver(page, client, absModule, opts.fn);
+      const driverResult = await runDriver(page, client, absModule, opts.fn, {
+        iterations: spec.iterations ?? opts.iterations,
+        warmup: opts.warmup,
+      });
       cdpBefore = driverResult.cdpBefore;
+      // Same contract as the bench split: the overall counts describe the first timed iteration,
+      // so they mean the same at any --iterations. runDriver closes the bracket itself (its
+      // counter reads already happen in Node, so unlike bench there is nothing to split).
+      if (spec.bracketFirstIteration && caps.cdpCounts)
+        countsAfter = driverResult.cdpAfterFirstIteration;
       driverSteps = driverResult.steps;
       lifecycle = driverResult.lifecycle;
       perIteration = driverResult.steps.map((step) => step.wallMs);
       runCleanup = driverResult.cleanup;
     } else {
+      const passIterations = spec.iterations ?? opts.iterations;
       const harnessArg = {
         // Bench mode only: the module is import()ed INSIDE the page, so it must be servable.
         // Driver mode imports it in Node (see runDriver above) and needs no url.
         moduleUrl: toServedUrl(server, root, absModule),
         fnName: opts.fn,
-        iterations: opts.iterations,
+        iterations: passIterations,
         warmup: opts.warmup,
       };
       // prepare() + warmup run BEFORE the CDP snapshot / tracing so their layout/style
@@ -376,8 +467,33 @@ async function runPass(
       cdpBefore = await snapshot();
       if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
       if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
-      const timed = await page.evaluate(runHarness, { ...harnessArg, phase: "timed" as const });
-      perIteration = timed.perIteration;
+      // Counts must mean the same thing at --iterations 1 and 50, so the CDP counters bracket the
+      // FIRST timed iteration alone rather than the whole loop. The counters are read from Node,
+      // so the only way to close that bracket mid-loop is to return from page.evaluate: hence the
+      // split. Skipped at one iteration (nothing to split), on lanes without CDP counters
+      // (Firefox), and on passes that are their own count source (see bracketFirstIteration).
+      const splitCounts = !!spec.bracketFirstIteration && passIterations > 1 && caps.cdpCounts;
+      const first = await page.evaluate(runHarness, {
+        ...harnessArg,
+        phase: "timed" as const,
+        iterations: splitCounts ? 1 : passIterations,
+        offset: 0,
+        runEnd: !splitCounts,
+      });
+      perIteration = first.perIteration;
+      if (splitCounts) {
+        // Closes the counts bracket. The gap costs one CDP round trip between iteration 0 and 1;
+        // per-iteration wall is measured in-page, so the samples themselves are unaffected.
+        countsAfter = await snapshot();
+        const rest = await page.evaluate(runHarness, {
+          ...harnessArg,
+          phase: "timed" as const,
+          iterations: passIterations - 1,
+          offset: 1,
+          runStart: false,
+        });
+        perIteration = perIteration.concat(rest.perIteration);
+      }
       runCleanup = () => page.evaluate(runHarness, { ...harnessArg, phase: "cleanup" as const });
     }
 
@@ -405,7 +521,10 @@ async function runPass(
       if (opts.driver && driverSteps) stepWindows = labelWindows(driverSteps, findSteps(events));
     }
 
-    const cdpAfter = await snapshot();
+    // A split phase already closed the bracket after iteration 0; reuse it rather than snapshot
+    // again, so `delta === after - before` holds and the metrics block describes one coherent
+    // window. Unsplit, this is the post-settle snapshot as before.
+    const cdpAfter = countsAfter ?? (await snapshot());
 
     // Teardown now; tracing is stopped and both counters are captured, so cleanup work
     // stays out of the measured window (the after-screenshot still shows post-cleanup).
@@ -520,7 +639,12 @@ export async function record(opts: RecordOptions): Promise<{
   // that forced it -- landing on the same frame as the real forced-layout cost, so the two are
   // indistinguishable after the fact. Riding the timing pass costs ~10% on wall (already the
   // directional signal), which --no-cpu-profile buys back. Measurements: docs/dev/cpu-profiling.md.
-  const timingSpec: PassSpec = { name: "timing", categories: null, cpu: opts.cpuProfile };
+  const timingSpec: PassSpec = {
+    name: "timing",
+    categories: null,
+    cpu: opts.cpuProfile,
+    bracketFirstIteration: true,
+  };
   // --no-trace skips the heavy trace pass entirely: counts come from CDP (timing
   // pass) and optionally a CPU profile, with no paint/forced/invalidation detail.
   // The fallback for pages whose invalidationTracking pass pins the main thread.
@@ -528,13 +652,19 @@ export async function record(opts: RecordOptions): Promise<{
   if (browserName === "firefox") {
     // Firefox has no CDP trace/counters: a clean timing pass, plus one
     // Gecko-profiler pass that yields CPU samples AND layout/style markers (blame) together.
+    // The gecko pass keeps --iterations (unlike Chrome's trace pass, pinned to 1 below): it is
+    // also the only CPU sampler on this lane, and one iteration would starve it of samples.
+    // Counts therefore still scale with --iterations here; noteBenchCountScope says so.
     specs = [timingSpec];
     if (opts.cpuProfile) specs.push({ name: "gecko", categories: null, gecko: true });
   } else {
     // No cpu pass: the sampler rides timingSpec (see the note there).
+    // The trace pass is pinned to one iteration ONLY when a timing pass exists to carry the wall
+    // samples. Under --no-isolate it is the only pass, so it has to run them all, and its counts
+    // scale with --iterations again (disclosed, not silently wrong).
     specs = opts.isolate
       ? wantTrace
-        ? [timingSpec, traceSpec]
+        ? [timingSpec, { ...traceSpec, iterations: 1 }]
         : [timingSpec]
       : wantTrace
         ? [traceSpec]
@@ -639,6 +769,8 @@ export async function record(opts: RecordOptions): Promise<{
       );
     }
   }
+  const countScope = noteCountScope(specs, opts, capsFor(browserName));
+  if (countScope) notes.push(countScope);
   if (opts.cpuThrottle || opts.network) {
     notes.push(
       `Artificial slowdown applied (${[opts.cpuThrottle ? `cpu ${opts.cpuThrottle}x` : null, opts.network].filter(Boolean).join(", ")}); timings are not comparable to an unthrottled run.`,
@@ -684,6 +816,7 @@ export async function record(opts: RecordOptions): Promise<{
     driver: opts.driver,
     // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome".
     browser: browserName === "firefox" ? "firefox" : undefined,
+    blameSemantic: blameSemanticFor(specs),
     throttle,
     screenshots,
   };
@@ -695,21 +828,45 @@ export async function record(opts: RecordOptions): Promise<{
     const end = timing.marks.find((entry) => entry.name === "wpd:run:end")?.startTime;
     return start != null && end != null ? end - start : null;
   };
-  const runWallMs =
-    detail.windowStart != null && detail.windowEnd != null
+  // Bench wall is the time actually spent in run(), summed over every timed iteration.
+  //
+  // It cannot be the detail pass's window any more: that pass runs a SINGLE iteration now (counts
+  // describe one iteration's work), so its window would report one iteration's wall as if it were
+  // all of them -- `assert --max-wall 12` would pass a run it used to fail, which is the bug this
+  // change exists to kill, moved onto the other axis. The wpd:run marks span the whole loop and
+  // would work, but the split puts a CDP round trip inside that window (measured: 16.30 vs 14.10
+  // at 8 iterations, so ~2.1ms of the tool's own overhead billed to the page).
+  //
+  // Summing the samples avoids both: they are measured in-page around run() alone, on the pass
+  // with tracing off, and they are the exact samples `stats` describes -- so the headline and the
+  // distribution can no longer disagree. Driver mode keeps the window: its steps are heterogeneous
+  // and its wall means "how long the whole flow took", which a sum would not answer.
+  const benchWallMs = (): number | null =>
+    timing.perIteration.length
+      ? timing.perIteration.reduce((total, iterationMs) => total + iterationMs, 0)
+      : null;
+  const runWallMs = !opts.driver
+    ? (benchWallMs() ?? wallFromMarks())
+    : detail.windowStart != null && detail.windowEnd != null
       ? (detail.windowEnd - detail.windowStart) / 1000
       : browserName === "firefox"
         ? wallFromMarks()
         : null;
-  // overall INP = worst interaction across driver steps
-  const overallInp =
-    timing.driverSteps && timing.driverSteps.length
-      ? timing.driverSteps.reduce<number | null>(
-          (worst, step) =>
-            step.inpMs != null && (worst == null || step.inpMs > worst) ? step.inpMs : worst,
-          null,
-        )
-      : null;
+  // Overall INP = the worst STEP, where each step is its own median across iterations.
+  //
+  // Read off mergedSteps, not timing.driverSteps: the latter holds one entry per measureStep call
+  // per iteration, so maxing it takes the worst sample of the worst step, and INP would climb with
+  // --iterations on unchanged code (more samples, more chances at a slow one). Measured before this
+  // was fixed: summary.inpMs 56 while every step's median was 24, i.e. the recording contradicting
+  // its own step index, and `assert --max-inp` getting stricter the more confidence you asked for.
+  // "Worst interaction" still means worst interaction; it just no longer means worst outlier.
+  const overallInp = mergedSteps?.length
+    ? mergedSteps.reduce<number | null>(
+        (worst, step) =>
+          step.inpMs != null && (worst == null || step.inpMs > worst) ? step.inpMs : worst,
+        null,
+      )
+    : null;
 
   const recording: Recording = {
     meta,
@@ -727,12 +884,12 @@ export async function record(opts: RecordOptions): Promise<{
       // repetitions of the SAME work. Driver steps are heterogeneous ("mount" vs "inp"), so
       // their walls go to perStep instead and are never summarized into a median.
       perIteration: opts.driver ? [] : timing.perIteration,
-      // From the timing pass (tracing off), same as perIteration: clean, uninstrumented walls.
-      // One sample per step: a driver flow runs once per pass. See StepTiming for why it is an
-      // array. buildSummary derives the stats; never pass a statistic in from here.
+      // From the timing pass (tracing off): clean, uninstrumented walls. One sample per step per
+      // --iterations, grouped by label in mergeSteps, which is the only place that knows a
+      // repeated label is a repetition rather than a collision. buildSummary derives the stats;
+      // never pass a statistic in from here.
       perStep:
-        timing.driverSteps?.map((step) => ({ label: step.label, perIteration: [step.wallMs] })) ??
-        [],
+        mergedSteps?.map((step) => ({ label: step.label, perIteration: step.perIteration })) ?? [],
       // wallMs is the measured run window for both modes (was null for in-page, which
       // silently disabled `assert --max-wall`).
       wallMs: runWallMs,
@@ -837,6 +994,9 @@ export async function record(opts: RecordOptions): Promise<{
           detailEvents: evs,
           detailWindowStart: step.startTs,
           cdpDelta: step.cdpDelta,
+          // This step's own repetitions, so a per-step recording carries the same samples+stats
+          // contract as a bench one: `wallMs` is their median, `stats` their spread.
+          perIteration: step.perIteration,
         }),
       };
       const stepBase = `${base}.step-${step.index}-${slug(step.label)}`;
@@ -853,6 +1013,7 @@ export async function record(opts: RecordOptions): Promise<{
         index: step.index,
         label: step.label,
         wallMs: step.wallMs,
+        stats: summary.stats,
         inpMs: step.inpMs,
         headline: {
           layoutCount: summary.layoutCount,

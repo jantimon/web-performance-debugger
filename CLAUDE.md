@@ -72,9 +72,15 @@ contracts** — keep them straight:
   browser*; `run()` takes no args and uses live `document`/`window`. Implemented by
   `browser/harness.ts` (a function serialized into `page.evaluate`) + `browser/server.ts` (a
   temp static server — ESM `import()` can't use `file://`, and the blank host page is served
-  same-origin to avoid cross-origin import). The only mode that supports `--iterations`/`--warmup`
-  benchmarking; it measures only `run()` (page load/boot is excluded). The CLI sets the internal
-  `RecordOptions.driver` to `!bench`.
+  same-origin to avoid cross-origin import). It measures only `run()` (page load/boot is
+  excluded). The CLI sets the internal `RecordOptions.driver` to `!bench`.
+
+`--iterations`/`--warmup` repeat `run()` in **both** modes (they were bench-only until 0.6.0, which
+left the mode that measures real interactions with no statistical footing at all). Driver labels are
+unique **within an iteration**, not within the run: the repetitions are a label's samples, so
+`mergeSteps` groups by label and each step reports the median of its own. That is also why
+`DriverStep` carries `markIndex` separately from `index` -- the trace needs a name that is unique
+per pass, while `index` is the step's stable position within an iteration.
 
 Modules/HTML must live under the cwd (the static server is rooted there). `--url` profiles any
 local/remote server; `--html` a local file; neither => blank page.
@@ -91,6 +97,20 @@ The merge prefers CDP counts (authoritative) and trace events for paint/invalida
 instrumentation distorts timing, hence the split. `--no-isolate` collapses to one pass.
 `meta.passes` records what ran. In driver mode each pass *replays the flow* (fresh browser), so
 flows should be idempotent.
+
+**Counts and wall live on different axes, and `--iterations` is where that bites.** Counts answer
+"how much work does one iteration cause" and must NOT scale with `--iterations`; wall only means
+something in bulk and must. So the count-bearing pass *runs* one iteration rather than being
+windowed after the fact: `traceSpec` is pinned to `iterations: 1` (whenever a timing pass exists to
+carry the samples), and `timingSpec.bracketFirstIteration` closes the CDP counter bracket after the
+first iteration -- in bench by splitting the timed `page.evaluate` in two, in driver by snapshotting
+inside `runDriver`. Windowing counts per iteration is NOT an option: paint/composite land after
+`run:end` during settle (`inWindow` is start-onward *by design*), so they belong to no iteration.
+Two lanes cannot have it both ways and say so via `noteCountScope` instead of lying: `--no-isolate`
+(one pass carries wall AND counts) and firefox (the gecko pass is that lane's only CPU sampler).
+Bench `wallMs` is the **sum of the timed samples**, not a window: the window would either span one
+iteration (wrong) or bracket the split's own CDP round trip (~2.1ms of tool cost billed to the
+page). Measurements and the before/after are in the 0.6.0 changeset and the commit messages.
 
 **The CPU sampler rides the timing pass** (it had a third pass of its own until 0.5.0). The cpu and
 timing specs were literally the same pass (`categories: null`) plus the sampler, so that pass bought

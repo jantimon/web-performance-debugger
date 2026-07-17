@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,4 +96,134 @@ e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   );
   assert.ok(named, "a named busywork function is hot");
   assert.ok(named.source?.includes("cpu-busywork.mjs"), "hot function resolved to its source file");
+});
+
+// The invariant this pins: counts answer "how much work does one iteration cause", so they must
+// not move when --iterations changes. They used to be summed over the whole loop (measured on
+// this probe: layoutCount 22 -> 102 -> 202 at 1/5/10), which silently rescaled every threshold --
+// `assert --max-layouts 30` passed at 1 and failed at 10 on an unchanged page. Wall is the
+// opposite: it only means something in bulk, so its sample count MUST track --iterations.
+e2e("bench counts describe one iteration, not --iterations of them", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const read = (iterations) => {
+    const out = path.join(dir, `iters-${iterations}`);
+    runCli([
+      "record", path.join(examples, "forces-layout.mjs"),
+      "--bench", "--iterations", String(iterations), "--out", out,
+    ]);
+    return JSON.parse(readFileSync(out, "utf8")).summary;
+  };
+
+  const one = read(1);
+  const many = read(8);
+
+  assert.ok(one.layoutCount > 0, "the probe forces layout at all");
+  assert.equal(many.layoutCount, one.layoutCount, "layoutCount must not scale with --iterations");
+  assert.equal(many.styleCount, one.styleCount, "styleCount must not scale with --iterations");
+  assert.equal(
+    many.forcedLayoutCount,
+    one.forcedLayoutCount,
+    "forcedLayoutCount must not scale with --iterations",
+  );
+
+  // Wall is the axis that SHOULD grow: one sample per timed iteration, contiguous, all real.
+  assert.equal(one.perIteration.length, 1, "one iteration yields one wall sample");
+  assert.equal(many.perIteration.length, 8, "eight iterations yield eight wall samples");
+  assert.ok(
+    many.perIteration.every((ms) => ms > 0),
+    "every iteration of a split timed phase is measured, including those after the counts bracket",
+  );
+  assert.ok(many.stats && many.stats.samples === 8, "stats are computed over all timed iterations");
+
+  // The mirror of the counts bug, and a regression this actually hit: pinning the trace pass to
+  // one iteration made wallMs describe that ONE iteration while still being read as the whole
+  // run, which silently loosened `assert --max-wall` by ~N x on an unchanged page. Wall must stay
+  // on the N axis, and must be exactly the samples `stats` describes.
+  const sum = (samples) => samples.reduce((total, ms) => total + ms, 0);
+  assert.ok(
+    Math.abs(many.wallMs - sum(many.perIteration)) < 0.001,
+    "bench wallMs is the sum of the timed samples, not a window that excludes most of them",
+  );
+  assert.ok(
+    many.wallMs > one.wallMs,
+    `wallMs must grow with --iterations (got ${many.wallMs} at 8 vs ${one.wallMs} at 1)`,
+  );
+});
+
+// The headline of driver --iterations: a real interaction measured once is a single sample of a
+// clock Chrome deliberately clamps, which cannot separate a regression from noise. Measured on
+// this flow, the n=1 reading of "first increment" was 87ms while the median over 6 was 40ms with
+// a 255ms outlier -- the single sample was not merely imprecise, it was 2x off the typical value.
+// Counts must NOT move with --iterations; only the sample count may.
+e2e("driver --iterations repeats the flow: per-step medians, per-iteration counts", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  // A committed fixture, not examples/react-counter, whose dist/ is git-ignored and never built in
+  // CI: the test would have returned early and reported green without exercising anything. It has
+  // to live under the repo because --html is served by a static server rooted at the cwd; the
+  // driver module is import()ed in Node, so that one can be written to a temp dir.
+  const html = path.join(repoRoot, "test", "fixtures", "driver-probe.html");
+  assert.ok(existsSync(html), "driver-probe.html is committed, so this test cannot silently skip");
+  const flow = path.join(dir, "flow.mjs");
+  writeFileSync(
+    flow,
+    `export async function prepare({ page }) {
+       await page.waitForSelector("#inc");
+     }
+     export async function run({ page, measureStep }) {
+       await measureStep("add rows", () => page.click("#inc"));
+     }`,
+  );
+
+  const read = (iterations) => {
+    const out = path.join(dir, `drv-${iterations}`);
+    runCli([
+      "record", flow,
+      "--html", html, "--iterations", String(iterations), "--out", out,
+    ]);
+    return {
+      recording: JSON.parse(readFileSync(out, "utf8")),
+      index: JSON.parse(readFileSync(`${out}.index.json`, "utf8")),
+    };
+  };
+
+  const one = read(1);
+  const many = read(5);
+
+  // Every step is re-measured per iteration and keeps its own samples, grouped by label rather
+  // than colliding on it (the label is what joins a step across passes).
+  const step = many.recording.summary.perStep[0];
+  assert.equal(step.perIteration.length, 5, "each step carries one sample per iteration");
+  assert.ok(step.stats && step.stats.samples === 5, "and gets real stats, not null");
+  assert.equal(one.recording.summary.perStep[0].stats, null, "one sample still yields no statistic");
+  assert.equal(
+    many.recording.summary.perStep.length,
+    one.recording.summary.perStep.length,
+    "repeating the flow must not multiply the steps",
+  );
+
+  // The headline is the median of the samples, so a cold first iteration cannot define the number.
+  const sorted = [...step.perIteration].sort((left, right) => left - right);
+  assert.ok(Math.abs(step.stats.medianMs - sorted[2]) < 0.001, "wall headline is the median");
+
+  // Counts are the axis that must hold still. Guard non-vacuity first: every equality below would
+  // hold at 0 === 0 on a page that did nothing, which is how the skipped version of this test
+  // passed for free.
+  assert.ok(one.recording.summary.layoutCount > 0, "the fixture actually causes layout");
+  assert.ok(one.recording.summary.forcedLayoutCount > 0, "and forces it synchronously");
+  assert.equal(
+    many.recording.summary.layoutCount,
+    one.recording.summary.layoutCount,
+    "overall layoutCount must not scale with --iterations",
+  );
+  assert.equal(
+    many.recording.summary.forcedLayoutCount,
+    one.recording.summary.forcedLayoutCount,
+    "overall forcedLayoutCount must not scale with --iterations",
+  );
+  assert.equal(
+    many.index.steps[0].headline.layoutCount,
+    one.index.steps[0].headline.layoutCount,
+    "per-step layoutCount must not scale with --iterations",
+  );
+  assert.ok(many.index.steps[0].stats?.samples === 5, "the step index exposes the spread");
 });

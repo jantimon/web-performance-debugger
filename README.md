@@ -79,8 +79,9 @@ mode `ctx` is a *property* of the argument; in the other lanes it *is* the argum
 
 `ctx` starts as an empty object and is shared across the hooks: stash things in `prepare` (a
 handle, a prebuilt DOM node, test data) and read them in `run`. `--iterations` / `--warmup`
-(defaults 1 / 0) repeat `run` in the bench and node lanes and are **ignored in driver mode** (a
-driver flow runs once per pass); `record` prints a note if you pass them anyway
+(defaults 1 / 0) repeat `run` in **every** lane. In driver mode each iteration re-measures every
+step, so a step reports the **median** of its samples instead of a single reading — see
+[Measuring an interaction more than once](#measuring-an-interaction-more-than-once)
 
 In `--bench` the module is imported *inside the page*, so it must live under the current working
 directory to be servable. Driver and `--target node` modules are imported in Node and can live
@@ -185,6 +186,41 @@ own digest you can drill into
 persist that session (without it, the default two-pass run opens a fresh browser per pass and makes
 you log in twice). Gate the login in your driver so it only waits when not yet authenticated, and do
 any iframe/list waiting there too
+
+### Measuring an interaction more than once
+
+One reading of `wall ms` cannot tell a regression from noise: it is a single sample of a clock
+Chrome deliberately clamps. `--iterations N` repeats `run` and re-measures every step, so each one
+reports the **median** of its samples, with `--warmup M` for untimed runs first:
+
+```bash
+wpd record flow.mjs --url http://localhost:3000 --iterations 20 --warmup 3
+```
+
+```
+Per-step wall time (median of --iterations samples; performance.now is coarse)
+
+step        median ms  min     max      samples
+open menu   40.383     39.428  255.254  20
+type query  82.513     73.132  147.178  20
+```
+
+That `min`/`max` spread is the point: here the median is 40 ms but one iteration took 255 ms, which
+a single sample would have reported as *the* number. The raw samples are kept in the recording
+(`summary.perStep[].perIteration`), because a median hides the bimodality that usually is the
+finding
+
+**Counts do not scale with `--iterations`.** They answer "how much work does one iteration cause",
+so they come from the first timed iteration and mean the same at `--iterations` 1 or 50 — an
+`assert --max-layouts` gate keeps its meaning. Only the wall samples grow. (Two lanes cannot do
+this and say so in `meta.notes`: `--no-isolate`, which has one pass for both jobs, and
+`--target firefox`, whose count pass is also its only CPU sampler)
+
+Each iteration must measure the **same steps** — `wpd` fails the run rather than report a median
+over fewer samples than it claims. If a step needs a fresh page every time, put a bare
+`page.goto(url)` in `run` outside any `measureStep`: everything after it is fresh each iteration,
+everything not preceded by one repeats in place. There is no reset flag, because that is strictly
+more expressive than one
 
 Make a `page.goto` its own step to measure a **cold boot**. Drop `--url` so the page starts blank
 (otherwise it pre-navigates before tracing); everything from navigation through first render lands in

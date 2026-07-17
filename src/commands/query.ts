@@ -1,6 +1,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { EventKind, NormalizedEvent, Recording, StepIndex } from "../model/recording.js";
+import type {
+  BlameSemantic,
+  EventKind,
+  NormalizedEvent,
+  Recording,
+  StepIndex,
+} from "../model/recording.js";
 import type { BlameEntry } from "../model/query.js";
 import { num, table } from "../output/ascii.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
@@ -227,7 +233,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     console.log(
       query.forced
         ? "No forced (synchronous) layout/style — no layout thrashing. 🎉"
-        : "No source-attributed events (Chrome captures stacks for layout/style/invalidation/scripting).",
+        : `No source-attributed events (${whatCapturesStacks(rec.meta.blameSemantic)}).`,
     );
     return;
   }
@@ -249,4 +255,47 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
           rows.map((row) => [row.count, num(row.durMs, 3), [...row.kinds].join(","), row.at]),
         ),
   );
+  // Only the forced rows have an engine-specific meaning worth naming, so the note is gated on
+  // one being present rather than on the --forced flag: plain `blame` and `--all` show forced and
+  // unforced rows together, and an unforced scripting/invalidation row is not a geometry read at
+  // all. Saying so over such a table would print the exact read/write confusion the semantic
+  // exists to prevent (Chrome's invalidation stacks name the WRITE: docs/dev/engine-mapping.md).
+  if (rows.some((row) => row.forced > 0)) {
+    const semantic = blameSemanticLine(rec.meta.blameSemantic);
+    if (semantic) console.log(`\n${semantic}`);
+  }
+}
+
+/**
+ * Which engine attributed this recording's events, for the "nothing to show" message. Naming
+ * Chrome unconditionally was wrong on a Firefox recording, and pointed the reader at a stack
+ * source that lane does not have. Absent semantic => no blame pass ran at all.
+ */
+function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
+  if (semantic === "invalidation-site")
+    return "Firefox captures cause stacks for layout/style via the Gecko profiler";
+  if (semantic === "flush-site")
+    return "Chrome captures stacks for layout/style/invalidation/scripting";
+  return "this run recorded no blame pass: --no-trace and --target node collect none";
+}
+
+/**
+ * One line saying what the `source` column of the FORCED rows points at. Without it the table
+ * invites the one comparison it cannot support: the same probe blamed in both engines shares zero
+ * lines, because each engine answers a different question (see BlameSemantic). Human output only --
+ * structured consumers read `meta.blameSemantic` off the recording or digest, which is durable and
+ * does not depend on having run this verb.
+ */
+function blameSemanticLine(semantic: BlameSemantic | undefined): string | null {
+  if (semantic === "flush-site")
+    return (
+      "forced rows: source = the geometry read that forced the flush (Chrome). Firefox blames the " +
+      "write that dirtied the DOM instead, so these lines are not comparable across engines."
+    );
+  if (semantic === "invalidation-site")
+    return (
+      "forced rows: source = the write that dirtied the DOM (Firefox), not the read that forced " +
+      "the flush. Chrome blames the read instead, so these lines are not comparable across engines."
+    );
+  return null;
 }
