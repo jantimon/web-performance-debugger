@@ -8,9 +8,9 @@ export interface LastPointer {
   recording: string;
   digest: string;
   index?: string;
-  /** raw .cpuprofile, when --cpu-profile was used */
+  /** raw .cpuprofile, when CPU profiling ran */
   cpuProfile?: string;
-  /** resolved CPU model (.cpu.json/.cpu.toon), when --cpu-profile was used */
+  /** resolved CPU model (.cpu.json/.cpu.toon), when CPU profiling ran */
   cpuModel?: string;
 }
 
@@ -49,7 +49,7 @@ export async function resolveTarget(
   if (kind === "cpu-model" || kind === "cpu-profile") {
     const target = kind === "cpu-model" ? pointer.cpuModel : pointer.cpuProfile;
     if (!target)
-      throw new Error("Latest run has no CPU profile. Re-run `record` with --cpu-profile.");
+      throw new Error("Latest run has no CPU profile. Re-run `record` without --no-cpu-profile.");
     return path.resolve(target);
   }
   if (kind === "auto") return path.resolve(pointer.index ?? pointer.recording);

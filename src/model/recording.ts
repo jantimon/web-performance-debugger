@@ -332,4 +332,12 @@ export interface CpuModel {
   functions: CpuFunction[];
   /** caller->callee edges (thresholded), for callers/callees drilling */
   edges: CpuEdge[];
+  /**
+   * How many distinct frames could not be attributed to an owner and fell back to an origin
+   * bucket (`(cdn.example.com)`). This is what a failed sourcemap actually costs you, and the
+   * only honest trigger for "the package rollup cannot be believed". 0 means every frame found
+   * its owner -- including when no sourcemap resolved at all, which is the normal case for plain
+   * unbundled source that needs no map. Optional: absent in models written before 0.5.0.
+   */
+  unmappedFrames?: number;
 }

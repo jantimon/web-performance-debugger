@@ -140,11 +140,18 @@ program
         cmdOpts.network && "--network",
         cmdOpts.cpuThrottle && "--cpu-throttle",
         cmdOpts.userDataDir && "--user-data-dir",
-        cmdOpts.bench && "--bench",
       ].filter(Boolean);
       if (browserOnly.length)
         program.error(
           `--target node is CPU-only and has no browser: remove ${browserOnly.join(", ")}`,
+        );
+      // --bench selects in-page execution, not iteration, so it has no meaning without a page.
+      // It used to be accepted here and silently ignored. Rejected with its own message rather
+      // than folded into browserOnly above, whose "has no browser" wording would imply --bench is
+      // about the browser rather than about *where run() executes*.
+      if (bench)
+        program.error(
+          "--bench imports the module inside a page; --target node has no page. Drop --bench (--iterations already repeats run() on this lane).",
         );
       if (cmdOpts.cpuProfile === false)
         program.error(
@@ -242,7 +249,7 @@ query
 fmtOpts(
   query
     .command("cpu <file>")
-    .description("CPU profile overview: hot functions + by-package self time (needs --cpu-profile)")
+    .description("CPU profile overview: hot functions + by-package self time")
     .option("--by <grouping>", "rollup grouping: package | file | function", "package")
     .option("--top <n>", "hot functions to show", toInt),
 ).action((file, opts) => run(queryCpu(file, opts)));

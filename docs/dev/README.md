@@ -42,5 +42,12 @@ the shape of mistake this project keeps making — a plausible mechanism, assert
 - "Firefox does not populate Event Timing entries, so INP stays null" — false, and it reached users
   via `meta.notes` before being caught.
 - "`--cpu-profile` is the right tool for comparing pure-JS cost" — true only for `--target node`.
+- "no sourcemap resolved" was treated as "your package rollup is a lie". Different questions: plain
+  unbundled source has no map because it needs none, and its frames resolve fine. The warning was
+  wrong for years but invisible, because it only reached people who had opted into profiling a
+  bundle. Making profiling default-on pointed it at plain source and the false positive became the
+  common case.
 
-The lesson each time: **run the probe in both engines before writing the sentence.**
+The lesson each time: **run the probe in both engines before writing the sentence.** And the
+corollary the last one adds: **a default does not just change behaviour, it changes which of your
+latent bugs are load-bearing.** Flipping one is a good moment to re-read every warning it unmasks.

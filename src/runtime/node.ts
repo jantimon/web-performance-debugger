@@ -3,7 +3,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import { Session } from "node:inspector";
-import { buildCpuModel, type RawCpuProfile } from "../profile/cpuprofile.js";
+import {
+  buildCpuModel,
+  DEFAULT_CPU_INTERVAL_US,
+  type RawCpuProfile,
+} from "../profile/cpuprofile.js";
 import { buildSummary } from "../metrics/summarize.js";
 import { buildDigest } from "../commands/digest.js";
 import { writePointer } from "../commands/resolve.js";
@@ -12,8 +16,6 @@ import type { CpuModel, Recording, RecordingMeta } from "../model/recording.js";
 import type { RecordOptions } from "../commands/record.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
-
-const DEFAULT_CPU_INTERVAL_US = 50;
 
 /** Promise wrapper around an inspector Session's callback-style post(). */
 function profilerSession() {
@@ -29,7 +31,7 @@ function profilerSession() {
 }
 
 /**
- * Node runtime for the CPU bench lane (--runtime node): import the module IN THIS PROCESS
+ * Node runtime for the CPU bench lane (--target node): import the module IN THIS PROCESS
  * and run its `run()` under the V8 sampling profiler (node's built-in `inspector`, which
  * returns the same .cpuprofile shape as CDP). Pure-JS only: no DOM, no layout/paint, so the
  * output is a CPU model (+ a CPU-only recording) and nothing else. The profiler is started
@@ -126,7 +128,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     lifecycle,
     passes: ["node-cpu"],
     notes: [
-      "Node runtime (--runtime node): in-process V8 sampling profile of run(). CPU only; no DOM, layout, paint, or invalidation is measured. Self-time ms come from the profiler's own clock.",
+      "Node runtime (--target node): in-process V8 sampling profile of run(). CPU only; no DOM, layout, paint, or invalidation is measured. Self-time ms come from the profiler's own clock.",
     ],
     driver: false,
     runtime: "node",

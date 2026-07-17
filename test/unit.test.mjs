@@ -1,12 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 // Tests run against the compiled output (pretest builds it). No browser needed.
 import { classify, invalidationKind } from "../dist/trace/classify.js";
 import { computeStats, buildSummary } from "../dist/metrics/summarize.js";
 import { forcedLayouts, longTasks, markForced } from "../dist/trace/analysis.js";
 import { serialize, deserialize } from "../dist/output/format.js";
-import { buildCpuModel, packageRollup, functionJoinKey } from "../dist/profile/cpuprofile.js";
+import {
+  buildCpuModel,
+  packageRollup,
+  functionJoinKey,
+  DEFAULT_CPU_INTERVAL_US,
+} from "../dist/profile/cpuprofile.js";
 import {
   parseGeckoLocation,
   parseGecko,
@@ -699,4 +705,66 @@ test("assert: a satisfied threshold on a measured metric passes", async () => {
   const rec = writeRecording("assert-ok.json", { forcedLayoutCount: 0 });
   const code = await captureExitCode(() => assertCmd(rec, { forced: 0 }));
   assert.equal(code, undefined);
+});
+
+// Regression: DEFAULT_CPU_INTERVAL_US was duplicated in commands/record.ts and runtime/node.ts, so
+// the 50 -> 200 change landed on the browser lanes only. The node lane -- the very lane the
+// interval was measured on -- kept sampling at 50us while --help and the changelog said 200. The
+// fix is that there is now exactly ONE definition; this test fails if a lane grows its own again.
+test("every lane shares one CPU sampler interval default", async () => {
+  assert.equal(typeof DEFAULT_CPU_INTERVAL_US, "number");
+  assert.equal(DEFAULT_CPU_INTERVAL_US, 200);
+
+  const files = ["../dist/commands/record.js", "../dist/runtime/node.js"];
+  for (const file of files) {
+    const source = await readFile(new URL(file, import.meta.url), "utf8");
+    assert.ok(
+      !/const\s+DEFAULT_CPU_INTERVAL_US\s*=/.test(source),
+      `${file} defines its own DEFAULT_CPU_INTERVAL_US; import the shared one from profile/cpuprofile.js instead`,
+    );
+  }
+});
+
+// The sourcemap WARNING is gated on `unmappedFrames`, not on "no sourcemap resolved". These two
+// tests pin BOTH directions, because the cheap way to kill a false positive is to kill the signal:
+//   - plain local source, no map, frames resolve  -> 0 unmapped, so no warning (the false positive)
+//   - remote bundle, no map, frames do NOT resolve -> counted, so the warning still fires
+function remoteProfile(url) {
+  return {
+    nodes: [
+      { id: 1, callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 }, children: [2] },
+      { id: 2, callFrame: { functionName: "hot", scriptId: "1", url, lineNumber: 0, columnNumber: 0 }, hitCount: 1 },
+    ],
+    startTime: 0,
+    endTime: 1000,
+    samples: [2],
+    timeDeltas: [1000],
+  };
+}
+
+test("buildCpuModel: an unmapped third-party bundle is counted and bucketed by origin", async () => {
+  const model = await buildCpuModel(remoteProfile("https://cdn.example.com/app.min.js"), {
+    profilePath: "synthetic.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+    serverUrl: "http://127.0.0.1:1234",
+    root: os.tmpdir(),
+  });
+  // No map resolved and the url is not the served origin, so we do not know whose code this is.
+  assert.equal(model.unmappedFrames, 1, "the unattributed frame is counted");
+  const hot = model.functions.find((fn) => fn.fn === "hot");
+  assert.equal(hot.package, "(cdn.example.com)", "bucketed by origin, never blamed on `app`");
+});
+
+test("buildCpuModel: node builtins are not counted as unmapped", async () => {
+  const model = await buildCpuModel(remoteProfile("node:internal/streams/readable"), {
+    profilePath: "synthetic.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+    root: os.tmpdir(),
+    runtime: "node",
+  });
+  // A builtin has no sourcemap and never will; that is not a broken package rollup.
+  assert.equal(model.unmappedFrames, 0, "builtins do not trip the unmapped warning");
+  assert.equal(model.functions.find((fn) => fn.fn === "hot").package, "(node)");
 });

@@ -15,13 +15,22 @@ benchmarking.
 **Fixed:** a Firefox run without `--cpu-profile` used to report every rendering count as `0` —
 indistinguishable from a clean run. `--target firefox` now yields counts and blame with no extra flag.
 
-**Fixed:** `--cpu-interval` now defaults to 200us instead of 50us. The old default inflated its own
-measurement ~6% and wall ~8.5%, while resolving no functions the new one misses.
+**Breaking:** `--target node --bench` is now an error instead of being silently ignored. `--bench`
+imports the module inside a page; the node lane has no page. `--iterations` already repeats `run()` there.
 
-**Fixed:** a trace-window warning told you to raise `--settle-ms`, which is not a flag. It is `--settle`.
+**Fixed:** `--cpu-interval` now defaults to 200us instead of 50us, on every target. The old default
+inflated its own measurement ~6% and wall ~8.5%, while resolving no functions the new one misses.
 
 **Fixed:** the "no sourcemap resolved … CPU self-time is attributed to minified bundle names" warning
-fired on runs that took no CPU profile.
+fired whenever no sourcemap resolved — including for plain unbundled source, which needs no map and
+whose frames resolve fine. It now fires only when frames genuinely could not be attributed, and
+`CpuModel` carries an `unmappedFrames` count so you can see how many.
+
+**Fixed:** with `--no-trace`, the notes claimed counts came from "a separate heavy-instrumentation
+pass" that never ran, and a warning blamed a trace-buffer overflow — for a run with tracing
+deliberately off.
+
+**Fixed:** a trace-window warning told you to raise `--settle-ms`, which is not a flag. It is `--settle`.
 
 Docs: forced-layout blame is **not** engine-comparable — Chrome names the geometry read that forced
 the flush, Firefox names the write that dirtied the DOM. Compare each engine against itself, and use

@@ -145,6 +145,12 @@ So 200us: ~1% overhead, 5x V8's default resolution, and percentages — the thin
 reports — stable across a 20x interval change. **Re-measure against a JS-heavy workload if you touch
 it.**
 
+`DEFAULT_CPU_INTERVAL_US` lives in `profile/cpuprofile.ts` and is imported by **both** lanes. It used
+to be declared separately in `commands/record.ts` and `runtime/node.ts`, and that duplication did
+exactly what duplication does: the 50 -> 200 change landed on chrome only, so the node lane — *the
+lane the measurement was taken on* — kept sampling at 50us while `--help` and the changelog said 200.
+A unit test asserts no lane redeclares it. If you add a lane, import the constant.
+
 ## Firefox: samples and markers share a pass, unavoidably
 
 The gecko pass collects markers *and* samples together — structurally the thing warned against
@@ -160,8 +166,27 @@ reasons too.
 
 ## Sourcemap note gating (fixed in 0.5.0)
 
-The sourcemap note is gated on a **CPU model existing**, not merely on
-`maps.diagnostics().scripts > 0`. It used to fire whenever any script was seen, so a run with no CPU
-profile still printed `WARNING: no sourcemap resolved ... so CPU self-time is attributed to minified
-bundle names` — about a profile that was never taken. Trace stacks resolve through the same resolver
-but are reported by `blame`, which this note does not describe.
+The note answers "can the package rollup be believed?", so it is gated on **`CpuModel.unmappedFrames`
+> 0** — frames whose owner we could not determine — plus a CPU model existing at all. It used to be
+gated on `resolved === 0` ("no sourcemap resolved"), which is a **different question**, and the
+conflation made it lie in the most common case:
+
+```
+$ wpd record examples/forces-layout.mjs --bench
+• WARNING: no sourcemap resolved ... CPU self-time is attributed to minified bundle names
+Sourcemaps: 0/1 resolved ← packages below are minified bundles, not real packages
+```
+
+`forces-layout.mjs` is hand-written unbundled ESM. Nothing is minified, and every frame resolved to
+`forces-layout.mjs:24`. It has no sourcemap because **it needs none**.
+
+This is a good illustration of a default flushing out a latent bug rather than causing one. While
+profiling was opt-in the warning only reached people who had opted in — plausibly profiling a bundle,
+where it was usually right. Turning it on by default pointed it at plain source and the false
+positive became the common case.
+
+`unmapped` is set in `resolveCallFrame` at the point where it falls back to `unmappedOriginBucket`,
+**not** inferred afterwards from the package string: `(cdn.example.com)` is unmapped while `(native)`
+and `(node)` are not, and telling those apart by pattern breaks on a dotless host (`(localhost)`).
+Unit tests pin both directions — a remote unmapped bundle must still count, a node builtin must not —
+because the cheap way to kill a false positive is to kill the signal.

@@ -17,7 +17,7 @@ Set TypingSpeed 45ms
 # (next-yak/tailwind cases are compile-time; we reuse the benchmark's already-compiled
 #  bundle, never re-esbuild the raw .tsx.)
 Hide
-Type 'WPD_DIR=/Users/jannicklas/Desktop/chrome-dev-performance-tools' Enter
+Type 'WPD_DIR=/Users/jannicklas/Desktop/web-performance-debugger' Enter
 Type 'BENCH=/Users/jannicklas/Development/github/next-yak/yak-worktree-2/benchmarks' Enter
 Type 'wpd() { node "$WPD_DIR/dist/cli.js" "$@"; }' Enter
 Type 'mkdir -p /tmp/wpd-demo && cd /tmp/wpd-demo' Enter

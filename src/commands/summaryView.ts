@@ -17,7 +17,7 @@ export function countProvenance(rec: Recording): string {
   if (rec.meta.passes.includes("gecko")) {
     return "counts come from Gecko markers — approximate, not comparable to Chrome; durations are coarse";
   }
-  return "counts NOT measured on this lane and shown as 0 — add --cpu-profile; see notes";
+  return "counts NOT measured on this lane and shown as 0; see notes";
 }
 
 export function printSummary(rec: Recording): void {
