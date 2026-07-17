@@ -26,6 +26,18 @@ regenerate a full one, launch Firefox via Puppeteer with the `MOZ_PROFILER_*` en
   `"CDP support is required for this feature. The current browser does not support CDP."`
   So: no CDP counters, no DevTools trace, no CPU/network throttling, no invalidationTracking.
   Every CDP touchpoint is capability-gated behind `capsFor(browser).cdpCounts/trace/throttle`.
+- **"We reach it through CDP" is not the same claim as "Gecko cannot do it", and the CLI's reject
+  list conflates the two.** Two [measured] counter-examples worth knowing before adding a third:
+  - `--network offline` **works** over BiDi (`browsingContext.setOfflineMode`, via
+    `page.emulateNetworkConditions`). It is rejected only because `throttle.ts` takes a raw
+    `CDPSession`. The throughput presets (slow-3g and friends) genuinely do throw
+    `UnsupportedOperation`.
+  - `--protocol-timeout` is **not a CDP knob at all**, despite puppeteer's own docstring
+    ("individual protocol (CDP) calls"). Puppeteer threads it into the BiDi connection
+    (`BrowserLauncher` -> `BrowserConnector` -> `Connection`), where it bounds every `send()`,
+    including the `session.new` handshake -- a BiDi-only command. Verified: `--protocol-timeout 1`
+    reproduces `session.new timed out` on Firefox; a large value launches fine. Read puppeteer's
+    code, not its docstring, before calling an option Chrome-only.
 - `PerformanceObserver({ type: "event" })` **works**, and per-step INP is real: Firefox populates
   Event Timing entries, so INP is measured on this lane, not `null`. Measured on Firefox 152 /
   Chrome 150:

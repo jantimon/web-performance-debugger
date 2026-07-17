@@ -29,7 +29,10 @@ So it carries the driver's own cost. The same 40-row forced-layout work, driven 
 
 Three things follow, and all three are counter-intuitive enough to be worth stating outright:
 
-- **The page did 1.1 ms of the 40.5.** Everything else is the tool.
+- **The page ran 1.1 ms of JS in the 40.5.** The rest is the tool: input dispatch, plus a frame wait
+  the tool performs on purpose. "The rest is overhead" is the wrong reading of that -- the two
+  numbers do not time the same window (see `--bench` below), so the gap is not a correction you can
+  subtract.
 - **`page.click` alone costs ~20 ms** of Puppeteer/CDP input dispatch (mouse move, hit test,
   dispatch). It is not a round-trip cost: an empty `page.evaluate` round trip is **~0.5 ms**, i.e.
   noise. Driving identical work two ways moves the wall by 8 ms.
@@ -124,7 +127,16 @@ to round the parts to whole ms where Chrome does not.
 - **The 16 ms floor is the spec's.** `durationThreshold` below 16 is clamped, so an interaction
   faster than a frame produces no entry at all. A `null` INP means "nothing crossed 16 ms", not
   "the engine cannot measure it".
-- **`--bench` has a DOM.** It is imported *inside* the page and uses live `document`/`window`; it
-  simply has no Puppeteer `page` handle to drive with. It is the in-page-timed lane
-  (1.1 ms vs the driver's 40.5 on identical work), and it is the right tool for a programmatic
-  measurement that wants a real number.
+- **`--bench` has a DOM.** `run(ctx)` is imported *inside* the page and uses live
+  `document`/`window`; it simply has no Puppeteer `page` handle to drive with, and `--html`/`--url`
+  still give it a host page. It is the in-page-timed lane (1.1 ms vs the driver's 40.5 on identical
+  work), and it is the right tool for a programmatic measurement that wants a real number.
+
+  **Bench and the driver do not time the same window, so the gap between them is not overhead.**
+  Bench times `run()` alone; the paint lands afterwards, on a later frame, and bench's wall never
+  waits for it. The driver's wall does, deliberately. The counts come out identical either way
+  (`inWindow` is start-onward, so the trace sees that paint on both lanes), and that is the trap:
+  identical counts make "same work, same counts, so the difference is the tool" read as airtight
+  when it is comparing a wall that waits for a frame against one that does not. The claim that
+  survives is narrower and still worth the switch: bench prices the code, while the driver's wall is
+  dominated by a frame wait that does not move when the code gets slower.

@@ -13,13 +13,20 @@ import { VERSION, TOOL } from "./version.js";
 /**
  * Puppeteer's protocol-timeout error tells the user to "increase the 'protocolTimeout' setting in
  * launch/connect calls" -- an API a CLI user never touches. Name the flag that actually fixes it.
- * A heavy traced interaction pinning the main thread is the usual cause.
+ *
+ * Two causes, and the advice differs: a heavy traced interaction pinned the main thread, or the
+ * browser never finished its startup handshake (`session.new`, Firefox/BiDi), where there is no
+ * step to make smaller.
  */
 function recordFailureMessage(error: Error): string {
   const protocolTimedOut =
     error.name === "ProtocolTimeoutError" || /protocolTimeout/i.test(error.message);
   if (!protocolTimedOut) return error.message;
-  return `${error.message}\n\nThe page did not answer CDP in time, usually because a traced interaction pinned the main thread. Retry with a higher --protocol-timeout (e.g. --protocol-timeout 600000), or measure less work per step.`;
+  // `session.new` is the BiDi handshake: this fired before the browser was usable, so advice about
+  // measuring less work per step would point at a step that never ran.
+  if (/session\.new/i.test(error.message))
+    return `${error.message}\n\nThe browser did not finish its startup handshake in time. This is usually load, not your flow: retry, or raise --protocol-timeout (e.g. --protocol-timeout 600000).`;
+  return `${error.message}\n\nThe page did not answer in time, usually because a traced interaction pinned the main thread. Retry with a higher --protocol-timeout (e.g. --protocol-timeout 600000), or measure less work per step.`;
 }
 
 const program = new Command();
@@ -62,8 +69,11 @@ const toInt = (value: string) => {
 
 program
   .command("record")
+  // Both modes have a real page and a live DOM; they differ in WHERE run() executes, and therefore
+  // in what times it. Name both signatures: "no args" or an unqualified "real page" on one of them
+  // reads as "--bench has no page", and from there as "it cannot touch the DOM".
   .description(
-    "Drive a real page (default; run gets { page, ctx, measureStep }) or benchmark a module in-page (--bench), and record where rendering work comes from.",
+    "Record where rendering work comes from. Default: run({ page, ctx, measureStep }) executes in Node and drives the page via Puppeteer. --bench: run(ctx) executes inside the page itself, with live document/window and no page handle, timed in-page.",
   )
   .argument("<module>", "path to a JS/ESM module exporting `run` (and optional prepare/cleanup)")
   .option("--fn <name>", "exported function to run", "run")
@@ -76,7 +86,7 @@ program
   .option("--url <url>", "host page: load this live URL, then run the module against it")
   .option(
     "--bench",
-    "benchmark mode: import the module inside the page and call run() (no args); repeat with --iterations",
+    "run(ctx) executes inside the page with live document/window (no page handle), timed in-page, so its wall excludes the driver's dispatch and settle. Pair with --html/--url for a host page; repeat with --iterations",
   )
   .option(
     "--iterations <n>",
@@ -103,7 +113,7 @@ program
   .option("--cpu-interval <us>", "CPU sampler interval in microseconds (default 200)", toInt)
   .option(
     "--protocol-timeout <ms>",
-    "CDP protocol timeout in ms (default 180000); raise it when a heavy traced interaction pins the main thread",
+    "timeout in ms for one protocol call (default 180000); raise it when a heavy traced interaction pins the main thread, or when a loaded machine makes Firefox time out launching",
     toInt,
   )
   .option(
@@ -128,11 +138,17 @@ program
     const node = cmdOpts.target === "node";
     const firefox = cmdOpts.target === "firefox";
     if (firefox) {
-      // Firefox is driven over BiDi with no CDP: these features have no Gecko equivalent.
+      // Firefox is driven over BiDi, and wpd implements these three through CDP, which it has no
+      // access to there. Not all of them are beyond Gecko: `--network offline` has a BiDi
+      // equivalent (browsingContext.setOfflineMode), and only lands here because throttle.ts takes
+      // a raw CDPSession. So this list is "unsupported as built", not "impossible on Firefox".
+      //
+      // --protocol-timeout is deliberately NOT here: it is not a CDP knob. Puppeteer threads it
+      // into the BiDi connection, where it bounds every send() including the `session.new`
+      // handshake, a BiDi-only command with no CDP counterpart.
       const unsupported = [
         cmdOpts.cpuThrottle && "--cpu-throttle",
         cmdOpts.network && "--network",
-        cmdOpts.protocolTimeout != null && "--protocol-timeout",
         cmdOpts.invalidationTracking === false && "--no-invalidation-tracking",
       ].filter(Boolean);
       if (unsupported.length) {

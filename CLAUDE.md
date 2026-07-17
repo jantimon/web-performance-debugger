@@ -69,7 +69,8 @@ contracts** — keep them straight:
   `StepIndex`. Per-step INP is captured via an injected Event Timing `PerformanceObserver`. A
   `page.goto` inside a `measureStep` is traced, so a navigation step measures a cold boot.
 - **Bench mode** (`--bench`): the module is served over http and `import()`'d *inside the
-  browser*; `run()` takes no args and uses live `document`/`window`. Implemented by
+  browser*; `run(ctx)` gets no `page` handle (there is nothing to drive from inside) but has live
+  `document`/`window`, and `--html`/`--url` still supply the host page. Implemented by
   `browser/harness.ts` (a function serialized into `page.evaluate`) + `browser/server.ts` (a
   temp static server — ESM `import()` can't use `file://`, and the blank host page is served
   same-origin to avoid cross-origin import). It measures only `run()` (page load/boot is
