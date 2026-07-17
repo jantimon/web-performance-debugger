@@ -20,6 +20,7 @@ export type {
   RecordingSummary,
   RecordingWindow,
   ScreenshotRefs,
+  BlameSemantic,
   RecordingMeta,
   Recording,
   Digest,

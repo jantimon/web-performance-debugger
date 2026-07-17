@@ -26,6 +26,7 @@ import { labelWindows, mergeSteps } from "../dist/trace/steps.js";
 import { diffCmd } from "../dist/commands/diff.js";
 import { assertCmd } from "../dist/commands/assert.js";
 import { countProvenance } from "../dist/commands/summaryView.js";
+import { blameSemanticFor } from "../dist/commands/record.js";
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -792,4 +793,20 @@ test("SourceMapResolver: plain local source with no map is not an unmapped bundl
   const diagnostics = maps.diagnostics();
   assert.equal(diagnostics.resolved, 0, "there is no map, and none is needed");
   assert.equal(diagnostics.unmappedBundles, 0, "hand-written source must not trip the warning");
+});
+
+test("blameSemanticFor: names the engine's question, and stays absent when there is no blame", () => {
+  const timing = { name: "timing", categories: null, cpu: true };
+  const trace = { name: "trace", categories: ["devtools.timeline"] };
+  const gecko = { name: "gecko", categories: null, gecko: true };
+
+  assert.equal(blameSemanticFor([timing, trace]), "flush-site", "chrome blames the read");
+  assert.equal(blameSemanticFor([timing, gecko]), "invalidation-site", "gecko blames the write");
+  // The branch worth pinning: a plan with neither pass produces no blame at all, so claiming a
+  // semantic would describe lines that do not exist. --no-trace and --target node land here.
+  assert.equal(blameSemanticFor([timing]), undefined, "--no-trace produces no blame");
+  assert.equal(blameSemanticFor([]), undefined, "no passes, no blame");
+  // Defensive only: record.ts never builds this plan (the chrome branch never pushes a gecko
+  // spec, the firefox branch never pushes a trace one). Pins the tie-break in case it ever can.
+  assert.equal(blameSemanticFor([gecko, trace]), "invalidation-site", "gecko takes precedence");
 });

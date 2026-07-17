@@ -37,6 +37,7 @@ import { serialize, extFor, type Format } from "../output/format.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 import type {
+  BlameSemantic,
   CpuModel,
   NormalizedEvent,
   Recording,
@@ -98,6 +99,19 @@ interface PassSpec {
   /** Firefox: run under the Gecko profiler; the shutdown dump yields CPU samples AND
    * layout/style markers (blame) from this one pass. */
   gecko?: boolean;
+}
+
+/**
+ * What this run's blame lines name, read off the pass plan that actually ran rather than the
+ * browser name: the gecko pass is what produces Gecko's invalidation-site stacks, and the trace
+ * pass is what produces Blink's flush-site ones, so a plan without either produces no blame and
+ * gets no semantic (--target node, or Chrome with --no-trace). Deriving this from `opts` instead
+ * would re-make the bug #12 fixed in the notes, where a flag implied a pass that never ran.
+ */
+export function blameSemanticFor(specs: PassSpec[]): BlameSemantic | undefined {
+  if (specs.some((spec) => spec.gecko)) return "invalidation-site";
+  if (specs.some((spec) => spec.categories)) return "flush-site";
+  return undefined;
 }
 
 interface PassResult {
@@ -684,6 +698,7 @@ export async function record(opts: RecordOptions): Promise<{
     driver: opts.driver,
     // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome".
     browser: browserName === "firefox" ? "firefox" : undefined,
+    blameSemantic: blameSemanticFor(specs),
     throttle,
     screenshots,
   };

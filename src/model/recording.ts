@@ -182,6 +182,22 @@ export interface SourceMapDiagnostics {
   failed?: Partial<Record<SourceMapFailure, string[]>>;
 }
 
+/**
+ * What a forced-layout blame line names, which is NOT the same question in both engines:
+ *
+ * - "flush-site" (Chrome/Blink): the geometry READ that forced the pending layout to flush
+ *   synchronously, e.g. the `offsetHeight` access. Blink captures the stack at the flush.
+ * - "invalidation-site" (Firefox/Gecko): the WRITE that dirtied the DOM and made a flush
+ *   necessary, e.g. the style assignment. Gecko captures the stack at invalidation, and only
+ *   for the first invalidator since the last flush.
+ *
+ * Both are real, and neither is a worse answer; they are answers to different questions. Measured
+ * on the same probe the two name ZERO lines in common, so diffing a Chrome blame list against a
+ * Firefox one compares nothing. Compare each engine against itself, and use `query cpu` (self-time)
+ * for the cross-engine view. See docs/dev/engine-mapping.md.
+ */
+export type BlameSemantic = "flush-site" | "invalidation-site";
+
 export interface RecordingMeta {
   tool: string;
   /** the package version that wrote this artifact (e.g. "0.1.0") */
@@ -214,6 +230,12 @@ export interface RecordingMeta {
   driver: boolean;
   /** browser backend: "chrome" (default, CDP) or "firefox" (BiDi + Gecko profiler). Absent => chrome. */
   browser?: "chrome" | "firefox";
+  /**
+   * Which code this run's forced-layout blame names. The two engines answer different questions,
+   * so this is what a cross-engine consumer needs to refuse the comparison rather than make it
+   * wrongly. Absent => the run produced no blame (--target node, or Chrome with --no-trace).
+   */
+  blameSemantic?: BlameSemantic;
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
   runtime?: "chrome" | "node";
   /** artificial slowdown applied during the run */
