@@ -97,3 +97,55 @@ e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   assert.ok(named, "a named busywork function is hot");
   assert.ok(named.source?.includes("cpu-busywork.mjs"), "hot function resolved to its source file");
 });
+
+// The invariant this pins: counts answer "how much work does one iteration cause", so they must
+// not move when --iterations changes. They used to be summed over the whole loop (measured on
+// this probe: layoutCount 22 -> 102 -> 202 at 1/5/10), which silently rescaled every threshold --
+// `assert --max-layouts 30` passed at 1 and failed at 10 on an unchanged page. Wall is the
+// opposite: it only means something in bulk, so its sample count MUST track --iterations.
+e2e("bench counts describe one iteration, not --iterations of them", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const read = (iterations) => {
+    const out = path.join(dir, `iters-${iterations}`);
+    runCli([
+      "record", path.join(examples, "forces-layout.mjs"),
+      "--bench", "--iterations", String(iterations), "--out", out,
+    ]);
+    return JSON.parse(readFileSync(out, "utf8")).summary;
+  };
+
+  const one = read(1);
+  const many = read(8);
+
+  assert.ok(one.layoutCount > 0, "the probe forces layout at all");
+  assert.equal(many.layoutCount, one.layoutCount, "layoutCount must not scale with --iterations");
+  assert.equal(many.styleCount, one.styleCount, "styleCount must not scale with --iterations");
+  assert.equal(
+    many.forcedLayoutCount,
+    one.forcedLayoutCount,
+    "forcedLayoutCount must not scale with --iterations",
+  );
+
+  // Wall is the axis that SHOULD grow: one sample per timed iteration, contiguous, all real.
+  assert.equal(one.perIteration.length, 1, "one iteration yields one wall sample");
+  assert.equal(many.perIteration.length, 8, "eight iterations yield eight wall samples");
+  assert.ok(
+    many.perIteration.every((ms) => ms > 0),
+    "every iteration of a split timed phase is measured, including those after the counts bracket",
+  );
+  assert.ok(many.stats && many.stats.samples === 8, "stats are computed over all timed iterations");
+
+  // The mirror of the counts bug, and a regression this actually hit: pinning the trace pass to
+  // one iteration made wallMs describe that ONE iteration while still being read as the whole
+  // run, which silently loosened `assert --max-wall` by ~N x on an unchanged page. Wall must stay
+  // on the N axis, and must be exactly the samples `stats` describes.
+  const sum = (samples) => samples.reduce((total, ms) => total + ms, 0);
+  assert.ok(
+    Math.abs(many.wallMs - sum(many.perIteration)) < 0.001,
+    "bench wallMs is the sum of the timed samples, not a window that excludes most of them",
+  );
+  assert.ok(
+    many.wallMs > one.wallMs,
+    `wallMs must grow with --iterations (got ${many.wallMs} at 8 vs ${one.wallMs} at 1)`,
+  );
+});

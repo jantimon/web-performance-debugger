@@ -26,7 +26,8 @@ import { labelWindows, mergeSteps } from "../dist/trace/steps.js";
 import { diffCmd } from "../dist/commands/diff.js";
 import { assertCmd } from "../dist/commands/assert.js";
 import { countProvenance } from "../dist/commands/summaryView.js";
-import { blameSemanticFor } from "../dist/commands/record.js";
+import { blameSemanticFor, noteBenchCountScope } from "../dist/commands/record.js";
+import { capsFor } from "../dist/browser/backend.js";
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -809,4 +810,52 @@ test("blameSemanticFor: names the engine's question, and stays absent when there
   // Defensive only: record.ts never builds this plan (the chrome branch never pushes a gecko
   // spec, the firefox branch never pushes a trace one). Pins the tie-break in case it ever can.
   assert.equal(blameSemanticFor([gecko, trace]), "invalidation-site", "gecko takes precedence");
+});
+
+test("noteBenchCountScope: describes the pass plan that ran, per lane", () => {
+  const timing = { name: "timing", categories: null, cpu: true, bracketFirstIteration: true };
+  const tracePinned = { name: "trace", categories: ["devtools.timeline"], iterations: 1 };
+  const traceAll = { name: "trace", categories: ["devtools.timeline"] };
+  const gecko = { name: "gecko", categories: null, gecko: true };
+  const bench = (iterations) => ({ driver: false, iterations });
+  // Real caps, not hand-rolled objects: the note must stay tied to what the backend can do.
+  const chrome = capsFor("chrome");
+  const firefoxCaps = capsFor("firefox");
+
+  // Nothing to say: one iteration cannot scale, and driver steps carry their own brackets.
+  assert.equal(noteBenchCountScope([timing, tracePinned], bench(1), chrome), null);
+  assert.equal(
+    noteBenchCountScope([timing, tracePinned], { driver: true, iterations: 20 }, chrome),
+    null,
+  );
+
+  const isolated = noteBenchCountScope([timing, tracePinned], bench(20), chrome);
+  assert.match(isolated, /FIRST timed iteration/, "default lane scopes counts to one iteration");
+  assert.match(isolated, /trace pass runs a single iteration/);
+
+  // --no-trace: no trace pass exists, so the note must not claim one runs a single iteration.
+  const noTrace = noteBenchCountScope([timing], bench(20), chrome);
+  assert.match(noTrace, /FIRST timed iteration/);
+  assert.doesNotMatch(noTrace, /trace pass/, "must not describe a pass that never ran");
+
+  // --no-isolate: the only pass carries wall AND counts, so counts really are totals. Claiming
+  // per-iteration here would be the mixed-window bug (layout from 1 iteration, forced from N).
+  const noIsolate = noteBenchCountScope([traceAll], bench(20), chrome);
+  assert.match(noIsolate, /TOTALS across all 20/);
+  assert.match(noIsolate, /--no-isolate/);
+
+  // Firefox: the gecko pass is the lane's CPU sampler, so it runs every iteration and totals.
+  const firefox = noteBenchCountScope([timing, gecko], bench(20), firefoxCaps);
+  assert.match(firefox, /TOTALS across all 20/);
+  assert.match(firefox, /CPU sampler/);
+
+  // Firefox with no gecko pass (programmatic cpuProfile:false; the CLI refuses it). timingSpec
+  // still carries bracketFirstIteration, but runPass only splits when the backend HAS CDP
+  // counters, so promising a CDP bracket here would describe a split that never ran -- next to a
+  // sibling note saying every count on this lane is 0.
+  assert.equal(
+    noteBenchCountScope([timing], bench(20), firefoxCaps),
+    null,
+    "no CDP counters means no bracket to describe",
+  );
 });
