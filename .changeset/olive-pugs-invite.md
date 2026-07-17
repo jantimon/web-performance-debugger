@@ -33,6 +33,11 @@ deliberately off.
 
 **Fixed:** a trace-window warning told you to raise `--settle-ms`, which is not a flag. It is `--settle`.
 
+**Fixed:** the `record` report printed artifact paths absolute, which wrapped across lines and put
+your home directory into anything you pasted or screenshotted. They now print relative to the current
+directory when that is shorter. The paths stored *inside* the artifacts stay absolute, so `latest`
+and the back-pointers still reopen from any directory.
+
 Docs: forced-layout blame is **not** engine-comparable — Chrome names the geometry read that forced
 the flush, Firefox names the write that dirtied the DOM. Compare each engine against itself, and use
 `query cpu` to compare across engines. Relatedly, `self ms` in a browser is JS *plus the synchronous

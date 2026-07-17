@@ -158,6 +158,24 @@ function shorterPath(root: string, absPath: string | undefined): string | null {
   return relative && relative.length < absPath.length ? relative : absPath;
 }
 
+/**
+ * An artifact path as the REPORT should show it: relative to cwd when that is shorter.
+ *
+ * Display only. The stored back-pointers stay absolute on purpose, so a recording can be reopened
+ * from any directory; this is purely about the terminal, where an absolute path is both harder to
+ * scan and something you may not want on screen -- a pasted report or a recorded terminal otherwise
+ * carries your home directory with it.
+ *
+ * Falls back to absolute when relativizing does not help: an --out outside cwd would otherwise
+ * become a worse `../../../tmp/x.json`.
+ */
+function displayPath(absPath: string): string {
+  const relative = path.relative(process.cwd(), absPath);
+  return relative && !relative.startsWith("..") && relative.length < absPath.length
+    ? relative
+    : absPath;
+}
+
 /** Plain-English remedy per failure reason, so the note says what to actually do. */
 const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
   "no-sourcemap-url":
@@ -905,15 +923,15 @@ function printNodeReport(result: {
     console.log(`trend  ${cyan(sparkline(perIteration))}`);
   }
 
-  console.log(`\nRecording:  ${dim(result.outPath)}`);
+  console.log(`\nRecording:  ${dim(displayPath(result.outPath))}`);
   console.log(
-    `Digest:     ${dim(`${result.digestPath}  ← CPU-only run; rendering metrics are not collected`)}`,
+    `Digest:     ${dim(`${displayPath(result.digestPath)}  ← CPU-only run; rendering metrics are not collected`)}`,
   );
   console.log(
-    `CPU model:  ${dim(`${result.cpuModelPath}  ← 'query cpu latest' for the hot-function overview`)}`,
+    `CPU model:  ${dim(`${displayPath(result.cpuModelPath)}  ← 'query cpu latest' for the hot-function overview`)}`,
   );
   console.log(
-    `CPU raw:    ${dim(`${result.cpuProfilePath}  ← opens in Chrome DevTools / Speedscope`)}`,
+    `CPU raw:    ${dim(`${displayPath(result.cpuProfilePath)}  ← opens in Chrome DevTools / Speedscope`)}`,
   );
 }
 
@@ -962,25 +980,30 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
       `\nslowdown: ${[throttle.cpuRate ? `cpu ${throttle.cpuRate}x` : null, throttle.network].filter(Boolean).join(", ")}`,
     );
   }
-  console.log(`\nRecording:  ${dim(outPath)}`);
+  console.log(`\nRecording:  ${dim(displayPath(outPath))}`);
   console.log(
-    `Digest:     ${dim(`${digestPath}  ← small entry point; start here, then drill with 'query get'`)}`,
+    `Digest:     ${dim(`${displayPath(digestPath)}  ← small entry point; start here, then drill with 'query get'`)}`,
   );
   if (indexPath) {
-    console.log(`Step index: ${dim(`${indexPath}  ← stepped run; one file per step listed here`)}`);
-  }
-  if (cpuModelPath) {
     console.log(
-      `CPU model:  ${dim(`${cpuModelPath}  ← 'query cpu latest' for the hot-function overview`)}`,
+      `Step index: ${dim(`${displayPath(indexPath)}  ← stepped run; one file per step listed here`)}`,
+    );
+  }
+  // Both are written together (record() only sets cpuModelPath when it wrote a profile), but say so
+  // rather than guarding on one and interpolating the other: the old form printed the string
+  // "undefined" if that invariant ever broke, which is how a template literal hides a missing value.
+  if (cpuModelPath && cpuProfilePath) {
+    console.log(
+      `CPU model:  ${dim(`${displayPath(cpuModelPath)}  ← 'query cpu latest' for the hot-function overview`)}`,
     );
     const rawHint =
       recording.meta.browser === "firefox"
         ? "opens at profiler.firefox.com"
         : "opens in Chrome DevTools / Speedscope";
-    console.log(`CPU raw:    ${dim(`${cpuProfilePath}  ← ${rawHint}`)}`);
+    console.log(`CPU raw:    ${dim(`${displayPath(cpuProfilePath)}  ← ${rawHint}`)}`);
   }
   if (recording.meta.screenshots?.before)
-    console.log(`Before png: ${dim(recording.meta.screenshots.before)}`);
+    console.log(`Before png: ${dim(displayPath(recording.meta.screenshots.before))}`);
   if (recording.meta.screenshots?.after)
-    console.log(`After png:  ${dim(recording.meta.screenshots.after)}`);
+    console.log(`After png:  ${dim(displayPath(recording.meta.screenshots.after))}`);
 }

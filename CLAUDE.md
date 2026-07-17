@@ -191,7 +191,10 @@ string-based package attribution (no fs). Resolved local source paths (`event.at
 resolution: smaller files, portable recordings, and stable `cpu-diff`/`functionJoinKey` joins across
 machines (the `/private` mismatch stops breaking joins). `node:` builtins, remote urls, and paths
 outside root stay absolute; artifact back-pointers (`recording`/`digest`/`profile`, the `latest`
-pointer) stay absolute for cwd-independent re-opening. On-disk numbers are rounded to 4 decimals in
+pointer) stay absolute for cwd-independent re-opening -- but the terminal report prints them through
+`displayPath` (relative to cwd when shorter). Display and storage answer different questions: stored
+absolute so any cwd can reopen them, shown relative because an absolute path is noise to read and
+puts your home directory into every pasted report, screenshot and recorded terminal. On-disk numbers are rounded to 4 decimals in
 `serialize` (drops binary-float dust; the raw `.cpuprofile` is written via direct `JSON.stringify`
 and stays exact). Display names prefer the sourcemap's original identifier (`pos.name`)
 over the minified V8 name (kept as `CpuFunction.minified`), which also makes `cpu-diff` join stably
@@ -310,6 +313,8 @@ Tape gotchas (learned), if you tweak `demo.tape`:
   development build: `react` outranks `react-dom`, and the profile shows a cost nobody ships.
 - **`FontSize 18` + `Width 1580`** avoid clipping; the widest line is the `record` report's longest
   dimmed file-path + annotation (`Digest: ... rendering metrics are not collected`), not the table.
+  Those paths print relative to cwd (`displayPath`), which is what keeps them on one line -- absolute
+  paths wrapped, and put the recorder's home directory into the GIF.
 - The record output is wiped with a hidden `clear` before `query cpu` so the final frame focuses on
   the result alone.
 - **Color is automatic**: VHS records in a real PTY, so `process.stdout.isTTY` is true and the
