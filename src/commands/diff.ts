@@ -6,10 +6,20 @@ import { resolveTarget } from "./resolve.js";
 import type { Recording, RecordingSummary } from "../model/recording.js";
 
 // `gated` metrics participate in --fail-on-regression; `advisory` ones are printed but never
-// fail the build. Only the exact CDP counts gate: wall/INP/scripting ride performance.now()
-// (Chrome-clamped, run-to-run jitter), so gating CI on a +0.1 ms blip would contradict the
-// tool's own trust tiers. They still show in the table, marked "advisory", as a directional
-// signal. (For a real JS-cost gate use `cpu-diff`, which has a sampling-noise floor.)
+// fail the build. A metric gates only if it is REPRODUCIBLE on unchanged code, which is not the
+// same as being a count:
+//
+//   - layout/style come from CDP counters, forced layout from trace stacks, and paint from
+//     main-thread `Paint` events. Provenance is not the test; reproducibility is, and all four are
+//     [measured] bit-identical across repeated runs of the same flow (layout 41, style 42, forced
+//     80 on 5 runs; paint exactly N+1 for N dirtied regions on 40). Those gate. Do not widen paint
+//     to raster/compositor events: their counts track the scheduler rather than the page and would
+//     cost this gate its meaning (docs/dev/rendering-counts.md).
+//   - wall/INP/scripting ride performance.now() (Chrome-clamped, run-to-run jitter), so gating on
+//     a +0.1 ms blip would contradict the tool's own trust tiers.
+//
+// Advisory metrics still show in the table as a directional signal. (For a real JS-cost gate use
+// `cpu-diff`, which has a sampling-noise floor.)
 const METRICS: {
   label: string;
   key: keyof RecordingSummary;
@@ -19,7 +29,6 @@ const METRICS: {
   { label: "layout", key: "layoutCount", higherIsWorse: true, gated: true },
   { label: "style", key: "styleCount", higherIsWorse: true, gated: true },
   { label: "paint", key: "paintCount", higherIsWorse: true, gated: true },
-  { label: "composite", key: "compositeCount", higherIsWorse: true, gated: true },
   { label: "forced layout", key: "forcedLayoutCount", higherIsWorse: true, gated: true },
   { label: "layout inval", key: "layoutInvalidations", higherIsWorse: true, gated: true },
   { label: "style inval", key: "styleInvalidations", higherIsWorse: true, gated: true },

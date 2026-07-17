@@ -123,8 +123,8 @@ interface PassSpec {
  *
  * Counts answer "how much work does one iteration cause"; wall answers "how long does it take",
  * which needs repetition. Summing counts over --iterations conflates the two and silently rescales
- * every threshold: `assert --max-layouts 30` passed at --iterations 1 and failed at 10 on the same
- * page (measured: layoutCount 22 -> 102 -> 202 at 1/5/10). The pass plan now keeps them apart, and
+ * every threshold: `assert --max-layouts 30` would pass at --iterations 1 and fail at 10 on the
+ * same page (measured: layoutCount 22 -> 102 -> 202 at 1/5/10). The pass plan keeps them apart, and
  * the lanes that cannot say so here.
  */
 export function noteCountScope(
@@ -170,7 +170,7 @@ export function noteCountScope(
  * browser name: the gecko pass is what produces Gecko's invalidation-site stacks, and the trace
  * pass is what produces Blink's flush-site ones, so a plan without either produces no blame and
  * gets no semantic (--target node, or Chrome with --no-trace). Deriving this from `opts` instead
- * would re-make the bug #12 fixed in the notes, where a flag implied a pass that never ran.
+ * would let a flag imply a pass that never ran.
  */
 export function blameSemanticFor(specs: PassSpec[]): BlameSemantic | undefined {
   if (specs.some((spec) => spec.gecko)) return "invalidation-site";
@@ -278,10 +278,10 @@ const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
  *                    Remote-only: a local frame always has a known path.
  *
  * Neither alone is sufficient -- a local minified bundle has unmappedFrames 0 (we know its path),
- * and an unminified remote script has unmappedBundles 0 (yet we still cannot say whose it is). An
- * earlier version of this gated on `unmappedFrames` alone and went silent on exactly the local
- * bundle it exists for, which is the failure this shape is designed against: when removing a false
- * positive, check the true positive still fires.
+ * and an unminified remote script has unmappedBundles 0 (yet we still cannot say whose it is).
+ * Gating on `unmappedFrames` alone goes silent on exactly the local bundle this note exists for,
+ * which is the failure this shape is designed against: when removing a false positive, check that
+ * the true positive still fires.
  */
 function sourcemapNote(diagnostics: SourceMapDiagnostics, unmappedFrames: number): string | null {
   const { scripts, resolved } = diagnostics;
@@ -523,7 +523,7 @@ async function runPass(
 
     // A split phase already closed the bracket after iteration 0; reuse it rather than snapshot
     // again, so `delta === after - before` holds and the metrics block describes one coherent
-    // window. Unsplit, this is the post-settle snapshot as before.
+    // window. Unsplit, this is the post-settle snapshot.
     const cdpAfter = countsAfter ?? (await snapshot());
 
     // Teardown now; tracing is stopped and both counters are captured, so cleanup work
@@ -630,9 +630,9 @@ export async function record(opts: RecordOptions): Promise<{
   const wantTrace = opts.trace !== false;
   const traceCats = traceCategories({ invalidationTracking: opts.invalidationTracking !== false });
   const traceSpec: PassSpec = { name: "trace", categories: traceCats };
-  // The sampler rides the timing pass rather than a third pass of its own: both specs are
-  // `categories: null`, i.e. they were always the same pass differing only by the sampler, so a
-  // separate cpu pass bought isolation from the *timing* pass -- which was never what mattered.
+  // The sampler rides the timing pass rather than a pass of its own: both specs are
+  // `categories: null`, so a separate cpu pass would differ from the timing pass only by the
+  // sampler and would buy isolation from the *timing* pass, which is not what matters.
   // What matters is isolation from TRACING. NEVER move `cpu` onto traceSpec: sampling there
   // inflates CPU self-time +21% with non-overlapping ranges, because `devtools.timeline.stack`
   // makes Blink walk the JS stack on every Layout and the sampler bills that work to the JS frame
@@ -723,10 +723,10 @@ export async function record(opts: RecordOptions): Promise<{
     // Name which fields are real, which are a hard 0, and what the real ones may be compared to.
     notes.push(
       opts.cpuProfile
-        ? "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's CDP counts: read them against another Firefox run. NOT measured at all and reported as 0: paintCount/compositeCount, invalidation counts, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and scriptingMs. A 0 in those means unmeasured, not clean."
+        ? "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's CDP counts: read them against another Firefox run. NOT measured at all and reported as 0: paintCount, invalidation counts, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and scriptingMs. A 0 in those means unmeasured, not clean."
         : // Unreachable from the CLI (it errors on --target firefox --no-cpu-profile); a
           // programmatic caller passing cpuProfile:false can still land here.
-          "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint/composite, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.",
+          "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.",
     );
     // INP is deliberately NOT in the caps list above: it never came from CDP. It is the same
     // in-page Event Timing observer Chrome uses, so it works here; the honest caveat is that the
@@ -736,9 +736,9 @@ export async function record(opts: RecordOptions): Promise<{
     );
   } else {
     // Describe the pass plan that was actually BUILT, never the flags that were asked for. Those
-    // diverge: `--no-isolate --no-trace` leaves one clean timing pass, yet branching on
-    // `opts.isolate` announced "invalidationTracking was active during timing, so timings are
-    // inflated" -- about a run with tracing off and timings that were fine. Reading `specs` cannot
+    // diverge: `--no-isolate --no-trace` leaves one clean timing pass, so branching on
+    // `opts.isolate` would announce "invalidationTracking was active during timing, so timings are
+    // inflated" about a run with tracing off and timings that are fine. Reading `specs` cannot
     // drift from reality the way a second transcription of the flag logic can.
     const timingPass = specs.find((spec) => spec.name === "timing");
     const tracePass = specs.find((spec) => spec.name === "trace");
@@ -821,8 +821,8 @@ export async function record(opts: RecordOptions): Promise<{
     screenshots,
   };
 
-  // Firefox timing-only runs have no trace/gecko window; fall back to the wpd:run marks
-  // (performance.now ms) so wall time is still reported. Chrome behavior is untouched.
+  // Last resort for an in-page run whose harness reported no samples (e.g. run() threw after the
+  // marks landed): the wpd:run marks span the timed loop on the clean pass.
   const wallFromMarks = (): number | null => {
     const start = timing.marks.find((entry) => entry.name === "wpd:run:start")?.startTime;
     const end = timing.marks.find((entry) => entry.name === "wpd:run:end")?.startTime;
@@ -830,36 +830,42 @@ export async function record(opts: RecordOptions): Promise<{
   };
   // Bench wall is the time actually spent in run(), summed over every timed iteration.
   //
-  // It cannot be the detail pass's window any more: that pass runs a SINGLE iteration now (counts
-  // describe one iteration's work), so its window would report one iteration's wall as if it were
-  // all of them -- `assert --max-wall 12` would pass a run it used to fail, which is the bug this
-  // change exists to kill, moved onto the other axis. The wpd:run marks span the whole loop and
-  // would work, but the split puts a CDP round trip inside that window (measured: 16.30 vs 14.10
-  // at 8 iterations, so ~2.1ms of the tool's own overhead billed to the page).
+  // It cannot be the detail pass's window: that pass runs a SINGLE iteration (counts describe one
+  // iteration's work), so its window would report one iteration's wall as if it were all of them,
+  // and `assert --max-wall 12` would pass a run it should fail. The wpd:run marks span the whole
+  // loop and would work, but the split puts a CDP round trip inside that window (measured: 16.30 vs
+  // 14.10 at 8 iterations, so ~2.1ms of the tool's own overhead billed to the page).
   //
   // Summing the samples avoids both: they are measured in-page around run() alone, on the pass
   // with tracing off, and they are the exact samples `stats` describes -- so the headline and the
-  // distribution can no longer disagree. Driver mode keeps the window: its steps are heterogeneous
-  // and its wall means "how long the whole flow took", which a sum would not answer.
+  // distribution cannot disagree.
   const benchWallMs = (): number | null =>
     timing.perIteration.length
       ? timing.perIteration.reduce((total, iterationMs) => total + iterationMs, 0)
       : null;
-  const runWallMs = !opts.driver
-    ? (benchWallMs() ?? wallFromMarks())
-    : detail.windowStart != null && detail.windowEnd != null
-      ? (detail.windowEnd - detail.windowStart) / 1000
-      : browserName === "firefox"
-        ? wallFromMarks()
-        : null;
+  // A driver run has NO run-level wall, deliberately: there is no honest number to put here.
+  //
+  //   - The detail pass's window is measured with full tracing on, and the two-pass split exists
+  //     precisely so that no reported time comes from the traced pass. It is also pinned to one
+  //     iteration, so it would be a single traced sample sitting beside per-step medians of
+  //     --iterations clean ones.
+  //   - The timing pass's marks are clean, but they span prepare + every step + inter-step driver
+  //     overhead + the settle sleep, which is no interaction anyone ran, and is ~90% settle floor
+  //     plus input dispatch (docs/dev/driver-timing.md).
+  //
+  // A driver step's wall lives on the step (StepIndexEntry.wallMs, median of its samples); what the
+  // PAGE did lives in `interaction` and the counts. `assert --max-wall` on a driver recording fails
+  // loudly (assert.ts) and names the step index, rather than gating CI on a number that describes
+  // the tool.
+  const runWallMs = !opts.driver ? (benchWallMs() ?? wallFromMarks()) : null;
   // Overall INP = the worst STEP, where each step is its own median across iterations.
   //
   // Read off mergedSteps, not timing.driverSteps: the latter holds one entry per measureStep call
   // per iteration, so maxing it takes the worst sample of the worst step, and INP would climb with
-  // --iterations on unchanged code (more samples, more chances at a slow one). Measured before this
-  // was fixed: summary.inpMs 56 while every step's median was 24, i.e. the recording contradicting
-  // its own step index, and `assert --max-inp` getting stricter the more confidence you asked for.
-  // "Worst interaction" still means worst interaction; it just no longer means worst outlier.
+  // --iterations on unchanged code (more samples, more chances at a slow one). Measured: that reads
+  // summary.inpMs 56 while every step's median is 24, i.e. the recording contradicting its own step
+  // index, and `assert --max-inp` getting stricter the more confidence you asked for. "Worst
+  // interaction" must mean worst interaction, not worst outlier.
   const worstStep = (mergedSteps ?? []).reduce<MergedStep | null>(
     (worst, step) =>
       step.inpMs != null && (worst?.inpMs == null || step.inpMs > worst.inpMs) ? step : worst,
@@ -892,8 +898,7 @@ export async function record(opts: RecordOptions): Promise<{
       // never pass a statistic in from here.
       perStep:
         mergedSteps?.map((step) => ({ label: step.label, perIteration: step.perIteration })) ?? [],
-      // wallMs is the measured run window for both modes (was null for in-page, which
-      // silently disabled `assert --max-wall`).
+      // In-page (bench/node): the summed timed samples. Driver: null on purpose; see runWallMs.
       wallMs: runWallMs,
       inpMs: overallInp,
       interaction: overallInteraction,
@@ -945,8 +950,8 @@ export async function record(opts: RecordOptions): Promise<{
   const sourcemaps = maps.diagnostics();
   // ALWAYS record the diagnostics when any script was attempted: the trace pass resolves stacks
   // through this same resolver, so `blame`'s source attribution depends on it just as `query cpu`
-  // does. Gating the data on a CPU model existing (as an earlier version did) silently dropped the
-  // only evidence a --no-cpu-profile run had about its own blame.
+  // does. Gating the data on a CPU model existing would silently drop the only evidence a
+  // --no-cpu-profile run has about its own blame.
   if (sourcemaps.scripts > 0) meta.sourcemaps = sourcemaps;
   // The NOTE is CPU-worded ("query cpu --by package"), so it needs a model to be about anything;
   // and it returns null when a missing map cost nothing at all.
@@ -1156,8 +1161,8 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     );
   }
   // Both are written together (record() only sets cpuModelPath when it wrote a profile), but say so
-  // rather than guarding on one and interpolating the other: the old form printed the string
-  // "undefined" if that invariant ever broke, which is how a template literal hides a missing value.
+  // rather than guarding on one and interpolating the other: that form prints the string
+  // "undefined" if the invariant ever breaks, which is how a template literal hides a missing value.
   if (cpuModelPath && cpuProfilePath) {
     console.log(
       `CPU model:  ${dim(`${displayPath(cpuModelPath)}  ← 'query cpu latest' for the hot-function overview`)}`,

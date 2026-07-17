@@ -4,12 +4,15 @@ import { dim } from "../output/color.js";
 import { capsFor } from "../browser/backend.js";
 
 /**
- * Where the count column came from, which differs by lane and must not be asserted blindly:
- * only CDP counters are exact. Without CDP, summarize falls back to counting trace/marker
- * events, which on Firefox means Gecko Reflow/Styles markers: real, but batched by a different
- * engine, so calling them "authoritative" invites diffing them against Chrome's as though the
- * two counted the same thing. With no counting mechanism at all the column is all zeros, and
- * saying so beats letting a reader take them for a clean run.
+ * Where the count column came from, which differs by lane and must not be asserted blindly.
+ *
+ * Provenance is not what makes a count trustworthy; reproducibility is (see diff.ts). Chrome's
+ * columns are exact whether they come from CDP counters (layout/style) or the trace (paint,
+ * forced): all of them are measured bit-identical across repeated runs of the same flow. Firefox
+ * counts Gecko Reflow/Styles markers instead: real, but batched by a different engine, so calling
+ * them "authoritative" invites diffing them against Chrome's as though the two counted the same
+ * thing. With no counting mechanism at all the column is all zeros, and saying so beats letting a
+ * reader take them for a clean run.
  */
 export function countProvenance(rec: Recording): string {
   if (capsFor(rec.meta.browser ?? "chrome").cdpCounts) {
@@ -19,6 +22,33 @@ export function countProvenance(rec: Recording): string {
     return "counts come from Gecko markers — approximate, not comparable to Chrome; durations are coarse";
   }
   return "counts NOT measured on this lane and shown as 0; see notes";
+}
+
+/**
+ * The wall row, or nothing. `summary.wallMs` carries a different statistic per artifact, so the
+ * label names which one rather than letting "wall" stand for all three:
+ *
+ *   - run-level driver recording: no wall exists (see runWallMs in record.ts). No row at all: a "—"
+ *     would advertise a number as missing when it does not exist, and send a reader off to look for
+ *     a flag that would bring it back.
+ *   - per-step recording: the MEDIAN of that step's samples (mergeSteps), measured on the clean
+ *     timing pass. This is the honest per-interaction wall, so it must print -- note it inherits
+ *     meta.driver from the parent run, which is why the check above is not on driver alone.
+ *   - bench / node: the SUM of the timed iterations.
+ */
+function wallRow(rec: Recording): [string, string][] {
+  const { summary, meta } = rec;
+  if (meta.driver && !meta.step) return [];
+  if (summary.wallMs == null) return [];
+  const samples = summary.perIteration.length;
+  const label = meta.step
+    ? samples > 1
+      ? `wall (median of ${samples} samples)`
+      : "wall (single sample)"
+    : samples > 1
+      ? `wall (sum of ${samples} timed iterations)`
+      : "wall";
+  return [[label, `${num(summary.wallMs)} ms`]];
 }
 
 export function printSummary(rec: Recording): void {
@@ -40,7 +70,6 @@ export function printSummary(rec: Recording): void {
         ["layout", summary.layoutCount, num(summary.layoutMs)],
         ["style recalc", summary.styleCount, num(summary.styleMs)],
         ["paint", summary.paintCount, num(summary.paintMs)],
-        ["composite", summary.compositeCount, num(summary.compositeMs)],
       ],
     ),
   );
@@ -60,9 +89,7 @@ export function printSummary(rec: Recording): void {
       ["forced layout/style", `${summary.forcedLayoutCount}  (${num(summary.forcedLayoutMs)} ms)`],
       ["long tasks ≥50ms", `${summary.longTaskCount}  (longest ${num(summary.longestTaskMs)} ms)`],
       ["INP (worst interaction)", summary.inpMs == null ? "—" : `${num(summary.inpMs)} ms`],
-      // The whole wpd:run window (navigation + prepare + every step + settle), NOT one
-      // interaction. Per-interaction wall is the perStep table below / `query index`.
-      ["wall (whole run window)", summary.wallMs == null ? "—" : `${num(summary.wallMs)} ms`],
+      ...wallRow(rec),
     ]),
   );
   // Where that INP went. This is the part of a driver report that describes the PAGE: a step's
@@ -116,7 +143,7 @@ export function printSummary(rec: Recording): void {
 
   // Steps are heterogeneous, so this is a labelled list, not one stats block or a sparkline:
   // there is no trend across "mount" and "inp". Each step aggregates only against itself.
-  // Optional chaining: recordings written before perStep existed have no such field.
+  // Optional chaining: an older recording may not carry perStep at all.
   if (summary.perStep?.length) {
     const repeated = summary.perStep.some((step) => step.perIteration.length > 1);
     if (repeated) {

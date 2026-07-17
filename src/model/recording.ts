@@ -88,10 +88,13 @@ export interface RecordingSummary {
   layoutMs: number;
   styleCount: number;
   styleMs: number;
+  /**
+   * Main-thread paint chunks: one per dirtied region, [measured] exactly N+1 for N regions with
+   * zero run-to-run variance. Raster (off-main-thread) is deliberately not in here; it counts
+   * scheduler behaviour, not the page. See docs/dev/rendering-counts.md.
+   */
   paintCount: number;
   paintMs: number;
-  compositeCount: number;
-  compositeMs: number;
 
   layoutInvalidations: number;
   paintInvalidations: number;
@@ -181,7 +184,7 @@ export interface SourceMapDiagnostics {
    * needs none: its frames already carry real names and real lines. A minified bundle with no map
    * is the opposite -- every frame keeps its mangled name and its cost rolls up under whatever
    * package.json sits above the bundle, which reads as a real package. 0 here means a missing map
-   * cost you nothing. Optional: absent in recordings written before 0.5.0.
+   * cost you nothing. Optional: an older recording may not carry it.
    */
   unmappedBundles?: number;
   /**
@@ -260,8 +263,8 @@ export interface RecordingMeta {
   notes: string[];
   /**
    * Sourcemap resolution for this run: how many scripts a map was attempted for, how many
-   * resolved, and why the rest did not. Absent on runs that attempted none (and on recordings
-   * written before this field existed). When resolution fails, CPU self-time is attributed to
+   * resolved, and why the rest did not. Absent on runs that attempted none, and on older
+   * recordings. When resolution fails, CPU self-time is attributed to
    * minified bundle names rather than the originating package, so this is the field that says
    * whether `query cpu --by package` can be trusted.
    */
@@ -415,7 +418,7 @@ export interface CpuModel {
    * bucket (`(cdn.example.com)`). This is what a failed sourcemap actually costs you, and the
    * only honest trigger for "the package rollup cannot be believed". 0 means every frame found
    * its owner -- including when no sourcemap resolved at all, which is the normal case for plain
-   * unbundled source that needs no map. Optional: absent in models written before 0.5.0.
+   * unbundled source that needs no map. Optional: an older model may not carry it.
    */
   unmappedFrames?: number;
 }

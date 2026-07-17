@@ -16,6 +16,7 @@ chromium at tip-of-tree, with a permalink).
 | [gecko-profile-format.md](./gecko-profile-format.md) | touching the Gecko converter, or debugging a Firefox dump that stopped parsing |
 | [cpu-profiling.md](./cpu-profiling.md) | changing the pass plan, the sampler interval, or how `selfMs` is described |
 | [driver-timing.md](./driver-timing.md) | touching `browser/driver.ts`, or presenting a step's `wallMs` as a cost |
+| [rendering-counts.md](./rendering-counts.md) | adding a name to `trace/classify.ts`, gating a count in `diff.ts`/`assert.ts`, or calling a count "exact" |
 
 ## The four things most likely to bite you
 
@@ -36,31 +37,17 @@ chromium at tip-of-tree, with a permalink).
    `interaction.processingMs` or the per-step counts for what the page did.
    [Details](./driver-timing.md#wallms-is-a-bound-on-the-step-not-the-cost-of-the-page).
 
-## Known-wrong things these notes replaced
+## How to add a claim here
 
-Kept deliberately: each was written down confidently, shipped, and turned out to be false. They are
-the shape of mistake this project keeps making — a plausible mechanism, asserted without a probe.
+**Run the probe in both engines before writing the sentence.** A plausible mechanism is not
+evidence: engine behaviour is only knowable by measuring it, and the notes above exist because the
+obvious answer and the measured one differ often enough that the difference is the point.
 
-- "Gecko's cause stack is the same 'JS on the stack == forced' approximation as Chrome's" — it is
-  the opposite end of the story, and the note's own cited evidence (`Node.appendChild`) showed it.
-- "CPU sampling is heavy, so it gets its own isolated pass" — sampling is cheap; tracing
-  contaminating the sampler is the actual reason.
-- "Firefox does not populate Event Timing entries, so INP stays null" — false, and it reached users
-  via `meta.notes` before being caught.
-- "`--cpu-profile` is the right tool for comparing pure-JS cost" — true only for `--target node`.
-- "no sourcemap resolved" was treated as "your package rollup is a lie". Different questions: plain
-  unbundled source has no map because it needs none, and its frames resolve fine. The warning was
-  wrong for years but invisible, because it only reached people who had opted into profiling a
-  bundle. Making profiling default-on pointed it at plain source and the false positive became the
-  common case.
+Two corollaries worth applying:
 
-- "A driver step's wall is inflated by the CDP round trip." Plausible, and the shape of the number
-  agreed. Measured: the round trip is **~0.5 ms**, i.e. noise. The cost is `page.click` itself
-  (~20 ms of input dispatch) and the ~31 ms settle floor. The proposed fix followed from the wrong
-  mechanism, and would have shipped an "action ms" column that was ~95% Puppeteer.
-
-The lesson each time: **run the probe in both engines before writing the sentence.** Two corollaries
-the later ones add: **a default does not just change behaviour, it changes which of your latent bugs
-are load-bearing** (flipping one is a good moment to re-read every warning it unmasks); and **a
-diagnosis that predicts the right magnitude can still name the wrong cause** -- "wall is too big"
-and "the round trip is why" are separate claims, and only the second one needed the probe.
+- **A diagnosis that predicts the right magnitude can still name the wrong cause.** "This wall is
+  too big" and "the CDP round trip is why" are separate claims; only the second needs a probe. A fix
+  derived from an unmeasured mechanism ships the wrong column even when the symptom was real.
+- **A default does not just change behaviour, it changes which latent bugs are load-bearing.** A
+  warning that only fires for opted-in users is barely tested; flipping the default is the moment to
+  re-read every warning it now reaches.

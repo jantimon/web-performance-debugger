@@ -53,8 +53,6 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
 
   let paintCount = 0;
   let paintUs = 0;
-  let compositeCount = 0;
-  let compositeUs = 0;
   let traceLayoutCount = 0;
   let traceLayoutUs = 0;
   let traceStyleCount = 0;
@@ -79,10 +77,6 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
       case "paint":
         paintCount++;
         paintUs += event.dur;
-        break;
-      case "composite":
-        compositeCount++;
-        compositeUs += event.dur;
         break;
       case "layout":
         traceLayoutCount++;
@@ -119,10 +113,11 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
       cdpDelta.RecalcStyleDuration != null
         ? cdpDelta.RecalcStyleDuration * 1000
         : traceStyleUs / 1000,
+    // Main-thread paint chunks only; see PAINT in trace/classify.ts. There is deliberately no
+    // composite count: [measured] it tracks --settle duration (7x swing on a constant workload),
+    // i.e. frames elapsed, never the page's work. docs/dev/rendering-counts.md.
     paintCount,
     paintMs: paintUs / 1000,
-    compositeCount,
-    compositeMs: compositeUs / 1000,
     layoutInvalidations: layoutInval,
     paintInvalidations: paintInval,
     styleInvalidations: styleInval,
