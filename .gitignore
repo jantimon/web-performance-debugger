@@ -6,3 +6,8 @@ recordings/
 examples/demo-gif/demo.gif
 *.tsbuildinfo
 .DS_Store
+
+# CLAUDE.md is checked in on purpose: it is this repo's architecture map, and it points at
+# docs/dev/ for the measured facts behind the non-obvious choices. Many contributors ignore
+# CLAUDE.md globally (core.excludesFile), so un-ignore it here -- repo rules win over global.
+!CLAUDE.md
