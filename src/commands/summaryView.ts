@@ -74,7 +74,10 @@ export function printSummary(rec: Recording): void {
     console.log(
       kv([
         ["input delay", `${num(inputDelayMs, 2)} ms   ${dim("(main thread busy at input)")}`],
-        ["processing", `${num(processingMs, 2)} ms   ${dim("(your event handlers)")}`],
+        [
+          "processing",
+          `${num(processingMs, 2)} ms   ${dim("(handlers, first start to last end)")}`,
+        ],
         [
           "presentation delay",
           `${num(presentationDelayMs, 2)} ms   ${dim("(rendering the result)")}`,

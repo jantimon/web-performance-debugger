@@ -71,16 +71,28 @@ we chose, to 0.1 ms.
 
 Two facts the implementation depends on:
 
-- **Chrome emits the whole pointer sequence, every entry sharing one duration to the same next
-  paint** (`pointerover`, `pointerenter` x4, `mouseover`, `pointerdown`, `mousedown`, `pointerup`,
-  `mouseup`, `click` -- all `duration: 64` on the 45 ms probe). So `Math.max` over durations finds
-  the interaction's latency without grouping, which is why `inpMs` does not group and must not start
-  to; that behaviour is verified in both engines in
+- **Chrome emits the whole pointer sequence** (`pointerover`, `pointerenter` x4, `mouseover`,
+  `pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`), and **on a zero-delay `page.click`
+  every entry shares one duration to the same next paint** (all `64` on the 45 ms probe). That is
+  what lets `Math.max` over durations find the interaction's latency without grouping, which is why
+  `inpMs` does not group; the behaviour is verified in both engines in
   [gecko-profile-format.md](./gecko-profile-format.md).
-- **But only the interaction's own events carry a non-zero `interactionId`** (`pointerdown`,
-  `pointerup`, `click` shared `1186`; the rest were `0`). The *breakdown* must group by it: the
+
+  **This does not generalize to a held press.** With `page.click(sel, { delay: 250 })` -- an
+  ordinary human press is ~100 ms -- the interaction spans **two paints**: `pointerdown`
+  `duration: 24` painting at 43.3, then `pointerup`/`click` `duration: 64` painting at 336.1. One
+  interactionId, two durations. So "every entry shares one duration" is a property of a synthetic
+  instant click, not of Chrome.
+- **Only the interaction's own events carry a non-zero `interactionId`** (`pointerdown`,
+  `pointerup`, `click`; the rest are `0`). The *breakdown* must group by it: on a plain click the
   entries tie on duration, and picking one by duration alone could read processing off
   `pointerover`, which measured **0.10** against the click's **45.20**.
+- **The breakdown then keeps only the entries at the worst duration**, because an interaction can
+  span paints. Reading `startTime` off `pointerdown` and `duration` off `click` on the held press
+  above reported `processingMs 297.5` and `presentationDelayMs -241.8` for a 45 ms handler; the
+  version that anchors on the earliest event instead prices `pointerdown`'s own paint and reports
+  `processingMs 15.7`, losing the handler. Anchoring on the max-duration entries gives **45.3**,
+  because that duration IS the latency INP reports.
 
 `processingStart`/`processingEnd` are **not** rounded, unlike `duration`, which the spec rounds to
 8 ms. So the split is finer-grained than the INP it decomposes: a 45 ms handler reads

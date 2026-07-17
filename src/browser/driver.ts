@@ -55,14 +55,28 @@ export interface RawEventTiming {
 }
 
 /**
- * Split the worst interaction's latency into the three CWV parts, per the web-vitals algorithm:
- * group by `interactionId`, take the group with the longest duration, and read input delay off its
- * FIRST event and processing end off its LAST (a click is pointerdown + pointerup + click, and the
- * work can live in any of them).
+ * Split the worst interaction's latency into the three CWV parts.
  *
- * Returns null when nothing carries an interactionId, which is not a failure: a programmatic step
- * (`page.evaluate`) fires untrusted events that Event Timing does not observe at all, and a fast
- * interaction may not cross the observer's 16ms floor.
+ * Group by `interactionId`, take the worst group, then keep only the entries in it that share the
+ * group's LONGEST duration. That last step is the subtle one, and skipping it produced nonsense.
+ * One interaction can span more than one paint: on a held click (measured, `delay: 250`)
+ * `pointerdown` painted at 43.3 with `duration: 24` while `pointerup`/`click` painted at 336.1 with
+ * `duration: 64`. Mixing them -- reading `startTime` off `pointerdown` and `duration` off `click` --
+ * reported `processingMs: 297.5` and `presentationDelayMs: -241.8` for a 45ms handler.
+ *
+ * The max-duration entries are the right anchor because `duration` IS the interaction's latency to
+ * its paint, and INP is that maximum: describing that journey describes the number being reported.
+ * Anchoring on the earliest event instead would price `pointerdown`'s own paint and lose the click
+ * handler entirely (15.7ms of a measured 45.3). Durations are 8ms multiples, so equality here needs
+ * no epsilon; entries reaching the same paint from starts 0.1ms apart still share one duration
+ * (measured: a plain click's pointerdown/pointerup/click all read 64).
+ *
+ * Non-negative by construction: `processingStart` is clamped into the paint (a handler cannot end
+ * after the frame it delayed), mirroring web-vitals, which carries the same two guards.
+ *
+ * Returns null when nothing carries an interactionId. That is not a failure and must not be 0: a
+ * programmatic step (`page.evaluate`) fires untrusted events, which Event Timing does not observe at
+ * all (measured: zero entries), and an interaction faster than the spec's 16ms floor produces none.
  */
 export function interactionBreakdown(entries: RawEventTiming[]): InteractionTiming | null {
   const groups = new Map<number, RawEventTiming[]>();
@@ -72,25 +86,32 @@ export function interactionBreakdown(entries: RawEventTiming[]): InteractionTimi
     group.push(entry);
     groups.set(entry.interactionId, group);
   }
-  let worst: RawEventTiming[] | null = null;
+  let worstGroup: RawEventTiming[] | null = null;
   let worstDuration = -1;
   for (const group of groups.values()) {
     const duration = Math.max(...group.map((entry) => entry.duration));
     if (duration > worstDuration) {
       worstDuration = duration;
-      worst = group;
+      worstGroup = group;
     }
   }
-  if (!worst) return null;
-  const ordered = [...worst].sort((left, right) => left.startTime - right.startTime);
-  const first = ordered[0];
-  const last = ordered.reduce((latest, entry) =>
-    entry.processingEnd > latest.processingEnd ? entry : latest,
+  if (!worstGroup) return null;
+
+  // Only the events that reached the paint this interaction is measured by.
+  const atWorstPaint = worstGroup.filter((entry) => entry.duration === worstDuration);
+  const startTime = Math.min(...atWorstPaint.map((entry) => entry.startTime));
+  const processingStart = Math.min(...atWorstPaint.map((entry) => entry.processingStart));
+  // max(): a handler that starts after its own frame deadline would otherwise push presentation
+  // delay negative. min(): processing cannot outlast the paint it is being measured against.
+  const paintTime = Math.max(startTime + worstDuration, processingStart);
+  const processingEnd = Math.min(
+    Math.max(...atWorstPaint.map((entry) => entry.processingEnd)),
+    paintTime,
   );
   return {
-    inputDelayMs: first.processingStart - first.startTime,
-    processingMs: last.processingEnd - first.processingStart,
-    presentationDelayMs: first.startTime + worstDuration - last.processingEnd,
+    inputDelayMs: processingStart - startTime,
+    processingMs: processingEnd - processingStart,
+    presentationDelayMs: paintTime - processingEnd,
   };
 }
 

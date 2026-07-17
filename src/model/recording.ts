@@ -192,10 +192,15 @@ export interface SourceMapDiagnostics {
 }
 
 /**
- * An interaction's latency, split the way Core Web Vitals splits INP. The three add up to `inpMs`,
- * and they are the standard triage: a slow interaction is slow because the main thread was busy
- * when the input arrived (input delay), because your handler ran long (processing), or because
- * rendering the result took a while (presentation delay).
+ * An interaction's latency, split the way Core Web Vitals splits INP: a slow interaction is slow
+ * because the main thread was busy when the input arrived (input delay), because your handler ran
+ * long (processing), or because rendering the result took a while (presentation delay).
+ *
+ * They sum to the latency of the interaction they describe, but **do not assume they sum to
+ * `inpMs`**. Two reasons, both real: `inpMs` is the max duration over EVERY Event Timing entry,
+ * including ones outside the interaction, while these come from the worst interaction's own group;
+ * and under `--iterations` each part is medianed independently, so three medians are not one
+ * interaction (see mergeSteps, which explains why that is still the honest choice).
  *
  * Measured in-page by the Event Timing observer, so unlike a step's `wallMs` these describe the
  * PAGE, not the driver: identical work reports the same processing time whether the step was driven

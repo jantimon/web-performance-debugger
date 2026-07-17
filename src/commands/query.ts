@@ -121,7 +121,7 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
         "#",
         "label",
         "inp ms",
-        "handler ms",
+        "processing ms",
         "layout",
         "forced",
         "paint",
@@ -146,9 +146,11 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
     ),
   );
   console.log(
-    "\n* wall includes the driver's own overhead (the action's round trip + the settle); it bounds " +
-      "the step rather than costing it.\n  inp/handler are measured in-page: 'handler ms' is the " +
-      "event handlers alone. A '—' means no interaction crossed the 16 ms Event Timing floor.",
+    "\n* wall includes the driver's own overhead (dispatching the action, then waiting for the page " +
+      "to settle); it bounds the step\n  rather than pricing it. inp/processing are measured in-page. " +
+      "'processing ms' is first handler start to last handler end,\n  so it also covers any gap " +
+      "between the events of one interaction. A '—' means no interaction crossed the 16 ms " +
+      "Event Timing floor.",
   );
   console.log("\nInspect a step:  wpd query digest <file above>");
 }

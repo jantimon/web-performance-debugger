@@ -7,10 +7,10 @@ Vitals splits INP: `summary.interaction` and `StepIndexEntry.interaction` carry 
 thread busy at input), `processingMs` (your event handlers) and `presentationDelayMs` (rendering the
 result). These come from the in-page Event Timing observer, so they describe the page, and they are
 finer-grained than `inpMs`, which the spec rounds to 8ms: a 45ms handler reads `processingMs` 45.1.
-`query index` gains a `handler ms` column.
+`query index` gains a `processing ms` column.
 
-**Changed:** `query index` leads with `inp ms` and `handler ms` and moves `wall ms` last, marked as
-a bound. A step's wall is measured around the driver, so it includes dispatching the action and
+**Changed:** `query index` leads with `inp ms` and `processing ms` and moves `wall ms` last, marked
+as a bound. A step's wall is measured around the driver, so it includes dispatching the action and
 waiting for the page to settle: identical work reports 40.5ms driven by `page.click` and 31.9ms by
 `page.evaluate`, of which the page did 1.1ms. Leading with it invited reading the driver's cost as
 the page's.

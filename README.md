@@ -166,13 +166,13 @@ wpd query index latest
 ```
 
 ```
-#  label       inp ms  handler ms  layout  forced  paint  layoutInval  wall ms*
-0  open menu   24      1.7         3       0       5      4            31.2
-1  type query  56      45.1        9       2       18     12           88.6
+#  label       inp ms  processing ms  layout  forced  paint  layoutInval  wall ms*
+0  open menu   24      1.7            3       0       5      4            31.2
+1  type query  56      45.1           9       2       18     12           88.6
 ```
 
-`inp ms` is the user-perceived latency, and `handler ms` is the part of it your own event handlers
-account for. Both are measured **in-page**, so they describe the page rather than the driver
+`inp ms` is the user-perceived latency, and `processing ms` is the part of it spent in your own
+event handlers. Both are measured **in-page**, so they describe the page rather than the driver
 
 `wall ms` is different, and the `*` in the table says so: it is measured around the driver, so it
 includes dispatching the action and waiting for the page to settle. On a trivial interaction that is
