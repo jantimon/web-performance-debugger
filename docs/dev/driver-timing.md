@@ -27,8 +27,7 @@ So it carries the driver's own cost. The same 40-row forced-layout work, driven 
 | `page.click('#inc')` | **~20** | ~20 | **40.5** |
 | `--bench` (timed in-page) | | | **1.1** |
 
-Three things follow, and all three are counter-intuitive enough to have been guessed wrong here
-before:
+Three things follow, and all three are counter-intuitive enough to be worth stating outright:
 
 - **The page did 1.1 ms of the 40.5.** Everything else is the tool.
 - **`page.click` alone costs ~20 ms** of Puppeteer/CDP input dispatch (mouse move, hit test,
@@ -89,10 +88,10 @@ Two facts the implementation depends on:
   `pointerover`, which measured **0.10** against the click's **45.20**.
 - **The breakdown then keeps only the entries at the worst duration**, because an interaction can
   span paints. Reading `startTime` off `pointerdown` and `duration` off `click` on the held press
-  above reported `processingMs 297.5` and `presentationDelayMs -241.8` for a 45 ms handler; the
-  version that anchors on the earliest event instead prices `pointerdown`'s own paint and reports
-  `processingMs 15.7`, losing the handler. Anchoring on the max-duration entries gives **45.3**,
-  because that duration IS the latency INP reports.
+  above reports `processingMs 297.5` and `presentationDelayMs -241.8` for a 45 ms handler; anchoring
+  on the earliest event instead prices `pointerdown`'s own paint and reports `processingMs 15.7`,
+  losing the handler. Anchoring on the max-duration entries gives **45.3**, because that duration IS
+  the latency INP reports.
 
 `processingStart`/`processingEnd` are **not** rounded, unlike `duration`, which the spec rounds to
 8 ms. So the split is finer-grained than the INP it decomposes: a 45 ms handler reads
@@ -110,8 +109,8 @@ Two facts the implementation depends on:
 | presentation delay | 10.8 | 3.0 |
 
 `processingMs` crosses (0.2% apart); `inpMs` does not. The whole gap is **presentation delay**, so
-"Firefox reads a lower INP for identical work" -- previously known but unexplained -- is a rendering
-difference, not a JS one, and the split is what says so. That makes `processingMs` the second signal
+"Firefox reads a lower INP for identical work" is a rendering difference, not a JS one, and the
+split is what says so. That makes `processingMs` the second signal
 comparable across engines, alongside CPU self-time; see
 [engine-mapping.md](./engine-mapping.md#what-is-actually-comparable-across-engines). Firefox appears
 to round the parts to whole ms where Chrome does not.

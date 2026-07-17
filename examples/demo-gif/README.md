@@ -23,10 +23,9 @@ Prereqs:
 - Nothing else. The tape runs [`examples/ssr-demo`](../ssr-demo/), which lives in this repo and
   `npm install`s itself from the tape. It is JSX-free on purpose, so there is no build step.
 
-That last point is the whole design. Until 0.5.0 this tape copied a pre-compiled bundle out of a
-private benchmarks repo, so exactly one person on one machine could re-render it — and it rotted
-exactly as you would expect: the bundle was deleted, and the published GIF kept demonstrating a CLI
-flag that no longer existed. **If you change this demo, keep it runnable from a clean checkout.**
+That last point is the whole design. **If you change this demo, keep it runnable from a clean
+checkout.** A tape that depends on an artifact only one machine can build is a tape nobody
+re-renders, and a GIF nobody re-renders goes on demonstrating a CLI that no longer exists.
 
 Two things in the tape that look incidental and are not:
 

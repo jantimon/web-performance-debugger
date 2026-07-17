@@ -64,8 +64,8 @@ export function duplicateLabelError(label: string): Error {
  * programmatic callers that hand-build steps and never go through it.
  *
  * Uniqueness is per ITERATION, not per run: with --iterations, "mount" legitimately appears once
- * per iteration and those are its samples. Two "mount"s in the SAME iteration are still the
- * original bug, where one label would join the wrong timing to the wrong trace.
+ * per iteration and those are its samples. Two "mount"s in the SAME iteration are a collision:
+ * one label would join the wrong timing to the wrong trace.
  */
 function assertUniqueLabels(labelled: { label: string; iteration?: number }[]): void {
   const seen = new Set<string>();
@@ -232,7 +232,7 @@ export function mergeSteps(
     const perIteration = ordered.map((step) => step.wallMs);
     // INP is the median across iterations, not the worst: the worst would climb with --iterations
     // (more samples, more chances at a slow one), so raising --iterations to gain confidence would
-    // report a worse INP for unchanged code. That is the same bug the counts had.
+    // report a worse INP for unchanged code. Counts stay per-iteration for the same reason.
     const inpSamples = ordered
       .map((step) => step.inpMs)
       .filter((inpMs): inpMs is number => inpMs != null);

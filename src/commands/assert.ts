@@ -56,6 +56,13 @@ export async function assertCmd(file: string, thresholds: Thresholds): Promise<v
   const abs = await resolveTarget(file, "auto");
   const obj = deserialize(await fs.readFile(abs, "utf8"), path.extname(abs).toLowerCase()) as any;
 
+  // A run-level driver recording has no wall by design, so `--max-wall` against it can only fail.
+  // "was not measured" would be true but useless: the wall exists, one per step, in the sidecar.
+  // Name the file rather than let a reader conclude the tool lost the number. A per-step recording
+  // is excluded because it HAS a wall (its median), so it never reaches the null branch anyway.
+  const wallIsPerStep =
+    obj?.meta?.driver === true && obj?.meta?.step == null && !Array.isArray(obj.steps);
+
   const targets: { label: string; m: Metrics }[] = [];
   if (Array.isArray(obj.steps) && typeof obj.recording === "string") {
     const idx = obj as StepIndex;
@@ -93,7 +100,11 @@ export async function assertCmd(file: string, thresholds: Thresholds): Promise<v
         // --max-inp on an in-page run that captured no interaction. Skipping it green
         // is a CI gate that doesn't gate.
         violations.push(
-          `${target.label}: ${check.label} was not measured; cannot satisfy max ${max}`,
+          wallIsPerStep && check.opt === "wall"
+            ? `${target.label}: a driver run has no run-level wall (it would be prepare + every ` +
+                `step + settle, mostly driver overhead). Each step has its own: assert the step ` +
+                `index beside this file (<name>.index.json, or 'latest') to gate --max-wall per step.`
+            : `${target.label}: ${check.label} was not measured; cannot satisfy max ${max}`,
         );
         rows.push([target.label, check.label, "n/a", max, "FAIL"]);
         continue;

@@ -91,7 +91,7 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
   const raw = await fs.readFile(abs, "utf8");
   const idx = deserialize(raw, path.extname(abs).toLowerCase()) as StepIndex;
   // `latest` resolves to the index via the pointer, but an explicit path is taken as given, so
-  // `query index <recording>` used to read a Recording as a StepIndex and die on
+  // `query index <recording>` would otherwise read a Recording as a StepIndex and die on
   // `Cannot read properties of undefined (reading 'length')`, naming neither the file nor the fix.
   if (!Array.isArray(idx.steps)) {
     throw new Error(
@@ -113,8 +113,8 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
   // `inp` and `handler` come first because they describe the PAGE. `wall` is last and labelled as
   // a bound: it is measured node-side around the action plus its settle, so it carries the driver's
   // own cost (measured: ~31ms of settle floor, and page.click alone ~20ms) and can differ by 8ms
-  // between two ways of driving identical work. Leading with it invited reading tool overhead as
-  // the page's cost. See docs/dev/driver-timing.md.
+  // between two ways of driving identical work. Leading with it would invite reading tool overhead
+  // as the page's cost. See docs/dev/driver-timing.md.
   console.log(
     table(
       [
@@ -292,7 +292,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
 
 /**
  * Which engine attributed this recording's events, for the "nothing to show" message. Naming
- * Chrome unconditionally was wrong on a Firefox recording, and pointed the reader at a stack
+ * Chrome unconditionally would be wrong on a Firefox recording, pointing the reader at a stack
  * source that lane does not have. Absent semantic => no blame pass ran at all.
  */
 function whatCapturesStacks(semantic: BlameSemantic | undefined): string {

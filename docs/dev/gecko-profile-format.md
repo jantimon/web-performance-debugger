@@ -26,9 +26,9 @@ regenerate a full one, launch Firefox via Puppeteer with the `MOZ_PROFILER_*` en
   `"CDP support is required for this feature. The current browser does not support CDP."`
   So: no CDP counters, no DevTools trace, no CPU/network throttling, no invalidationTracking.
   Every CDP touchpoint is capability-gated behind `capsFor(browser).cdpCounts/trace/throttle`.
-- `PerformanceObserver({ type: "event" })` **works**, and per-step INP is real. An earlier version of
-  this doc claimed Firefox does not populate Event Timing entries and that INP stays `null`; that was
-  wrong, and the wrong claim reached users via `meta.notes`. Measured on Firefox 152 / Chrome 150:
+- `PerformanceObserver({ type: "event" })` **works**, and per-step INP is real: Firefox populates
+  Event Timing entries, so INP is measured on this lane, not `null`. Measured on Firefox 152 /
+  Chrome 150:
   - `supportedEntryTypes` includes `event`, `first-input`, `largest-contentful-paint`, `paint`
     (and `PerformanceEventTiming.interactionId` exists). It does **not** include `layout-shift`,
     `longtask`, or `element`, so CLS and long tasks cannot be sourced in-page here. wpd's long tasks
@@ -139,9 +139,8 @@ modes (both already emit those marks).
   We map `Styles -> style`, `Reflow* -> layout`, set `event.at` from the top JS cause frame, and set
   `forced: true` when a JS frame is on the cause stack. Markers with a native-only cause get counts
   + durations but no `at`/`forced`.
-- **WARNING — the cause stack is NOT Chrome's stack.** An earlier version of this file described
-  the above as "the same 'JS on the stack == synchronously forced' approximation as the Chrome trace
-  path". **That is wrong**, and its own cited evidence shows why: the example cause chain
+- **WARNING — the cause stack is NOT Chrome's stack.** It is **not** the same "JS on the stack ==
+  synchronously forced" approximation as the Chrome trace path, and the cause chain above shows why:
   `Node.appendChild -> ...` is the **write**, not the geometry read. Gecko captures the cause in
   `SetNeedLayoutFlush`/`SetNeedStyleFlush` (the **invalidator**, and only the *first* one since the
   last flush); Chrome captures it at the flush (the **forcer**). Measured on
@@ -150,9 +149,9 @@ modes (both already emit those marks).
   [engine-mapping.md](./engine-mapping.md#forced-layout-blame-differs-by-engine) before touching or
   trusting this path.
 - This lane runs inside the gecko pass (one browser launch yields both the CPU samples and the
-  markers), which since 0.5.0 is **not opt-in**: it used to require `--cpu-profile`, and without that
-  flag a Firefox recording reported every rendering count as 0 — indistinguishable from a clean run.
-  The CLI now refuses `--target firefox --no-cpu-profile` for the same reason. Note the CPU samples
+  markers), which is **not opt-in**: without it a Firefox recording would report every rendering
+  count as 0 — indistinguishable from a clean run — so the CLI refuses
+  `--target firefox --no-cpu-profile`. Note the CPU samples
   *do* attribute forced layout to the forcing frame, so `query cpu` is currently more correct than
   `query blame` on this lane; see [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
 

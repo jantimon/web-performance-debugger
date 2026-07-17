@@ -75,9 +75,9 @@ contracts** — keep them straight:
   same-origin to avoid cross-origin import). It measures only `run()` (page load/boot is
   excluded). The CLI sets the internal `RecordOptions.driver` to `!bench`.
 
-`--iterations`/`--warmup` repeat `run()` in **both** modes (they were bench-only until 0.6.0, which
-left the mode that measures real interactions with no statistical footing at all). Driver labels are
-unique **within an iteration**, not within the run: the repetitions are a label's samples, so
+`--iterations`/`--warmup` repeat `run()` in **both** modes: the mode that measures real interactions
+needs a statistical footing as much as bench does. Driver labels are unique **within an iteration**,
+not within the run: the repetitions are a label's samples, so
 `mergeSteps` groups by label and each step reports the median of its own. That is also why
 `DriverStep` carries `markIndex` separately from `index` -- the trace needs a name that is unique
 per pass, while `index` is the step's stable position within an iteration.
@@ -109,13 +109,13 @@ inside `runDriver`. Windowing counts per iteration is NOT an option: paint/compo
 Two lanes cannot have it both ways and say so via `noteCountScope` instead of lying: `--no-isolate`
 (one pass carries wall AND counts) and firefox (the gecko pass is that lane's only CPU sampler).
 Bench `wallMs` is the **sum of the timed samples**, not a window: the window would either span one
-iteration (wrong) or bracket the split's own CDP round trip (~2.1ms of tool cost billed to the
-page). Measurements and the before/after are in the 0.6.0 changeset and the commit messages.
+iteration (wrong) or bracket the split's own CDP round trip (measured: ~2.1ms of tool cost billed to
+the page).
 
-**The CPU sampler rides the timing pass** (it had a third pass of its own until 0.5.0). The cpu and
-timing specs were literally the same pass (`categories: null`) plus the sampler, so that pass bought
-isolation from *timing*, which was never what mattered. Isolation from **tracing** is: sampling
-during the trace pass inflates CPU self-time **+21%** (our own `devtools.timeline.stack` category
+**The CPU sampler rides the timing pass**, not a pass of its own: a cpu spec and the timing spec are
+the same pass (`categories: null`) plus the sampler, so a separate pass would buy isolation from
+*timing*, which is not what matters. Isolation from **tracing** is: sampling during the trace pass
+inflates CPU self-time **+21%** (our own `devtools.timeline.stack` category
 makes Blink walk the JS stack on every Layout, and the sampler bills that to the forcing JS frame —
 the same frame the real forced-layout cost lands on, so the two cannot be separated afterwards).
 **Never move `cpu` onto `traceSpec`.** Riding the timing pass costs ~10% on wall, which
@@ -197,7 +197,7 @@ instance, so `runtime/node.ts` and programmatic callers are unaffected): it shar
 remote script+map is fetched once, not once per pass) and, critically, the **diagnostics**. Every
 `loadMap` attempt records an outcome (`no-sourcemap-url` / `script-fetch-failed` /
 `map-fetch-failed` / `map-parse-failed`); `maps.diagnostics()` returns them grouped by reason.
-Failure used to be swallowed by bare `catch { return null }` and was invisible, which reads as "the
+Swallowing a failure (a bare `catch { return null }`) makes it invisible, which reads as "the
 feature does not exist": frames keep minified names and the per-package rollup silently reports one
 bundle-shaped bucket. So `record()` mutates `meta.sourcemaps` + pushes a note (WARNING only when 0
 of N resolved) **after** `buildCpuModel` but **before** any artifact is serialized -- that ordering
@@ -283,24 +283,36 @@ the probes that establish them.
 - **No em-dashes or AI-prose in comments.** Use ASCII punctuation (`:`, `;`, `()`, `.`) and keep
   comments terse and technical; drop chatty tells (`à la`, `Best-guess`, `Nudge the engine`).
   The standalone `"—"` used as a missing-value placeholder in table *output* is allowed.
+- **No archeology.** Comments and docs describe the code as it is now, never how it used to be.
+  Cut past-tense narration ("used to", "was null before", "until 0.5.0", "the bug this fixes",
+  "measured before this was fixed"), version/PR numbers used as rationale, and incident logs.
+  **Keep every `[measured]` number and the prohibition it justifies** -- those are why the code is
+  the way it is -- but phrase them as present-tense constraints: "Never move `cpu` onto `traceSpec`:
+  sampling during the trace pass inflates self-time +21%", not "it had its own pass until 0.5.0".
+  The test: would someone implementing this from scratch today still write the sentence? If it only
+  makes sense as "here is what we changed", it belongs in the changeset and the PR description,
+  which is where history lives. This applies to `docs/dev/` too: state the finding, not its
+  discovery story.
 - Per the user's global rule: use `trash`, never `rm -rf`.
 - **Changesets are release notes, not design docs.** A changeset becomes a `CHANGELOG.md` entry read
   by someone deciding whether to upgrade: say what changed, what breaks, and what to do about it.
-  Budget **~5 lines, ~15 for a breaking change**; 0.4.0 shipped at 130 lines against 0.3.0's 10 and
-  had to be rewritten. The reasoning (why the bug existed, what was measured, what was ruled out)
-  belongs in the PR description and the code comments, both of which outlive the changeset. Lead with
-  **Breaking:** where it applies, and order a release's changesets breaking-first.
+  Budget **~5 lines, ~15 for a breaking change**. The reasoning (why the bug existed, what was
+  measured, what was ruled out) belongs in the PR description and the code comments, both of which
+  outlive the changeset. Lead with **Breaking:** where it applies, and order a release's changesets
+  breaking-first.
 - **Cross-engine / profiling work**: `docs/dev/` ([index](docs/dev/README.md)) holds the measured
   facts the code depends on but cannot state itself. Read the relevant one BEFORE touching that
   code: `gecko-profile-format.md` (raw v34 schemas, marker phases, cause-stack encoding, line/col
   base) for the Gecko converter; `engine-mapping.md` (Gecko<->Blink names, blame semantics, what is
   actually comparable) before any cross-engine claim; `cpu-profiling.md` (pass plan, sampler
-  contamination, what `selfMs` includes) before changing passes or the interval.
-- **Claims about engine behaviour need a probe, not a mechanism.** Every wrong thing in this repo's
-  history (see the list at the bottom of `docs/dev/README.md`) was a plausible mechanism asserted
-  without running it in both engines. Sourcemaps, INP, Gecko cause stacks, sampler isolation — each
-  read as obviously true and was false. Run `examples/forces-layout.mjs` in both engines and look at
-  the output before writing the sentence.
+  contamination, what `selfMs` includes) before changing passes or the interval;
+  `rendering-counts.md` (what each count counts, which ones reproduce, why there is no composite
+  count) before adding a name to `classify.ts` or gating a count.
+- **Claims about engine behaviour need a probe, not a mechanism.** A plausible mechanism is not
+  evidence, however obviously true it reads: sourcemaps, INP, Gecko cause stacks and sampler
+  isolation all behave in ways a mechanism alone predicts wrongly. Run `examples/forces-layout.mjs`
+  in both engines and look at the output before writing the sentence (`docs/dev/README.md` has the
+  rule and its corollaries).
 
 ## Regenerating the README demo (`examples/demo-gif/`)
 
@@ -315,18 +327,18 @@ What it shows: the `--target node` CPU lane attributing SSR `renderToString` sel
 `tailwind-merge` ~22% vs `app` ~9%, with `tailwind-merge get (lib/lru-cache.ts:35)` the single
 hottest function (~21%) as the punchline.
 
-It used to run a pre-compiled bundle from a private benchmarks repo, which meant one person on one
-machine could re-render it -- so it rotted unnoticed until the published GIF was demonstrating a
-removed flag. **Keep this demo runnable from a clean checkout**; that property is the point, not the
-exact percentages.
+**Keep this demo runnable from a clean checkout**; that property is the point, not the exact
+percentages. A demo that depends on a pre-compiled bundle from a private repo can only be
+re-rendered by one person on one machine, and rots unnoticed until the published GIF demonstrates a
+flag that no longer exists.
 
-Tape gotchas (learned), if you tweak `demo.tape`:
+Tape gotchas, if you tweak `demo.tape`:
 
 - **`Sleep` must outlast the process.** VHS fires the next keystroke after the `Sleep`, not when
   the command exits. The `record` step needs a Sleep longer than its real runtime (~a few seconds).
 - **`--iterations 250`** is about `(node) post (node:inspector)`, the profiler's own cost on this
   lane. It is a **fixed ~23ms** regardless of workload, so the only way to shrink it is more real
-  work: at 80 iterations it was the single hottest function (~18-46%) and buried the punchline; at
+  work: at 80 iterations it is the single hottest function (~18-46%) and buries the punchline; at
   250 it drops to ~7% and `tailwind-merge get` takes the top row. If you shrink the workload, re-check
   that row before publishing.
 - **`NODE_ENV=production` is load-bearing** (hidden in the tape). Without it React resolves to its
@@ -334,7 +346,7 @@ Tape gotchas (learned), if you tweak `demo.tape`:
 - **`FontSize 18` + `Width 1580`** avoid clipping; the widest line is the `record` report's longest
   dimmed file-path + annotation (`Digest: ... rendering metrics are not collected`), not the table.
   Those paths print relative to cwd (`displayPath`), which is what keeps them on one line -- absolute
-  paths wrapped, and put the recorder's home directory into the GIF.
+  paths wrap, and put the recorder's home directory into the GIF.
 - The record output is wiped with a hidden `clear` before `query cpu` so the final frame focuses on
   the result alone.
 - **Color is automatic**: VHS records in a real PTY, so `process.stdout.isTTY` is true and the

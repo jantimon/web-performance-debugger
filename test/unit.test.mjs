@@ -150,7 +150,7 @@ test("serialize/deserialize round-trips json and toon", () => {
 });
 
 test("public entrypoint exposes the schema version anchor", () => {
-  assert.equal(SCHEMA_VERSION, "1");
+  assert.equal(SCHEMA_VERSION, "2");
 });
 
 test("package exports map points at files that exist", () => {
@@ -755,7 +755,7 @@ const tmpDir = mkdtempSync(path.join(os.tmpdir(), "wpd-test-"));
 function writeRecording(name, summaryOverrides) {
   const summary = {
     wallMs: null, inpMs: null, scriptingMs: 0,
-    layoutCount: 0, styleCount: 0, paintCount: 0, compositeCount: 0,
+    layoutCount: 0, styleCount: 0, paintCount: 0,
     forcedLayoutCount: 0, layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0,
     longTaskCount: 0, totalEvents: 0, perIteration: [], stats: null,
     ...summaryOverrides,

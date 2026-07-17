@@ -448,7 +448,7 @@ a genuinely clean run
 | Forced layout/style blame to source | — | ✓ | ✓ |
 | INP per step | — | ✓ | ✓ |
 | Layout / style / forced-layout counts | — | ~ (Gecko) | ✓ (CDP) |
-| Paint / composite counts + invalidation rollup | — | — | ✓ (CDP + trace) |
+| Paint counts + invalidation rollup | — | — | ✓ (trace) |
 | Long tasks | — | — | ✓ |
 | `--cpu-throttle` / `--network` slowdowns | — | — | ✓ |
 
@@ -506,7 +506,8 @@ always plain, so CI and scripts are unaffected
 
 | Signal | Source | Trust |
 | --- | --- | --- |
-| Counts (layout / paint / style / invalidation) | CDP | exact: compare freely |
+| Counts (layout / style) | CDP counters | exact: compare freely |
+| Counts (paint / forced layout / invalidation) | DevTools trace | exact: measured bit-identical across repeated runs |
 | Wall and INP times | `performance.now()`, browser-clamped | directional: good for "~2x worse?", not "1.3 ms" |
 | CPU self-time | the sampler's own clock (V8 microsecond; Gecko ~1 ms floor on Firefox) | real: trustworthy in aggregate (a few % noise) |
 

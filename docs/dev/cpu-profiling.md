@@ -2,7 +2,7 @@
 
 > **Developer notes, not user documentation.** Read the [README](../../README.md) to use wpd. This
 > file records why the pass plan is shaped the way it is, with the measurements behind it, so the
-> next person does not "optimise" the structure back into a wrong number.
+> next person does not "optimise" the structure into a wrong number.
 
 Related: [engine-mapping.md](./engine-mapping.md) (Gecko <-> Blink names and semantics),
 [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas).
@@ -10,7 +10,7 @@ Related: [engine-mapping.md](./engine-mapping.md) (Gecko <-> Blink names and sem
 **Provenance.** Pass-structure numbers are 5 interleaved runs per arm, after a discarded warmup, of
 `examples/forces-layout.mjs --bench` on chrome 150 / firefox 152; interval numbers are 3 runs per arm
 of `examples/cpu-busywork.mjs --target node`. First-run numbers are cold-start outliers by a wide
-margin (a single un-warmed run showed 18ms against a 7ms median, and would have "proven" the wrong
+margin (a single un-warmed run reads 18ms against a 7ms median, enough to "prove" the wrong
 conclusion) — **always warm up and interleave** before believing a pass-structure A/B.
 
 ## What self-time actually includes
@@ -18,7 +18,7 @@ conclusion) — **always warm up and interleave** before believing a pass-struct
 **[measured]** The headline fact, and it is not what "CPU profile" suggests.
 
 On the browser lanes, `selfMs` is **JS plus the synchronous engine work that JS triggered** — not
-pure JS. The isolated CPU pass (tracing off, i.e. what ships today) on the forced-layout probe:
+pure JS. The CPU pass (tracing off) on the forced-layout probe:
 
 ```
 8.41 ms   fn=run    examples/forces-layout.mjs:24
@@ -59,24 +59,24 @@ node:    [node-cpu]
   **The sampler must never run in this pass** (see below).
 - **gecko** — firefox only; one Gecko-profiler run yields CPU samples *and* layout/style markers.
 
-CPU profiling is **on by default on every target** and costs no extra pass. It was `--cpu-profile`
-(opt-in, third pass) until 0.5.0; the flag was only ever meaningful on chrome — node forced it on,
-and firefox without it silently reported every rendering count as 0.
+CPU profiling is **on by default on every target** and costs no extra pass. Opting out is only
+meaningful on chrome: node has nothing left to measure without it, and firefox without it reports
+every rendering count as 0, so the CLI refuses `--no-cpu-profile` on both.
 
 `--no-isolate` collapses to the single trace pass, which the sampler cannot ride, so that
 combination yields no CPU model and says so in `meta.notes`.
 
 ### Why the CPU pass is separate: tracing contaminates sampling
 
-**[measured]** The comment historically said "CPU sampling is heavy, so it gets its own isolated
-pass". That reasoning is **wrong** and the parenthetical ("tracing stays off in it") was the real
-load-bearing part. Sampling is not the problem. **Tracing contaminating the sampler is.**
+**[measured]** Sampling is cheap; it is not the reason the sampler needs an untraced pass.
+**Tracing contaminating the sampler is.** The load-bearing property of the pass the sampler rides is
+that tracing is off in it.
 
 Folding the sampler into the trace pass:
 
 | sampler runs in | passes | CPU self ms | CPU fns | perIteration ms |
 | --- | --- | --- | --- | --- |
-| own pass (pre-0.5.0) | 3 | **8.67** (8.2–11.4) | 7 | **8.3** (8.0–8.7) |
+| a pass of its own | 3 | **8.67** (8.2–11.4) | 7 | **8.3** (8.0–8.7) |
 | **trace pass** (never do this) | 2 | **10.4** (10.0–11.2) | **10** | 8.3 |
 | timing pass (**shipped**) | 2 | 8.99 (8.3–13.3) | 7 | 9.1 (8.3–13.4) |
 
@@ -91,7 +91,7 @@ above. From inside the folded pass the two are indistinguishable. One is product
 is measurement apparatus that exists only because we asked for it. Reporting 10.4ms for a line that
 costs 8.4ms in production is precisely the fake number this project refuses elsewhere.
 
-Counts are never at risk: `layoutCount`/`styleCount`/`forcedLayoutCount` were byte-identical
+Counts are never at risk: `layoutCount`/`styleCount`/`forcedLayoutCount` are byte-identical
 (22/23/43) across all 20 runs of the A/B.
 
 ### Do not "correct" the contamination arithmetically
@@ -103,30 +103,31 @@ into the one signal the trust table calls "real: trustworthy in aggregate". Fold
 **timing** pass removes the error instead of modelling it. Prefer the design where the number is
 measured.
 
-### Why it rides the timing pass (shipped in 0.5.0)
+### Why it rides the timing pass
 
-**[measured]** The cpu spec and the timing spec were *the same pass* (`categories: null`), differing
-only by the sampler. So the third pass bought isolation from the **timing** pass, which was never
-what mattered — isolation from **tracing** was, and the timing pass has that for free.
+**[measured]** A cpu spec and the timing spec would be *the same pass* (`categories: null`),
+differing only by the sampler. A pass of its own therefore buys isolation from the **timing** pass,
+which is not what matters — isolation from **tracing** is, and the timing pass has that for free.
 
-Riding there: 2 passes, **record wall 2.48s vs 3.68s (-33%)**, CPU model intact (+4%, overlapping
-ranges, same function count). The cost lands on wall instead: **perIteration +10% median and ~3x
-the variance** at the old 50us interval — most of which the 200us default below buys back.
+Riding there: 2 passes, **record wall 2.48s vs 3.68s (-33%)** against a separate cpu pass, CPU model
+intact (+4%, overlapping ranges, same function count). The cost lands on wall instead:
+**perIteration +10% median and ~3x the variance** at a 50us interval — most of which the 200us
+default below buys back.
 
-That trade respects the existing trust hierarchy — wall is already declared *directional*, CPU
-self-time is declared *real* — and systematic inflation cancels in `diff`, where both sides carry
-it. The timing pass is no longer pristine, which is what `--no-cpu-profile` is for: clean-wall and
+That trade respects the existing trust hierarchy — wall is declared *directional*, CPU self-time is
+declared *real* — and systematic inflation cancels in `diff`, where both sides carry it. The timing
+pass is therefore not pristine, which is what `--no-cpu-profile` is for: clean-wall and
 `--iterations` benchmarking work.
 
 ### The sampler interval: why 200us
 
-**[measured]** The default was `50us` — **20x more aggressive than V8's own 1000us** — and that is
-where most of the timing-fold's wall cost came from.
+**[measured]** `50us` — **20x more aggressive than V8's own 1000us** — is where most of the
+timing-fold's wall cost comes from.
 
 Tuned against `examples/cpu-busywork.mjs` (**~2.2 seconds** of real JS), *not* the layout probe. A
 layout probe is the wrong workload for tuning a JS sampler: it has ~8ms of JS, so any coarsening
-starves it and looks catastrophic. Measuring on the probe first suggested 200us "collapsed"
-resolution from 7 functions to 3; on a real JS workload that effect does not exist.
+starves it and looks catastrophic. Measuring on the probe suggests 200us "collapses" resolution from
+7 functions to 3; on a real JS workload that effect does not exist.
 
 | interval | self ms (median) | perIteration ms | functions |
 | --- | --- | --- | --- |
@@ -145,11 +146,11 @@ So 200us: ~1% overhead, 5x V8's default resolution, and percentages — the thin
 reports — stable across a 20x interval change. **Re-measure against a JS-heavy workload if you touch
 it.**
 
-`DEFAULT_CPU_INTERVAL_US` lives in `profile/cpuprofile.ts` and is imported by **both** lanes. It used
-to be declared separately in `commands/record.ts` and `runtime/node.ts`, and that duplication did
-exactly what duplication does: the 50 -> 200 change landed on chrome only, so the node lane — *the
-lane the measurement was taken on* — kept sampling at 50us while `--help` and the changelog said 200.
-A unit test asserts no lane redeclares it. If you add a lane, import the constant.
+`DEFAULT_CPU_INTERVAL_US` lives in `profile/cpuprofile.ts` and is imported by **both** lanes. One
+definition, because a lane that declares its own drifts silently: nothing type-checks two constants
+into agreement, so a change to the interval lands on one lane while the other keeps sampling at the
+old rate and `--help` describes neither. A unit test asserts no lane redeclares it. If you add a
+lane, import the constant.
 
 ## Firefox: samples and markers share a pass, unavoidably
 
@@ -164,12 +165,11 @@ The one data point that argues against a large effect: firefox `run()` = 8.79ms 
 uncontaminated 8.41ms, a 5% gap — but that is one probe and the two engines differ for other
 reasons too.
 
-## Sourcemap note gating (fixed in 0.5.0)
+## Sourcemap note gating
 
-The note answers "can the package rollup be believed?", so it is gated on **`CpuModel.unmappedFrames`
-> 0** — frames whose owner we could not determine — plus a CPU model existing at all. It used to be
-gated on `resolved === 0` ("no sourcemap resolved"), which is a **different question**, and the
-conflation made it lie in the most common case:
+The note answers "can the package rollup be believed?", which is a **different question** from "did
+any sourcemap resolve?". Gating it on `resolved === 0` ("no sourcemap resolved") conflates the two
+and lies in the most common case:
 
 ```
 $ wpd record examples/forces-layout.mjs --bench
@@ -177,26 +177,21 @@ $ wpd record examples/forces-layout.mjs --bench
 Sourcemaps: 0/1 resolved ← packages below are minified bundles, not real packages
 ```
 
-`forces-layout.mjs` is hand-written unbundled ESM. Nothing is minified, and every frame resolved to
+`forces-layout.mjs` is hand-written unbundled ESM. Nothing is minified, and every frame resolves to
 `forces-layout.mjs:24`. It has no sourcemap because **it needs none**.
 
-This is a good illustration of a default flushing out a latent bug rather than causing one. While
-profiling was opt-in the warning only reached people who had opted in — plausibly profiling a bundle,
-where it was usually right. Turning it on by default pointed it at plain source and the false
-positive became the common case.
+### The trigger needs TWO signals
 
-### The trigger needs TWO signals, and the first attempt shipped only one
+Worth reading before touching this, because the obvious narrowing is wrong and its wrongness is
+silent.
 
-Worth reading before touching this, because the obvious fix is wrong and its wrongness is silent.
-
-The first attempt gated on `CpuModel.unmappedFrames` alone — frames that fell back to an origin
-bucket. That killed the false positive **and the true positive**: a local frame *always* resolves to
-a path (`makeSourceResolver` sets `frame.source` for every served file), so `unmapped: !isLocalPath`
-can never fire for a local script. A minified `app.min.mjs` with no map — precisely what
-`vite build` emits, since `build.sourcemap` defaults to `false` — got attributed to whatever
-`package.json` sat above it and warned about **nothing**. `main` warned there. The regression was
-invisible because "we know the file path" and "we know whose code this is" are different facts, and
-the flag conflated them.
+Gating on `CpuModel.unmappedFrames` alone — frames that fell back to an origin bucket — kills the
+false positive **and the true positive**: a local frame *always* resolves to a path
+(`makeSourceResolver` sets `frame.source` for every served file), so `unmapped: !isLocalPath` can
+never fire for a local script. A minified `app.min.mjs` with no map — precisely what `vite build`
+emits, since `build.sourcemap` defaults to `false` — is attributed to whatever `package.json` sits
+above it and warns about **nothing**. That gap is invisible from the output, because "we know the
+file path" and "we know whose code this is" are different facts and one flag cannot carry both.
 
 So the condition is measured twice, at the two places the damage is actually done:
 
@@ -221,6 +216,5 @@ alternative is guessing, and a warning that cries wolf on every hand-written mod
 one that misses a toy bundle.
 
 Four unit tests pin all of it — remote unmapped bundle counts, node builtin does not, minified local
-bundle counts, plain local source does not. The version that shipped the regression *claimed* to
-"pin both directions" while testing node builtins twice, which is how it got through: **when you
+bundle counts, plain local source does not. Keep both directions genuinely covered: **when you
 remove a false positive, the test that matters is the one proving the true positive still fires.**
