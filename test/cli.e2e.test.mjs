@@ -62,12 +62,12 @@ e2e("record + query blame attributes forced layout to the source line", { timeou
   assert.ok(top.kinds.includes("layout"), "kinds include layout");
 });
 
-// --runtime node profiles in-process via node's V8 inspector, so it needs no browser and
+// --target node profiles in-process via node's V8 inspector, so it needs no browser and
 // runs everywhere (not gated on Chrome).
-test("record --runtime node resolves hot functions to source without a browser", () => {
+test("record --target node resolves hot functions to source without a browser", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "nodecpu");
-  runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--runtime", "node", "--iterations", "3", "--out", out]);
+  runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--target", "node", "--iterations", "3", "--out", out]);
   assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
   assert.ok(existsSync(`${out}.cpuprofile`), "raw cpuprofile written");
 
@@ -80,10 +80,10 @@ test("record --runtime node resolves hot functions to source without a browser",
   assert.ok(named.source?.includes("cpu-busywork.mjs"), "hot function resolved to its source file");
 });
 
-e2e("record --cpu-profile resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
+e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "cpu");
-  runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--cpu-profile", "--iterations", "3", "--out", out]);
+  runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--iterations", "3", "--out", out]);
   assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
   assert.ok(existsSync(`${out}.cpuprofile`), "raw cpuprofile written");
 

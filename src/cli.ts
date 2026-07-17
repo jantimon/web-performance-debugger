@@ -57,8 +57,8 @@ program
   .argument("<module>", "path to a JS/ESM module exporting `run` (and optional prepare/cleanup)")
   .option("--fn <name>", "exported function to run", "run")
   .option(
-    "--browser <name>",
-    "browser backend: chrome (default, full CDP) | firefox (WebDriver BiDi + Gecko profiler; timing + --cpu-profile only)",
+    "--target <name>",
+    "where to run: chrome (default, full CDP) | firefox (WebDriver BiDi + Gecko profiler) | node (in-process, CPU only, no DOM)",
     "chrome",
   )
   .option("--html <file>", "host page: load this local HTML, then run the module against it")
@@ -80,8 +80,11 @@ program
   .option("--settle <ms>", "ms to wait after run for async paints to flush", toInt, 200)
   .option("--cpu-throttle <rate>", "artificial slowdown: CPU multiplier (4 = 4x slower)", toInt)
   .option("--network <preset>", "artificial slowdown: slow-3g | fast-3g | slow-4g | offline")
-  .option("--cpu-profile", "also capture a V8 CPU sampling profile (.cpuprofile + .cpu model)")
-  .option("--cpu-interval <us>", "CPU sampler interval in microseconds (default 50)", toInt)
+  .option(
+    "--no-cpu-profile",
+    "skip CPU sampling: keeps the timing pass pristine (the sampler perturbs wall by ~10%), at the cost of no .cpu model",
+  )
+  .option("--cpu-interval <us>", "CPU sampler interval in microseconds (default 200)", toInt)
   .option(
     "--protocol-timeout <ms>",
     "CDP protocol timeout in ms (default 180000); raise it when a heavy traced interaction pins the main thread",
@@ -93,12 +96,7 @@ program
   )
   .option(
     "--no-trace",
-    "skip the trace pass: counts from CDP (+ optional --cpu-profile) only, no paint/forced/invalidation detail. Use when the trace pass hangs on a pathological interaction",
-  )
-  .option(
-    "--runtime <env>",
-    "chrome (default) | node: run the module in-process under node's V8 profiler (CPU only, no DOM)",
-    "chrome",
+    "skip the trace pass: counts from CDP + the CPU model only, no paint/forced/invalidation detail. Use when the trace pass hangs on a pathological interaction",
   )
   .option("--format <fmt>", "on-disk format: json | toon", "json")
   .action(async (module: string, cmdOpts: any) => {
@@ -106,19 +104,14 @@ program
       program.error("--screenshot must be one of: before, after, both");
     }
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
-    if (!["chrome", "node"].includes(cmdOpts.runtime))
-      program.error("--runtime must be chrome or node");
-    if (!["chrome", "firefox"].includes(cmdOpts.browser))
-      program.error("--browser must be chrome or firefox");
+    // One axis: chrome | firefox | node. The old "--browser firefox and --runtime node are
+    // mutually exclusive" state is now unreachable rather than guarded against.
+    if (!["chrome", "firefox", "node"].includes(cmdOpts.target))
+      program.error("--target must be chrome, firefox, or node");
     const bench = !!cmdOpts.bench;
-    const node = cmdOpts.runtime === "node";
-    const firefox = cmdOpts.browser === "firefox";
+    const node = cmdOpts.target === "node";
+    const firefox = cmdOpts.target === "firefox";
     if (firefox) {
-      if (node) {
-        program.error(
-          "--browser firefox and --runtime node are mutually exclusive (node is an in-process CPU lane with no browser).",
-        );
-      }
       // Firefox is driven over BiDi with no CDP: these features have no Gecko equivalent.
       const unsupported = [
         cmdOpts.cpuThrottle && "--cpu-throttle",
@@ -128,7 +121,14 @@ program
       ].filter(Boolean);
       if (unsupported.length) {
         program.error(
-          `--browser firefox has no CDP, so these are unsupported: ${unsupported.join(", ")}. See the browser-support matrix in the README.`,
+          `--target firefox has no CDP, so these are unsupported: ${unsupported.join(", ")}. See the target-support matrix in the README.`,
+        );
+      }
+      // On firefox the profiler pass is the ONLY source of counts and blame, so opting out is not
+      // the "slightly less data" it means on chrome: it leaves wall times and nothing else.
+      if (cmdOpts.cpuProfile === false) {
+        program.error(
+          "--target firefox --no-cpu-profile would record timing only: on firefox the profiler pass is what yields layout/style counts and blame. Drop --no-cpu-profile.",
         );
       }
     }
@@ -143,7 +143,19 @@ program
       ].filter(Boolean);
       if (browserOnly.length)
         program.error(
-          `--runtime node is CPU-only and ignores the browser: remove ${browserOnly.join(", ")}`,
+          `--target node is CPU-only and has no browser: remove ${browserOnly.join(", ")}`,
+        );
+      // --bench selects in-page execution, not iteration, so it has no meaning without a page.
+      // It used to be accepted here and silently ignored. Rejected with its own message rather
+      // than folded into browserOnly above, whose "has no browser" wording would imply --bench is
+      // about the browser rather than about *where run() executes*.
+      if (bench)
+        program.error(
+          "--bench imports the module inside a page; --target node has no page. Drop --bench (--iterations already repeats run() on this lane).",
+        );
+      if (cmdOpts.cpuProfile === false)
+        program.error(
+          "--target node is a CPU-profiling lane; --no-cpu-profile leaves it nothing to measure.",
         );
     }
     if (!bench && !node && (cmdOpts.iterations > 1 || cmdOpts.warmup > 0)) {
@@ -154,6 +166,8 @@ program
     const opts: RecordOptions = {
       module,
       fn: cmdOpts.fn,
+      // RecordOptions keeps browser/runtime as separate internal axes because runPass and capsFor
+      // are written against them. --target is the single user-facing axis that maps onto both.
       browser: firefox ? "firefox" : "chrome",
       html: cmdOpts.html,
       url: cmdOpts.url,
@@ -170,8 +184,9 @@ program
       runtime: node ? "node" : "chrome",
       cpuThrottle: cmdOpts.cpuThrottle,
       network: cmdOpts.network,
-      // node runtime is a CPU-only lane; the profile is its sole output, so always capture it
-      cpuProfile: node || !!cmdOpts.cpuProfile,
+      // On by default on every target: the sampler rides the timing pass, so it costs no extra
+      // pass, and on firefox it is what produces counts + blame at all. --no-cpu-profile opts out.
+      cpuProfile: cmdOpts.cpuProfile !== false,
       cpuIntervalUs: cmdOpts.cpuInterval,
       protocolTimeoutMs: cmdOpts.protocolTimeout,
       trace: cmdOpts.trace,
@@ -234,7 +249,7 @@ query
 fmtOpts(
   query
     .command("cpu <file>")
-    .description("CPU profile overview: hot functions + by-package self time (needs --cpu-profile)")
+    .description("CPU profile overview: hot functions + by-package self time")
     .option("--by <grouping>", "rollup grouping: package | file | function", "package")
     .option("--top <n>", "hot functions to show", toInt),
 ).action((file, opts) => run(queryCpu(file, opts)));

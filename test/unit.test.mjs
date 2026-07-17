@@ -1,12 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 // Tests run against the compiled output (pretest builds it). No browser needed.
 import { classify, invalidationKind } from "../dist/trace/classify.js";
 import { computeStats, buildSummary } from "../dist/metrics/summarize.js";
 import { forcedLayouts, longTasks, markForced } from "../dist/trace/analysis.js";
 import { serialize, deserialize } from "../dist/output/format.js";
-import { buildCpuModel, packageRollup, functionJoinKey } from "../dist/profile/cpuprofile.js";
+import {
+  buildCpuModel,
+  packageRollup,
+  functionJoinKey,
+  DEFAULT_CPU_INTERVAL_US,
+} from "../dist/profile/cpuprofile.js";
 import {
   parseGeckoLocation,
   parseGecko,
@@ -699,4 +705,91 @@ test("assert: a satisfied threshold on a measured metric passes", async () => {
   const rec = writeRecording("assert-ok.json", { forcedLayoutCount: 0 });
   const code = await captureExitCode(() => assertCmd(rec, { forced: 0 }));
   assert.equal(code, undefined);
+});
+
+// Regression: DEFAULT_CPU_INTERVAL_US was duplicated in commands/record.ts and runtime/node.ts, so
+// the 50 -> 200 change landed on the browser lanes only. The node lane -- the very lane the
+// interval was measured on -- kept sampling at 50us while --help and the changelog said 200. The
+// fix is that there is now exactly ONE definition; this test fails if a lane grows its own again.
+test("every lane shares one CPU sampler interval default", async () => {
+  assert.equal(typeof DEFAULT_CPU_INTERVAL_US, "number");
+  assert.equal(DEFAULT_CPU_INTERVAL_US, 200);
+
+  const files = ["../dist/commands/record.js", "../dist/runtime/node.js"];
+  for (const file of files) {
+    const source = await readFile(new URL(file, import.meta.url), "utf8");
+    assert.ok(
+      !/const\s+DEFAULT_CPU_INTERVAL_US\s*=/.test(source),
+      `${file} defines its own DEFAULT_CPU_INTERVAL_US; import the shared one from profile/cpuprofile.js instead`,
+    );
+  }
+});
+
+// The sourcemap warning must fire when the package rollup is a lie and stay quiet when it is not.
+// These pin BOTH directions, which the previous version of this comment CLAIMED to do while
+// actually testing node builtins twice -- and that gap let a regression ship where the warning went
+// silent on exactly the local minified bundle it exists for.
+function remoteProfile(url) {
+  return {
+    nodes: [
+      { id: 1, callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 }, children: [2] },
+      { id: 2, callFrame: { functionName: "hot", scriptId: "1", url, lineNumber: 0, columnNumber: 0 }, hitCount: 1 },
+    ],
+    startTime: 0,
+    endTime: 1000,
+    samples: [2],
+    timeDeltas: [1000],
+  };
+}
+
+test("buildCpuModel: an unmapped third-party bundle is counted and bucketed by origin", async () => {
+  const model = await buildCpuModel(remoteProfile("https://cdn.example.com/app.min.js"), {
+    profilePath: "synthetic.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+    serverUrl: "http://127.0.0.1:1234",
+    root: os.tmpdir(),
+  });
+  // No map resolved and the url is not the served origin, so we do not know whose code this is.
+  assert.equal(model.unmappedFrames, 1, "the unattributed frame is counted");
+  const hot = model.functions.find((fn) => fn.fn === "hot");
+  assert.equal(hot.package, "(cdn.example.com)", "bucketed by origin, never blamed on `app`");
+});
+
+test("buildCpuModel: node builtins are not counted as unmapped", async () => {
+  const model = await buildCpuModel(remoteProfile("node:internal/streams/readable"), {
+    profilePath: "synthetic.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+    root: os.tmpdir(),
+    runtime: "node",
+  });
+  // A builtin has no sourcemap and never will; that is not a broken package rollup.
+  assert.equal(model.unmappedFrames, 0, "builtins do not trip the unmapped warning");
+  assert.equal(model.functions.find((fn) => fn.fn === "hot").package, "(node)");
+});
+
+// A local frame ALWAYS resolves to a path, so unmappedFrames can never flag a local bundle. That is
+// what `unmappedBundles` is for, and these two are the regression guard: a minified local bundle
+// with no map must be reported, and plain local source with no map must not.
+test("SourceMapResolver: a minified local bundle with no map counts as an unmapped bundle", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-map-"));
+  const bundle = path.join(dir, "app.min.js");
+  writeFileSync(bundle, `function a(n){${"let x=0;".repeat(120)}return n}export{a};\n`);
+  const maps = new SourceMapResolver();
+  await maps.resolveFrame({ url: `http://x/app.min.js`, source: bundle, line: 1, column: 1 });
+  const diagnostics = maps.diagnostics();
+  assert.equal(diagnostics.resolved, 0, "no map to resolve");
+  assert.equal(diagnostics.unmappedBundles, 1, "minified build output with no map is reported");
+});
+
+test("SourceMapResolver: plain local source with no map is not an unmapped bundle", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-map-"));
+  const plain = path.join(dir, "probe.mjs");
+  writeFileSync(plain, "export function run() {\n  return 1 + 1;\n}\n");
+  const maps = new SourceMapResolver();
+  await maps.resolveFrame({ url: `http://x/probe.mjs`, source: plain, line: 1, column: 1 });
+  const diagnostics = maps.diagnostics();
+  assert.equal(diagnostics.resolved, 0, "there is no map, and none is needed");
+  assert.equal(diagnostics.unmappedBundles, 0, "hand-written source must not trip the warning");
 });

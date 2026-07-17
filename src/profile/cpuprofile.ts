@@ -95,6 +95,13 @@ function classifyPseudoUrl(url: string | undefined): { package: string; label: s
 }
 
 /**
+ * Default sampler interval for EVERY lane (CDP and node's inspector). One definition: a lane that
+ * declares its own can drift silently, since nothing type-checks two constants into agreement. A
+ * unit test asserts no lane redeclares it. See docs/dev/cpu-profiling.md for why 200.
+ */
+export const DEFAULT_CPU_INTERVAL_US = 200;
+
+/**
  * Bucket for a remote script whose sourcemap did not resolve: we know its origin and nothing
  * else. Blaming it on "app" would be a guess, and a wrong one for every third-party script
  * (analytics, CDN widgets), whose cost would land in the user's own bucket. Parenthesized to
@@ -171,6 +178,14 @@ interface ResolvedFrame {
   /** bare file path (no line) */
   file?: string;
   package: string;
+  /**
+   * True only when `package` came from `unmappedOriginBucket`, i.e. we could NOT work out whose
+   * code this is and fell back to its origin. Set at the point of that decision rather than
+   * inferred later from the package string: `(cdn.example.com)` is unmapped but `(native)` and
+   * `(node)` are not, and telling those apart by pattern breaks on a dotless host like
+   * `(localhost)`. This is the only honest signal for "the package rollup is lying".
+   */
+  unmapped?: boolean;
 }
 
 /**
@@ -228,13 +243,20 @@ async function resolveCallFrame(
   if (frame.remote) {
     const dependency = packageFromNodeModules(file);
     const owner = dependency ?? (frame.source != null ? "app" : unmappedOriginBucket(frame.url));
-    return { fn, minified, source, file, package: owner };
+    return {
+      fn,
+      minified,
+      source,
+      file,
+      package: owner,
+      unmapped: dependency == null && frame.source == null,
+    };
   }
   const isLocalPath = frame.source != null;
   // Resolve the owning package from the absolute path (reads package.json), then store the
   // path relative to root: smaller model, portable, and a stable cpu-diff join key.
   // Not-on-disk and not flagged remote means the frame was never rewritten to a local path
-  // (e.g. --runtime node handed an http url): unknown owner, so bucket it rather than guess "app".
+  // (e.g. --target node handed an http url): unknown owner, so bucket it rather than guess "app".
   const owner = isLocalPath
     ? await packageForFile(file, packageCache)
     : unmappedOriginBucket(frame.url);
@@ -245,6 +267,7 @@ async function resolveCallFrame(
     source: `${relFile}${frame.line != null ? `:${frame.line}` : ""}`,
     file: relFile,
     package: owner,
+    unmapped: !isLocalPath,
   };
 }
 
@@ -346,6 +369,11 @@ export async function buildCpuModel(
       key,
       await resolveCallFrame(callFrame, rewriteToLocal, maps, packageCache, context.root),
     );
+  // Frames whose owner we could not determine, i.e. what a failed sourcemap actually costs you.
+  // Surfaced on the model so `record` can warn about a broken package rollup only when it really
+  // is broken: a missing sourcemap for plain unbundled source is a non-event, because those frames
+  // resolve straight to their local path with no map involved.
+  const unmappedFrames = [...resolvedByKey.values()].filter((frame) => frame.unmapped).length;
 
   // system buckets vs rankable user functions
   const systemMs = (name: string) =>
@@ -433,6 +461,7 @@ export async function buildCpuModel(
     system,
     functions,
     edges,
+    unmappedFrames,
   };
 }
 
@@ -518,6 +547,6 @@ export async function loadCpuModel(file: string): Promise<CpuModel> {
     // fall through to the error below
   }
   throw new Error(
-    `${file} is not a CPU model. Pass the .cpu.json, or use 'latest' after recording with --cpu-profile.`,
+    `${file} is not a CPU model. Pass the .cpu.json, or use 'latest' after a record run that was not given --no-cpu-profile.`,
   );
 }

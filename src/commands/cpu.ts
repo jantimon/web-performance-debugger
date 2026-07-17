@@ -17,7 +17,7 @@ import {
   tailPath,
 } from "../profile/cpuprofile.js";
 
-/** Compact by-package headline, printed right after `record --cpu-profile`. */
+/** Compact by-package headline, printed right after `record`. */
 export function printCpuHeadline(model: CpuModel): void {
   const byPackage = packageRollup(model);
   console.log(

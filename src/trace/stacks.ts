@@ -68,7 +68,7 @@ export function makeSourceResolver(serverUrl: string, root: string) {
 }
 
 /**
- * Resolver for the node runtime (--runtime node): V8 reports file:// urls for ESM and
+ * Resolver for the node runtime (--target node): V8 reports file:// urls for ESM and
  * "node:" urls for builtins. Convert file:// to a local path so sourcemap + package
  * resolution apply; leave node: builtins for the (node) bucket downstream.
  */
@@ -139,7 +139,7 @@ export function topLocation(stack: StackFrame[] | undefined): string | undefined
  * Attach resolved stacks + top location to every event that carries one.
  *
  * Pass `maps` to share one resolver (its cache, and its diagnostics) across every call in a run:
- * a `record --cpu-profile` run resolves stacks twice and builds a CPU model, and each would
+ * a `record` run resolves stacks twice and builds a CPU model, and each would
  * otherwise re-fetch the same remote script and map.
  */
 export async function attachStacks(

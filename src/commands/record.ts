@@ -22,7 +22,11 @@ import {
   stopCpuProfile,
 } from "../metrics/cdp.js";
 import { buildSummary } from "../metrics/summarize.js";
-import { buildCpuModel, type RawCpuProfile } from "../profile/cpuprofile.js";
+import {
+  buildCpuModel,
+  DEFAULT_CPU_INTERVAL_US,
+  type RawCpuProfile,
+} from "../profile/cpuprofile.js";
 import { printCpuHeadline } from "./cpu.js";
 import { printSummary } from "./summaryView.js";
 import { kv, num, sparkline } from "../output/ascii.js";
@@ -45,7 +49,6 @@ import type {
   TimingEntry,
 } from "../model/recording.js";
 
-const DEFAULT_CPU_INTERVAL_US = 50;
 const US_PER_MS = 1000;
 
 export interface RecordOptions {
@@ -71,9 +74,10 @@ export interface RecordOptions {
   cpuThrottle?: number;
   /** artificial slowdown: network preset (slow-3g, fast-3g, slow-4g, offline) */
   network?: string;
-  /** also capture a V8 CPU sampling profile (writes .cpuprofile + .cpu model) */
+  /** capture a CPU sampling profile (writes .cpuprofile + .cpu model). The CLI defaults this on;
+   * it rides the timing pass, so it costs no extra pass. */
   cpuProfile?: boolean;
-  /** CPU sampler interval in microseconds (default 50) */
+  /** CPU sampler interval in microseconds (default DEFAULT_CPU_INTERVAL_US) */
   cpuIntervalUs?: number;
   /** execution runtime: "chrome" (default, Puppeteer page) or "node" (in-process V8, CPU only) */
   runtime?: "chrome" | "node";
@@ -154,6 +158,24 @@ function shorterPath(root: string, absPath: string | undefined): string | null {
   return relative && relative.length < absPath.length ? relative : absPath;
 }
 
+/**
+ * An artifact path as the REPORT should show it: relative to cwd when that is shorter.
+ *
+ * Display only. The stored back-pointers stay absolute on purpose, so a recording can be reopened
+ * from any directory; this is purely about the terminal, where an absolute path is both harder to
+ * scan and something you may not want on screen -- a pasted report or a recorded terminal otherwise
+ * carries your home directory with it.
+ *
+ * Falls back to absolute when relativizing does not help: an --out outside cwd would otherwise
+ * become a worse `../../../tmp/x.json`.
+ */
+function displayPath(absPath: string): string {
+  const relative = path.relative(process.cwd(), absPath);
+  return relative && !relative.startsWith("..") && relative.length < absPath.length
+    ? relative
+    : absPath;
+}
+
 /** Plain-English remedy per failure reason, so the note says what to actually do. */
 const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
   "no-sourcemap-url":
@@ -164,21 +186,48 @@ const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
 };
 
 /**
- * One honest sentence about sourcemap resolution. WARNING only when NOTHING resolved: that is the
- * silently-wrong-number case, where every package bucket is a minified bundle wearing a real name.
- * A partial failure is normal (third-party scripts rarely ship maps) and only worth a note.
+ * One honest sentence about sourcemap resolution, or null when there is nothing to say.
+ *
+ * "No sourcemap resolved" is NOT the trigger, because it is a different question from "can the
+ * package rollup be believed". A plain unbundled `.mjs` has no map and needs none -- its frames
+ * already carry real names and real lines -- so warning about it is a false alarm. Two things
+ * actually cost you, and each is measured at the point it happens:
+ *
+ *   unmappedBundles  a script that IS build output (minified) whose map did not resolve: its
+ *                    frames keep mangled names and roll up under whatever package.json sits above
+ *                    the bundle, which reads as a real package. Local or remote.
+ *   unmappedFrames   a frame whose owner could not be determined at all, bucketed by origin.
+ *                    Remote-only: a local frame always has a known path.
+ *
+ * Neither alone is sufficient -- a local minified bundle has unmappedFrames 0 (we know its path),
+ * and an unminified remote script has unmappedBundles 0 (yet we still cannot say whose it is). An
+ * earlier version of this gated on `unmappedFrames` alone and went silent on exactly the local
+ * bundle it exists for, which is the failure this shape is designed against: when removing a false
+ * positive, check the true positive still fires.
  */
-function sourcemapNote(diagnostics: SourceMapDiagnostics): string {
+function sourcemapNote(diagnostics: SourceMapDiagnostics, unmappedFrames: number): string | null {
   const { scripts, resolved } = diagnostics;
+  const unmappedBundles = diagnostics.unmappedBundles ?? 0;
   const reasons = Object.keys(diagnostics.failed ?? {}) as SourceMapFailure[];
   const why = reasons.map((reason) => `${reason} (${SOURCEMAP_REMEDY[reason]})`).join("; ");
-  if (resolved === 0) {
-    return `WARNING: no sourcemap resolved for any of the ${scripts} script(s) profiled, so CPU self-time is attributed to minified bundle names and 'query cpu --by package' cannot split by real package. Unmapped scripts are bucketed by origin, not as your app. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
-  }
-  if (reasons.length) {
-    return `Sourcemaps resolved for ${resolved} of ${scripts} script(s); the rest keep minified names and are bucketed by origin. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
-  }
-  return `Sourcemaps resolved for all ${scripts} script(s): CPU self-time is attributed to original sources.`;
+  // A missing map cost nothing: no unmapped script was build output, and every frame found its
+  // owner. Saying anything here would be crying wolf about plain source that needs no map.
+  if (unmappedBundles === 0 && unmappedFrames === 0) return null;
+  const damage = [
+    unmappedBundles
+      ? `${unmappedBundles} minified bundle(s) keep their mangled function names and roll up under whichever package.json sits above them, not their real packages`
+      : null,
+    unmappedFrames
+      ? `${unmappedFrames} frame(s) could not be attributed to any package and are bucketed by origin, not as your app`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+  const scope =
+    resolved === 0
+      ? `no sourcemap resolved for any of the ${scripts} script(s) profiled`
+      : `sourcemaps resolved for only ${resolved} of ${scripts} script(s)`;
+  return `WARNING: ${scope}, so 'query cpu --by package' cannot be believed for them: ${damage}. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -224,7 +273,7 @@ async function waitForGeckoDump(
     await sleep(GECKO_DUMP_POLL_MS);
   }
   throw new Error(
-    `Gecko profile dump was not written to ${dumpPath} within ${timeoutMs}ms (Firefox --cpu-profile pass).`,
+    `Gecko profile dump was not written to ${dumpPath} within ${timeoutMs}ms (Firefox gecko pass).`,
   );
 }
 
@@ -462,17 +511,27 @@ export async function record(opts: RecordOptions): Promise<{
   const wantTrace = opts.trace !== false;
   const traceCats = traceCategories({ invalidationTracking: opts.invalidationTracking !== false });
   const traceSpec: PassSpec = { name: "trace", categories: traceCats };
-  const timingSpec: PassSpec = { name: "timing", categories: null };
+  // The sampler rides the timing pass rather than a third pass of its own: both specs are
+  // `categories: null`, i.e. they were always the same pass differing only by the sampler, so a
+  // separate cpu pass bought isolation from the *timing* pass -- which was never what mattered.
+  // What matters is isolation from TRACING. NEVER move `cpu` onto traceSpec: sampling there
+  // inflates CPU self-time +21% with non-overlapping ranges, because `devtools.timeline.stack`
+  // makes Blink walk the JS stack on every Layout and the sampler bills that work to the JS frame
+  // that forced it -- landing on the same frame as the real forced-layout cost, so the two are
+  // indistinguishable after the fact. Riding the timing pass costs ~10% on wall (already the
+  // directional signal), which --no-cpu-profile buys back. Measurements: docs/dev/cpu-profiling.md.
+  const timingSpec: PassSpec = { name: "timing", categories: null, cpu: opts.cpuProfile };
   // --no-trace skips the heavy trace pass entirely: counts come from CDP (timing
   // pass) and optionally a CPU profile, with no paint/forced/invalidation detail.
   // The fallback for pages whose invalidationTracking pass pins the main thread.
   let specs: PassSpec[];
   if (browserName === "firefox") {
-    // Firefox has no CDP trace/counters: a clean timing pass, plus (only with --cpu-profile) one
+    // Firefox has no CDP trace/counters: a clean timing pass, plus one
     // Gecko-profiler pass that yields CPU samples AND layout/style markers (blame) together.
     specs = [timingSpec];
     if (opts.cpuProfile) specs.push({ name: "gecko", categories: null, gecko: true });
   } else {
+    // No cpu pass: the sampler rides timingSpec (see the note there).
     specs = opts.isolate
       ? wantTrace
         ? [timingSpec, traceSpec]
@@ -480,8 +539,6 @@ export async function record(opts: RecordOptions): Promise<{
       : wantTrace
         ? [traceSpec]
         : [timingSpec];
-    // CPU sampling is heavy, so it gets its own isolated pass (tracing stays off in it).
-    if (opts.cpuProfile) specs.push({ name: "cpu", categories: null, cpu: true });
   }
 
   const server = await startStaticServer(root);
@@ -537,7 +594,9 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(
       opts.cpuProfile
         ? "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's CDP counts: read them against another Firefox run. NOT measured at all and reported as 0: paintCount/compositeCount, invalidation counts, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and scriptingMs. A 0 in those means unmeasured, not clean."
-        : "Rendering counts on Firefox need --cpu-profile (they come from the Gecko profiler's Reflow/Styles markers). Without it EVERY rendering count in this recording is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint/composite, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.",
+        : // Unreachable from the CLI (it errors on --target firefox --no-cpu-profile); a
+          // programmatic caller passing cpuProfile:false can still land here.
+          "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint/composite, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.",
     );
     // INP is deliberately NOT in the caps list above: it never came from CDP. It is the same
     // in-page Event Timing observer Chrome uses, so it works here; the honest caveat is that the
@@ -545,19 +604,40 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(
       "INP IS measured on Firefox (in-page Event Timing, the same observer Chrome uses). The two engines' values are not interchangeable: both span the interaction through the next paint and round to 8 ms, but Firefox reports a systematically lower number for identical work because presentation delay differs by engine. Compare a browser against itself across a change, not one engine against the other.",
     );
-    if (!opts.cpuProfile) {
+  } else {
+    // Describe the pass plan that was actually BUILT, never the flags that were asked for. Those
+    // diverge: `--no-isolate --no-trace` leaves one clean timing pass, yet branching on
+    // `opts.isolate` announced "invalidationTracking was active during timing, so timings are
+    // inflated" -- about a run with tracing off and timings that were fine. Reading `specs` cannot
+    // drift from reality the way a second transcription of the flag logic can.
+    const timingPass = specs.find((spec) => spec.name === "timing");
+    const tracePass = specs.find((spec) => spec.name === "trace");
+    // The measured-timing pass is whichever pass the summary's wall times came from.
+    const timingIsTraced = !timingPass;
+
+    notes.push(
+      timingIsTraced
+        ? "Single-pass mode (--no-isolate): instrumentation was active during timing, so per-iteration timings are inflated. Drop --no-isolate for trustworthy timing."
+        : "Timing/stats come from a low-overhead pass with tracing OFF.",
+    );
+    notes.push(
+      tracePass
+        ? "Paint & invalidation counts come from a separate heavy-instrumentation pass; do not compare durations across the two."
+        : "No trace pass ran (--no-trace): counts come from CDP only. Paint, forced-layout, invalidation and long-task detail is NOT collected and is reported as 0 — that means unmeasured, not clean.",
+    );
+    if (timingPass?.cpu) {
       notes.push(
-        "Add --cpu-profile to get source-attributed layout/style blame plus CPU self-time by package/file/function.",
+        "The CPU sampler ran during the timing pass, which inflates per-iteration wall by roughly 10%: it is systematic, so it cancels in `diff`, but use --no-cpu-profile for absolute wall numbers.",
       );
     }
-  } else if (opts.isolate) {
-    notes.push(
-      "Timing/stats come from a low-overhead pass with tracing OFF; paint & invalidation counts come from a separate heavy-instrumentation pass. Do not compare durations across the two.",
-    );
-  } else {
-    notes.push(
-      "Single-pass mode: invalidationTracking instrumentation was active during timing, so per-iteration timings are inflated. Use --isolate (default) for trustworthy timing.",
-    );
+    // The sampler must not ride the trace pass (it would inflate self-time ~21%; see the timingSpec
+    // note), so a plan with no timing pass has no CPU model. Say so: silently dropping it would
+    // read as "this run had no JS worth sampling".
+    if (opts.cpuProfile && !timingPass) {
+      notes.push(
+        "No CPU model in this run: --no-isolate collapses to the single trace pass, and CPU sampling during tracing would inflate self-time by ~21% (trace instrumentation is billed to the JS frame that triggered it). Drop --no-isolate to get a CPU model, or add --no-trace to sample without tracing.",
+      );
+    }
   }
   if (opts.cpuThrottle || opts.network) {
     notes.push(
@@ -570,11 +650,14 @@ export async function record(opts: RecordOptions): Promise<{
   // inflating every trace-derived count by an order of magnitude while looking normal. Treat
   // those counts as not-measured (0) and say so loudly; CDP counters are unaffected.
   // Firefox has its own honest notes (above) and no DevTools trace, so this Chrome-specific
-  // trace-buffer warning does not apply there.
-  const traceWindowMissing = detail.windowStart == null && browserName !== "firefox";
+  // trace-buffer warning does not apply there. Nor does it apply under --no-trace: no trace pass
+  // ran, so a missing window is the flag working, not a buffer overflow. Telling that user to
+  // "raise --settle because the trace buffer overflowed" sends them to debug a pass they turned
+  // off; the --no-trace note above already states what is unmeasured.
+  const traceWindowMissing = detail.windowStart == null && browserName !== "firefox" && wantTrace;
   if (traceWindowMissing) {
     notes.push(
-      "WARNING: trace run-window markers (wpd:run:start/end) were not found, so paint/forced-layout/invalidation/long-task counts are NOT measured for this run and are reported as 0. CDP counters (layout/style/scripting) are unaffected. This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce work or raise --settle-ms if it persists.",
+      "WARNING: trace run-window markers (wpd:run:start/end) were not found, so paint/forced-layout/invalidation/long-task counts are NOT measured for this run and are reported as 0. CDP counters (layout/style/scripting) are unaffected. This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce work or raise --settle if it persists.",
     );
   }
 
@@ -700,9 +783,16 @@ export async function record(opts: RecordOptions): Promise<{
   // numbers look plausible while attributing everything to the bundle. Mutating `meta` here (not
   // at construction) is what lets every artifact below carry the same verdict.
   const sourcemaps = maps.diagnostics();
-  if (sourcemaps.scripts > 0) {
-    meta.sourcemaps = sourcemaps;
-    notes.push(sourcemapNote(sourcemaps));
+  // ALWAYS record the diagnostics when any script was attempted: the trace pass resolves stacks
+  // through this same resolver, so `blame`'s source attribution depends on it just as `query cpu`
+  // does. Gating the data on a CPU model existing (as an earlier version did) silently dropped the
+  // only evidence a --no-cpu-profile run had about its own blame.
+  if (sourcemaps.scripts > 0) meta.sourcemaps = sourcemaps;
+  // The NOTE is CPU-worded ("query cpu --by package"), so it needs a model to be about anything;
+  // and it returns null when a missing map cost nothing at all.
+  if (sourcemaps.scripts > 0 && cpuModel) {
+    const note = sourcemapNote(sourcemaps, cpuModel.unmappedFrames ?? 0);
+    if (note) notes.push(note);
   }
 
   await fs.writeFile(outPath, serialize(recording, opts.format), "utf8");
@@ -804,7 +894,7 @@ export async function record(opts: RecordOptions): Promise<{
   return { recording, outPath, digestPath, indexPath, cpuProfilePath, cpuModelPath, cpuModel };
 }
 
-/** Terminal report for a --runtime node run: CPU headline + per-iteration timing, no DOM tables. */
+/** Terminal report for a --target node run: CPU headline + per-iteration timing, no DOM tables. */
 function printNodeReport(result: {
   recording: Recording;
   outPath: string;
@@ -833,29 +923,37 @@ function printNodeReport(result: {
     console.log(`trend  ${cyan(sparkline(perIteration))}`);
   }
 
-  console.log(`\nRecording:  ${dim(result.outPath)}`);
+  console.log(`\nRecording:  ${dim(displayPath(result.outPath))}`);
   console.log(
-    `Digest:     ${dim(`${result.digestPath}  ← CPU-only run; rendering metrics are not collected`)}`,
+    `Digest:     ${dim(`${displayPath(result.digestPath)}  ← CPU-only run; rendering metrics are not collected`)}`,
   );
   console.log(
-    `CPU model:  ${dim(`${result.cpuModelPath}  ← 'query cpu latest' for the hot-function overview`)}`,
+    `CPU model:  ${dim(`${displayPath(result.cpuModelPath)}  ← 'query cpu latest' for the hot-function overview`)}`,
   );
   console.log(
-    `CPU raw:    ${dim(`${result.cpuProfilePath}  ← opens in Chrome DevTools / Speedscope`)}`,
+    `CPU raw:    ${dim(`${displayPath(result.cpuProfilePath)}  ← opens in Chrome DevTools / Speedscope`)}`,
   );
 }
 
-/** One line qualifying the package table above it: were the frames mapped back to real sources? */
-function printSourcemapLine(diagnostics: SourceMapDiagnostics | undefined): void {
+/**
+ * One line qualifying the package table above it: can that table be believed?
+ *
+ * Silent when a missing map cost nothing — plain unbundled source needs none, and claiming
+ * "packages below are minified bundles" about a hand-written `.mjs` whose frames resolved to their
+ * own source file is simply false. Same trigger as sourcemapNote(); see the reasoning there.
+ */
+function printSourcemapLine(
+  diagnostics: SourceMapDiagnostics | undefined,
+  unmappedFrames: number,
+): void {
   if (!diagnostics || diagnostics.scripts === 0) return;
+  const unmappedBundles = diagnostics.unmappedBundles ?? 0;
+  if (unmappedBundles === 0 && unmappedFrames === 0) return;
   const { scripts, resolved } = diagnostics;
   const reasons = Object.keys(diagnostics.failed ?? {}).join(", ");
-  const hint =
-    resolved === scripts
-      ? "packages resolved from original sources"
-      : resolved === 0
-        ? `${reasons} — packages below are minified bundles, not real packages`
-        : `${reasons} — unresolved scripts are bucketed by origin`;
+  const hint = unmappedBundles
+    ? `${reasons} — ${unmappedBundles} unmapped bundle(s) below are minified, not real packages`
+    : `${reasons} — ${unmappedFrames} unattributed frame(s) are bucketed by origin`;
   console.log(`Sourcemaps: ${dim(`${resolved}/${scripts} resolved  ← ${hint}`)}`);
 }
 
@@ -874,7 +972,7 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
   if (cpuModel) {
     printCpuHeadline(cpuModel);
     // Directly under the package table, because it says whether that table can be believed.
-    printSourcemapLine(recording.meta.sourcemaps);
+    printSourcemapLine(recording.meta.sourcemaps, cpuModel.unmappedFrames ?? 0);
   }
   if (recording.meta.throttle) {
     const throttle = recording.meta.throttle;
@@ -882,25 +980,30 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
       `\nslowdown: ${[throttle.cpuRate ? `cpu ${throttle.cpuRate}x` : null, throttle.network].filter(Boolean).join(", ")}`,
     );
   }
-  console.log(`\nRecording:  ${dim(outPath)}`);
+  console.log(`\nRecording:  ${dim(displayPath(outPath))}`);
   console.log(
-    `Digest:     ${dim(`${digestPath}  ← small entry point; start here, then drill with 'query get'`)}`,
+    `Digest:     ${dim(`${displayPath(digestPath)}  ← small entry point; start here, then drill with 'query get'`)}`,
   );
   if (indexPath) {
-    console.log(`Step index: ${dim(`${indexPath}  ← stepped run; one file per step listed here`)}`);
-  }
-  if (cpuModelPath) {
     console.log(
-      `CPU model:  ${dim(`${cpuModelPath}  ← 'query cpu latest' for the hot-function overview`)}`,
+      `Step index: ${dim(`${displayPath(indexPath)}  ← stepped run; one file per step listed here`)}`,
+    );
+  }
+  // Both are written together (record() only sets cpuModelPath when it wrote a profile), but say so
+  // rather than guarding on one and interpolating the other: the old form printed the string
+  // "undefined" if that invariant ever broke, which is how a template literal hides a missing value.
+  if (cpuModelPath && cpuProfilePath) {
+    console.log(
+      `CPU model:  ${dim(`${displayPath(cpuModelPath)}  ← 'query cpu latest' for the hot-function overview`)}`,
     );
     const rawHint =
       recording.meta.browser === "firefox"
         ? "opens at profiler.firefox.com"
         : "opens in Chrome DevTools / Speedscope";
-    console.log(`CPU raw:    ${dim(`${cpuProfilePath}  ← ${rawHint}`)}`);
+    console.log(`CPU raw:    ${dim(`${displayPath(cpuProfilePath)}  ← ${rawHint}`)}`);
   }
   if (recording.meta.screenshots?.before)
-    console.log(`Before png: ${dim(recording.meta.screenshots.before)}`);
+    console.log(`Before png: ${dim(displayPath(recording.meta.screenshots.before))}`);
   if (recording.meta.screenshots?.after)
-    console.log(`After png:  ${dim(recording.meta.screenshots.after)}`);
+    console.log(`After png:  ${dim(displayPath(recording.meta.screenshots.after))}`);
 }

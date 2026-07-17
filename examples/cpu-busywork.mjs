@@ -1,6 +1,6 @@
 // CPU sampling smoke test (in-page): a few named functions doing measurable JS work,
 // so the profile has clear hot frames to attribute back to these exact source lines.
-// Run: node dist/cli.js record examples/cpu-busywork.mjs --bench --cpu-profile --iterations 50
+// Run: node dist/cli.js record examples/cpu-busywork.mjs --bench --iterations 50
 //      node dist/cli.js query cpu latest
 
 function hashString(input) {

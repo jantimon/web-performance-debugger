@@ -1,0 +1,12 @@
+{
+  "name": "wpd-ssr-demo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SSR example for the README demo: renderToString work split across react-dom, a runtime styling library, and your own component. Deliberately dependency-light and JSX-free so it needs no build step and `wpd record demo.mjs --target node` runs it straight from source.",
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^3.6.0"
+  }
+}

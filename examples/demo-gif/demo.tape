@@ -1,7 +1,12 @@
 # demo.tape  —  source for the README hero GIF (see README.md in this folder).
 # Regenerate with:  cd examples/demo-gif && vhs demo.tape
 #
-# Edit the two absolute paths in the Hide block for your machine.
+# Edit the one absolute path in the Hide block for your machine.
+#
+# This used to copy a pre-compiled bundle out of a private benchmarks repo, which meant only one
+# person on one machine could re-render it. It duly rotted: the bundle was deleted, and the GIF went
+# on demonstrating a CLI flag that had been removed. It now runs examples/ssr-demo, which is
+# committed here and needs no build step, so anyone can regenerate this.
 
 Output demo.gif
 
@@ -13,23 +18,23 @@ Set Padding 24
 Set Theme "Dracula"
 Set TypingSpeed 45ms
 
-# --- hidden setup: a short `wpd`, a clean work dir, the pre-compiled bundle as demo.mjs ---
-# (next-yak/tailwind cases are compile-time; we reuse the benchmark's already-compiled
-#  bundle, never re-esbuild the raw .tsx.)
+# --- hidden setup: a short `wpd`, and the demo's own directory as cwd ---
+# NODE_ENV=production is hidden rather than shown because it is not part of the story, but it IS
+# load-bearing: without it React resolves to its development build, whose dev-only bookkeeping
+# dominates the profile and buries the point (`react` outranks `react-dom`, and the cost you would
+# be reading is not the cost you ship).
 Hide
-Type 'WPD_DIR=/Users/jannicklas/Desktop/chrome-dev-performance-tools' Enter
-Type 'BENCH=/Users/jannicklas/Development/github/next-yak/yak-worktree-2/benchmarks' Enter
+Type 'WPD_DIR=/Users/jannicklas/Desktop/web-performance-debugger' Enter
 Type 'wpd() { node "$WPD_DIR/dist/cli.js" "$@"; }' Enter
-Type 'mkdir -p /tmp/wpd-demo && cd /tmp/wpd-demo' Enter
-Type 'BUNDLE="$BENCH/bench/tailwind/data/attribution-work/bundles/btn-variant.twmerge.mjs"' Enter
-Type 'cp "$BUNDLE" demo.mjs && cp "$BUNDLE.map" demo.mjs.map 2>/dev/null' Enter
+Type 'cd "$WPD_DIR/examples/ssr-demo" && npm install --silent' Enter
+Type 'export NODE_ENV=production' Enter
 Type 'clear' Enter
 Show
 
 # --- visible: the two-command story ---
-Type "wpd record demo.mjs --runtime node --iterations 80" Enter
-Sleep 9s          # record runs fast (V8 sampling pass); hold long on its summary + quick rollup.
-                  # VHS does NOT wait for the process, so this must outlast it; bump if needed.
+Type "wpd record demo.mjs --target node --iterations 250" Enter
+Sleep 8s          # record itself takes ~1s; VHS does NOT wait for the process, so this only has to
+                  # outlast it. The long hold is for reading the summary + package rollup.
 
 # clear the record output (hidden, so "clear" isn't shown) → final frame focuses on the query result
 Hide
@@ -37,7 +42,7 @@ Type "clear" Enter
 Show
 
 Type "wpd query cpu latest --top 5" Enter
-Sleep 7s          # PAYOFF: react-dom vs tailwind-merge vs your component, source-attributed.
-                  # the longest, most important hold.
+Sleep 7s          # PAYOFF: react-dom vs tailwind-merge vs your component, source-attributed, with
+                  # `tailwind-merge get (lib/lru-cache.ts:35)` the single hottest function.
 
 Sleep 1s
