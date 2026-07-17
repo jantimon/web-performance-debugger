@@ -6,6 +6,8 @@ import type {
   StepTiming,
 } from "../model/recording.js";
 import { invalidationKind } from "../trace/classify.js";
+import { measuredIf } from "../model/measured.js";
+import { usToMs, msToUs, cdpSecondsToMs } from "../model/time.js";
 import { LONG_TASK_MS, inWindow } from "../trace/analysis.js";
 // inWindow is start-onward by design; see the note in analysis.ts.
 
@@ -94,7 +96,7 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
         traceStyleUs += event.dur;
         break;
       case "task":
-        if (event.dur >= LONG_TASK_MS * 1000) longTaskCount++;
+        if (event.dur >= msToUs(LONG_TASK_MS)) longTaskCount++;
         if (event.dur > longestTaskUs) longestTaskUs = event.dur;
         break;
       case "invalidation": {
@@ -104,6 +106,18 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
         else if (invalKind === "style") styleInval++;
         break;
       }
+      // No summary counter derives from these kinds; enumerated (not left to a silent default) so a
+      // future EventKind lands on the exhaustiveness guard below and must be handled here.
+      case "composite":
+      case "scripting":
+      case "gc":
+      case "usertiming":
+      case "other":
+        break;
+      default: {
+        const exhausted: never = event.kind;
+        throw new Error(`buildSummary: unhandled event kind ${String(exhausted)}`);
+      }
     }
   }
 
@@ -111,30 +125,33 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     wallMs: input.wallMs ?? null,
     inpMs: input.inpMs ?? null,
     interaction: input.interaction,
-    // Prefer authoritative low-overhead CDP counters; fall back to trace counts.
+    // Prefer authoritative low-overhead CDP counters; fall back to trace counts. The two branches
+    // convert opposite ways: CDP durations are seconds, trace durations are microseconds.
     layoutCount: cdpDelta.LayoutCount ?? traceLayoutCount,
     layoutMs:
-      cdpDelta.LayoutDuration != null ? cdpDelta.LayoutDuration * 1000 : traceLayoutUs / 1000,
+      cdpDelta.LayoutDuration != null
+        ? cdpSecondsToMs(cdpDelta.LayoutDuration)
+        : usToMs(traceLayoutUs),
     styleCount: cdpDelta.RecalcStyleCount ?? traceStyleCount,
     styleMs:
       cdpDelta.RecalcStyleDuration != null
-        ? cdpDelta.RecalcStyleDuration * 1000
-        : traceStyleUs / 1000,
+        ? cdpSecondsToMs(cdpDelta.RecalcStyleDuration)
+        : usToMs(traceStyleUs),
     // Main-thread paint chunks only; see PAINT in trace/classify.ts. There is deliberately no
     // composite count: [measured] it tracks --settle duration (7x swing on a constant workload),
     // i.e. frames elapsed, never the page's work. docs/dev/rendering-counts.md.
     paintCount,
-    paintMs: paintUs / 1000,
+    paintMs: usToMs(paintUs),
     layoutInvalidations: layoutInval,
     paintInvalidations: paintInval,
     styleInvalidations: styleInval,
     // null (not 0) when detection did not run: --breakdown drops the `.stack` category forced
     // detection needs, so a 0 here would read as "no thrashing" instead of "not measured".
-    forcedLayoutCount: forcedMeasured ? forcedLayoutCount : null,
-    forcedLayoutMs: forcedMeasured ? forcedLayoutUs / 1000 : null,
+    forcedLayoutCount: measuredIf(forcedMeasured, forcedLayoutCount),
+    forcedLayoutMs: measuredIf(forcedMeasured, usToMs(forcedLayoutUs)),
     longTaskCount,
-    longestTaskMs: longestTaskUs / 1000,
-    scriptingMs: (cdpDelta.ScriptDuration ?? 0) * 1000,
+    longestTaskMs: usToMs(longestTaskUs),
+    scriptingMs: cdpSecondsToMs(cdpDelta.ScriptDuration ?? 0),
     totalEvents: total,
     perIteration,
     stats: computeStats(perIteration),

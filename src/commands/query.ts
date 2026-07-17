@@ -14,6 +14,8 @@ import { buildDigest } from "./digest.js";
 import { printSpanBreakdowns } from "./cpu.js";
 import { printSummary } from "./summaryView.js";
 import { resolveTarget } from "./resolve.js";
+import { formatMeasured } from "../model/measured.js";
+import { usToMs } from "../model/time.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
 
 interface OutOpts {
@@ -141,7 +143,7 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
         step.interaction == null ? "—" : num(step.interaction.processingMs, 2),
         step.headline.layoutCount,
         // null = not measured (e.g. a --breakdown step); show a placeholder, never a fake 0.
-        step.headline.forcedLayoutCount ?? "—",
+        formatMeasured(step.headline.forcedLayoutCount, (count) => String(count)),
         step.headline.paintCount,
         step.headline.layoutInvalidations,
         step.headline.longTaskCount,
@@ -198,7 +200,7 @@ export async function queryEvents(file: string, query: EventsQuery): Promise<voi
         event.id,
         event.kind,
         event.name,
-        num(event.dur / 1000, 3),
+        num(usToMs(event.dur), 3),
         event.at ?? "",
       ]),
     ),
@@ -237,7 +239,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     };
     group.count++;
     if (event.forced) group.forced++;
-    group.durMs += event.dur / 1000;
+    group.durMs += usToMs(event.dur);
     group.kinds.add(event.kind);
     groups.set(event.at!, group);
   }

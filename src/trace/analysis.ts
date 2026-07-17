@@ -1,4 +1,5 @@
 import type { InvalidationRecord, NormalizedEvent } from "../model/recording.js";
+import { usToMs, msToUs } from "../model/time.js";
 import { invalidationKind } from "./classify.js";
 
 export const LONG_TASK_MS = 50;
@@ -35,7 +36,7 @@ export function forcedLayouts(events: NormalizedEvent[], start: number | null): 
     if (!event.forced || !event.at || !inWindow(event, start)) continue;
     const group = groups.get(event.at) ?? { at: event.at, count: 0, durMs: 0 };
     group.count++;
-    group.durMs += event.dur / 1000;
+    group.durMs += usToMs(event.dur);
     groups.set(event.at, group);
   }
   return [...groups.values()].sort((left, right) => right.durMs - left.durMs);
@@ -56,7 +57,7 @@ export function longTasks(
   start: number | null,
   thresholdMs = LONG_TASK_MS,
 ): LongTask[] {
-  const thresholdUs = thresholdMs * 1000;
+  const thresholdUs = msToUs(thresholdMs);
   const tasks = events.filter(
     (event) => event.kind === "task" && event.dur >= thresholdUs && inWindow(event, start),
   );
@@ -92,9 +93,9 @@ export function longTasks(
       return {
         id: task.id,
         ts: task.ts,
-        durMs: task.dur / 1000,
+        durMs: usToMs(task.dur),
         dominantKind,
-        dominantMs: dominantUs / 1000,
+        dominantMs: usToMs(dominantUs),
         at,
       };
     })

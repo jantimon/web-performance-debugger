@@ -1,4 +1,5 @@
 import type { Recording } from "../model/recording.js";
+import { formatMeasured } from "../model/measured.js";
 import { kv, num, sparkline, table } from "../output/ascii.js";
 import { dim } from "../output/color.js";
 import { capsFor } from "../browser/backend.js";
@@ -85,10 +86,11 @@ export function printSummary(rec: Recording): void {
 
   // forced is null when the run did not measure it (--breakdown drops the `.stack` category); say
   // "not measured" and point at the mode that does, never print 0 (which reads as "no thrashing").
-  const forcedCell =
-    summary.forcedLayoutCount == null
-      ? dim("not measured (run the default mode for forced-layout blame)")
-      : `${summary.forcedLayoutCount}  (${num(summary.forcedLayoutMs ?? 0)} ms)`;
+  const forcedCell = formatMeasured(
+    summary.forcedLayoutCount,
+    (count) => `${count}  (${num(summary.forcedLayoutMs ?? 0)} ms)`,
+    dim("not measured (run the default mode for forced-layout blame)"),
+  );
   console.log("\nHotspots\n");
   console.log(
     kv([

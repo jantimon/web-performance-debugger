@@ -37,7 +37,7 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 
 CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
 unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). Unit tests (`test/unit.test.mjs`) cover pure functions
+`test:e2e`). Unit tests (`test/unit/*.test.mjs`) cover pure functions
 (classify/summarize/analysis/format) against compiled `dist/`. The e2e test (`test/cli.e2e.test.mjs`)
 spawns the built CLI against real headless Chrome and asserts the two flagship flows end-to-end:
 forced-layout `blame` attribution and CPU source resolution. It **self-skips when
@@ -281,6 +281,10 @@ the probes that establish them.
   `group` not `g`, `frame` not `f`, `(left, right)` not `(a, b)`, `index` not `i`). This holds
   even inside browser-serialized functions (harness/driver/settle), where names don't affect
   serialization. Exported names, type names, and object property keys are exempt.
+- **When more than one clock is in scope, a timestamp identifier names its clock** (`traceTs`,
+  `pageNowMs`, `profileTs`), so a `* 1000` / `/ 1000` is never read for its direction. The unit
+  conversions live in one place (`model/time.ts`: `usToMs`/`msToUs`/`cdpSecondsToMs`); use them
+  rather than a bare factor.
 - **No em-dashes or AI-prose in comments.** Use ASCII punctuation (`:`, `;`, `()`, `.`) and keep
   comments terse and technical; drop chatty tells (`à la`, `Best-guess`, `Nudge the engine`).
   The standalone `"—"` used as a missing-value placeholder in table *output* is allowed.

@@ -3,6 +3,7 @@ import path from "node:path";
 import { deserialize } from "../output/format.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget } from "./resolve.js";
+import { formatMeasured, type Measured } from "../model/measured.js";
 import type { Recording, RecordingSummary } from "../model/recording.js";
 
 // `gated` metrics participate in --fail-on-regression; `advisory` ones are printed but never
@@ -61,15 +62,15 @@ export async function diffCmd(
   const rows: (string | number)[][] = [];
   const regressions: string[] = [];
   for (const metric of METRICS) {
-    const baseValue = baselineSummary[metric.key] as number | null;
-    const currentValue = currentSummary[metric.key] as number | null;
+    const baseValue = baselineSummary[metric.key] as Measured<number>;
+    const currentValue = currentSummary[metric.key] as Measured<number>;
     // Don't conflate "not measured" (null) with 0; that invents fake regressions
     // (0 → 45) and fake improvements (300 → 0) when a metric is absent on one side.
     if (baseValue == null || currentValue == null) {
       rows.push([
         metric.label,
-        baseValue == null ? "n/a" : num(baseValue),
-        currentValue == null ? "n/a" : num(currentValue),
+        formatMeasured(baseValue, (value) => num(value), "n/a"),
+        formatMeasured(currentValue, (value) => num(value), "n/a"),
         "—",
       ]);
       continue;

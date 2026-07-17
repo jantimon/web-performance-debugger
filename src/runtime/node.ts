@@ -13,6 +13,8 @@ import { buildDigest } from "../commands/digest.js";
 import { writePointer } from "../commands/resolve.js";
 import { serialize, extFor } from "../output/format.js";
 import type { CpuModel, Recording, RecordingMeta } from "../model/recording.js";
+import { RUN_MEASURE } from "../model/marks.js";
+import { nodeRuntime } from "../record/notes.js";
 import type { RecordOptions } from "../commands/record.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
@@ -127,9 +129,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     userDataDir: null,
     lifecycle,
     passes: ["node-cpu"],
-    notes: [
-      "Node runtime (--target node): in-process V8 sampling profile of run(). CPU only; no DOM, layout, paint, or invalidation is measured. Self-time ms come from the profiler's own clock.",
-    ],
+    notes: [nodeRuntime()],
     driver: false,
     runtime: "node",
   };
@@ -148,7 +148,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
 
   const recording: Recording = {
     meta,
-    window: { measure: "wpd:run", startTs: null, endTs: null, wallMs },
+    window: { measure: RUN_MEASURE, startTs: null, endTs: null, wallMs },
     marks: [],
     metrics: { before: {}, after: {}, delta: {} },
     events: [],

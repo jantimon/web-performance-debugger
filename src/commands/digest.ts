@@ -1,4 +1,5 @@
 import type { Digest, NormalizedEvent, Recording } from "../model/recording.js";
+import { usToMs } from "../model/time.js";
 import { forcedLayouts, longTasks, extractInvalidations } from "../trace/analysis.js";
 
 export function buildDigest(rec: Recording, recordingPath: string, topN = 20): Digest {
@@ -15,7 +16,7 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
       id: event.id,
       kind: event.kind,
       name: event.name,
-      durMs: event.dur / 1000,
+      durMs: usToMs(event.dur),
       at: event.at,
     }));
 
@@ -29,7 +30,7 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
       kinds: new Set<string>(),
     };
     group.count++;
-    group.durMs += event.dur / 1000;
+    group.durMs += usToMs(event.dur);
     group.kinds.add(event.kind);
     blame.set(event.at, group);
   }

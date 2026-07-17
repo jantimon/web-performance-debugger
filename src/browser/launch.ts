@@ -1,6 +1,7 @@
 import puppeteer from "puppeteer";
 import type { Browser, CDPSession, Page } from "puppeteer";
 import type { BrowserName } from "./backend.js";
+import { shellFallback } from "../record/notes.js";
 
 export interface BrowserHandle {
   browser: Browser;
@@ -68,12 +69,6 @@ function missingBrowserMessage(error: Error, browser: BrowserName): Error {
  * See docs/dev/frame-floor.md. Ignored when the browser is headed (--no-headless) or Firefox.
  */
 export type HeadlessMode = "new" | "shell";
-
-/** WARNING pushed to meta.notes when chrome-headless-shell is missing and the run falls back to
- * new-headless. chrome-headless-shell is a separate Puppeteer download; the default install fetches
- * it, but PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD or a chrome-only browser install omits it. */
-export const SHELL_FALLBACK_NOTE =
-  "WARNING: chrome-headless-shell is not installed, so this run fell back to new-headless (~60Hz frames): wall/INP carry the ~16.6ms one-frame floor instead of ~8.3ms. Install it with `npx puppeteer browsers install chrome-headless-shell`, or pass --headless-mode new to select new-headless deliberately.";
 
 /**
  * Resolve puppeteer's `headless` launch value from wpd's two knobs. Headed (`--no-headless`) wins
@@ -143,7 +138,9 @@ async function launchOrThrow(opts: {
   } catch (error) {
     if (!/could not find chrome/i.test((error as Error).message)) throw error;
     const handle = await launchChrome(true, opts);
-    handle.headlessFallback = SHELL_FALLBACK_NOTE;
+    // chrome-headless-shell is a separate Puppeteer download; the default install fetches it, but
+    // PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD or a chrome-only browser install omits it.
+    handle.headlessFallback = shellFallback();
     return handle;
   }
 }

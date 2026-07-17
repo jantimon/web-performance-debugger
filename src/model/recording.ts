@@ -1,3 +1,5 @@
+import type { Measured } from "./measured.js";
+
 export type EventKind =
   | "layout"
   | "style"
@@ -109,13 +111,13 @@ export interface RecordingSummary {
   styleInvalidations: number;
 
   /**
-   * layout/style synchronously forced by JS (thrashing). null = NOT measured on this run, which is
-   * a different fact than 0 (no thrashing): forced detection needs the `.stack` trace category, so
-   * a mode that drops it (--breakdown) reports null and points at the default two-pass mode. A gate
-   * like `assert --max-forced` treats null as a loud failure, never a silent pass.
+   * layout/style synchronously forced by JS (thrashing), as a `Measured` value (see
+   * model/measured.ts): a number is the count (0 = measured, no thrashing); null = NOT measured,
+   * because the mode dropped the `.stack` trace category forced detection needs (--breakdown). The
+   * tri-state contract -- incl. why a gate treats null as a loud failure -- lives on the Measured type.
    */
-  forcedLayoutCount: number | null;
-  forcedLayoutMs: number | null;
+  forcedLayoutCount: Measured<number>;
+  forcedLayoutMs: Measured<number>;
 
   /** tasks >= 50ms ("long tasks") in the window */
   longTaskCount: number;
@@ -401,8 +403,8 @@ export interface StepIndexEntry {
   stats?: BenchStats | null;
   headline: {
     layoutCount: number;
-    /** null when forced detection was not run for this step (see RecordingSummary.forcedLayoutCount) */
-    forcedLayoutCount: number | null;
+    /** Measured (see model/measured.ts): null when forced detection was not run for this step */
+    forcedLayoutCount: Measured<number>;
     paintCount: number;
     layoutInvalidations: number;
     styleInvalidations: number;
@@ -508,6 +510,9 @@ export interface CpuBreakdown {
     gc: CpuSlice;
     idle: CpuSlice;
   };
+  /** wallMs - Σ slices; present only when a node's owner resolved to null so its time landed in no
+   * slice (the tiling did not close within float dust). Absent/0 in the normal case. */
+  residualMs?: number;
 }
 
 /**

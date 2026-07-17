@@ -1,4 +1,5 @@
 import type { NormalizedEvent } from "../model/recording.js";
+import { RUN_START_MARK, RUN_END_MARK, matchStepEdgeMark } from "../model/marks.js";
 import { classify } from "./classify.js";
 
 interface RawTraceEvent {
@@ -63,13 +64,10 @@ export function findSteps(events: NormalizedEvent[]): StepWindow[] {
   const starts = new Map<number, number>();
   const ends = new Map<number, number>();
   for (const event of events) {
-    let match = /^wpd:step:(\d+):start$/.exec(event.name);
-    if (match) {
-      starts.set(Number(match[1]), event.ts);
-      continue;
-    }
-    match = /^wpd:step:(\d+):end$/.exec(event.name);
-    if (match) ends.set(Number(match[1]), event.ts);
+    const step = matchStepEdgeMark(event.name);
+    if (!step) continue;
+    if (step.edge === "start") starts.set(step.index, event.ts);
+    else ends.set(step.index, event.ts);
   }
   return [...starts.entries()]
     .sort((left, right) => left[0] - right[0])
@@ -84,8 +82,8 @@ export function findWindow(events: NormalizedEvent[]): {
   let startTs: number | null = null;
   let endTs: number | null = null;
   for (const event of events) {
-    if (event.name === "wpd:run:start") startTs = event.ts;
-    if (event.name === "wpd:run:end") endTs = event.ts;
+    if (event.name === RUN_START_MARK) startTs = event.ts;
+    if (event.name === RUN_END_MARK) endTs = event.ts;
   }
   return { startTs, endTs };
 }

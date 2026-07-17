@@ -1,39 +1,20 @@
-import type { Breakdown, EventKind, NormalizedEvent } from "../model/recording.js";
+import type { Breakdown, NormalizedEvent } from "../model/recording.js";
+import { usToMs } from "../model/time.js";
+import { reconcileResidual } from "../model/reconcile.js";
+import { sliceOf, type WorkSlice } from "./taxonomy.js";
 
 /**
  * One CPU sample projected onto the trace clock, for subdividing the js slice by package.
  *
- * `ts` is the sample's absolute trace-clock timestamp (microseconds) -- the same clock the trace
- * events carry, so a sample can be tested for membership in a scripting self-time region. `package`
- * is the resolved owning package of the sample's leaf frame, or null for a frame with no owner
- * (idle/gc/system/tool). Sampled time is NEVER added to the trace-measured ms; samples only supply
- * proportions.
+ * `traceTs` is the sample's absolute timestamp on the TRACE clock (microseconds) -- named for its
+ * clock because it is only comparable to trace-event timestamps, the same clock, so a sample can be
+ * tested for membership in a scripting self-time region. `package` is the resolved owning package of
+ * the sample's leaf frame, or null for a frame with no owner (idle/gc/system/tool). Sampled time is
+ * NEVER added to the trace-measured ms; samples only supply proportions.
  */
 export interface BreakdownSample {
-  ts: number;
+  traceTs: number;
   package: string | null;
-}
-
-/** The six non-idle work slices an event kind can land in; `idle` is the window remainder, not a kind. */
-type WorkSlice = "js" | "style" | "layout" | "paint" | "gc" | "other";
-
-/** Which of the seven work slices an event kind lands in. */
-function sliceOf(kind: EventKind): WorkSlice {
-  switch (kind) {
-    case "scripting":
-      return "js";
-    case "style":
-      return "style";
-    case "layout":
-      return "layout";
-    case "paint":
-      return "paint";
-    case "gc":
-      return "gc";
-    default:
-      // task remainder + composite/invalidation/user-timing/other: the floor bucket, kept visible.
-      return "other";
-  }
 }
 
 interface OpenInterval {
@@ -47,10 +28,6 @@ interface Segment {
   /** "idle" for a window gap with no main-thread work open */
   slice: WorkSlice | "idle";
 }
-
-const US_PER_MS = 1000;
-/** Float dust below this (ms) is not a real residual; the tiling is exact by construction. */
-const RESIDUAL_EPSILON_MS = 1e-6;
 
 /**
  * Decompose one span's trace window into the seven work slices + idle, tiling `[startTs, endTs]`
@@ -123,19 +100,19 @@ export function computeSpanBreakdown(
 
   // Subdivide the js slice by package: count the samples inside a scripting region per owner, then
   // split the TRACE-measured js ms by those counts. Zero samples => empty rather than fabricated.
-  const jsMs = sliceUs.js / US_PER_MS;
+  const jsMs = usToMs(sliceUs.js);
   const byPackage = splitJsByPackage(jsMs, jsSegments, samples);
 
-  const idleMs = sliceUs.idle / US_PER_MS;
+  const idleMs = usToMs(sliceUs.idle);
   const breakdown: Breakdown = {
-    wallMs: windowUs / US_PER_MS,
+    wallMs: usToMs(windowUs),
     slices: {
       js: { ms: jsMs, byPackage },
-      style: { ms: sliceUs.style / US_PER_MS },
-      layout: { ms: sliceUs.layout / US_PER_MS },
-      paint: { ms: sliceUs.paint / US_PER_MS },
-      gc: { ms: sliceUs.gc / US_PER_MS },
-      other: { ms: sliceUs.other / US_PER_MS },
+      style: { ms: usToMs(sliceUs.style) },
+      layout: { ms: usToMs(sliceUs.layout) },
+      paint: { ms: usToMs(sliceUs.paint) },
+      gc: { ms: usToMs(sliceUs.gc) },
+      other: { ms: usToMs(sliceUs.other) },
       idle: { ms: idleMs },
     },
   };
@@ -150,8 +127,8 @@ export function computeSpanBreakdown(
     breakdown.slices.gc.ms +
     breakdown.slices.other.ms +
     breakdown.slices.idle.ms;
-  const residual = breakdown.wallMs - summed;
-  if (Math.abs(residual) > RESIDUAL_EPSILON_MS) breakdown.residualMs = residual;
+  const residual = reconcileResidual(breakdown.wallMs, summed);
+  if (residual !== undefined) breakdown.residualMs = residual;
 
   return breakdown;
 }
@@ -168,7 +145,7 @@ function splitJsByPackage(
   let counted = 0;
   for (const sample of samples) {
     if (sample.package == null) continue;
-    if (!inAnySegment(sample.ts, sorted)) continue;
+    if (!inAnySegment(sample.traceTs, sorted)) continue;
     countByPackage.set(sample.package, (countByPackage.get(sample.package) ?? 0) + 1);
     counted++;
   }

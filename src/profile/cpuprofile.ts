@@ -16,6 +16,8 @@ import {
   isToolFrameUrl,
 } from "../trace/stacks.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
+import { usToMs, msToUs } from "../model/time.js";
+import { reconcileResidual } from "../model/reconcile.js";
 import { deserialize } from "../output/format.js";
 import { resolveTarget } from "../commands/resolve.js";
 
@@ -324,16 +326,28 @@ function computeBreakdown(
   }
   const byPackage: Record<string, number> = {};
   for (const [owner, microseconds] of [...byPackageUs].sort((left, right) => right[1] - left[1]))
-    byPackage[owner] = microseconds / 1000;
-  return {
+    byPackage[owner] = usToMs(microseconds);
+  const breakdown: CpuBreakdown = {
     wallMs: totalMs,
     slices: {
-      js: { ms: jsUs / 1000, byPackage },
-      browser: { ms: browserUs / 1000 },
-      gc: { ms: gcUs / 1000 },
-      idle: { ms: idleUs / 1000 },
+      js: { ms: usToMs(jsUs), byPackage },
+      browser: { ms: usToMs(browserUs) },
+      gc: { ms: usToMs(gcUs) },
+      idle: { ms: usToMs(idleUs) },
     },
   };
+  // Every classified node adds its selfUs to exactly one slice, so the four sum to totalMs by
+  // construction. The one leak is a node whose owner resolves to null (the `continue` above): its
+  // time belongs to no slice. The residual surfaces that instead of letting the bar quietly fall
+  // short of wall; same epsilon + escape valve as the seven-slice breakdown.
+  const sliceSum =
+    breakdown.slices.js.ms +
+    breakdown.slices.browser.ms +
+    breakdown.slices.gc.ms +
+    breakdown.slices.idle.ms;
+  const residual = reconcileResidual(breakdown.wallMs, sliceSum);
+  if (residual !== undefined) breakdown.residualMs = residual;
+  return breakdown;
 }
 
 /**
@@ -445,7 +459,7 @@ export async function buildCpuModel(
     [...callFrameByKey].reduce(
       (sum, [key, callFrame]) =>
         callFrame.functionName === name && !callFrame.url
-          ? sum + (selfUsByKey.get(key) ?? 0) / 1000
+          ? sum + usToMs(selfUsByKey.get(key) ?? 0)
           : sum,
       0,
     );
@@ -455,8 +469,8 @@ export async function buildCpuModel(
     programMs: systemMs("(program)"),
   };
   const sampledUs = [...selfUsByNode.values()].reduce((sum, value) => sum + value, 0);
-  const idleUs = system.idleMs * 1000;
-  const scriptingMs = Math.max(0, (sampledUs - idleUs) / 1000);
+  const idleUs = msToUs(system.idleMs);
+  const scriptingMs = Math.max(0, usToMs(sampledUs - idleUs));
 
   const ranked = [...callFrameByKey.keys()]
     .filter((key) => {
@@ -474,8 +488,8 @@ export async function buildCpuModel(
         source: resolved.source,
         file: resolved.file,
         package: resolved.package,
-        selfMs: (selfUsByKey.get(key) ?? 0) / 1000,
-        totalMs: (totalUsByKey.get(key) ?? 0) / 1000,
+        selfMs: usToMs(selfUsByKey.get(key) ?? 0),
+        totalMs: usToMs(totalUsByKey.get(key) ?? 0),
       };
     })
     .sort((left, right) => right.selfMs - left.selfMs || left.key.localeCompare(right.key));
@@ -511,12 +525,12 @@ export async function buildCpuModel(
     const separatorAt = edgeId.indexOf(EDGE_SEPARATOR);
     const caller = idByKey.get(edgeId.slice(0, separatorAt));
     const callee = idByKey.get(edgeId.slice(separatorAt + 1));
-    const ms = microseconds / 1000;
+    const ms = usToMs(microseconds);
     if (caller != null && callee != null && ms >= EDGE_THRESHOLD_MS)
       edges.push({ caller, callee, ms });
   }
 
-  const totalMs = raw.timeDeltas.reduce((sum, value) => sum + Math.max(0, value), 0) / 1000;
+  const totalMs = usToMs(raw.timeDeltas.reduce((sum, value) => sum + Math.max(0, value), 0));
   // Omit the breakdown on Firefox: the Gecko profile does not represent idle honestly. [measured] a
   // pure-wait window (run() only awaits ~400ms) records ZERO Idle-category and zero null-stack
   // samples in the dump; the converter bills every sample to (program), so a firefox breakdown would

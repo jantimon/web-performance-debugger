@@ -7,6 +7,8 @@
  */
 
 import type { NormalizedEvent } from "../model/recording.js";
+import { msToUs } from "../model/time.js";
+import { RUN_START_MARK, RUN_END_MARK, isRunOrStepEdgeMark } from "../model/marks.js";
 import type { RawCallFrame, RawCpuProfile, RawProfileNode } from "./cpuprofile.js";
 
 /** Raw trace-stack frame shape that trace/stacks.ts `extractStack` reads (1-based line/col). */
@@ -50,9 +52,6 @@ export interface GeckoContext {
   windowStartMs: number | null;
   windowEndMs: number | null;
 }
-
-/** wpd marks land on the same ms clock; NormalizedEvent.ts is the microsecond trace clock. */
-const MS_TO_US = 1000;
 
 /** Cycle guard for stackTable prefix walks: far above any real JS stack, so a corrupt
  * self-referencing dump cannot hang the converter. */
@@ -129,8 +128,8 @@ function runWindow(thread: GeckoThread): { startMs: number | null; endMs: number
   let endMs: number | null = null;
   for (const markerRow of thread.markers.data) {
     const label = userTimingName(thread, markerRow);
-    if (label === "wpd:run:start") startMs = markerRow[startColumn] as number;
-    else if (label === "wpd:run:end") endMs = markerRow[startColumn] as number;
+    if (label === RUN_START_MARK) startMs = markerRow[startColumn] as number;
+    else if (label === RUN_END_MARK) endMs = markerRow[startColumn] as number;
   }
   return { startMs, endMs };
 }
@@ -335,11 +334,11 @@ export function geckoToRawCpuProfile(context: GeckoContext): RawCpuProfile {
         nodeId = internChain(chain);
       }
     }
-    const deltaUs = Math.max(0, deltaMs) * MS_TO_US;
+    const deltaUs = msToUs(Math.max(0, deltaMs));
     samples.push(nodeId);
     timeDeltas.push(deltaUs);
-    if (windowStartUs == null) windowStartUs = timeMs * MS_TO_US;
-    windowEndUs = timeMs * MS_TO_US;
+    if (windowStartUs == null) windowStartUs = msToUs(timeMs);
+    windowEndUs = msToUs(timeMs);
   }
 
   for (let nodeId = 0; nodeId < nodes.length; nodeId++)
@@ -347,8 +346,8 @@ export function geckoToRawCpuProfile(context: GeckoContext): RawCpuProfile {
 
   return {
     nodes,
-    startTime: windowStartUs ?? (windowStartMs != null ? windowStartMs * MS_TO_US : 0),
-    endTime: windowEndUs ?? (windowEndMs != null ? windowEndMs * MS_TO_US : 0),
+    startTime: windowStartUs ?? (windowStartMs != null ? msToUs(windowStartMs) : 0),
+    endTime: windowEndUs ?? (windowEndMs != null ? msToUs(windowEndMs) : 0),
     samples,
     timeDeltas,
   };
@@ -422,12 +421,12 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
     const label = userTimingName(thread, markerRow);
     if (label) {
       // Only surface the marks the pipeline windows on (run/step); skip other user marks.
-      if (!/^wpd:(run|step:\d+):(start|end)$/.test(label)) continue;
+      if (!isRunOrStepEdgeMark(label)) continue;
       if (!inWindow(startTime)) continue;
       events.push({
         id: 0,
         name: label,
-        ts: startTime * MS_TO_US,
+        ts: msToUs(startTime),
         dur: 0,
         ph: "R",
         kind: "usertiming",
@@ -470,8 +469,8 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
     events.push({
       id: 0,
       name: rendering.name,
-      ts: effectiveStartMs * MS_TO_US,
-      dur: durationMs * MS_TO_US,
+      ts: msToUs(effectiveStartMs),
+      dur: msToUs(durationMs),
       ph: "X",
       kind: rendering.kind,
       // Mimic the Chrome trace arg shape so attachStacks() resolves it unchanged.
