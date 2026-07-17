@@ -18,8 +18,8 @@ export interface DriverStep {
    * "prepare" for a step measured inside prepare(), which runs ONCE before the timed loop, so it
    * has one sample no matter what --iterations says. Absent means "timed". Kept distinct rather
    * than folded into `iteration` because the two ask different questions: a prepare step is not
-   * iteration 0 of anything, and treating it as such made the idempotency check see an extra label
-   * in iteration 0 and fail every repeated run whose prepare() measured something.
+   * iteration 0 of anything, and treating it as such would make the idempotency check see an extra
+   * label in iteration 0 and fail every repeated run whose prepare() measured something.
    */
   phase?: "prepare" | "timed";
   /**

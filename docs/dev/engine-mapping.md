@@ -155,9 +155,8 @@ Because:
 | answers | **who forced it** (the read) | **who dirtied it** (the write) |
 | coverage | every flush | only the *first* invalidation since the last flush (`if (!mReflowCause)`) |
 
-The existing note in [gecko-profile-format.md](./gecko-profile-format.md) that the cause chain was
-`Node.appendChild -> ...` was recorded as *confirming* forced-layout blame. It was actually the
-first evidence of this bug: `appendChild` is the **write**.
+The cause chain [gecko-profile-format.md](./gecko-profile-format.md) records for a Gecko flush
+marker (`Node.appendChild -> ...`) is the tell: `appendChild` is the **write**, not a geometry read.
 
 Consequences, all live today:
 
@@ -192,11 +191,11 @@ The `processingMs` row is **[measured]** on a click handler that busy-waits a kn
 engines recover the number we chose, because both are timing the same handler with their own in-page
 clock.
 
-It also explains why `inpMs` does **not** cross, which previously read as an unexplained systematic
-offset. Splitting the same runs: chrome `0.1 + 45.1 + 10.8`, firefox `0 + 45.0 + 3.0`. The engines
-agree on the handler to 0.1 ms and disagree on **presentation delay** by 3.6x. So an INP difference
-between the two engines is a rendering-pipeline difference, not a JS one, and `wpd record` now prints
-the split that says so. Consistent with the independent measurement in
+It also explains why `inpMs` does **not** cross. Splitting the same runs: chrome
+`0.1 + 45.1 + 10.8`, firefox `0 + 45.0 + 3.0`. The engines agree on the handler to 0.1 ms and
+disagree on **presentation delay** by 3.6x. So an INP difference between the two engines is a
+rendering-pipeline difference, not a JS one, and `wpd record` prints the split that says so.
+Consistent with the independent measurement in
 [gecko-profile-format.md](./gecko-profile-format.md) (chrome processing 112.2 + presentation 47.4 vs
 firefox 111.0 + presentation 16.0 on a 100 ms handler): same conclusion, different probe.
 
@@ -219,9 +218,9 @@ split its cost across processing and presentation differently in each engine.
 
 ## Per-element counts: both engines have them, wpd reports neither
 
-**[measured]** First, a premise correction that keeps coming up: **CDP has no per-element
-style-recalc counter.** `Performance.getMetrics` -> `RecalcStyleCount` counts recalc *operations*.
-The per-element number is in the **trace**.
+**[measured]** The premise worth stating first, because it is easy to assume otherwise: **CDP has no
+per-element style-recalc counter.** `Performance.getMetrics` -> `RecalcStyleCount` counts recalc
+*operations*. The per-element number is in the **trace**.
 
 | | source | present today |
 | --- | --- | --- |

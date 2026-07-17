@@ -49,10 +49,10 @@ program.hook("preAction", (thisCommand) => {
 
 /**
  * Rejects what parseInt would quietly accept. Bare `parseInt` turns `abc` into NaN and `1.5` into
- * 1, and every option below then carries that forward silently: NaN failed no range check (every
- * comparison with NaN is false), so `--iterations abc` reached a `for (i = 0; i < NaN)` loop that
- * never ran and recorded 0 layouts -- zeros indistinguishable from a clean page. Fail on the
- * argument instead, once, for every option that parses a whole number.
+ * 1, and every option below would then carry that forward silently: NaN passes every range check
+ * (every comparison with NaN is false), so `--iterations abc` would reach a `for (i = 0; i < NaN)`
+ * loop that never runs and record 0 layouts -- zeros indistinguishable from a clean page. Fail on
+ * the argument instead, once, for every option that parses a whole number.
  */
 const toInt = (value: string) => {
   if (!/^-?\d+$/.test(value.trim()))
@@ -120,8 +120,8 @@ program
       program.error("--screenshot must be one of: before, after, both");
     }
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
-    // One axis: chrome | firefox | node. The old "--browser firefox and --runtime node are
-    // mutually exclusive" state is now unreachable rather than guarded against.
+    // One axis: chrome | firefox | node, so a conflicting browser/runtime combination is
+    // unrepresentable rather than something to guard against.
     if (!["chrome", "firefox", "node"].includes(cmdOpts.target))
       program.error("--target must be chrome, firefox, or node");
     const bench = !!cmdOpts.bench;
@@ -162,9 +162,9 @@ program
           `--target node is CPU-only and has no browser: remove ${browserOnly.join(", ")}`,
         );
       // --bench selects in-page execution, not iteration, so it has no meaning without a page.
-      // It used to be accepted here and silently ignored. Rejected with its own message rather
-      // than folded into browserOnly above, whose "has no browser" wording would imply --bench is
-      // about the browser rather than about *where run() executes*.
+      // Rejected with its own message rather than folded into browserOnly above, whose "has no
+      // browser" wording would imply --bench is about the browser rather than about *where run()
+      // executes*.
       if (bench)
         program.error(
           "--bench imports the module inside a page; --target node has no page. Drop --bench (--iterations already repeats run() on this lane).",
