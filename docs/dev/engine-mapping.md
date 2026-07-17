@@ -180,10 +180,25 @@ question `query blame` gets wrong on Firefox. See
 | Signal | chrome | firefox | comparable? |
 | --- | --- | --- | --- |
 | CPU self-time of the forcing fn | 8.41 ms | 8.79 ms | **yes, ~5%** |
+| `interaction.processingMs` | 45.1 ms | 45.0 ms | **yes, ~0.2%** |
+| `inpMs` | 56 ms | 48 ms | no, and see below |
 | forced layout ms | 7.17 ms | 1.08 ms | no, 7x |
 | layout batches | 22 | 70 | no, 3x |
 | style batches | 23 | 45 | no, 2x |
 | elements styled | 30 | 56 | same *definition*, still ~2x |
+
+The `processingMs` row is **[measured]** on a click handler that busy-waits a known 45 ms
+(`test/fixtures/slow-handler.html`), and it is the second signal that survives the crossing. Both
+engines recover the number we chose, because both are timing the same handler with their own in-page
+clock.
+
+It also explains why `inpMs` does **not** cross, which previously read as an unexplained systematic
+offset. Splitting the same runs: chrome `0.1 + 45.1 + 10.8`, firefox `0 + 45.0 + 3.0`. The engines
+agree on the handler to 0.1 ms and disagree on **presentation delay** by 3.6x. So an INP difference
+between the two engines is a rendering-pipeline difference, not a JS one, and `wpd record` now prints
+the split that says so. Consistent with the independent measurement in
+[gecko-profile-format.md](./gecko-profile-format.md) (chrome processing 112.2 + presentation 47.4 vs
+firefox 111.0 + presentation 16.0 on a 100 ms handler): same conclusion, different probe.
 
 Counts and marker-ms are genuinely not comparable across engines — Gecko batches layout differently
 and its markers miss short flushes. But **CPU self-time is**, because both samplers attribute the
@@ -191,8 +206,16 @@ synchronous engine work to the JS frame that triggered it, and both measure it o
 That is the opposite of how the README ranks these, and it is a strong argument for the CPU lane
 being on by default.
 
-Caveat: one probe, ~85% reflow by cost. Reproduce on a mixed JS+layout workload before promoting
-this claim to the README.
+The pattern in what crosses: **the signals that cross are the ones each engine times on its own
+clock (self-time, processing); the ones that do not are the ones each engine counts or batches by
+its own rules** (layout batches, marker-ms), plus presentation delay, where the engines genuinely
+differ. That is a better predictor than the tier list, and worth applying before assuming a new
+signal is comparable.
+
+Caveat: the self-time row is one probe, ~85% reflow by cost. Reproduce on a mixed JS+layout workload
+before promoting this claim to the README. The `processingMs` row is also one probe, and a
+deliberately synthetic one (a busy-wait, no async work, no framework); a handler that yields would
+split its cost across processing and presentation differently in each engine.
 
 ## Per-element counts: both engines have them, wpd reports neither
 

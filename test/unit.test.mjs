@@ -28,6 +28,7 @@ import { assertCmd } from "../dist/commands/assert.js";
 import { countProvenance } from "../dist/commands/summaryView.js";
 import { blameSemanticFor, noteCountScope } from "../dist/commands/record.js";
 import { capsFor } from "../dist/browser/backend.js";
+import { interactionBreakdown } from "../dist/browser/driver.js";
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -1002,4 +1003,56 @@ test("mergeSteps: a step measured in prepare() is single-sample, not an idempote
   ];
   const withWindows = mergeSteps(steps, windows);
   assert.equal(withWindows.find((step) => step.label === "boot").startTs, 10);
+});
+
+// Real shape, measured in headless Chrome on a click whose handler burns 45ms: Chrome emits the
+// whole pointer sequence, EVERY entry sharing one duration to the same next paint, but only the
+// interaction's own events carry a non-zero interactionId. Picking the max-duration entry would
+// therefore tie across all of them and could read processing off `pointerover`, which does nothing.
+const eventTiming = (name, startTime, processingStart, processingEnd, duration, interactionId) => ({
+  name, startTime, processingStart, processingEnd, duration, interactionId,
+});
+
+test("interactionBreakdown: splits INP the way Core Web Vitals does, off the interaction's group", () => {
+  const entries = [
+    // interactionId 0: not an interaction. Same duration, no processing.
+    eventTiming("pointerover", 100.0, 100.1, 100.2, 64, 0),
+    eventTiming("mouseover", 100.0, 100.1, 100.1, 64, 0),
+    // interactionId 1186: the interaction. The work lives in `click`, not in pointerdown/up.
+    eventTiming("pointerdown", 100.0, 100.4, 100.4, 64, 1186),
+    eventTiming("pointerup", 144.0, 145.6, 145.6, 64, 1186),
+    eventTiming("click", 144.0, 145.6, 190.8, 64, 1186),
+  ];
+  const split = interactionBreakdown(entries);
+  // input delay from the FIRST event of the group (pointerdown), not from pointerover.
+  assert.ok(Math.abs(split.inputDelayMs - 0.4) < 0.001, "input delay is the group's first event");
+  // processing spans first processingStart -> last processingEnd, so it catches the 45ms click
+  // handler even though pointerdown itself did nothing.
+  assert.ok(Math.abs(split.processingMs - 90.4) < 0.001, "processing spans the whole group");
+  // the three reconstruct the interaction's duration
+  assert.ok(
+    Math.abs(split.inputDelayMs + split.processingMs + split.presentationDelayMs - 64) < 0.001,
+    "the parts add back up to the reported INP",
+  );
+});
+
+test("interactionBreakdown: null when nothing is an interaction", () => {
+  // A programmatic step (page.evaluate -> el.click()) fires untrusted events, which Event Timing
+  // does not observe at all. Verified in headless Chrome: zero entries. Reporting 0ms of handler
+  // for that would read as "your handler is free" rather than "not measured".
+  assert.equal(interactionBreakdown([]), null);
+  assert.equal(
+    interactionBreakdown([eventTiming("pointerover", 1, 1.1, 1.2, 16, 0)]),
+    null,
+    "entries with no interactionId are not an interaction",
+  );
+});
+
+test("interactionBreakdown: picks the worst interaction when a step has several", () => {
+  const entries = [
+    eventTiming("click", 0, 0.5, 2.0, 24, 1),
+    eventTiming("click", 100, 100.5, 180.0, 96, 2), // the slow one
+  ];
+  const split = interactionBreakdown(entries);
+  assert.ok(Math.abs(split.processingMs - 79.5) < 0.001, "the worst interaction's handler, not the first");
 });

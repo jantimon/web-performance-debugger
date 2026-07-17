@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>wpd slow-handler probe</title>
+<!-- A click handler with a known cost, so the reported processing time can be checked against a
+     number we chose rather than against itself. -->
+<button id="inc">go</button>
+<script>
+  document.getElementById("inc").addEventListener("click", () => {
+    const start = performance.now();
+    while (performance.now() - start < 45) {} // 45ms of handler, deliberately
+  });
+</script>

@@ -166,13 +166,33 @@ wpd query index latest
 ```
 
 ```
-#  label       wall ms  inp ms  layout  forced  paint  layoutInval
-0  open menu   31.2     24      3       0       5      4
-1  type query  88.6     56      9       2       18     12
+#  label       inp ms  handler ms  layout  forced  paint  layoutInval  wall ms*
+0  open menu   24      1.7         3       0       5      4            31.2
+1  type query  56      45.1        9       2       18     12           88.6
 ```
 
-`wall ms` is the whole step (action + settle); `inp ms` is the user-perceived latency inside it. A
-step can have a long wall but a fine INP when the work happens off the interaction path
+`inp ms` is the user-perceived latency, and `handler ms` is the part of it your own event handlers
+account for. Both are measured **in-page**, so they describe the page rather than the driver
+
+`wall ms` is different, and the `*` in the table says so: it is measured around the driver, so it
+includes dispatching the action and waiting for the page to settle. On a trivial interaction that is
+most of it — the settle floor alone is ~31 ms (two frames), and `page.click` costs ~20 ms of input
+dispatch before your handler runs. Identical work reports 40.5 ms via `page.click` and 31.9 ms via
+`page.evaluate`. Treat `wall ms` as a bound on the step, not the cost of it
+
+To see where an interaction's time actually went, `record` prints the Core Web Vitals split:
+
+```
+Where that interaction's time went (in-page, Core Web Vitals split)
+
+input delay         0.1 ms   (main thread busy at input)
+processing          45.1 ms  (your event handlers)
+presentation delay  10.8 ms  (rendering the result)
+```
+
+That is the standard triage: a slow interaction is slow because the main thread was busy when the
+input landed, because your handler ran long, or because rendering the result did. A `—` means no
+interaction crossed the 16 ms floor the Event Timing spec sets, so nothing was measured
 
 Omitting `until` waits for the page to **settle**: two animation frames, each followed by an idle
 callback, which covers the usual state-update → render → cleanup pattern. Pass `until` when your
@@ -519,10 +539,18 @@ each step's own window:
 Each step keeps its **raw samples** rather than only a statistic, and aggregates only against
 itself: `stats` is that step's own min/median/mean/max, `null` below 2 samples. There is
 deliberately no median *across* steps — "mount" and "inp" measure different work, so pooling them
-would produce a real-looking number that means nothing. A driver flow runs once per pass today, so
-`perIteration` holds one sample per step; treat it as directional, not a precise median. In
-`--bench` / `--target node`, `--iterations` fills the top-level `summary.perIteration` /
-`summary.stats` instead, and those stay empty in driver mode
+would produce a real-looking number that means nothing. `perIteration` holds one sample per
+`--iterations`, so `stats` is `null` at the default of 1. In `--bench` / `--target node`,
+`--iterations` fills the top-level `summary.perIteration` / `summary.stats` instead, and those stay
+empty in driver mode
+
+A step's `wallMs` is measured **around the driver**, so it includes the cost of dispatching the
+action and waiting for the page to settle. It bounds the step; it does not price it. For what the
+page did, read `interaction` (the in-page Core Web Vitals split of `inpMs`) or the step's counts:
+
+```json
+{ "inpMs": 56, "interaction": { "inputDelayMs": 0.1, "processingMs": 45.1, "presentationDelayMs": 10.8 } }
+```
 
 ### Consuming the JSON
 

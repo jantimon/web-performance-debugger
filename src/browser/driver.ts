@@ -4,6 +4,7 @@ import type { CDPSession, Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
 import { snapshotMetricsIfAvailable, metricsDelta } from "../metrics/cdp.js";
 import { duplicateLabelError } from "../trace/steps.js";
+import type { InteractionTiming } from "../model/recording.js";
 
 export interface DriverStep {
   /** this step's position WITHIN its iteration; the same label gets the same index every time */
@@ -29,9 +30,68 @@ export interface DriverStep {
    */
   markIndex?: number;
   label: string;
+  /**
+   * Node-side elapsed time around the action plus its settle. This is a BOUND on the step, not the
+   * page's cost: it carries the driver's own overhead. Measured on identical 40-row forced-layout
+   * work, `page.click` reports 40.5ms and `page.evaluate` 31.9ms, of which the page did 1.1ms; the
+   * settle floor alone is ~31ms (two frames). Use `interaction.processingMs` or the per-step counts
+   * for what the page actually did. See docs/dev/driver-timing.md.
+   */
   wallMs: number;
   inpMs: number | null;
+  /** in-page CWV split of `inpMs`; null when no interaction crossed the 16ms Event Timing floor */
+  interaction: InteractionTiming | null;
   cdpDelta: Record<string, number>;
+}
+
+/** One Event Timing entry, as read back out of the page. */
+export interface RawEventTiming {
+  startTime: number;
+  processingStart: number;
+  processingEnd: number;
+  duration: number;
+  /** 0 for events that are not part of an interaction (pointerover, mouseover, ...) */
+  interactionId: number;
+}
+
+/**
+ * Split the worst interaction's latency into the three CWV parts, per the web-vitals algorithm:
+ * group by `interactionId`, take the group with the longest duration, and read input delay off its
+ * FIRST event and processing end off its LAST (a click is pointerdown + pointerup + click, and the
+ * work can live in any of them).
+ *
+ * Returns null when nothing carries an interactionId, which is not a failure: a programmatic step
+ * (`page.evaluate`) fires untrusted events that Event Timing does not observe at all, and a fast
+ * interaction may not cross the observer's 16ms floor.
+ */
+export function interactionBreakdown(entries: RawEventTiming[]): InteractionTiming | null {
+  const groups = new Map<number, RawEventTiming[]>();
+  for (const entry of entries) {
+    if (!entry.interactionId) continue;
+    const group = groups.get(entry.interactionId) ?? [];
+    group.push(entry);
+    groups.set(entry.interactionId, group);
+  }
+  let worst: RawEventTiming[] | null = null;
+  let worstDuration = -1;
+  for (const group of groups.values()) {
+    const duration = Math.max(...group.map((entry) => entry.duration));
+    if (duration > worstDuration) {
+      worstDuration = duration;
+      worst = group;
+    }
+  }
+  if (!worst) return null;
+  const ordered = [...worst].sort((left, right) => left.startTime - right.startTime);
+  const first = ordered[0];
+  const last = ordered.reduce((latest, entry) =>
+    entry.processingEnd > latest.processingEnd ? entry : latest,
+  );
+  return {
+    inputDelayMs: first.processingStart - first.startTime,
+    processingMs: last.processingEnd - first.processingStart,
+    presentationDelayMs: first.startTime + worstDuration - last.processingEnd,
+  };
 }
 
 export interface DriverResult {
@@ -118,7 +178,18 @@ export async function runDriver(
     win.__cpInp = [];
     try {
       new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) win.__cpInp.push((entry as any).duration);
+        for (const entry of list.getEntries()) {
+          const event = entry as any;
+          // The whole entry, not just duration: processingStart/End are what split the latency into
+          // input delay / processing / presentation, and unlike duration they are not rounded to 8ms.
+          win.__cpInp.push({
+            startTime: event.startTime,
+            processingStart: event.processingStart,
+            processingEnd: event.processingEnd,
+            duration: event.duration,
+            interactionId: event.interactionId ?? 0,
+          });
+        }
       }).observe({ type: "event", durationThreshold: 16, buffered: true } as any);
     } catch {
       /* event-timing unsupported */
@@ -190,17 +261,22 @@ export async function runDriver(
     // presented. Flush a frame + a macrotask so a slow interaction's entry lands before
     // we read it, rather than being dropped or misattributed to the next step. null
     // (not 0) means "no interaction measured"; keep them distinct.
-    const inp = (await page.evaluate(
+    const observed = (await page.evaluate(
       () =>
-        new Promise<number | null>((resolve) => {
+        new Promise<RawEventTiming[]>((resolve) => {
           requestAnimationFrame(() =>
-            setTimeout(() => {
-              const inpDurations = (window as any).__cpInp as number[];
-              resolve(inpDurations && inpDurations.length ? Math.max(...inpDurations) : null);
-            }, 0),
+            setTimeout(() => resolve(((window as any).__cpInp as RawEventTiming[]) ?? []), 0),
           );
         }),
-    )) as number | null;
+    )) as RawEventTiming[];
+    // INP stays max-over-every-entry, deliberately: Chrome emits the whole pointer sequence with
+    // every entry sharing one duration to the same next paint, and Firefox emits only the events
+    // that did work, so this finds the interaction's latency in both. Verified in both engines:
+    // docs/dev/gecko-profile-format.md. The breakdown below needs the interactionId grouping the
+    // spec defines; the headline does not, and narrowing it here would change a measured behaviour
+    // for no gain.
+    const inp = observed.length ? Math.max(...observed.map((entry) => entry.duration)) : null;
+    const interaction = interactionBreakdown(observed);
     steps.push({
       index,
       iteration,
@@ -209,6 +285,7 @@ export async function runDriver(
       label,
       wallMs,
       inpMs: inp,
+      interaction,
       cdpDelta: metricsDelta(before, after),
     });
   }

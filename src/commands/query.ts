@@ -90,6 +90,16 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
   const abs = await resolveTarget(file, "index");
   const raw = await fs.readFile(abs, "utf8");
   const idx = deserialize(raw, path.extname(abs).toLowerCase()) as StepIndex;
+  // `latest` resolves to the index via the pointer, but an explicit path is taken as given, so
+  // `query index <recording>` used to read a Recording as a StepIndex and die on
+  // `Cannot read properties of undefined (reading 'length')`, naming neither the file nor the fix.
+  if (!Array.isArray(idx.steps)) {
+    throw new Error(
+      `${abs} has no steps: this is a recording, not a step index. A stepped (driver) run writes ` +
+        `its index beside the recording as <name>.index.json -- pass that file, or 'latest'. ` +
+        `A --bench or --target node run has no steps at all.`,
+    );
+  }
   const fmt = structuredFormat(opts);
   if (fmt) return emit(idx, fmt);
 
@@ -100,33 +110,45 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
       `slowdown: ${[throttle.cpuRate ? `cpu ${throttle.cpuRate}x` : null, throttle.network].filter(Boolean).join(", ")}`,
     );
   }
+  // `inp` and `handler` come first because they describe the PAGE. `wall` is last and labelled as
+  // a bound: it is measured node-side around the action plus its settle, so it carries the driver's
+  // own cost (measured: ~31ms of settle floor, and page.click alone ~20ms) and can differ by 8ms
+  // between two ways of driving identical work. Leading with it invited reading tool overhead as
+  // the page's cost. See docs/dev/driver-timing.md.
   console.log(
     table(
       [
         "#",
         "label",
-        "wall ms",
         "inp ms",
+        "handler ms",
         "layout",
         "forced",
         "paint",
         "layoutInval",
         "longTasks",
+        "wall ms*",
         "file",
       ],
       idx.steps.map((step) => [
         step.index,
         step.label,
-        num(step.wallMs ?? 0, 1),
         step.inpMs == null ? "—" : num(step.inpMs, 1),
+        step.interaction == null ? "—" : num(step.interaction.processingMs, 2),
         step.headline.layoutCount,
         step.headline.forcedLayoutCount,
         step.headline.paintCount,
         step.headline.layoutInvalidations,
         step.headline.longTaskCount,
+        num(step.wallMs ?? 0, 1),
         path.basename(step.recording),
       ]),
     ),
+  );
+  console.log(
+    "\n* wall includes the driver's own overhead (the action's round trip + the settle); it bounds " +
+      "the step rather than costing it.\n  inp/handler are measured in-page: 'handler ms' is the " +
+      "event handlers alone. A '—' means no interaction crossed the 16 ms Event Timing floor.",
   );
   console.log("\nInspect a step:  wpd query digest <file above>");
 }

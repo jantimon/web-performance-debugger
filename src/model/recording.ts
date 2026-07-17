@@ -78,6 +78,11 @@ export interface RecordingSummary {
   wallMs: number | null;
   /** worst interaction-to-next-paint in the window, ms (driver mode); null if unmeasured */
   inpMs: number | null;
+  /**
+   * In-page CWV split of `inpMs` for the step it came from. Absent on lanes with no observed
+   * interaction (bench/node), and null when no step crossed the 16ms Event Timing floor.
+   */
+  interaction?: InteractionTiming | null;
 
   layoutCount: number;
   layoutMs: number;
@@ -187,6 +192,32 @@ export interface SourceMapDiagnostics {
 }
 
 /**
+ * An interaction's latency, split the way Core Web Vitals splits INP. The three add up to `inpMs`,
+ * and they are the standard triage: a slow interaction is slow because the main thread was busy
+ * when the input arrived (input delay), because your handler ran long (processing), or because
+ * rendering the result took a while (presentation delay).
+ *
+ * Measured in-page by the Event Timing observer, so unlike a step's `wallMs` these describe the
+ * PAGE, not the driver: identical work reports the same processing time whether the step was driven
+ * by `page.click` or `page.evaluate`, while its wall differs by ~8ms between the two. They are also
+ * finer-grained than `inpMs` itself, which the spec rounds to 8ms: a 45ms handler reads
+ * `processingMs` 45.4 inside an `inpMs` of 64.
+ *
+ * Grouped by `interactionId` per the web-vitals algorithm. Chrome emits the whole pointer sequence
+ * (pointerover, mouseover, ...) sharing one duration, but only the interaction's own events carry a
+ * non-zero interactionId; picking by duration alone would tie and could read `processing` off
+ * `pointerover`, which does nothing (measured: 0.10 vs the click's 45.20).
+ */
+export interface InteractionTiming {
+  /** input arrival -> handler start: the main thread was busy with something else */
+  inputDelayMs: number;
+  /** the event handlers themselves, first processingStart to last processingEnd */
+  processingMs: number;
+  /** handler end -> next paint: the cost of rendering the result */
+  presentationDelayMs: number;
+}
+
+/**
  * What a forced-layout blame line names, which is NOT the same question in both engines:
  *
  * - "flush-site" (Chrome/Blink): the geometry READ that forced the pending layout to flush
@@ -284,6 +315,8 @@ export interface StepIndexEntry {
   /** median of this step's samples under --iterations; the single sample when there is one */
   wallMs: number | null;
   inpMs: number | null;
+  /** in-page CWV split of inpMs: where the interaction's latency actually went */
+  interaction?: InteractionTiming | null;
   /** this step's own min/median/mean/max; null below 2 samples, same contract as elsewhere */
   stats?: BenchStats | null;
   headline: {
