@@ -287,18 +287,27 @@ git-ignored and hosted via a GitHub user-attachments URL (not committed, so the 
 lean). **See `examples/demo-gif/README.md` for the render/publish steps.** Internal notes below.
 
 What it shows: the `--target node` CPU lane attributing SSR `renderToString` self-time to
-`react-dom` vs a styling library vs your component, down to a source line, via `query cpu`. It
-deliberately uses the **tailwind-merge** Button lane (`btn-variant.twmerge`) because that produces
-the clearest three co-equal buckets (`react-dom` ~37% vs `tailwind-merge` ~37% vs `app`), with the
-hot function `tailwind-merge get (lib/lru-cache.ts:35)` as the punchline.
+`react-dom` vs a styling library vs your component, down to a source line, via `query cpu`. It runs
+**`examples/ssr-demo`** (in this repo, JSX-free so no build step): `react-dom` ~44% vs
+`tailwind-merge` ~22% vs `app` ~9%, with `tailwind-merge get (lib/lru-cache.ts:35)` the single
+hottest function (~21%) as the punchline.
+
+It used to run a pre-compiled bundle from a private benchmarks repo, which meant one person on one
+machine could re-render it -- so it rotted unnoticed until the published GIF was demonstrating a
+removed flag. **Keep this demo runnable from a clean checkout**; that property is the point, not the
+exact percentages.
 
 Tape gotchas (learned), if you tweak `demo.tape`:
 
 - **`Sleep` must outlast the process.** VHS fires the next keystroke after the `Sleep`, not when
   the command exits. The `record` step needs a Sleep longer than its real runtime (~a few seconds).
-- **`--iterations 80` + `--top 5`** keep the V8 `(node) post (node:inspector)` self-time from
-  cluttering the hot-function list: more iterations shrink its fixed cost to a small %, and `--top 5`
-  drops it from the table while still showing all three buckets with source lines.
+- **`--iterations 250`** is about `(node) post (node:inspector)`, the profiler's own cost on this
+  lane. It is a **fixed ~23ms** regardless of workload, so the only way to shrink it is more real
+  work: at 80 iterations it was the single hottest function (~18-46%) and buried the punchline; at
+  250 it drops to ~7% and `tailwind-merge get` takes the top row. If you shrink the workload, re-check
+  that row before publishing.
+- **`NODE_ENV=production` is load-bearing** (hidden in the tape). Without it React resolves to its
+  development build: `react` outranks `react-dom`, and the profile shows a cost nobody ships.
 - **`FontSize 18` + `Width 1580`** avoid clipping; the widest line is the `record` report's longest
   dimmed file-path + annotation (`Digest: ... rendering metrics are not collected`), not the table.
 - The record output is wiped with a hidden `clear` before `query cpu` so the final frame focuses on

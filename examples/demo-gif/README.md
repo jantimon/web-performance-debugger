@@ -19,11 +19,22 @@ cd examples/demo-gif && vhs demo.tape # writes demo.gif here
 
 Prereqs:
 
-- Edit the two absolute paths (`WPD_DIR`, `BENCH`) in the `Hide` block of `demo.tape` for your
-  machine.
-- The tape records against the next-yak benchmark's **pre-compiled** bundle
-  (`btn-variant.twmerge.mjs`). Use the compiled bundle, never raw `.tsx` (tailwind/next-yak cases
-  are compile-time). If it's missing, run `pnpm bench:tw:attribution` in the benchmark project.
+- Edit the one absolute path (`WPD_DIR`) in the `Hide` block of `demo.tape` for your machine.
+- Nothing else. The tape runs [`examples/ssr-demo`](../ssr-demo/), which lives in this repo and
+  `npm install`s itself from the tape. It is JSX-free on purpose, so there is no build step.
+
+That last point is the whole design. Until 0.5.0 this tape copied a pre-compiled bundle out of a
+private benchmarks repo, so exactly one person on one machine could re-render it — and it rotted
+exactly as you would expect: the bundle was deleted, and the published GIF kept demonstrating a CLI
+flag that no longer existed. **If you change this demo, keep it runnable from a clean checkout.**
+
+Two things in the tape that look incidental and are not:
+
+- **`NODE_ENV=production`** (hidden). Without it React resolves to its development build, whose
+  dev-only bookkeeping dominates the profile: `react` outranks `react-dom`, and the cost on screen
+  is not the cost anyone ships.
+- **Dependencies stay external** (a real `npm install`, never bundled). That is what lets wpd roll
+  self-time up per package — bundle react-dom in and its cost lands in the `app` bucket.
 
 Color is automatic: VHS records in a real TTY, so the output is colorized exactly as a user sees it
 in their terminal (heat-colored `self %`, dimmed paths, bold headline). No flag needed.
