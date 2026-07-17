@@ -38,6 +38,60 @@ export function printCpuHeadline(model: CpuModel): void {
   );
 }
 
+/**
+ * The reconciling `js · browser · gc · idle` bar, printed after the CPU headline. The slices tile
+ * the sampled window exactly (js + browser + gc + idle == wallMs), so the row percentages sum to
+ * 100. No-op when the model carries no breakdown (Firefox, or an older model).
+ */
+export function printCpuBreakdown(model: CpuModel): void {
+  const breakdown = model.breakdown;
+  if (!breakdown) return;
+  const { wallMs, slices } = breakdown;
+  // An empty profile (no sampled window) has nothing to tile; skip rather than print an
+  // all-placeholder ("—") table that says nothing.
+  if (wallMs <= 0) return;
+  const isNode = model.meta.runtime === "node";
+  // On the node lane the non-JS engine slice is V8 runtime/native, not a browser; label it honestly.
+  const browserLabel = isNode ? "native" : "browser";
+  // wallMs > 0 is guaranteed by the early return above.
+  const pct = (ms: number): string => `${num((ms / wallMs) * 100, 1)}%`;
+
+  // Top packages of the js slice, as a compact "react-dom 401.2 · app 190.3" annotation.
+  const topPackages = Object.entries(slices.js.byPackage)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, BREAKDOWN_TOP_PACKAGES)
+    .map(([owner, ms]) => `${owner} ${num(ms, 1)}`)
+    .join(" · ");
+
+  console.log(`\nCPU time breakdown ${dim(`(sampled window, ${num(wallMs, 1)} ms)`)}\n`);
+  // Fixed order js -> gc -> browser -> idle, so the eye lands on real work first and idle last.
+  const rows: [string, number, string][] = [
+    ["js", slices.js.ms, topPackages],
+    ["gc", slices.gc.ms, ""],
+    [browserLabel, slices.browser.ms, dim("(engine work, unsplit)")],
+    ["idle", slices.idle.ms, dim("(waiting, not work)")],
+  ];
+  console.log(
+    table(
+      HEAD(["slice", "ms", "%", ""]),
+      rows.map(([label, ms, note]) => [
+        label,
+        num(ms, 1),
+        heat((ms / wallMs) * 100, pct(ms)),
+        note,
+      ]),
+    ),
+  );
+  // Browser lanes fold synchronous engine work (a forced layout) into the forcing JS frame, so the
+  // js slice is not pure JS. --target node has no DOM, so its js slice really is pure JS.
+  if (!isNode)
+    console.log(
+      dim(
+        "js includes synchronous engine work JS triggered (e.g. forced layout bills to the forcing frame); it is not pure JS.",
+      ),
+    );
+}
+
 interface OutOpts {
   json?: boolean;
   format?: string;
@@ -58,6 +112,9 @@ function emit(value: unknown, fmt: Format): void {
 }
 
 const DEFAULT_TOP = 25;
+
+/** How many packages the breakdown's js-slice annotation names before eliding the rest. */
+const BREAKDOWN_TOP_PACKAGES = 4;
 
 const GROUPINGS = new Set(["package", "file", "function"]);
 
@@ -85,6 +142,7 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
       sampleCount: model.sampleCount,
       sampleIntervalUs: model.sampleIntervalUs,
       system: model.system,
+      breakdown: model.breakdown,
       byPackage,
       byFile,
       hot,
@@ -101,6 +159,13 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
   console.log(
     `CPU sampling: ${bold(`${num(model.scriptingMs, 1)} ms`)} JS self-time ${dim(`(sampled, summed over the whole window) · ${model.sampleCount} samples @ ${model.sampleIntervalUs}us · idle ${num(model.system.idleMs, 1)} ms · gc ${num(model.system.gcMs, 1)} ms`)}`,
   );
+  if (model.breakdown)
+    console.log(
+      dim(
+        "  (that headline is the sampled total minus idle; the bar below splits it, breaking gc and browser/engine work out of the js slice.)",
+      ),
+    );
+  printCpuBreakdown(model);
   if (by !== "function") {
     const grouping = by === "file" ? byFile : byPackage;
     console.log(`\nBy ${by} (self time):\n`);

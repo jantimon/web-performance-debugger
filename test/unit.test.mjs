@@ -11,6 +11,7 @@ import {
   buildCpuModel,
   packageRollup,
   functionJoinKey,
+  loadCpuModel,
   DEFAULT_CPU_INTERVAL_US,
 } from "../dist/profile/cpuprofile.js";
 import {
@@ -242,6 +243,113 @@ test("buildCpuModel: self/total time, recursion-safe totals, system buckets, edg
 
   // edges only between ranked functions (root/idle/gc dropped, not rerouted)
   assert.equal(model.edges.length, 2);
+});
+
+// The four-slice CPU breakdown (js/browser/gc/idle) must tile the profile window EXACTLY: every
+// sample's delta is attributed to its node, every node classifies into one slice, so the slices
+// sum to wall with zero residual. This fixture exercises every synthetic frame plus a node_modules
+// split and an app frame, so classification and the js byPackage subdivision are both pinned.
+function breakdownProfile() {
+  const sys = (functionName) => ({ functionName, scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 });
+  const fileFrame = (functionName, absFile, lineNumber) => ({
+    functionName,
+    scriptId: "1",
+    url: `file://${absFile}`,
+    lineNumber,
+    columnNumber: 0,
+  });
+  return {
+    startTime: 0,
+    endTime: 8000,
+    nodes: [
+      { id: 1, callFrame: sys("(root)"), children: [2, 3, 4, 5, 6] },
+      { id: 2, callFrame: fileFrame("render", "/proj/node_modules/react-dom/index.js", 10), children: [] },
+      { id: 3, callFrame: fileFrame("appMain", "/proj/src/app.js", 3), children: [] },
+      { id: 4, callFrame: sys("(idle)"), children: [] },
+      { id: 5, callFrame: sys("(garbage collector)"), children: [] },
+      { id: 6, callFrame: sys("(program)"), children: [] },
+    ],
+    samples: [2, 3, 4, 5, 6],
+    timeDeltas: [1000, 2000, 3000, 1500, 500],
+  };
+}
+
+test("buildCpuModel: the breakdown tiles the window exactly and classifies every synthetic frame", async () => {
+  const model = await buildCpuModel(breakdownProfile(), {
+    profilePath: "breakdown.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: 50,
+    root: os.tmpdir(),
+    runtime: "node",
+  });
+
+  const breakdown = model.breakdown;
+  assert.ok(breakdown, "a chrome/node model carries a breakdown");
+  const { js, browser, gc, idle } = breakdown.slices;
+
+  // classification: (idle) -> idle, (garbage collector) -> gc, (program)/(root) -> browser,
+  // real frames -> js.
+  // render 1.0 + appMain 2.0
+  assert.equal(js.ms, 3);
+  assert.equal(idle.ms, 3);
+  assert.equal(gc.ms, 1.5);
+  // (program); (root) had zero self time
+  assert.equal(browser.ms, 0.5);
+
+  // wall is the profile's own window (sum of deltas), which equals totalMs.
+  assert.equal(breakdown.wallMs, model.totalMs);
+  assert.equal(breakdown.wallMs, 8);
+
+  // the product promise: slices tile the wall with zero residual (float dust only).
+  const sum = js.ms + browser.ms + gc.ms + idle.ms;
+  assert.ok(Math.abs(sum - breakdown.wallMs) < 1e-9, `slices ${sum} must sum to wall ${breakdown.wallMs}`);
+
+  // the js slice is subdivided by the SAME resolver: a node_modules frame becomes its package,
+  // an app frame becomes "app", and byPackage sums back to js.ms.
+  assert.equal(js.byPackage["react-dom"], 1);
+  assert.equal(js.byPackage["app"], 2);
+  const pkgSum = Object.values(js.byPackage).reduce((total, value) => total + value, 0);
+  assert.ok(Math.abs(pkgSum - js.ms) < 1e-9, "byPackage must sum to js.ms");
+});
+
+test("buildCpuModel: Firefox gets NO breakdown (Gecko does not represent idle honestly)", async () => {
+  // Measured: a pure-wait window (run() only awaits) reads 0 idle samples in the Gecko dump; the
+  // converter bills that time to (program), so a firefox breakdown would report idle ~= 0 for a
+  // fully-idle window. A fabricated idle is worse than none, so the model omits it on this lane.
+  const model = await buildCpuModel(breakdownProfile(), {
+    profilePath: "ff.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1", browser: "firefox" },
+    sampleIntervalUs: 1000,
+    root: os.tmpdir(),
+    runtime: "node",
+  });
+  assert.equal(model.breakdown, undefined, "no breakdown on the firefox lane");
+  // The rest of the model is unaffected: system buckets and functions still populate.
+  assert.ok(model.functions.length > 0, "functions still resolve on firefox");
+});
+
+test("loadCpuModel: an old model without a breakdown still loads and queries", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-cpu-"));
+  // A model shaped like an artifact written before the breakdown field existed: no `breakdown` key.
+  const legacy = {
+    profile: "old.cpuprofile",
+    meta: { tool: "wpd", version: "0.4.0", schemaVersion: "2" },
+    sampleCount: 2,
+    sampleIntervalUs: 200,
+    totalMs: 5,
+    scriptingMs: 5,
+    system: { idleMs: 0, gcMs: 0, programMs: 0 },
+    functions: [
+      { id: 0, fn: "render", source: "src/app.js:3", file: "src/app.js", package: "app", selfMs: 5, selfPct: 100, totalMs: 5 },
+    ],
+    edges: [],
+  };
+  const modelPath = path.join(dir, "old.cpu.json");
+  writeFileSync(modelPath, JSON.stringify(legacy));
+  const model = await loadCpuModel(modelPath);
+  assert.equal(model.breakdown, undefined, "no breakdown field on an old model");
+  // the verbs still work: packageRollup reads it without the breakdown present.
+  assert.equal(packageRollup(model)[0].key, "app");
 });
 
 // Pseudo-URLs (inline data: modules, blob:, wasm, V8/extension internals) are not on disk.

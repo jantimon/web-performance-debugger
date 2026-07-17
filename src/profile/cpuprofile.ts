@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type {
+  CpuBreakdown,
   CpuEdge,
   CpuFunction,
   CpuGroupStat,
@@ -272,6 +273,70 @@ async function resolveCallFrame(
 }
 
 /**
+ * Reconciling `js · browser · gc · idle` decomposition of the profile's own sampled window.
+ *
+ * Built from `samples[]` + `timeDeltas[]` (via `selfUsByNode`, which already attributed each delta
+ * to its sample's node), NOT from `selfMs` aggregates: every node classifies into exactly one slice
+ * and every delta belongs to a node, so `js + browser + gc + idle === wallMs` EXACTLY with zero
+ * residual. `wallMs` is the sum of the profile's time deltas (which equals `CpuModel.totalMs`), not
+ * an external wall: `endTime - startTime` carries a small tail after the last sample that belongs to
+ * no delta, which would break the closure.
+ *
+ * Classification of a node:
+ *  - (idle)              -> idle
+ *  - (garbage collector) -> gc
+ *  - (program)/(root), or a tool harness frame -> browser (engine/runtime work with the profiled
+ *    JS not on the stack; left unsplit)
+ *  - everything else     -> js, bucketed by the SAME resolved package as `functions`/packageRollup,
+ *    so `byPackage` matches `query cpu --by package` and sums to `js.ms`.
+ */
+function computeBreakdown(
+  nodes: RawProfileNode[],
+  selfUsByNode: Map<number, number>,
+  resolvedByKey: Map<string, ResolvedFrame>,
+  totalMs: number,
+): CpuBreakdown {
+  let idleUs = 0;
+  let gcUs = 0;
+  let browserUs = 0;
+  let jsUs = 0;
+  const byPackageUs = new Map<string, number>();
+  for (const node of nodes) {
+    const selfUs = selfUsByNode.get(node.id) ?? 0;
+    if (selfUs === 0) continue;
+    const { functionName, url } = node.callFrame;
+    if (!url && functionName === "(idle)") {
+      idleUs += selfUs;
+    } else if (!url && functionName === "(garbage collector)") {
+      gcUs += selfUs;
+    } else if (!url && (functionName === "(program)" || functionName === "(root)")) {
+      browserUs += selfUs;
+    } else if (isToolFrameUrl(url)) {
+      browserUs += selfUs;
+    } else {
+      // resolvedByKey is keyed by frameKey over these same raw.nodes, so this lookup always hits;
+      // fall back to jsUs staying unattributed rather than inventing a "(native)" bucket.
+      const owner = resolvedByKey.get(frameKey(node.callFrame))?.package;
+      if (owner == null) continue;
+      jsUs += selfUs;
+      byPackageUs.set(owner, (byPackageUs.get(owner) ?? 0) + selfUs);
+    }
+  }
+  const byPackage: Record<string, number> = {};
+  for (const [owner, microseconds] of [...byPackageUs].sort((left, right) => right[1] - left[1]))
+    byPackage[owner] = microseconds / 1000;
+  return {
+    wallMs: totalMs,
+    slices: {
+      js: { ms: jsUs / 1000, byPackage },
+      browser: { ms: browserUs / 1000 },
+      gc: { ms: gcUs / 1000 },
+      idle: { ms: idleUs / 1000 },
+    },
+  };
+}
+
+/**
  * Turn a raw CPU profile into a resolved, self-contained model: per-function self/total
  * time, system buckets, and a thresholded call-graph. Sized by function count, not by
  * sample count, so it stays small for complex pages and needs no re-resolution later.
@@ -451,14 +516,26 @@ export async function buildCpuModel(
       edges.push({ caller, callee, ms });
   }
 
+  const totalMs = raw.timeDeltas.reduce((sum, value) => sum + Math.max(0, value), 0) / 1000;
+  // Omit the breakdown on Firefox: the Gecko profile does not represent idle honestly. [measured] a
+  // pure-wait window (run() only awaits ~400ms) records ZERO Idle-category and zero null-stack
+  // samples in the dump; the converter bills every sample to (program), so a firefox breakdown would
+  // report idle 0 for a fully-idle window that Chrome reports as ~99% idle. A fabricated idle is
+  // worse than none. Chrome and node profiles carry real (idle) samples. See docs/dev/cpu-profiling.md.
+  const breakdown =
+    context.meta.browser === "firefox"
+      ? undefined
+      : computeBreakdown(raw.nodes, selfUsByNode, resolvedByKey, totalMs);
+
   return {
     profile: context.profilePath,
     meta: context.meta,
     sampleCount: raw.samples.length,
     sampleIntervalUs: context.sampleIntervalUs,
-    totalMs: raw.timeDeltas.reduce((sum, value) => sum + Math.max(0, value), 0) / 1000,
+    totalMs,
     scriptingMs,
     system,
+    breakdown,
     functions,
     edges,
     unmappedFrames,

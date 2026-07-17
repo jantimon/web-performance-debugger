@@ -392,6 +392,49 @@ export interface CpuSystem {
   programMs: number;
 }
 
+/** One slice of the CPU-time breakdown. */
+export interface CpuSlice {
+  ms: number;
+}
+
+/** The `js` slice, subdivided by owning package (same buckets as packageRollup). */
+export interface CpuJsSlice extends CpuSlice {
+  /** self ms per owning package; sums to `ms` */
+  byPackage: Record<string, number>;
+}
+
+/**
+ * A reconciling decomposition of the CPU profile's own sampled window into where time went.
+ *
+ * Built from the raw profile's `samples[]` + `timeDeltas[]`: every time delta is attributed to its
+ * sample's node, and each node classifies into exactly one slice, so
+ * `js + browser + gc + idle === wallMs` EXACTLY, with zero residual. `wallMs` is the sum of the
+ * profile's own time deltas (not an external wall), which is also `CpuModel.totalMs`. That exact
+ * tiling is the product promise; it is not a proportional allocation.
+ *
+ * Honesty constraints, both from docs/dev:
+ *  - On browser lanes the `js` slice is NOT pure JS: synchronous engine work JS triggered (a forced
+ *    layout) is billed to the forcing frame (~85% of the layout probe's "JS" self-time is reflow).
+ *    Only `--target node` measures pure JS. The report annotates this on browser lanes.
+ *  - `browser` is engine/runtime work with the profiled JS not on the stack ((program)/(root) plus
+ *    the tool's own harness frames), left UNSPLIT: no invented style/layout/paint numbers, which
+ *    would require fusing the trace onto this timeline.
+ *
+ * Absent on lanes whose profile does not honestly represent idle (Firefox/Gecko): a fabricated
+ * idle is worse than none. Optional, so an older `.cpu.json` without it keeps working everywhere.
+ */
+export interface CpuBreakdown {
+  /** sum of the profile's time deltas, ms; equals CpuModel.totalMs */
+  wallMs: number;
+  slices: {
+    js: CpuJsSlice;
+    /** (program)/(root) + tool harness frames; engine/runtime work, unsplit */
+    browser: CpuSlice;
+    gc: CpuSlice;
+    idle: CpuSlice;
+  };
+}
+
 /**
  * Resolved, self-contained model of a CPU sampling profile. Sized by function count
  * (not sample count), already sourcemap-resolved, so `query cpu` / `query frame` /
@@ -409,6 +452,12 @@ export interface CpuModel {
   /** sampled time excluding idle, ms */
   scriptingMs: number;
   system: CpuSystem;
+  /**
+   * Reconciling `js · browser · gc · idle` decomposition of the sampled window (they tile it
+   * exactly). Absent on lanes whose profile does not honestly represent idle (Firefox), and on
+   * older models. Additive: readers that predate it are unaffected.
+   */
+  breakdown?: CpuBreakdown;
   /** functions sorted by self time descending; id is the index */
   functions: CpuFunction[];
   /** caller->callee edges (thresholded), for callers/callees drilling */

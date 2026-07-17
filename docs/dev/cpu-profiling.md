@@ -165,6 +165,46 @@ The one data point that argues against a large effect: firefox `run()` = 8.79ms 
 uncontaminated 8.41ms, a 5% gap — but that is one probe and the two engines differ for other
 reasons too.
 
+### The Gecko profile has no idle, so the CPU breakdown is Chrome/node only
+
+**[measured]** The `js · browser · gc · idle` breakdown (`CpuModel.breakdown`) is omitted on Firefox
+because the Gecko profile does not record idle time. Probe: `examples/awaits-only.mjs`, a `run()`
+that only awaits (`setTimeout` 20ms x 20 iterations, `--bench`), so the sampled window is ~pure
+waiting.
+
+| lane | window | idle reported |
+| --- | --- | --- |
+| Chrome (CDP, 200us) | 614 ms | **610 ms (99%)** — `(idle)` samples fill the wait |
+| Firefox (Gecko, ~1ms) | 495 ms | **0 ms** — 0 Idle-category and 0 null-stack samples in the dump |
+
+Gecko samples the content thread while it waits, but the leaf frame is a native waiting frame
+(categorized as `Other`, not `Idle`), so `geckoToRawCpuProfile` maps it to `(program)`: the
+converted profile reads **495 ms `program`, 0 idle**. A firefox bar would therefore report idle 0
+for a fully-idle window — the exact fabrication reconciliation exists to prevent, so the field is
+absent on this lane (gated on `meta.browser === "firefox"` in `buildCpuModel`). `scriptingMs`
+(all non-idle sampled time) is still emitted and is honest for JS-bound work, whose window carries
+no idle.
+
+### Sub-frame CPU work IS measurable on both engines, off the frame-floor axis
+
+**[measured]** `wall`/`INP` cannot resolve below one display frame ([frame-floor.md](./frame-floor.md)),
+but CPU self-time can, in both engines, and reconciles with the independent `--bench` wall (the
+summed timed `run()` samples) to ~1% on JS-bound work. Probe: `examples/fixed-js-work.mjs`, a fixed
+~1.5ms JS loop, `--bench`.
+
+| lane | iter=1 | iter=50 | reconciles with bench wall | resolution floor |
+| --- | --- | --- | --- | --- |
+| Chrome (200us sampler) | js 2.2 ms (bench 2.2) | js 74.1 ms (bench 73.4) | yes, ~1% | ~1.5ms call resolves at iter=1 (~10 samples) |
+| Firefox (~1ms sampler) | scriptingMs 2.0 ms (bench 2) | scriptingMs 67.9 ms (bench 65) | yes, ~3% | needs a few ms accumulated; ~5ms over-count floor for near-zero work |
+
+The sampler interval sets the floor: Chrome at 200us prices a single sub-millisecond call (though
+at `--iterations 1` a sub-ms call can land 0 samples — the near-zero `console.log` probe
+`examples/near-zero.mjs` reads js 0 at iter 10 and only becomes monotonic above ~200 iterations);
+Firefox is pinned to Gecko's ~1ms floor
+(`GECKO_MIN_INTERVAL_MS`), so a near-zero window reads a fixed ~5ms of a handful of samples and needs
+higher `--iterations` before the number is trustworthy. Both prove the point: the work axis reports
+what the one-frame `wall`/`INP` floor hides.
+
 ## Sourcemap note gating
 
 The note answers "can the package rollup be believed?", which is a **different question** from "did

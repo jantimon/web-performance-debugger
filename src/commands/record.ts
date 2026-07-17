@@ -27,7 +27,7 @@ import {
   DEFAULT_CPU_INTERVAL_US,
   type RawCpuProfile,
 } from "../profile/cpuprofile.js";
-import { printCpuHeadline } from "./cpu.js";
+import { printCpuHeadline, printCpuBreakdown } from "./cpu.js";
 import { printSummary } from "./summaryView.js";
 import { kv, num, sparkline } from "../output/ascii.js";
 import { bold, cyan, dim } from "../output/color.js";
@@ -734,6 +734,11 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(
       "INP IS measured on Firefox (in-page Event Timing, the same observer Chrome uses). The two engines' values are not interchangeable: both span the interaction through the next paint and round to 8 ms, but Firefox reports a systematically lower number for identical work because presentation delay differs by engine. Compare a browser against itself across a change, not one engine against the other.",
     );
+    // The js/browser/gc/idle breakdown is not emitted on Firefox; the [measured] rationale lives at
+    // the omission site (buildCpuModel in profile/cpuprofile.ts). This is the user-facing note.
+    notes.push(
+      "No CPU time breakdown (js/browser/gc/idle bar) on Firefox: the Gecko profile does not record idle samples (a fully-idle window reads as 0 idle), so a bar here would fabricate the idle slice. CPU self-time (scriptingMs, query cpu) is still measured. Use --target chrome for the breakdown.",
+    );
   } else {
     // Describe the pass plan that was actually BUILT, never the flags that were asked for. Those
     // diverge: `--no-isolate --no-trace` leaves one clean timing pass, so branching on
@@ -1077,6 +1082,7 @@ function printNodeReport(result: {
   const meta = result.recording.meta;
   console.log(`\n${bold(meta.tool)} — node:${meta.target}  ${dim(`(fn: ${meta.fn})`)}`);
   printCpuHeadline(result.cpuModel);
+  printCpuBreakdown(result.cpuModel);
 
   const stats = result.recording.summary.stats;
   const perIteration = result.recording.summary.perIteration;
@@ -1144,6 +1150,7 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     printCpuHeadline(cpuModel);
     // Directly under the package table, because it says whether that table can be believed.
     printSourcemapLine(recording.meta.sourcemaps, cpuModel.unmappedFrames ?? 0);
+    printCpuBreakdown(cpuModel);
   }
   if (recording.meta.throttle) {
     const throttle = recording.meta.throttle;

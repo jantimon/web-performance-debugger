@@ -2,7 +2,7 @@
 // derived views over the on-disk artifacts (model/recording.ts), kept here so the command
 // call sites can be annotated and the JSON contract cannot silently drift.
 
-import type { CpuFunction, CpuGroupStat, CpuSystem, EventKind } from "./recording.js";
+import type { CpuBreakdown, CpuFunction, CpuGroupStat, CpuSystem, EventKind } from "./recording.js";
 
 /** Functions below the `--top` cutoff in a CPU overview, rolled up. */
 export interface CpuDropped {
@@ -19,6 +19,8 @@ export interface CpuOverview {
   sampleCount: number;
   sampleIntervalUs: number;
   system: CpuSystem;
+  /** reconciling js/browser/gc/idle bar; absent on lanes without honest idle (Firefox) or old models */
+  breakdown?: CpuBreakdown;
   byPackage: CpuGroupStat[];
   byFile: CpuGroupStat[];
   /** top functions by self time (length bounded by `--top`) */
