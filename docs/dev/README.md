@@ -16,6 +16,7 @@ chromium at tip-of-tree, with a permalink).
 | [gecko-profile-format.md](./gecko-profile-format.md) | touching the Gecko converter, or debugging a Firefox dump that stopped parsing |
 | [cpu-profiling.md](./cpu-profiling.md) | changing the pass plan, the sampler interval, or how `selfMs` is described |
 | [driver-timing.md](./driver-timing.md) | touching `browser/driver.ts`, or presenting a step's `wallMs` as a cost |
+| [frame-floor.md](./frame-floor.md) | changing the headless mode, adding a headless flag, or explaining why libraries with different cost report the same `wallMs` |
 | [rendering-counts.md](./rendering-counts.md) | adding a name to `trace/classify.ts`, gating a count in `diff.ts`/`assert.ts`, or calling a count "exact" |
 
 ## The four things most likely to bite you

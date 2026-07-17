@@ -308,7 +308,9 @@ the probes that establish them.
   actually comparable) before any cross-engine claim; `cpu-profiling.md` (pass plan, sampler
   contamination, what `selfMs` includes) before changing passes or the interval;
   `rendering-counts.md` (what each count counts, which ones reproduce, why there is no composite
-  count) before adding a name to `classify.ts` or gating a count.
+  count) before adding a name to `classify.ts` or gating a count; `frame-floor.md` (the one-frame
+  floor on `wall`/`INP`, and why the headless mode sets its height) before changing the headless
+  option or adding a headless flag.
 - **Claims about engine behaviour need a probe, not a mechanism.** A plausible mechanism is not
   evidence, however obviously true it reads: sourcemaps, INP, Gecko cause stacks and sampler
   isolation all behave in ways a mechanism alone predicts wrongly. Run `examples/forces-layout.mjs`
