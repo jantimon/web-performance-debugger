@@ -27,7 +27,7 @@ Type 'clear' Enter
 Show
 
 # --- visible: the two-command story ---
-Type "wpd record demo.mjs --runtime node --iterations 80" Enter
+Type "wpd record demo.mjs --target node --iterations 80" Enter
 Sleep 9s          # record runs fast (V8 sampling pass); hold long on its summary + quick rollup.
                   # VHS does NOT wait for the process, so this must outlast it; bump if needed.
 

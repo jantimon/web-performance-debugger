@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
-// End-to-end for the Firefox lane: drives the built CLI with --browser firefox, which launches
+// End-to-end for the Firefox lane: drives the built CLI with --target firefox, which launches
 // real Firefox over WebDriver BiDi, profiles run() with the Gecko profiler, and resolves CPU
 // self-time + forced layout/style back to source. Firefox's puppeteer build is installed
 // separately (`npx puppeteer browsers install firefox`), so this self-skips when it is absent to
@@ -48,34 +48,47 @@ function runCli(args) {
   return result.stdout;
 }
 
+// Regression: a plain `--target firefox` run used to need --cpu-profile to measure anything, and
+// silently reported every rendering count as 0 without it. The gecko pass is no longer opt-in, so
+// the bare invocation must now carry real detail. This test exists to keep that footgun from
+// returning: assert on the counts, not just on the pass list.
 e2e(
-  "record --browser firefox (timing only) writes a recording with honest notes",
+  "record --target firefox yields rendering detail with no extra flag",
   { timeout: TIMEOUT_MS },
   () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
-    const out = path.join(dir, "timing");
-    runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--browser", "firefox", "--iterations", "3", "--out", out]);
+    const out = path.join(dir, "default");
+    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "3", "--out", out]);
     assert.ok(existsSync(out), "recording file written");
 
     const recording = JSON.parse(runCli(["query", "digest", out, "--json"]));
     assert.equal(recording.meta.browser, "firefox", "meta records the firefox backend");
-    assert.deepEqual(recording.meta.passes, ["timing"], "timing-only lane");
-    // Honest about what Firefox cannot measure without a Gecko pass.
+    assert.deepEqual(recording.meta.passes, ["timing", "gecko"], "gecko pass runs by default");
     assert.ok(
       recording.meta.notes.some((note) => /Firefox backend/.test(note)),
       "notes disclose the Firefox capability limits",
     );
     assert.ok(recording.summary.wallMs != null && recording.summary.wallMs >= 0, "wall time reported");
+    // The point of the change: these were 0 before, which was indistinguishable from a clean run.
+    assert.ok(recording.summary.forcedLayoutCount > 0, "forced layout counted without --cpu-profile");
   },
 );
 
+// --no-cpu-profile on firefox would leave wall times and nothing else, so it is rejected rather
+// than silently producing the empty recording the flag used to yield by default.
+e2e("record --target firefox --no-cpu-profile is refused", { timeout: TIMEOUT_MS }, () => {
+  const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--no-cpu-profile"], { encoding: "utf8" });
+  assert.notEqual(result.status, 0, "exits non-zero");
+  assert.match(result.stderr, /timing only/, "explains why it is refused");
+});
+
 e2e(
-  "record --browser firefox --cpu-profile resolves hot functions to source",
+  "record --target firefox resolves hot functions to source",
   { timeout: TIMEOUT_MS },
   () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
     const out = path.join(dir, "cpu");
-    runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--browser", "firefox", "--cpu-profile", "--iterations", "20", "--out", out]);
+    runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--iterations", "20", "--out", out]);
     assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
     assert.ok(existsSync(`${out}.geckoprofile.json`), "raw gecko dump written");
 
@@ -91,12 +104,12 @@ e2e(
 );
 
 e2e(
-  "record --browser firefox --cpu-profile attributes forced layout to source (Reflow/Styles markers)",
+  "record --target firefox attributes forced layout to source (Reflow/Styles markers)",
   { timeout: TIMEOUT_MS },
   () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
     const out = path.join(dir, "blame");
-    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--browser", "firefox", "--cpu-profile", "--iterations", "3", "--out", out]);
+    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "3", "--out", out]);
 
     const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
     assert.ok(Array.isArray(blame) && blame.length > 0, "at least one forced layout/style source group");

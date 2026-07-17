@@ -16,13 +16,13 @@ Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use 
 
 - **Node 24+**
 - **Chrome** is downloaded automatically by Puppeteer on install. To skip the browser entirely, use
-  the `--runtime node` lane (CPU profiling only, no DOM/layout/paint)
-- **Firefox** is optional (`--browser firefox`): install it once with
+  the `--target node` lane (CPU profiling only, no DOM/layout/paint)
+- **Firefox** is optional (`--target firefox`): install it once with
   `npx puppeteer browsers install firefox`. See
   [What each target gives you](#what-each-target-gives-you)
 - For `--url`, **your dev/preview server must already be running** at that URL; wpd does not start it
 - `--html` files, and `--bench` modules, must live **under the current working directory** (they are
-  served to the browser from there). Driver and `--runtime node` modules are imported in Node and can
+  served to the browser from there). Driver and `--target node` modules are imported in Node and can
   live anywhere
 
 ## 30-second quickstart
@@ -34,7 +34,7 @@ Every run starts from a small JS file you write that exports a `run` function (t
   and drives your `--url`
 - **An isolated DOM-touching snippet** → `--bench`: `run` executes inside the page, repeated with
   `--iterations`
-- **Pure JS, no DOM (SSR, hot loops)** → `--runtime node`: no browser at all
+- **Pure JS, no DOM (SSR, hot loops)** → `--target node`: no browser at all
 
 ```bash
 # 1. forced-layout (thrashing) attribution, in-page:
@@ -42,7 +42,7 @@ npx @jantimon/web-performance-debugger record probe.mjs --bench --iterations 5
 npx @jantimon/web-performance-debugger query blame latest --forced
 
 # 2. pure-JS cost, no browser:
-npx @jantimon/web-performance-debugger record render.entry.js --runtime node --iterations 50
+npx @jantimon/web-performance-debugger record render.entry.js --target node --iterations 50
 npx @jantimon/web-performance-debugger query cpu latest
 ```
 
@@ -50,8 +50,8 @@ By default `record` runs your flow **twice**: once with tracing off for clean ti
 instrumented for counts and attribution (that split is why the numbers stay honest, see
 [the trust table](#the-numbers-and-how-far-to-trust-them)). It writes into `./recordings/` (or
 name the run with `--out`): the full recording (`<timestamp>.json`), a small **digest** next to it
-(the summary and worst offenders, each carrying an `id` to drill into), a `.cpu.json` model when
-CPU profiling, and a per-step index for driver runs. A `latest` pointer tracks the newest run, so
+(the summary and worst offenders, each carrying an `id` to drill into), a `.cpu.json` model plus the
+raw `.cpuprofile`, and a per-step index for driver runs. A `latest` pointer tracks the newest run, so
 every `query` verb accepts `latest` instead of a file path. Start at the digest, then drill in by
 id
 
@@ -69,13 +69,13 @@ export async function cleanup(arg) {} // optional, after the window (alias: tear
 
 `prepare` and `cleanup` run **outside** the measured window, so setup and teardown never pollute
 the numbers: once around all `--iterations`, per pass. Because `record` replays the whole flow for
-each of its 2-3 passes, hooks should be idempotent (safe to run again on a fresh browser). All
+each of its two passes, hooks should be idempotent (safe to run again on a fresh browser). All
 three hooks receive the same argument, which depends on the lane. Note the asymmetry: in driver
 mode `ctx` is a *property* of the argument; in the other lanes it *is* the argument
 
 - **driver** (default): `run({ page, ctx, measureStep })` executes in Node, `page` is a Puppeteer page
 - **`--bench`**: `run(ctx)` executes inside the browser page, with live `document`/`window`
-- **`--runtime node`**: `run(ctx)` executes in this Node process
+- **`--target node`**: `run(ctx)` executes in this Node process
 
 `ctx` starts as an empty object and is shared across the hooks: stash things in `prepare` (a
 handle, a prebuilt DOM node, test data) and read them in `run`. `--iterations` / `--warmup`
@@ -83,7 +83,7 @@ handle, a prebuilt DOM node, test data) and read them in `run`. `--iterations` /
 driver flow runs once per pass); `record` prints a note if you pass them anyway
 
 In `--bench` the module is imported *inside the page*, so it must live under the current working
-directory to be servable. Driver and `--runtime node` modules are imported in Node and can live
+directory to be servable. Driver and `--target node` modules are imported in Node and can live
 anywhere
 
 ## Which problem do you have?
@@ -92,7 +92,7 @@ anywhere
 | --- | --- |
 | A page janks on a click or interaction | `record` a flow, then `query index` |
 | A line forces synchronous layout (thrashing) | `query blame --forced` |
-| SSR or a hot JS loop is slow | `record --runtime node` |
+| SSR or a hot JS loop is slow | `record --target node` |
 | Which dependency dominates CPU time | `query cpu` |
 | Did my change regress a budget | `assert`, `diff`, `cpu-diff` |
 
@@ -200,7 +200,7 @@ export async function run({ page, measureStep }) {
 
 ## SSR or a hot JS loop is slow
 
-When the cost is JavaScript, profile self-time per function and per package. `--runtime node` runs
+When the cost is JavaScript, profile self-time per function and per package. `--target node` runs
 `run()` in this Node process (no browser, no DOM): that is where SSR runs in production, and it
 resolves `node_modules` directly without bundling to a browser module
 
@@ -228,7 +228,7 @@ esbuild src/pages/Product.tsx --bundle --packages=external --platform=node \
 ```
 
 ```bash
-wpd record render.entry.js --runtime node --iterations 50
+wpd record render.entry.js --target node --iterations 50
 # hot functions + by-package rollup
 wpd query cpu   latest
 # drill one function; 0 = the id column of `query cpu`
@@ -259,15 +259,15 @@ Two lanes measure CPU self-time; pick by where the code runs in production:
 
 | Your code | Lane |
 | --- | --- |
-| Pure JS that runs in Node in production (SSR, tooling) | `--runtime node` |
-| JS that touches the DOM, or that ships to the browser | `--bench --cpu-profile` |
+| Pure JS that runs in Node in production (SSR, tooling) | `--target node` |
+| JS that touches the DOM, or that ships to the browser | `--bench` |
 
 For the browser lane, bundle to one ESM module with sourcemaps:
 
 ```bash
 esbuild render.entry.js --bundle --format=esm --sourcemap \
   --define:process.env.NODE_ENV='"production"' --outfile=render.mjs
-wpd record render.mjs --bench --cpu-profile --iterations 50
+wpd record render.mjs --bench --iterations 50
 ```
 
 Either lane writes a `.cpu.json` model (read by the verbs) and a raw `.cpuprofile` that opens in
@@ -367,17 +367,16 @@ wpd query get    latest 100
 wpd is additive: the core promise (attribute cost to the source line that caused it) works
 everywhere, and each richer target stacks more signals on top
 
-**Target Node (`--runtime node`), no browser at all:** CPU self-time attributed to source line,
+**Target Node (`--target node`), no browser at all:** CPU self-time attributed to source line,
 file, and owning package, plus per-iteration timing and `cpu-diff` regression gates. If your cost
 is pure JS (SSR, hot loops), this is already the whole story
 
-**Target a browser (`--browser chrome`, default, or `--browser firefox`): all of that, plus the
+**Target a browser (`--target chrome`, default, or `--target firefox`): all of that, plus the
 real DOM.** Drive real user flows (`measureStep`) or benchmark DOM-touching modules in-page
 (`--bench`), measure wall time per step, take screenshots, and get **forced layout/style blame**
 pointing at the offending statement. The same modules, recording format, and query verbs work in
 both browsers, so you can verify an optimization in both engines instead of tuning for a Chromium
-quirk. On Firefox, **add `--cpu-profile`** — without it a Firefox run measures timing only. It also
-writes `<base>.geckoprofile.json`, ready to open at profiler.firefox.com
+quirk. Firefox also writes `<base>.geckoprofile.json`, ready to open at profiler.firefox.com
 
 **Target Chrome: all of that, plus the exact CDP layer on top** (the last rows below). The flags
 that need CDP error out on other targets, and a Firefox recording names in `meta.notes` both what
@@ -390,9 +389,9 @@ a genuinely clean run
 | CPU self-time by package / file / function | ✓ (V8) | ✓ (Gecko) | ✓ (V8) |
 | Wall / per-iteration timing | ✓ | ✓ | ✓ |
 | Real user flows, in-page bench, screenshots | — | ✓ | ✓ |
-| Forced layout/style blame to source | — | ✓ (with `--cpu-profile`) | ✓ |
+| Forced layout/style blame to source | — | ✓ | ✓ |
 | INP per step | — | ✓ | ✓ |
-| Layout / style / forced-layout counts | — | ~ (Gecko, with `--cpu-profile`) | ✓ (CDP) |
+| Layout / style / forced-layout counts | — | ~ (Gecko) | ✓ (CDP) |
 | Paint / composite counts + invalidation rollup | — | — | ✓ (CDP + trace) |
 | Long tasks | — | — | ✓ |
 | `--cpu-throttle` / `--network` slowdowns | — | — | ✓ |
@@ -421,10 +420,10 @@ against the other
 ```bash
 # the same probe in both engines. Compare each engine against ITSELF across your change;
 # `query cpu` (not `blame`) is what lines up between the two — see the note above:
-wpd record examples/forces-layout.mjs --bench --cpu-profile
+wpd record examples/forces-layout.mjs --bench
 wpd query cpu latest
 
-wpd record examples/forces-layout.mjs --bench --cpu-profile --browser firefox
+wpd record examples/forces-layout.mjs --bench --target firefox
 wpd query cpu latest
 ```
 
@@ -458,14 +457,15 @@ always plain, so CI and scripts are unaffected
 **In a browser, `self ms` is not only JavaScript.** It is your JS *plus the synchronous engine work
 that JS triggered*: force a layout by reading `offsetWidth`, and the reflow is billed to the line
 that read it. That is usually what you want — it prices "what do I save by deleting this line?" —
-and it is why a `query cpu` row can dwarf the JavaScript actually on that line. `--runtime node` has
+and it is why a `query cpu` row can dwarf the JavaScript actually on that line. `--target node` has
 no DOM, so there it really is pure JS.
 
-The two default passes exist to keep this table honest: heavy instrumentation distorts timing, so
-timing is measured with tracing off and the counts/attribution in a separate instrumented pass.
-`--cpu-profile` adds a third, isolated sampling pass; `--no-isolate` collapses everything into one
-faster but noisier pass. Slow things down to surface jank with `--cpu-throttle 4` or
-`--network slow-3g`
+The two passes exist to keep this table honest: heavy instrumentation distorts timing, so timing is
+measured with tracing off and the counts/attribution in a separate instrumented pass. The CPU
+sampler rides the timing pass, which costs it about 10% on wall — systematic, so it cancels in
+`diff`; use `--no-cpu-profile` when you need absolute wall numbers or are benchmarking with
+`--iterations`. `--no-isolate` collapses everything into one faster but noisier pass. Slow things
+down to surface jank with `--cpu-throttle 4` or `--network slow-3g`
 
 **`summary.wallMs` is not your interaction.** It is the whole `wpd:run` window of one pass:
 navigation, `prepare`, every step, and the `--settle` wait. On a driver flow that is routinely
@@ -485,7 +485,7 @@ itself: `stats` is that step's own min/median/mean/max, `null` below 2 samples. 
 deliberately no median *across* steps — "mount" and "inp" measure different work, so pooling them
 would produce a real-looking number that means nothing. A driver flow runs once per pass today, so
 `perIteration` holds one sample per step; treat it as directional, not a precise median. In
-`--bench` / `--runtime node`, `--iterations` fills the top-level `summary.perIteration` /
+`--bench` / `--target node`, `--iterations` fills the top-level `summary.perIteration` /
 `summary.stats` instead, and those stay empty in driver mode
 
 ### Consuming the JSON

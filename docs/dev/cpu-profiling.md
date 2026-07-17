@@ -7,10 +7,11 @@
 Related: [engine-mapping.md](./engine-mapping.md) (Gecko <-> Blink names and semantics),
 [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas).
 
-**Provenance.** Everything marked **[measured]** is 5 interleaved runs per arm, after a discarded
-warmup run, of `examples/forces-layout.mjs --bench --cpu-profile` on chrome 150 / firefox 152.
-First-run numbers are cold-start outliers by a wide margin (a single un-warmed run showed 18ms vs a
-7ms median) — **always warm up and interleave** before believing a pass-structure A/B.
+**Provenance.** Pass-structure numbers are 5 interleaved runs per arm, after a discarded warmup, of
+`examples/forces-layout.mjs --bench` on chrome 150 / firefox 152; interval numbers are 3 runs per arm
+of `examples/cpu-busywork.mjs --target node`. First-run numbers are cold-start outliers by a wide
+margin (a single un-warmed run showed 18ms against a 7ms median, and would have "proven" the wrong
+conclusion) — **always warm up and interleave** before believing a pass-structure A/B.
 
 ## What self-time actually includes
 
@@ -38,7 +39,7 @@ the *forcing* line on both engines — including on Firefox, where `query blame`
 
 But it constrains what may be claimed:
 
-- **`--runtime node`**: no DOM, so self-time really is pure JS cost. The SSR / `renderToString`
+- **`--target node`**: no DOM, so self-time really is pure JS cost. The SSR / `renderToString`
   framing is accurate here and only here.
 - **browser lanes** (`--bench`, driver): self-time is JS + synchronous engine work. Do not describe
   it as "pure JS cost".
@@ -46,16 +47,24 @@ But it constrains what may be claimed:
 ## The pass plan
 
 ```
-chrome:  [timing] [trace] (+ [cpu] with --cpu-profile)
-firefox: [timing] (+ [gecko] with --cpu-profile)
+chrome:  [timing+sampler] [trace]
+firefox: [timing]          [gecko]
 node:    [node-cpu]
 ```
 
-- **timing** — `categories: null`, tracing off. Clean wall/per-iteration times + CDP counters.
+- **timing** — `categories: null`, tracing off. Clean wall/per-iteration times + CDP counters, and
+  **the CPU sampler rides here** (see below). `--no-cpu-profile` takes the sampler back off.
 - **trace** — full DevTools timeline incl. `invalidationTracking`. Counts, events, attribution.
   Durations here are distorted by instrumentation **by design**; timing comes from the timing pass.
-- **cpu** — `categories: null`, sampler on. Note this is **the timing spec plus the sampler**.
+  **The sampler must never run in this pass** (see below).
 - **gecko** — firefox only; one Gecko-profiler run yields CPU samples *and* layout/style markers.
+
+CPU profiling is **on by default on every target** and costs no extra pass. It was `--cpu-profile`
+(opt-in, third pass) until 0.5.0; the flag was only ever meaningful on chrome — node forced it on,
+and firefox without it silently reported every rendering count as 0.
+
+`--no-isolate` collapses to the single trace pass, which the sampler cannot ride, so that
+combination yields no CPU model and says so in `meta.notes`.
 
 ### Why the CPU pass is separate: tracing contaminates sampling
 
@@ -67,9 +76,9 @@ Folding the sampler into the trace pass:
 
 | sampler runs in | passes | CPU self ms | CPU fns | perIteration ms |
 | --- | --- | --- | --- | --- |
-| own pass (today) | 3 | **8.67** (8.2–11.4) | 7 | **8.3** (8.0–8.7) |
-| **trace pass** | 2 | **10.4** (10.0–11.2) | **10** | 8.3 |
-| timing pass | 2 | 8.99 (8.3–13.3) | 7 | 9.1 (8.3–13.4) |
+| own pass (pre-0.5.0) | 3 | **8.67** (8.2–11.4) | 7 | **8.3** (8.0–8.7) |
+| **trace pass** (never do this) | 2 | **10.4** (10.0–11.2) | **10** | 8.3 |
+| timing pass (**shipped**) | 2 | 8.99 (8.3–13.3) | 7 | 9.1 (8.3–13.4) |
 
 Trace-folding inflates CPU self-time **+21% with non-overlapping ranges** and invents functions.
 The mechanism is our own trace config: `disabled-by-default-devtools.timeline.stack` makes Blink
@@ -94,37 +103,47 @@ into the one signal the trust table calls "real: trustworthy in aggregate". Fold
 **timing** pass removes the error instead of modelling it. Prefer the design where the number is
 measured.
 
-### Folding into the timing pass is the viable 2-pass option
+### Why it rides the timing pass (shipped in 0.5.0)
 
-**[measured]** The cpu spec and the timing spec are *the same pass* (`categories: null`), differing
-only by the sampler. So the third pass buys isolation from **tracing**, which the timing pass
-already has for free.
+**[measured]** The cpu spec and the timing spec were *the same pass* (`categories: null`), differing
+only by the sampler. So the third pass bought isolation from the **timing** pass, which was never
+what mattered — isolation from **tracing** was, and the timing pass has that for free.
 
-Folding there: 2 passes, **record wall 2.48s vs 3.68s (-33%)**, CPU model intact (+4%, overlapping
+Riding there: 2 passes, **record wall 2.48s vs 3.68s (-33%)**, CPU model intact (+4%, overlapping
 ranges, same function count). The cost lands on wall instead: **perIteration +10% median and ~3x
-the variance**.
+the variance** at the old 50us interval — most of which the 200us default below buys back.
 
 That trade respects the existing trust hierarchy — wall is already declared *directional*, CPU
 self-time is declared *real* — and systematic inflation cancels in `diff`, where both sides carry
-it. It does mean the timing pass is no longer pristine, so an opt-out has to keep existing for
-clean-wall / `--iterations` benchmarking work.
+it. The timing pass is no longer pristine, which is what `--no-cpu-profile` is for: clean-wall and
+`--iterations` benchmarking work.
 
-### The sampler interval is a live knob
+### The sampler interval: why 200us
 
-**[measured]** `DEFAULT_CPU_INTERVAL_US = 50` is **20x more aggressive than Chrome's own 1000us
-default**, and most of the timing-fold's +10% is that. Sweeping it (timing-folded):
+**[measured]** The default was `50us` — **20x more aggressive than V8's own 1000us** — and that is
+where most of the timing-fold's wall cost came from.
 
-| interval | perIteration ms | CPU fns |
-| --- | --- | --- |
-| 50us | 9.1 | 7 |
-| 200us | **8.1** (baseline 8.3) | 3 |
-| 1000us | 8.6 | 1 |
+Tuned against `examples/cpu-busywork.mjs` (**~2.2 seconds** of real JS), *not* the layout probe. A
+layout probe is the wrong workload for tuning a JS sampler: it has ~8ms of JS, so any coarsening
+starves it and looks catastrophic. Measuring on the probe first suggested 200us "collapsed"
+resolution from 7 functions to 3; on a real JS workload that effect does not exist.
 
-At 200us the wall inflation **disappears entirely**. But read the function-count collapse
-skeptically: this probe runs only ~8ms of JS, so coarsening starves it of samples. That is an
-artifact of the probe, not a verdict — a 268ms SSR workload at 200us still gets ~1300 samples.
-**Tune the interval against a JS-heavy workload, never against a layout probe.** Treat "50us is too
-aggressive" as a strong hypothesis, not a finding.
+| interval | self ms (median) | perIteration ms | functions |
+| --- | --- | --- | --- |
+| 50us | 2348.3 | 177.0 | 6 |
+| **200us** | **2226.1** | **165.6** | **6** |
+| 1000us | 2208.4 | 163.1 | 5 |
+
+Reading it: 1000us is effectively the unperturbed baseline, so 50us **inflates its own measurement
+by ~6%** and the wall it rides on by ~8.5%. 200us costs ~1%. And the resolution argument for 50us
+does not survive contact: at 50us and 200us the function lists are **identical**, with self-% within
+0.3pp (`run` 65.0 vs 64.7, `buildRows` 24.6 vs 24.4, `hashString` 3.6 vs 3.7). The only thing 50us
+"finds" extra is sub-0.1ms noise like `now (node:internal/perf/performance)` at 0.0ms, and its
+presence varies run to run.
+
+So 200us: ~1% overhead, 5x V8's default resolution, and percentages — the thing `query cpu` actually
+reports — stable across a 20x interval change. **Re-measure against a JS-heavy workload if you touch
+it.**
 
 ## Firefox: samples and markers share a pass, unavoidably
 
@@ -139,10 +158,10 @@ The one data point that argues against a large effect: firefox `run()` = 8.79ms 
 uncontaminated 8.41ms, a 5% gap — but that is one probe and the two engines differ for other
 reasons too.
 
-## Sourcemap note is mis-gated
+## Sourcemap note gating (fixed in 0.5.0)
 
-`record.ts` pushes the sourcemap note whenever `maps.diagnostics().scripts > 0` — i.e. whenever any
-script was seen, regardless of whether CPU profiling ran. A chrome run **without** `--cpu-profile`
-therefore prints `WARNING: no sourcemap resolved ... so CPU self-time is attributed to minified
-bundle names`, about a CPU profile that was never taken. Gate it on whether the sampler actually
-ran.
+The sourcemap note is gated on a **CPU model existing**, not merely on
+`maps.diagnostics().scripts > 0`. It used to fire whenever any script was seen, so a run with no CPU
+profile still printed `WARNING: no sourcemap resolved ... so CPU self-time is attributed to minified
+bundle names` — about a profile that was never taken. Trace stacks resolve through the same resolver
+but are reported by `blame`, which this note does not describe.

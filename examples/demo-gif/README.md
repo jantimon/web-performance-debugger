@@ -1,6 +1,6 @@
 # README demo GIF
 
-Source for the animated GIF at the top of the project README. The GIF shows the `--runtime node`
+Source for the animated GIF at the top of the project README. The GIF shows the `--target node`
 CPU lane attributing SSR `renderToString` self-time to **react-dom vs the styling library
 (tailwind-merge) vs your component**, each down to a source line.
 

@@ -45,7 +45,12 @@ import type {
   TimingEntry,
 } from "../model/recording.js";
 
-const DEFAULT_CPU_INTERVAL_US = 50;
+// 200us, not V8's own 1000us default and not the 50us this used to run at. 50us sampled hard enough
+// to perturb the timing pass it now rides (~10% on wall); 1000us starves short workloads of
+// distinct frames. 200us measured as the knee: wall inflation back to baseline, resolution kept on
+// a JS-heavy workload. See docs/dev/cpu-profiling.md before changing it, and re-measure against
+// examples/cpu-busywork.mjs (a layout probe is the wrong workload to tune a JS sampler against).
+const DEFAULT_CPU_INTERVAL_US = 200;
 const US_PER_MS = 1000;
 
 export interface RecordOptions {
@@ -462,7 +467,16 @@ export async function record(opts: RecordOptions): Promise<{
   const wantTrace = opts.trace !== false;
   const traceCats = traceCategories({ invalidationTracking: opts.invalidationTracking !== false });
   const traceSpec: PassSpec = { name: "trace", categories: traceCats };
-  const timingSpec: PassSpec = { name: "timing", categories: null };
+  // The sampler rides the timing pass rather than a third pass of its own: both specs are
+  // `categories: null`, i.e. they were always the same pass differing only by the sampler, so a
+  // separate cpu pass bought isolation from the *timing* pass -- which was never what mattered.
+  // What matters is isolation from TRACING. NEVER move `cpu` onto traceSpec: sampling there
+  // inflates CPU self-time +21% with non-overlapping ranges, because `devtools.timeline.stack`
+  // makes Blink walk the JS stack on every Layout and the sampler bills that work to the JS frame
+  // that forced it -- landing on the same frame as the real forced-layout cost, so the two are
+  // indistinguishable after the fact. Riding the timing pass costs ~10% on wall (already the
+  // directional signal), which --no-cpu-profile buys back. Measurements: docs/dev/cpu-profiling.md.
+  const timingSpec: PassSpec = { name: "timing", categories: null, cpu: opts.cpuProfile };
   // --no-trace skips the heavy trace pass entirely: counts come from CDP (timing
   // pass) and optionally a CPU profile, with no paint/forced/invalidation detail.
   // The fallback for pages whose invalidationTracking pass pins the main thread.
@@ -473,6 +487,7 @@ export async function record(opts: RecordOptions): Promise<{
     specs = [timingSpec];
     if (opts.cpuProfile) specs.push({ name: "gecko", categories: null, gecko: true });
   } else {
+    // No cpu pass: the sampler rides timingSpec (see the note there).
     specs = opts.isolate
       ? wantTrace
         ? [timingSpec, traceSpec]
@@ -480,8 +495,6 @@ export async function record(opts: RecordOptions): Promise<{
       : wantTrace
         ? [traceSpec]
         : [timingSpec];
-    // CPU sampling is heavy, so it gets its own isolated pass (tracing stays off in it).
-    if (opts.cpuProfile) specs.push({ name: "cpu", categories: null, cpu: true });
   }
 
   const server = await startStaticServer(root);
@@ -537,7 +550,9 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(
       opts.cpuProfile
         ? "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's CDP counts: read them against another Firefox run. NOT measured at all and reported as 0: paintCount/compositeCount, invalidation counts, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and scriptingMs. A 0 in those means unmeasured, not clean."
-        : "Rendering counts on Firefox need --cpu-profile (they come from the Gecko profiler's Reflow/Styles markers). Without it EVERY rendering count in this recording is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint/composite, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.",
+        : // Unreachable from the CLI (it errors on --target firefox --no-cpu-profile); a
+          // programmatic caller passing cpuProfile:false can still land here.
+          "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint/composite, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.",
     );
     // INP is deliberately NOT in the caps list above: it never came from CDP. It is the same
     // in-page Event Timing observer Chrome uses, so it works here; the honest caveat is that the
@@ -545,19 +560,24 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(
       "INP IS measured on Firefox (in-page Event Timing, the same observer Chrome uses). The two engines' values are not interchangeable: both span the interaction through the next paint and round to 8 ms, but Firefox reports a systematically lower number for identical work because presentation delay differs by engine. Compare a browser against itself across a change, not one engine against the other.",
     );
-    if (!opts.cpuProfile) {
-      notes.push(
-        "Add --cpu-profile to get source-attributed layout/style blame plus CPU self-time by package/file/function.",
-      );
-    }
   } else if (opts.isolate) {
     notes.push(
-      "Timing/stats come from a low-overhead pass with tracing OFF; paint & invalidation counts come from a separate heavy-instrumentation pass. Do not compare durations across the two.",
+      opts.cpuProfile
+        ? "Timing/stats come from a low-overhead pass with tracing OFF; paint & invalidation counts come from a separate heavy-instrumentation pass. Do not compare durations across the two. The CPU sampler ran during the timing pass, which inflates per-iteration wall by roughly 10%: it is systematic, so it cancels in `diff`, but use --no-cpu-profile for absolute wall numbers."
+        : "Timing/stats come from a low-overhead pass with tracing OFF; paint & invalidation counts come from a separate heavy-instrumentation pass. Do not compare durations across the two.",
     );
   } else {
     notes.push(
       "Single-pass mode: invalidationTracking instrumentation was active during timing, so per-iteration timings are inflated. Use --isolate (default) for trustworthy timing.",
     );
+    // --no-isolate collapses to the trace pass, and the sampler must not ride that pass (it would
+    // inflate self-time ~21%; see the timingSpec note). So there is no CPU model here. Say so:
+    // silently dropping it would read as "this run had no JS worth sampling".
+    if (opts.cpuProfile && wantTrace) {
+      notes.push(
+        "No CPU model in this run: --no-isolate collapses to the single trace pass, and CPU sampling during tracing would inflate self-time by ~21% (trace instrumentation is billed to the JS frame that triggered it). Drop --no-isolate to get a CPU model, or use --no-trace to sample without tracing.",
+      );
+    }
   }
   if (opts.cpuThrottle || opts.network) {
     notes.push(
@@ -574,7 +594,7 @@ export async function record(opts: RecordOptions): Promise<{
   const traceWindowMissing = detail.windowStart == null && browserName !== "firefox";
   if (traceWindowMissing) {
     notes.push(
-      "WARNING: trace run-window markers (wpd:run:start/end) were not found, so paint/forced-layout/invalidation/long-task counts are NOT measured for this run and are reported as 0. CDP counters (layout/style/scripting) are unaffected. This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce work or raise --settle-ms if it persists.",
+      "WARNING: trace run-window markers (wpd:run:start/end) were not found, so paint/forced-layout/invalidation/long-task counts are NOT measured for this run and are reported as 0. CDP counters (layout/style/scripting) are unaffected. This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce work or raise --settle if it persists.",
     );
   }
 
@@ -700,7 +720,10 @@ export async function record(opts: RecordOptions): Promise<{
   // numbers look plausible while attributing everything to the bundle. Mutating `meta` here (not
   // at construction) is what lets every artifact below carry the same verdict.
   const sourcemaps = maps.diagnostics();
-  if (sourcemaps.scripts > 0) {
+  // Gate on a CPU model existing, not just on scripts having been seen: the note talks about CPU
+  // self-time and `query cpu --by package`, so without a model it warned about a profile that was
+  // never taken. Trace stacks resolve through the same resolver but are reported by `blame`.
+  if (sourcemaps.scripts > 0 && cpuModel) {
     meta.sourcemaps = sourcemaps;
     notes.push(sourcemapNote(sourcemaps));
   }

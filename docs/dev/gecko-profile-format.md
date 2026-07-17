@@ -149,9 +149,10 @@ modes (both already emit those marks).
   **zero overlap**. Read
   [engine-mapping.md](./engine-mapping.md#forced-layout-blame-differs-by-engine) before touching or
   trusting this path.
-- This lane runs only inside the `--cpu-profile` gecko pass (one browser launch yields both the CPU
-  samples and the markers). Without `--cpu-profile`, a Firefox recording is timing-only with honest
-  `meta.notes` saying rendering detail is not collected. Note the CPU samples from that same pass
+- This lane runs inside the gecko pass (one browser launch yields both the CPU samples and the
+  markers), which since 0.5.0 is **not opt-in**: it used to require `--cpu-profile`, and without that
+  flag a Firefox recording reported every rendering count as 0 — indistinguishable from a clean run.
+  The CLI now refuses `--target firefox --no-cpu-profile` for the same reason. Note the CPU samples
   *do* attribute forced layout to the forcing frame, so `query cpu` is currently more correct than
   `query blame` on this lane; see [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
 

@@ -6,17 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `wpd` (package `@jantimon/web-performance-debugger`, bins `wpd` / `web-performance-debugger`) is a
 TypeScript CLI that drives Chrome or Firefox via Puppeteer to **attribute layout/paint/style/
-invalidation work back to source lines**, plus an opt-in **CPU sampling pass** (`--cpu-profile`)
-that attributes self-time to source/package. Three trust tiers, keep them straight: **counts** (CDP)
-are exact; **wall/INP timing** rides `performance.now()` (Chrome-clamped, so coarse/directional);
-**CPU self-time** comes from the profiler's own microsecond clock (*not* `performance.now()`), so
-its ms are a real signal, trustworthy in aggregate (sampling noise ~few %). So it is not a
-wall-clock benchmark runner, but with `--cpu-profile` it *is* the right tool for comparing JS cost
-(e.g. SSR `renderToString` lanes).
+invalidation work back to source lines**, plus **CPU sampling** (on by default) that attributes
+self-time to source/package. One user-facing axis picks where it runs: `--target chrome|firefox|node`.
+Three trust tiers, keep them straight: **counts** (CDP) are exact; **wall/INP timing** rides
+`performance.now()` (Chrome-clamped, so coarse/directional); **CPU self-time** comes from the
+profiler's own microsecond clock (*not* `performance.now()`), so its ms are a real signal,
+trustworthy in aggregate (sampling noise ~few %). So it is not a wall-clock benchmark runner, but it
+*is* the right tool for comparing JS cost (e.g. SSR `renderToString` lanes).
 
 **`selfMs` is not "pure JS" on the browser lanes.** It is JS *plus the synchronous engine work JS
 triggered*: a forced layout lands as self-time on the line that forced it (measured: ~85% of the
-forced-layout probe's "JS" self-time is reflow). Only `--runtime node` (no DOM) measures pure JS.
+forced-layout probe's "JS" self-time is reflow). Only `--target node` (no DOM) measures pure JS.
 This is a feature — it prices "delete this line" — but do not describe it as pure JS.
 
 Read `README.md` for the user-facing surface; this file is the internal map; **`docs/dev/` holds the
@@ -40,7 +40,7 @@ unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrom
 `test:e2e`). Unit tests (`test/unit.test.mjs`) cover pure functions
 (classify/summarize/analysis/format) against compiled `dist/`. The e2e test (`test/cli.e2e.test.mjs`)
 spawns the built CLI against real headless Chrome and asserts the two flagship flows end-to-end:
-forced-layout `blame` attribution and `--cpu-profile` source resolution. It **self-skips when
+forced-layout `blame` attribution and CPU source resolution. It **self-skips when
 Chrome is not installed** (so `npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1`
 (set by `test:e2e`) turns a missing browser into a hard failure so the e2e job can't silently pass.
 The broader smoke tests below stay manual (always `npm run build` first — the CLI runs `dist/`):
@@ -92,12 +92,15 @@ instrumentation distorts timing, hence the split. `--no-isolate` collapses to on
 `meta.passes` records what ran. In driver mode each pass *replays the flow* (fresh browser), so
 flows should be idempotent.
 
-`--cpu-profile` appends a **third** pass. Its isolation is **from tracing, not from the timing
-pass** — the cpu spec and the timing spec are literally the same pass (`categories: null`) plus the
-sampler. Sampling during the *trace* pass inflates CPU self-time **+21%** (our own
-`devtools.timeline.stack` category makes Blink walk the JS stack on every Layout, and the sampler
-bills that to the forcing JS frame). Do not fold it there. Measurements, and the viable 2-pass
-alternative: [docs/dev/cpu-profiling.md](docs/dev/cpu-profiling.md).
+**The CPU sampler rides the timing pass** (it had a third pass of its own until 0.5.0). The cpu and
+timing specs were literally the same pass (`categories: null`) plus the sampler, so that pass bought
+isolation from *timing*, which was never what mattered. Isolation from **tracing** is: sampling
+during the trace pass inflates CPU self-time **+21%** (our own `devtools.timeline.stack` category
+makes Blink walk the JS stack on every Layout, and the sampler bills that to the forcing JS frame —
+the same frame the real forced-layout cost lands on, so the two cannot be separated afterwards).
+**Never move `cpu` onto `traceSpec`.** Riding the timing pass costs ~10% on wall, which
+`--no-cpu-profile` buys back. `--no-isolate` collapses to the trace pass alone, so it yields no CPU
+model and says so. Measurements: [docs/dev/cpu-profiling.md](docs/dev/cpu-profiling.md).
 
 ### Trace pipeline (trace/)
 
@@ -145,11 +148,12 @@ Two things this rule is **not**, both documented in
   `commands/record.ts`): heat-colored `self %`, cyan packages, dimmed paths/source/secondary counts,
   bold headline numbers.
 
-### CPU profiling (opt-in via `--cpu-profile`)
+### CPU profiling (on by default; `--no-cpu-profile` opts out)
 
-For pure-JS cost (render/reconcile/hot loops), `record --cpu-profile` appends a dedicated **cpu
-pass** (heavy, isolated; tracing stays off) that runs the V8 sampling profiler via CDP
+For JS cost (render/reconcile/hot loops), the V8 sampling profiler runs via CDP
 `Profiler.start/stop` (`metrics/cdp.ts`), bracketed around the timed window like the CDP counters.
+It **rides the timing pass** rather than a pass of its own (see Two-pass isolation above): no extra
+flow replay, at the cost of ~10% on wall. `--no-cpu-profile` restores a pristine timing pass.
 `profile/cpuprofile.ts` turns the raw `.cpuprofile` into a **resolved, self-contained `CpuModel`**
 (per-function self/total time + a thresholded call graph), reusing `makeSourceResolver` +
 `SourceMapResolver` for source attribution. Self time rolls up by **package** (`packageRollup`,
@@ -193,7 +197,7 @@ and stays exact). Display names prefer the sourcemap's original identifier (`pos
 over the minified V8 name (kept as `CpuFunction.minified`), which also makes `cpu-diff` join stably
 across different minified builds.
 
-**Node runtime (`--runtime node`)**: a CPU-only lane that skips Chrome entirely. `runtime/node.ts`
+**Node runtime (`--target node`)**: a CPU-only lane that skips Chrome entirely. `runtime/node.ts`
 (`recordNode`) imports the module *in this process* and profiles `run()` with node's built-in
 `inspector` Session (`Profiler.start/stop` returns the same `RawCpuProfile` shape as CDP), bracketed
 around the timed loop so only `run()` + callees are sampled. It reuses `buildCpuModel` unchanged via
@@ -202,10 +206,10 @@ around the timed loop so only `run()` + callees are sampled. It reuses `buildCpu
 `resolveCallFrame`). The tool's own loop frames are dropped by extending `isToolFrameUrl` to match
 `/runtime/node.`. CPU-only means no Recording rendering counts: `recordAndReport` dispatches to
 `recordNode` + `printNodeReport` (CPU headline + per-iteration timing, no DOM tables). The CLI sets
-`runtime: "node"`, forces `cpuProfile` on, and errors on browser-only flags (`--url/--html/...`).
+`runtime: "node"` from `--target node` and errors on browser-only flags (`--url/--html/...`).
 `meta.runtime` records the lane; `meta.passes` is `["node-cpu"]`.
 
-**Firefox backend (`--browser firefox`)**: a second browser lane driven over WebDriver BiDi (no
+**Firefox backend (`--target firefox`)**: a second browser lane driven over WebDriver BiDi (no
 CDP). `browser/backend.ts` `capsFor()` is a plain caps object (`cdpCounts/trace/throttle/
 cpuProfile/geckoProfiler`) so `runPass` stays one function with capability guards, not a class
 tree. `browser/launch.ts` returns `client: CDPSession | null` (null on firefox); every CDP call
@@ -217,7 +221,8 @@ throttling; the CLI errors on those flags and `meta.notes` says so loudly (never
 `driver.ts`, ungated by caps, and it works. `meta.browser` is `"firefox"` (absent = chrome, so old
 recordings stay valid).
 
-Pass plan `["timing"]`, or `["timing","gecko"]` with `--cpu-profile`. The **gecko pass** launches
+Pass plan `["timing","gecko"]` (the gecko pass is not opt-in; the CLI refuses `--no-cpu-profile`
+here, because without it a firefox recording reports every rendering count as 0). The **gecko pass** launches
 Firefox with the Gecko profiler env vars, runs the flow, closes the browser (which flushes a
 shutdown dump), then `waitForGeckoDump` polls the file to stable before parsing. The dump stays a
 **path** on `PassResult` (never a retained string) and is `copyFile`d to the artifact: a 16M-entry
@@ -281,7 +286,7 @@ how-to live in `examples/demo-gif/` (`demo.tape` + `README.md`); the rendered `d
 git-ignored and hosted via a GitHub user-attachments URL (not committed, so the npm tarball stays
 lean). **See `examples/demo-gif/README.md` for the render/publish steps.** Internal notes below.
 
-What it shows: the `--runtime node` CPU lane attributing SSR `renderToString` self-time to
+What it shows: the `--target node` CPU lane attributing SSR `renderToString` self-time to
 `react-dom` vs a styling library vs your component, down to a source line, via `query cpu`. It
 deliberately uses the **tailwind-merge** Button lane (`btn-variant.twmerge`) because that produces
 the clearest three co-equal buckets (`react-dom` ~37% vs `tailwind-merge` ~37% vs `app`), with the

@@ -24,7 +24,7 @@ chromium at tip-of-tree, with a permalink).
    [Details](./engine-mapping.md#forced-layout-blame-differs-by-engine).
 2. **`selfMs` on the browser lanes is not pure JS.** It is JS *plus the synchronous engine work JS
    triggered* — a forced layout shows up as self-time on the line that forced it (~85% of the
-   probe's "JS" time is reflow). Only `--runtime node` measures pure JS.
+   probe's "JS" time is reflow). Only `--target node` measures pure JS.
    [Details](./cpu-profiling.md#what-self-time-actually-includes).
 3. **The CPU pass is isolated from *tracing*, not from the timing pass.** Sampling during the trace
    pass inflates self-time +21% because our own `devtools.timeline.stack` category makes Blink walk
@@ -41,6 +41,6 @@ the shape of mistake this project keeps making — a plausible mechanism, assert
   contaminating the sampler is the actual reason.
 - "Firefox does not populate Event Timing entries, so INP stays null" — false, and it reached users
   via `meta.notes` before being caught.
-- "`--cpu-profile` is the right tool for comparing pure-JS cost" — true only for `--runtime node`.
+- "`--cpu-profile` is the right tool for comparing pure-JS cost" — true only for `--target node`.
 
 The lesson each time: **run the probe in both engines before writing the sentence.**
