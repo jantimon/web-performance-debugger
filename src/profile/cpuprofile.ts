@@ -95,11 +95,9 @@ function classifyPseudoUrl(url: string | undefined): { package: string; label: s
 }
 
 /**
- * Default sampler interval, shared by every lane (CDP and node's inspector). It lives here, in the
- * one module both lanes already import, because it used to be duplicated in `commands/record.ts`
- * and `runtime/node.ts` and promptly drifted: the 50 -> 200 change landed on chrome only, so the
- * node lane -- the very lane the interval was measured on -- kept sampling at 50us while --help
- * and the changelog said 200. One constant, no drift. See docs/dev/cpu-profiling.md for why 200.
+ * Default sampler interval for EVERY lane (CDP and node's inspector). One definition: a lane that
+ * declares its own can drift silently, since nothing type-checks two constants into agreement. A
+ * unit test asserts no lane redeclares it. See docs/dev/cpu-profiling.md for why 200.
  */
 export const DEFAULT_CPU_INTERVAL_US = 200;
 

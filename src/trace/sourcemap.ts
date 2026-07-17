@@ -74,6 +74,37 @@ async function fetchText(url: string): Promise<string | null> {
 }
 
 /**
+ * A line this long is machine-generated. Hand-written source, however sloppy, does not run to
+ * hundreds of characters on one line; a minifier joins whole modules into one. Deliberately far
+ * above anything a formatter would emit (oxfmt/prettier cap around 100) so the test is decisive
+ * rather than a judgement call.
+ */
+const MINIFIED_LINE_LENGTH = 500;
+
+/**
+ * Does this script body look like build output rather than source?
+ *
+ * Used to answer a question a failed sourcemap CANNOT answer on its own: a missing map only
+ * matters if the file is generated. Plain source has no map because it needs none -- its frames
+ * already point at real lines with real names -- so warning about it is a false alarm. A minified
+ * bundle with no map is the opposite: every frame is a lie wearing a real package name.
+ *
+ * Scans for a single long line rather than an average, so one huge bundled line is enough and a
+ * bundle with a banner comment or a few short lines still trips it.
+ */
+function looksMinified(js: string): boolean {
+  let lineLength = 0;
+  for (let index = 0; index < js.length; index++) {
+    if (js.charCodeAt(index) === 10 /* \n */) {
+      lineLength = 0;
+      continue;
+    }
+    if (++lineLength > MINIFIED_LINE_LENGTH) return true;
+  }
+  return false;
+}
+
+/**
  * Best-effort mapping of bundled stack frames back to original source using sibling `.map`
  * files, inline data-URI maps, or (for remote scripts) the map auto-detected from the JS's
  * `sourceMappingURL` and fetched over the network.
@@ -83,6 +114,10 @@ export class SourceMapResolver {
   /** per attempted script: null = resolved, else why it failed. Keyed like `cache`, so each
    * script counts once no matter how many frames point at it. */
   private outcomes = new Map<string, SourceMapFailure | null>();
+  /** scripts that read as build output (see looksMinified). Only meaningful for scripts whose map
+   * did NOT resolve: those are the ones whose frames keep minified names and a bundle-shaped
+   * package rollup. Keyed like `cache`. */
+  private minified = new Set<string>();
 
   private async loadLocalMap(jsFile: string): Promise<RawMap> {
     try {
@@ -96,6 +131,8 @@ export class SourceMapResolver {
     } catch {
       return { failure: "script-fetch-failed" };
     }
+    // The body is already in hand for the sourceMappingURL scan, so the minification test is free.
+    if (looksMinified(js)) this.minified.add(jsFile);
     const reference = sourceMappingURLOf(js);
     if (!reference) return { failure: "no-sourcemap-url" };
     // A non-data reference here means the sibling read above already missed the file it names.
@@ -107,6 +144,7 @@ export class SourceMapResolver {
   private async loadRemoteMap(jsUrl: string): Promise<RawMap> {
     const script = await fetchWithHeaders(jsUrl);
     if (!script) return { failure: "script-fetch-failed" };
+    if (looksMinified(script.text)) this.minified.add(jsUrl);
     // DevTools honours the SourceMap response header as well as the trailing comment, and
     // production builds commonly emit the header while stripping the comment. Headers.get is
     // case-insensitive, so the canonical `SourceMap` and legacy `X-SourceMap` both land here.
@@ -155,15 +193,24 @@ export class SourceMapResolver {
   diagnostics(): SourceMapDiagnostics {
     const failed: Partial<Record<SourceMapFailure, string[]>> = {};
     let resolved = 0;
+    let unmappedBundles = 0;
     for (const [target, failure] of this.outcomes) {
       if (failure == null) {
         resolved++;
         continue;
       }
+      // Build output whose map did not resolve: its frames keep minified names and its cost rolls
+      // up under whatever package.json happens to sit above the bundle. This -- not "a map was
+      // missing" -- is the condition worth warning about.
+      if (this.minified.has(target)) unmappedBundles++;
       const urls = (failed[failure] ??= []);
       if (urls.length < MAX_URLS_PER_REASON) urls.push(target);
     }
-    const diagnostics: SourceMapDiagnostics = { scripts: this.outcomes.size, resolved };
+    const diagnostics: SourceMapDiagnostics = {
+      scripts: this.outcomes.size,
+      resolved,
+      unmappedBundles,
+    };
     if (Object.keys(failed).length) diagnostics.failed = failed;
     return diagnostics;
   }

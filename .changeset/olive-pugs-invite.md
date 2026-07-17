@@ -23,8 +23,9 @@ inflated its own measurement ~6% and wall ~8.5%, while resolving no functions th
 
 **Fixed:** the "no sourcemap resolved … CPU self-time is attributed to minified bundle names" warning
 fired whenever no sourcemap resolved — including for plain unbundled source, which needs no map and
-whose frames resolve fine. It now fires only when frames genuinely could not be attributed, and
-`CpuModel` carries an `unmappedFrames` count so you can see how many.
+whose frames resolve fine. It now fires when a missing map actually costs you something: an unmapped
+script that is minified build output, or a frame with no determinable owner. `SourceMapDiagnostics`
+gains `unmappedBundles` and `CpuModel` gains `unmappedFrames` so you can see how much.
 
 **Fixed:** with `--no-trace`, the notes claimed counts came from "a separate heavy-instrumentation
 pass" that never ran, and a warning blamed a trace-buffer overflow — for a run with tracing

@@ -185,8 +185,42 @@ profiling was opt-in the warning only reached people who had opted in — plausi
 where it was usually right. Turning it on by default pointed it at plain source and the false
 positive became the common case.
 
-`unmapped` is set in `resolveCallFrame` at the point where it falls back to `unmappedOriginBucket`,
-**not** inferred afterwards from the package string: `(cdn.example.com)` is unmapped while `(native)`
-and `(node)` are not, and telling those apart by pattern breaks on a dotless host (`(localhost)`).
-Unit tests pin both directions — a remote unmapped bundle must still count, a node builtin must not —
-because the cheap way to kill a false positive is to kill the signal.
+### The trigger needs TWO signals, and the first attempt shipped only one
+
+Worth reading before touching this, because the obvious fix is wrong and its wrongness is silent.
+
+The first attempt gated on `CpuModel.unmappedFrames` alone — frames that fell back to an origin
+bucket. That killed the false positive **and the true positive**: a local frame *always* resolves to
+a path (`makeSourceResolver` sets `frame.source` for every served file), so `unmapped: !isLocalPath`
+can never fire for a local script. A minified `app.min.mjs` with no map — precisely what
+`vite build` emits, since `build.sourcemap` defaults to `false` — got attributed to whatever
+`package.json` sat above it and warned about **nothing**. `main` warned there. The regression was
+invisible because "we know the file path" and "we know whose code this is" are different facts, and
+the flag conflated them.
+
+So the condition is measured twice, at the two places the damage is actually done:
+
+| signal | where | catches |
+| --- | --- | --- |
+| `SourceMapDiagnostics.unmappedBundles` | `SourceMapResolver.diagnostics()` | a script that **is build output** (minified) whose map did not resolve — local *or* remote |
+| `CpuModel.unmappedFrames` | `resolveCallFrame` | a frame with **no determinable owner**, bucketed by origin — remote only |
+
+Neither alone is enough: a local minified bundle has `unmappedFrames === 0` (its path is known), and
+an unminified remote script has `unmappedBundles === 0` (yet we still cannot say whose it is). The
+note fires on either.
+
+`unmapped` is set in `resolveCallFrame` at the point it falls back to `unmappedOriginBucket`, **not**
+inferred afterwards from the package string: `(cdn.example.com)` is unmapped while `(native)` and
+`(node)` are not, and telling those apart by pattern breaks on a dotless host (`(localhost)`).
+
+**Known false negative:** `looksMinified` tests for a line over 500 chars, so a *small* minified
+bundle whose lines all stay short reads as plain source and does not warn. Real build output is
+nowhere near that (bundlers join whole modules onto one line — the repo's own test fixture lands at
+1114 chars, and a react-dom bundle is orders beyond), so the gap is narrow and deliberate: the
+alternative is guessing, and a warning that cries wolf on every hand-written module is worse than
+one that misses a toy bundle.
+
+Four unit tests pin all of it — remote unmapped bundle counts, node builtin does not, minified local
+bundle counts, plain local source does not. The version that shipped the regression *claimed* to
+"pin both directions" while testing node builtins twice, which is how it got through: **when you
+remove a false positive, the test that matters is the one proving the true positive still fires.**

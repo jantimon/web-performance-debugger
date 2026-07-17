@@ -725,10 +725,10 @@ test("every lane shares one CPU sampler interval default", async () => {
   }
 });
 
-// The sourcemap WARNING is gated on `unmappedFrames`, not on "no sourcemap resolved". These two
-// tests pin BOTH directions, because the cheap way to kill a false positive is to kill the signal:
-//   - plain local source, no map, frames resolve  -> 0 unmapped, so no warning (the false positive)
-//   - remote bundle, no map, frames do NOT resolve -> counted, so the warning still fires
+// The sourcemap warning must fire when the package rollup is a lie and stay quiet when it is not.
+// These pin BOTH directions, which the previous version of this comment CLAIMED to do while
+// actually testing node builtins twice -- and that gap let a regression ship where the warning went
+// silent on exactly the local minified bundle it exists for.
 function remoteProfile(url) {
   return {
     nodes: [
@@ -767,4 +767,29 @@ test("buildCpuModel: node builtins are not counted as unmapped", async () => {
   // A builtin has no sourcemap and never will; that is not a broken package rollup.
   assert.equal(model.unmappedFrames, 0, "builtins do not trip the unmapped warning");
   assert.equal(model.functions.find((fn) => fn.fn === "hot").package, "(node)");
+});
+
+// A local frame ALWAYS resolves to a path, so unmappedFrames can never flag a local bundle. That is
+// what `unmappedBundles` is for, and these two are the regression guard: a minified local bundle
+// with no map must be reported, and plain local source with no map must not.
+test("SourceMapResolver: a minified local bundle with no map counts as an unmapped bundle", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-map-"));
+  const bundle = path.join(dir, "app.min.js");
+  writeFileSync(bundle, `function a(n){${"let x=0;".repeat(120)}return n}export{a};\n`);
+  const maps = new SourceMapResolver();
+  await maps.resolveFrame({ url: `http://x/app.min.js`, source: bundle, line: 1, column: 1 });
+  const diagnostics = maps.diagnostics();
+  assert.equal(diagnostics.resolved, 0, "no map to resolve");
+  assert.equal(diagnostics.unmappedBundles, 1, "minified build output with no map is reported");
+});
+
+test("SourceMapResolver: plain local source with no map is not an unmapped bundle", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-map-"));
+  const plain = path.join(dir, "probe.mjs");
+  writeFileSync(plain, "export function run() {\n  return 1 + 1;\n}\n");
+  const maps = new SourceMapResolver();
+  await maps.resolveFrame({ url: `http://x/probe.mjs`, source: plain, line: 1, column: 1 });
+  const diagnostics = maps.diagnostics();
+  assert.equal(diagnostics.resolved, 0, "there is no map, and none is needed");
+  assert.equal(diagnostics.unmappedBundles, 0, "hand-written source must not trip the warning");
 });

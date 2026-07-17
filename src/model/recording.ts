@@ -165,6 +165,17 @@ export interface SourceMapDiagnostics {
   /** of those, how many resolved */
   resolved: number;
   /**
+   * Of the ones that did NOT resolve, how many look like build output (a minified body).
+   *
+   * This is the honest trigger for "the package rollup below cannot be believed", and it is a
+   * different question from `resolved === 0`. Plain unbundled source has no sourcemap because it
+   * needs none: its frames already carry real names and real lines. A minified bundle with no map
+   * is the opposite -- every frame keeps its mangled name and its cost rolls up under whatever
+   * package.json sits above the bundle, which reads as a real package. 0 here means a missing map
+   * cost you nothing. Optional: absent in recordings written before 0.5.0.
+   */
+  unmappedBundles?: number;
+  /**
    * failing script urls grouped by reason. Capped per reason (a page can carry hundreds of
    * unmapped third-party scripts), so `scripts`/`resolved` are the authoritative totals.
    */

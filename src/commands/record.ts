@@ -168,33 +168,48 @@ const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
 };
 
 /**
- * One honest sentence about sourcemap resolution.
+ * One honest sentence about sourcemap resolution, or null when there is nothing to say.
  *
- * The trigger is `unmappedFrames` -- frames whose owner we could not work out -- NOT "no map
- * resolved". Those are different questions, and conflating them made this note lie in the common
- * case: a plain unbundled `.mjs` has no sourcemap and needs none, because its frames resolve
- * straight to their local path. Gating on `resolved === 0` told those users their self-time was
- * "attributed to minified bundle names" when nothing was minified and every frame had resolved.
- * That false alarm was invisible while profiling was opt-in (you opted in to profile a bundle);
- * making it default-on put it on every plain-source run, which is what surfaced it.
+ * "No sourcemap resolved" is NOT the trigger, because it is a different question from "can the
+ * package rollup be believed". A plain unbundled `.mjs` has no map and needs none -- its frames
+ * already carry real names and real lines -- so warning about it is a false alarm. Two things
+ * actually cost you, and each is measured at the point it happens:
  *
- * WARNING only when EVERY frame is unattributed: that is the silently-wrong-number case, where each
- * package bucket is a bundle wearing a real name. A partial failure is normal (third-party scripts
- * rarely ship maps) and only worth a note.
+ *   unmappedBundles  a script that IS build output (minified) whose map did not resolve: its
+ *                    frames keep mangled names and roll up under whatever package.json sits above
+ *                    the bundle, which reads as a real package. Local or remote.
+ *   unmappedFrames   a frame whose owner could not be determined at all, bucketed by origin.
+ *                    Remote-only: a local frame always has a known path.
+ *
+ * Neither alone is sufficient -- a local minified bundle has unmappedFrames 0 (we know its path),
+ * and an unminified remote script has unmappedBundles 0 (yet we still cannot say whose it is). An
+ * earlier version of this gated on `unmappedFrames` alone and went silent on exactly the local
+ * bundle it exists for, which is the failure this shape is designed against: when removing a false
+ * positive, check the true positive still fires.
  */
 function sourcemapNote(diagnostics: SourceMapDiagnostics, unmappedFrames: number): string | null {
   const { scripts, resolved } = diagnostics;
+  const unmappedBundles = diagnostics.unmappedBundles ?? 0;
   const reasons = Object.keys(diagnostics.failed ?? {}) as SourceMapFailure[];
   const why = reasons.map((reason) => `${reason} (${SOURCEMAP_REMEDY[reason]})`).join("; ");
-  // Every frame found its owner: the maps were not needed, so their absence is a non-event.
-  if (unmappedFrames === 0) return null;
-  if (resolved === 0) {
-    return `WARNING: ${unmappedFrames} profiled frame(s) could not be attributed to a package because no sourcemap resolved for any of the ${scripts} script(s), so their CPU self-time keeps minified bundle names and 'query cpu --by package' cannot split them by real package. They are bucketed by origin, not as your app. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
-  }
-  if (reasons.length) {
-    return `Sourcemaps resolved for ${resolved} of ${scripts} script(s); the rest keep minified names and are bucketed by origin. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
-  }
-  return `Sourcemaps resolved for all ${scripts} script(s): CPU self-time is attributed to original sources.`;
+  // A missing map cost nothing: no unmapped script was build output, and every frame found its
+  // owner. Saying anything here would be crying wolf about plain source that needs no map.
+  if (unmappedBundles === 0 && unmappedFrames === 0) return null;
+  const damage = [
+    unmappedBundles
+      ? `${unmappedBundles} minified bundle(s) keep their mangled function names and roll up under whichever package.json sits above them, not their real packages`
+      : null,
+    unmappedFrames
+      ? `${unmappedFrames} frame(s) could not be attributed to any package and are bucketed by origin, not as your app`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+  const scope =
+    resolved === 0
+      ? `no sourcemap resolved for any of the ${scripts} script(s) profiled`
+      : `sourcemaps resolved for only ${resolved} of ${scripts} script(s)`;
+  return `WARNING: ${scope}, so 'query cpu --by package' cannot be believed for them: ${damage}. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -571,31 +586,38 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(
       "INP IS measured on Firefox (in-page Event Timing, the same observer Chrome uses). The two engines' values are not interchangeable: both span the interaction through the next paint and round to 8 ms, but Firefox reports a systematically lower number for identical work because presentation delay differs by engine. Compare a browser against itself across a change, not one engine against the other.",
     );
-  } else if (opts.isolate) {
-    notes.push(
-      [
-        // Only true when a trace pass actually ran: with --no-trace there is no second pass, and
-        // claiming counts came from one describes a run that did not happen.
-        wantTrace
-          ? "Timing/stats come from a low-overhead pass with tracing OFF; paint & invalidation counts come from a separate heavy-instrumentation pass. Do not compare durations across the two."
-          : "Single timing pass with tracing OFF (--no-trace): counts come from CDP only. Paint, forced-layout and invalidation detail is NOT collected and is reported as 0 — that means unmeasured, not clean.",
-        opts.cpuProfile
-          ? "The CPU sampler ran during the timing pass, which inflates per-iteration wall by roughly 10%: it is systematic, so it cancels in `diff`, but use --no-cpu-profile for absolute wall numbers."
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" "),
-    );
   } else {
+    // Describe the pass plan that was actually BUILT, never the flags that were asked for. Those
+    // diverge: `--no-isolate --no-trace` leaves one clean timing pass, yet branching on
+    // `opts.isolate` announced "invalidationTracking was active during timing, so timings are
+    // inflated" -- about a run with tracing off and timings that were fine. Reading `specs` cannot
+    // drift from reality the way a second transcription of the flag logic can.
+    const timingPass = specs.find((spec) => spec.name === "timing");
+    const tracePass = specs.find((spec) => spec.name === "trace");
+    // The measured-timing pass is whichever pass the summary's wall times came from.
+    const timingIsTraced = !timingPass;
+
     notes.push(
-      "Single-pass mode: invalidationTracking instrumentation was active during timing, so per-iteration timings are inflated. Use --isolate (default) for trustworthy timing.",
+      timingIsTraced
+        ? "Single-pass mode (--no-isolate): instrumentation was active during timing, so per-iteration timings are inflated. Drop --no-isolate for trustworthy timing."
+        : "Timing/stats come from a low-overhead pass with tracing OFF.",
     );
-    // --no-isolate collapses to the trace pass, and the sampler must not ride that pass (it would
-    // inflate self-time ~21%; see the timingSpec note). So there is no CPU model here. Say so:
-    // silently dropping it would read as "this run had no JS worth sampling".
-    if (opts.cpuProfile && wantTrace) {
+    notes.push(
+      tracePass
+        ? "Paint & invalidation counts come from a separate heavy-instrumentation pass; do not compare durations across the two."
+        : "No trace pass ran (--no-trace): counts come from CDP only. Paint, forced-layout, invalidation and long-task detail is NOT collected and is reported as 0 — that means unmeasured, not clean.",
+    );
+    if (timingPass?.cpu) {
       notes.push(
-        "No CPU model in this run: --no-isolate collapses to the single trace pass, and CPU sampling during tracing would inflate self-time by ~21% (trace instrumentation is billed to the JS frame that triggered it). Drop --no-isolate to get a CPU model, or use --no-trace to sample without tracing.",
+        "The CPU sampler ran during the timing pass, which inflates per-iteration wall by roughly 10%: it is systematic, so it cancels in `diff`, but use --no-cpu-profile for absolute wall numbers.",
+      );
+    }
+    // The sampler must not ride the trace pass (it would inflate self-time ~21%; see the timingSpec
+    // note), so a plan with no timing pass has no CPU model. Say so: silently dropping it would
+    // read as "this run had no JS worth sampling".
+    if (opts.cpuProfile && !timingPass) {
+      notes.push(
+        "No CPU model in this run: --no-isolate collapses to the single trace pass, and CPU sampling during tracing would inflate self-time by ~21% (trace instrumentation is billed to the JS frame that triggered it). Drop --no-isolate to get a CPU model, or add --no-trace to sample without tracing.",
       );
     }
   }
@@ -743,12 +765,14 @@ export async function record(opts: RecordOptions): Promise<{
   // numbers look plausible while attributing everything to the bundle. Mutating `meta` here (not
   // at construction) is what lets every artifact below carry the same verdict.
   const sourcemaps = maps.diagnostics();
-  // Gate on a CPU model existing, not just on scripts having been seen: the note talks about CPU
-  // self-time and `query cpu --by package`, so without a model it warned about a profile that was
-  // never taken. Trace stacks resolve through the same resolver but are reported by `blame`.
-  // sourcemapNote() returns null when every frame resolved, i.e. when the maps were not needed.
+  // ALWAYS record the diagnostics when any script was attempted: the trace pass resolves stacks
+  // through this same resolver, so `blame`'s source attribution depends on it just as `query cpu`
+  // does. Gating the data on a CPU model existing (as an earlier version did) silently dropped the
+  // only evidence a --no-cpu-profile run had about its own blame.
+  if (sourcemaps.scripts > 0) meta.sourcemaps = sourcemaps;
+  // The NOTE is CPU-worded ("query cpu --by package"), so it needs a model to be about anything;
+  // and it returns null when a missing map cost nothing at all.
   if (sourcemaps.scripts > 0 && cpuModel) {
-    meta.sourcemaps = sourcemaps;
     const note = sourcemapNote(sourcemaps, cpuModel.unmappedFrames ?? 0);
     if (note) notes.push(note);
   }
@@ -896,22 +920,22 @@ function printNodeReport(result: {
 /**
  * One line qualifying the package table above it: can that table be believed?
  *
- * Silent when every frame found its owner (`unmappedFrames === 0`), including when no map resolved
- * — plain unbundled source needs none. Claiming "packages below are minified bundles" about a
- * hand-written `.mjs` whose frames resolved to their own source file is simply false, and it is the
- * table's own credibility on the line. Mirrors sourcemapNote(); see the reasoning there.
+ * Silent when a missing map cost nothing — plain unbundled source needs none, and claiming
+ * "packages below are minified bundles" about a hand-written `.mjs` whose frames resolved to their
+ * own source file is simply false. Same trigger as sourcemapNote(); see the reasoning there.
  */
 function printSourcemapLine(
   diagnostics: SourceMapDiagnostics | undefined,
   unmappedFrames: number,
 ): void {
-  if (!diagnostics || diagnostics.scripts === 0 || unmappedFrames === 0) return;
+  if (!diagnostics || diagnostics.scripts === 0) return;
+  const unmappedBundles = diagnostics.unmappedBundles ?? 0;
+  if (unmappedBundles === 0 && unmappedFrames === 0) return;
   const { scripts, resolved } = diagnostics;
   const reasons = Object.keys(diagnostics.failed ?? {}).join(", ");
-  const hint =
-    resolved === 0
-      ? `${reasons} — the ${unmappedFrames} unattributed frame(s) below are minified bundles, not real packages`
-      : `${reasons} — unresolved scripts are bucketed by origin`;
+  const hint = unmappedBundles
+    ? `${reasons} — ${unmappedBundles} unmapped bundle(s) below are minified, not real packages`
+    : `${reasons} — ${unmappedFrames} unattributed frame(s) are bucketed by origin`;
   console.log(`Sourcemaps: ${dim(`${resolved}/${scripts} resolved  ← ${hint}`)}`);
 }
 

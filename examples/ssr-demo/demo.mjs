@@ -17,8 +17,13 @@
 //     `app` bucket.
 //
 // Run:  cd examples/ssr-demo && npm install
-//       node ../../dist/cli.js record examples/ssr-demo/demo.mjs --target node --iterations 80
+//       NODE_ENV=production node ../../dist/cli.js record demo.mjs --target node --iterations 250
 //       node ../../dist/cli.js query cpu latest --top 5
+//
+// NODE_ENV=production is not optional: without it React resolves to its development build and the
+// profile shows dev-only bookkeeping instead of the cost you ship. 250 iterations, not 80, because
+// `(node) post (node:inspector)` is a FIXED ~23ms on this lane -- only more real work shrinks its
+// share below the finding.
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { twMerge } from "tailwind-merge";
