@@ -1,0 +1,238 @@
+# Chrome <-> Firefox: what the names mean (internal)
+
+> **Developer notes, not user documentation.** Nothing here is needed to *use* wpd; read the
+> [README](../../README.md) for that. This file records how Gecko's profiler vocabulary maps onto
+> Blink's DevTools-timeline vocabulary, and — more importantly — where the two look equivalent but
+> are **not**. Read it before touching `trace/classify.ts`, `profile/gecko.ts`, or anything that
+> claims a number is comparable across engines.
+
+**Provenance.** Facts below are either (a) reproduced locally against `examples/forces-layout.mjs`
+in both engines, marked **[measured]**, or (b) read out of mozilla-central / chromium at
+tip-of-tree in 2026-07, marked **[source]** with a permalink. Nothing here is from vendor docs
+alone: both engines' user-facing docs are silent or wrong on most of this.
+
+Related: [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas),
+[cpu-profiling.md](./cpu-profiling.md) (passes, sampler contamination, what self-time includes).
+
+## The naming map
+
+| Gecko | Blink trace event / DevTools UI | Notes |
+| --- | --- | --- |
+| `Reflow <url>` (**label frame**) | `Layout` / "Layout" | `PresShell::DoReflow`; the URL is a dynamic label suffix, not part of the name |
+| `Reflow (sync)` / `Reflow (interruptible)` (**marker**) | `Layout` | Marker name != label name. `(sync)` = non-interruptible, **not** "JS forced it" |
+| `Styles` (**label + marker**, two different call sites) | `UpdateLayoutTree` / "Recalculate style" | `RestyleManager::ProcessPendingRestyles` (label) and `AutoProfilerStyleMarker` (marker) |
+| `Style computation` (**label**) | *(inside `UpdateLayoutTree`)* | `ServoStyleSet::StyleDocument` |
+| `Update stylesheet information` (**label**) | *(inside `UpdateLayoutTree`, untraced)* | `ServoStyleSet::UpdateStylist`; see below |
+| `Container Query Styles Update` (**label**) | *(inside `Layout`)* | Blink has no container-query trace event at all |
+| `UpdateContainerQueryStyles` (**marker**) | — | co-located with the label above, different name |
+| `SetNeedStyleFlush` (**marker**, cause stack) | `ScheduleStyleRecalculation`, `*InvalidationTracking` | both name the *write* that dirtied things |
+| `get Element.clientHeight` (**label**) | **nothing** | see [Chrome cannot name the property](#chrome-cannot-name-the-property) |
+
+`RecalcStyles` is a **dead Blink name** — the modern event is `UpdateLayoutTree`. Likewise
+`CompositeLayers` / `UpdateLayerTree` are legacy, replaced by `Commit`. `trace/classify.ts` keeps
+all three so old traces still import; do not "clean them up".
+
+### Label frames vs markers
+
+Gecko has two independent instrumentation channels and **wpd only reads one of them**:
+
+- **Markers** (`thread.markers`) -> the Marker Chart. This is what `profile/gecko.ts` parses.
+- **Label frames** (pushed on the `ProfilingStack`, sampled) -> the Stack Chart. wpd sees these
+  only incidentally, as frames inside the CPU model.
+
+The trap: **`Reflow` and `Reflow (sync)` are not the same record.** Searching the marker table for
+`Reflow` finds `Reflow (sync)`; searching the stack chart finds `Reflow <url>`. Same `DoReflow`
+scope, two different names, two different channels.
+
+`Style computation` is stranger still: the literal string appears at **no call site**. It is a
+*subcategory label* in `profiling_categories.yaml`, reached via
+`AUTO_PROFILER_LABEL_CATEGORY_PAIR_RELEVANT_FOR_JS(LAYOUT_StyleComputation)`, which pushes an empty
+label plus `LABEL_DETERMINED_BY_CATEGORY_PAIR`; the frontend substitutes the subcategory's label at
+render time. **[source]** [`ProfilingStack.h:215`](https://searchfox.org/mozilla-central/source/js/public/ProfilingStack.h#215).
+Grepping mozilla-central for `"Style computation"` finds nothing, which is why it looks like it
+comes from nowhere.
+
+### `Update stylesheet information` is not "forced style recalc"
+
+Recurring misreading, worth stating plainly. **[source]**
+[`ServoStyleSet.cpp:1380`](https://searchfox.org/mozilla-central/source/layout/style/ServoStyleSet.cpp#1380):
+
+```cpp
+void ServoStyleSet::UpdateStylist() {
+  AUTO_PROFILER_LABEL_RELEVANT_FOR_JS("Update stylesheet information", LAYOUT);
+  MOZ_ASSERT(StylistNeedsUpdate());
+  ...
+  Servo_StyleSet_FlushStyleSheets(mRawData.get(), root, snapshots, &nonDocumentStyles);
+```
+
+It rebuilds the **stylist** (cascade data derived from author sheets) and runs only when a
+stylesheet was added/removed/mutated (`SetStylistStyleSheetsDirty`). It recalculates **no element's
+style**. The frame that does that is `Styles` -> `Style computation`.
+
+Blink's counterpart is `StyleEngine::UpdateActiveStyle()`, and the interesting part is where it
+sits — **inside** the `UpdateLayoutTree` begin/end pair. **[source]**
+[`document.cc:2704`](https://github.com/chromium/chromium/blob/main/third_party/blink/renderer/core/dom/document.cc#L2704):
+
+```cpp
+TRACE_EVENT_BEGIN("blink,devtools.timeline", "UpdateLayoutTree", "beginData", ...);
+...
+style_engine.UpdateActiveStyle();     // the "Update stylesheet information" equivalent
+...
+UpdateStyle();                        // the actual recalc
+TRACE_EVENT_END("blink,devtools.timeline", "elementCount", element_count);
+```
+
+`UpdateActiveStyleSheets` traces on `blink,blink_style` — **not** `devtools.timeline` — so DevTools
+never records it. Chrome folds stylist-rebuild cost invisibly into one "Recalculate style" bar.
+So a Gecko profile showing this frame under JS tells you something Chrome actively hides: the
+flush also had to rebuild cascade data, which is the expensive variant.
+
+## Chrome cannot name the property
+
+The single largest asymmetry, and it favours Firefox.
+
+Gecko labels every WebIDL accessor. `get Element.clientHeight` is generated by
+`CGSpecializedGetterCommon.auto_profiler_label` **[source]**
+[`Codegen.py:11482`](https://searchfox.org/mozilla-central/source/dom/bindings/Codegen.py#11482);
+the `get ` prefix is applied at *serialization* via the `STRING_TEMPLATE_GETTER` flag, so the call
+site only stores `"Element", "clientHeight"`. Category is **DOM**, not Layout. No feature flag
+gates it: the labels compile into every binding and cost nothing while the profiler is off.
+
+Blink throws the property identity away immediately. `Element::OffsetHeight`,
+`GetBoundingClientRect` and ~24 siblings in `element.cc` all funnel into
+`EnsurePaintLocationDataValidForNode(this, DocumentUpdateReason::kJavaScript)`, and
+`DocumentUpdateReason` lives under `public/common/**metrics**/` — it reaches UKM, never the trace.
+DOM accessors are V8 API C++ getters and push **no JS frame**.
+
+Net: Chrome gives you a JS stack and you read the source line to learn *which* property forced the
+layout. Firefox names the accessor outright. This is why
+[`what-forces-layout`](https://gist.github.com/paulirish/5d52fb081b3570c81e3a) exists as a hand-maintained
+list at all — and that gist has **no per-property Gecko data**; it only points at `FrameNeedsReflow`
+on searchfox.
+
+## "Forced reflow" is a Blink concept; Gecko has the data but not the word
+
+Searching mozilla-central for `forced reflow` / `forced synchronous layout` returns **zero** code
+hits. Gecko never uses the vocabulary and Firefox DevTools surfaces no equivalent warning.
+
+What Gecko has instead is the **cause stack**: `profiler_capture_backtrace()` fires in
+`SetNeedLayoutFlush` / `SetNeedStyleFlush`, is stored on the PresShell (`mReflowCause` /
+`mStyleCause`), and is moved onto the flush marker when it eventually runs. **This captures the
+invalidator, not the forcer** — see
+[forced-layout blame differs by engine](#forced-layout-blame-differs-by-engine), which is the most
+consequential entry in this file.
+
+Do **not** read `Reflow (sync)` as "JS forced this". `aInterruptible` is a plain parameter of
+`DoReflow`; container-query updates call `DoFlushLayout(/* aInterruptible = */ false)` with no JS
+involved. `(sync)` means non-interruptible, nothing more.
+
+### wpd's `markForced` is not DevTools' rule either
+
+Worth knowing before someone "aligns" us with DevTools. `markForced` flags a layout/style event
+that resolved a user stack (`event.at`). DevTools' `WarningsHandler.ts` **ignores the stack** and
+requires *structural nesting inside a JS invocation event* **and** a **>=30ms per-task aggregate**
+(`FORCED_REFLOW_THRESHOLD`). The two correlate in practice — the stack is only attached when JS is
+on the stack — but wpd flags cheap forced layouts DevTools stays silent about. That is arguably the
+better rule for a CI gate; it is simply not the same rule, and CLAUDE.md must not imply it is.
+
+## Forced-layout blame differs by engine
+
+**[measured]** This is a real, reproducible semantic difference in `query blame --forced`, not a
+subtlety.
+
+`examples/forces-layout.mjs` separates the two halves cleanly: it writes inside `bump()` and reads
+each geometry property on its own line. Same module, both engines:
+
+- **Chrome** blames `52:14`, `56:14`, `60:14`, `64:14`, `68:14`, ... — every geometry **read**.
+- **Firefox** blames `15:3`, `13:14` (inside `bump`), `21:3` (inside `bumpDoc`), `51:7`, `55:7`,
+  `59:7`, `63:7`, ... — the **writes**. Chrome produces **zero** of those lines.
+
+Because:
+
+| | Chrome | Gecko |
+| --- | --- | --- |
+| stack source | `SetCallStack` at the flush | `profiler_capture_backtrace()` at invalidation |
+| answers | **who forced it** (the read) | **who dirtied it** (the write) |
+| coverage | every flush | only the *first* invalidation since the last flush (`if (!mReflowCause)`) |
+
+The existing note in [gecko-profile-format.md](./gecko-profile-format.md) that the cause chain was
+`Node.appendChild -> ...` was recorded as *confirming* forced-layout blame. It was actually the
+first evidence of this bug: `appendChild` is the **write**.
+
+Consequences, all live today:
+
+- `query blame --forced` means a **different thing** per engine, and nothing in the output says so.
+- The README's "the same probe, verified in both engines" snippet invites a line-by-line comparison
+  that cannot hold.
+- Firefox's marker-derived `forcedLayoutMs` also badly under-reports: **1.08ms vs Chrome's 7.17ms**
+  for identical work on this probe.
+
+**The fix is mostly free**, and it is the non-obvious payoff of the CPU lane: the sampled CPU model
+*already* attributes forced-layout cost to the **forcing** frame on both engines (`run()` at
+**8.41ms** chrome / **8.79ms** firefox, agreeing within 5%). So `query cpu` already answers the
+question `query blame` gets wrong on Firefox. See
+[cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
+
+## What is actually comparable across engines
+
+**[measured]**, same probe, and it inverts the hierarchy the README currently implies:
+
+| Signal | chrome | firefox | comparable? |
+| --- | --- | --- | --- |
+| CPU self-time of the forcing fn | 8.41 ms | 8.79 ms | **yes, ~5%** |
+| forced layout ms | 7.17 ms | 1.08 ms | no, 7x |
+| layout batches | 22 | 70 | no, 3x |
+| style batches | 23 | 45 | no, 2x |
+| elements styled | 30 | 56 | same *definition*, still ~2x |
+
+Counts and marker-ms are genuinely not comparable across engines — Gecko batches layout differently
+and its markers miss short flushes. But **CPU self-time is**, because both samplers attribute the
+synchronous engine work to the JS frame that triggered it, and both measure it on their own clock.
+That is the opposite of how the README ranks these, and it is a strong argument for the CPU lane
+being on by default.
+
+Caveat: one probe, ~85% reflow by cost. Reproduce on a mixed JS+layout workload before promoting
+this claim to the README.
+
+## Per-element counts: both engines have them, wpd reports neither
+
+**[measured]** First, a premise correction that keeps coming up: **CDP has no per-element
+style-recalc counter.** `Performance.getMetrics` -> `RecalcStyleCount` counts recalc *operations*.
+The per-element number is in the **trace**.
+
+| | source | present today |
+| --- | --- | --- |
+| chrome elements styled | `UpdateLayoutTree` END arg `elementCount` | in `event.args` (23/23 events); never rolled up |
+| chrome dirty objects | `Layout` `beginData.dirtyObjects` | in `event.args` (22/22 events); never rolled up |
+| firefox elements styled | `Styles` marker `elementsStyled` | **dropped** — `geckoToRenderingEvents` reads only `data.stack` |
+
+The Gecko `Styles` marker payload is richer than Chrome's, verified in our own fixture:
+
+```json
+{"type":"Styles","elementsTraversed":14,"elementsStyled":13,"elementsMatched":13,
+ "stylesShared":0,"stylesReused":0}
+```
+
+`elementsTraversed` (140) vs `elementsStyled` (56) on the probe is **selector-matching waste** — a
+Gecko-only signal with no Chrome counterpart, and a partial stand-in for the invalidation rollup
+Firefox cannot give. Note the `Reflow` marker payload is only `{innerWindowID, stack, type}`:
+**style has element counts, layout does not.**
+
+These are *size* metrics, so they belong in the "counts are exact, compare freely" trust tier —
+within an engine. They do **not** make the engines comparable (same ~2x ratio as the batch counts).
+
+## Categories (Gecko)
+
+From `profiling_categories.yaml`, which is the source of `meta.categories` in the dump, so frontend
+colours derive straight from it:
+
+| Frame | Category | Colour |
+| --- | --- | --- |
+| `Reflow <url>` | LAYOUT / `LAYOUT_Reflow` | purple |
+| `Styles`, `Container Query Styles Update`, `Update stylesheet information` | LAYOUT | purple |
+| `Style computation` | LAYOUT / `LAYOUT_StyleComputation` | purple |
+| `get Element.clientHeight`, `Window.queueMicrotask` | **DOM** | **blue** |
+| JS frames | JS | yellow |
+
+`profile/gecko.ts` looks the JS category up **by name**, not by index, because the index is not
+stable across versions.

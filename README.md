@@ -376,9 +376,8 @@ real DOM.** Drive real user flows (`measureStep`) or benchmark DOM-touching modu
 (`--bench`), measure wall time per step, take screenshots, and get **forced layout/style blame**
 pointing at the offending statement. The same modules, recording format, and query verbs work in
 both browsers, so you can verify an optimization in both engines instead of tuning for a Chromium
-quirk. Firefox rides the **Gecko profiler**: add `--cpu-profile` to a Firefox run that should
-produce blame (one profiler pass yields both the CPU samples and the layout/style markers), and
-the raw profile lands as `<base>.geckoprofile.json`, ready to open at profiler.firefox.com
+quirk. On Firefox, **add `--cpu-profile`** — without it a Firefox run measures timing only. It also
+writes `<base>.geckoprofile.json`, ready to open at profiler.firefox.com
 
 **Target Chrome: all of that, plus the exact CDP layer on top** (the last rows below). The flags
 that need CDP error out on other targets, and a Firefox recording names in `meta.notes` both what
@@ -404,6 +403,14 @@ than Blink. Those counts are real and useful **against another Firefox run**; co
 Chrome's counts compares two different definitions. Everything marked `—` is reported as `0` on
 that target
 
+**Forced-layout blame currently answers a different question per engine.** Chrome names the
+geometry **read** that forced the flush (`el.offsetWidth`). Firefox names the **write** that dirtied
+the DOM (`el.style.width = ...`), because Gecko records who invalidated rather than who forced. Both
+are real lines in your thrashing loop, but they are not the same line, so **do not diff the two
+engines' `blame` tables against each other**. Firefox's forced-layout *milliseconds* also
+under-report. Until this is fixed, `query cpu` is the better cross-engine view of forced layout: it
+prices the forcing line on both engines and the two agree closely
+
 INP comes from an in-page Event Timing observer, so **both engines measure it** (long tasks do not:
 they are counted from the DevTools trace, which Firefox has no equivalent of). Both span the
 interaction through the next paint and round to 8 ms, but they are **not interchangeable**: for
@@ -412,12 +419,13 @@ is genuinely engine-specific. Compare a browser against itself across your chang
 against the other
 
 ```bash
-# the same probe, verified in both engines:
+# the same probe in both engines. Compare each engine against ITSELF across your change;
+# `query cpu` (not `blame`) is what lines up between the two — see the note above:
 wpd record examples/forces-layout.mjs --bench --cpu-profile
-wpd query blame latest --forced
+wpd query cpu latest
 
 wpd record examples/forces-layout.mjs --bench --cpu-profile --browser firefox
-wpd query blame latest --forced
+wpd query cpu latest
 ```
 
 ### The query verbs
@@ -446,6 +454,12 @@ always plain, so CI and scripts are unaffected
 | Counts (layout / paint / style / invalidation) | CDP | exact: compare freely |
 | Wall and INP times | `performance.now()`, browser-clamped | directional: good for "~2x worse?", not "1.3 ms" |
 | CPU self-time | the sampler's own clock (V8 microsecond; Gecko ~1 ms floor on Firefox) | real: trustworthy in aggregate (a few % noise) |
+
+**In a browser, `self ms` is not only JavaScript.** It is your JS *plus the synchronous engine work
+that JS triggered*: force a layout by reading `offsetWidth`, and the reflow is billed to the line
+that read it. That is usually what you want — it prices "what do I save by deleting this line?" —
+and it is why a `query cpu` row can dwarf the JavaScript actually on that line. `--runtime node` has
+no DOM, so there it really is pure JS.
 
 The two default passes exist to keep this table honest: heavy instrumentation distorts timing, so
 timing is measured with tracing off and the counts/attribution in a separate instrumented pass.

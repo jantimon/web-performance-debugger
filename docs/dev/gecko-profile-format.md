@@ -5,6 +5,11 @@
 > empirically-verified Gecko profile format facts that `src/profile/gecko.ts` depends on, for
 > whoever has to touch that code next (e.g. when a Firefox update bumps the format version).
 
+**Scope.** This file is the **raw dump format**: schemas, encodings, bases. For what the names
+*mean* against Chrome's vocabulary — and where the two engines look equivalent but are not — read
+[engine-mapping.md](./engine-mapping.md). For the pass plan and sampler behaviour, read
+[cpu-profiling.md](./cpu-profiling.md).
+
 Everything below was verified against a
 real Gecko shutdown dump (Firefox 152.0.2 via Puppeteer 25 / WebDriver BiDi), not from docs alone.
 A trimmed slice of a real dump is checked in at `test/fixtures/gecko-shutdown.trimmed.json`; to
@@ -80,6 +85,14 @@ growing (3 stable reads, ~15s timeout) before parsing. A 4.5s workload produced 
     use wall-time deltas like V8. `sampleUnits.time === "ms"`.
   - `markers.schema = {name, startTime, endTime, phase, category, data}`. `name` is a stringTable
     index; `phase`: 0=instant, 1=interval(start+end on one row), 2=intervalStart, 3=intervalEnd.
+    `data` is a per-marker-type payload. The two we read differ sharply in richness:
+    - `Styles` -> `{innerWindowID, stack, type:"Styles", elementsTraversed, elementsStyled,
+      elementsMatched, stylesShared, stylesReused}` — a real **per-element style-recalc counter**,
+      richer than Chrome's `UpdateLayoutTree.elementCount`. `geckoToRenderingEvents` currently reads
+      only `data.stack` and **drops all five counts**; see
+      [engine-mapping.md](./engine-mapping.md#per-element-counts-both-engines-have-them-wpd-reports-neither).
+    - `Reflow (sync)` -> `{innerWindowID, stack, type:"StackMarker"}` — **no counts at all.**
+      Style has element counts; layout does not.
   - `thread.stringTable` is a plain string array (the field is `stringTable`, not `stringArray`).
 - **Frame location string formats** (a trailing `[NN]` innerWindowID subscript is always stripped):
   - `functionName (url:line:col)` for named JS functions. The `line:col` in the string is the
@@ -114,22 +127,33 @@ the JS label in `data.name` (e.g. `data.name === "wpd:run:start"`). NOT a marker
 samples (and rendering markers) to `[wpd:run:start, wpd:run:end]`. Works in both bench and driver
 modes (both already emit those marks).
 
-## Stretch goal: Reflow/Styles markers -> layout/style blame (landed)
+## Reflow/Styles markers -> layout/style blame (landed, but see the semantics warning)
 
 - Marker names: `"Styles"` (style recalc, phase 1 interval) and `"Reflow (sync)"` /
-  `"Reflow (interruptible)"` (phase 2/3 start/end pairs). Category 3 = Layout.
+  `"Reflow (interruptible)"` (phase 2/3 start/end pairs). Category 3 = Layout. These are the
+  **marker** names; the stack chart uses different strings for the same work (`Reflow <url>`) —
+  see [engine-mapping.md](./engine-mapping.md#label-frames-vs-markers).
 - **Cause stacks are real and resolvable.** A marker's `data.stack` is an embedded thread-shaped
   object whose `samples.data[0][0]` is a **stack index into the SAME host thread's stackTable**
   (not a self-contained mini-profile). We resolve it through the identical frame path as samples.
-  When a synchronous reflow/style flush is triggered from JS, the cause chain contains the JS
-  frames (verified: our forced `offsetHeight` probe produced a `Styles` marker whose cause chain
-  was `Node.appendChild -> http://.../__blank__:1:8`). We map `Styles -> style`, `Reflow* ->
-  layout`, set `event.at` from the top JS cause frame, and set `forced: true` when a JS frame is on
-  the cause stack (same "JS on the stack == synchronously forced" approximation as the Chrome
-  trace path). Markers with a native-only cause get counts + durations but no `at`/`forced`.
+  We map `Styles -> style`, `Reflow* -> layout`, set `event.at` from the top JS cause frame, and set
+  `forced: true` when a JS frame is on the cause stack. Markers with a native-only cause get counts
+  + durations but no `at`/`forced`.
+- **WARNING — the cause stack is NOT Chrome's stack.** An earlier version of this file described
+  the above as "the same 'JS on the stack == synchronously forced' approximation as the Chrome trace
+  path". **That is wrong**, and its own cited evidence shows why: the example cause chain
+  `Node.appendChild -> ...` is the **write**, not the geometry read. Gecko captures the cause in
+  `SetNeedLayoutFlush`/`SetNeedStyleFlush` (the **invalidator**, and only the *first* one since the
+  last flush); Chrome captures it at the flush (the **forcer**). Measured on
+  `examples/forces-layout.mjs`, chrome blames every geometry read and firefox blames `bump()` — with
+  **zero overlap**. Read
+  [engine-mapping.md](./engine-mapping.md#forced-layout-blame-differs-by-engine) before touching or
+  trusting this path.
 - This lane runs only inside the `--cpu-profile` gecko pass (one browser launch yields both the CPU
   samples and the markers). Without `--cpu-profile`, a Firefox recording is timing-only with honest
-  `meta.notes` saying rendering detail is not collected.
+  `meta.notes` saying rendering detail is not collected. Note the CPU samples from that same pass
+  *do* attribute forced layout to the forcing frame, so `query cpu` is currently more correct than
+  `query blame` on this lane; see [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
 
 ## What is NOT measured on Firefox (reported honestly, never as fake zeros)
 
@@ -141,3 +165,15 @@ terminal report say so; `assert` on those metrics fails rather than passing on a
 Its honest caveat is a different one -- the number is real in both engines but not interchangeable
 between them, because presentation delay is engine-specific. Under-claiming a metric wpd does
 measure is the same failure as faking a zero, in the opposite direction.
+
+**A third category exists and is the dangerous one: measured, but not meaning what it looks like.**
+A fake zero announces itself; these do not.
+
+- `forcedLayoutMs` **under-reports badly** on Firefox: 1.08ms vs chrome's 7.17ms for identical work
+  on `examples/forces-layout.mjs`. The markers miss short flushes.
+- `query blame --forced` names the **write** on Firefox and the **read** on Chrome (above).
+- Both are invisible in the output today. Neither is a zero, so neither trips the "unmeasured"
+  guard. `meta.notes` covers what is missing, not what is subtly different.
+- The signal that *does* survive cross-engine is CPU self-time (8.41ms chrome / 8.79ms firefox,
+  ~5%), which is the inverse of how the README ranks trust. See
+  [engine-mapping.md](./engine-mapping.md#what-is-actually-comparable-across-engines).
