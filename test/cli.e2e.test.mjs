@@ -321,3 +321,15 @@ test("record --headless-mode shell errors when combined with --no-headless", () 
   assert.notEqual(result.status, 0, "the bad flag combo exits non-zero");
   assert.match(result.stderr, /--headless-mode shell requires headless \(drop --no-headless\)/);
 });
+
+// --headless-mode is a Chrome-only launch flavour, so ANY explicit value is rejected on firefox/node
+// (not just shell). Guards reject before any browser launches, so this runs everywhere.
+test("record --headless-mode new errors on a firefox target (chrome-only flag)", () => {
+  const result = spawnSync(
+    process.execPath,
+    [cli, "record", path.join(examples, "forces-layout.mjs"), "--target", "firefox", "--headless-mode", "new"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.notEqual(result.status, 0, "the chrome-only flag on firefox exits non-zero");
+  assert.match(result.stderr, /--headless-mode is chrome-only \(target is firefox\)/);
+});

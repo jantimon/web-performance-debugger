@@ -176,9 +176,13 @@ event handlers. Both are measured **in-page**, so they describe the page rather 
 
 `wall ms` is different, and the `*` in the table says so: it is measured around the driver, so it
 includes dispatching the action and waiting for the page to settle. On a trivial interaction that is
-most of it — the settle floor alone is ~31 ms (two frames), and `page.click` costs ~20 ms of input
-dispatch before your handler runs. Identical work reports 40.5 ms via `page.click` and 31.9 ms via
-`page.evaluate`. Treat `wall ms` as a bound on the step, not the cost of it
+most of it — the settle floor is two frames, ~16 ms on the default headless mode
+(chrome-headless-shell, ~120 Hz) and ~31 ms under `--headless-mode new` (full Chrome, ~60 Hz) — and
+`page.click` costs ~20 ms of input dispatch before your handler runs. (Under `--headless-mode new`,
+identical work reports 40.5 ms via `page.click` and 31.9 ms via `page.evaluate`.) Treat `wall ms` as
+a bound on the step, not the cost of it. `wall`/`INP` carry this one-frame floor either way, so a
+sub-frame re-render reads as the frame time; `--headless-mode new` doubles the floor to model a
+60 Hz user.
 
 To see where an interaction's time actually went, `record` prints the Core Web Vitals split:
 
@@ -555,9 +559,10 @@ page did, read `interaction` (the in-page Core Web Vitals split of `inpMs`) or t
 
 **If your step is programmatic, `--bench` is the lane you want.** `interaction` comes from Event
 Timing, which only observes *trusted* input, so a step that calls `page.evaluate(() => app.mount())`
-has no interaction to split — and its wall is dispatch plus the deliberate ~31 ms two-frame settle
-that `measureStep` waits out ([docs/dev/driver-timing.md](docs/dev/driver-timing.md) measures the
-split: 31.9 ms total, ~2 ms of it the action).
+has no interaction to split — and its wall is dispatch plus the deliberate two-frame settle that
+`measureStep` waits out (~16 ms on the default shell mode, ~31 ms under `--headless-mode new`;
+[docs/dev/driver-timing.md](docs/dev/driver-timing.md) measures the split under new-headless:
+31.9 ms total, ~2 ms of it the action).
 
 `--bench --html host.html` runs the same module *inside* the page instead: `run(ctx)` gets live
 `document`/`window` (so it can call `window.__mount()` directly), and its wall is an in-page

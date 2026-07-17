@@ -34,7 +34,8 @@ chromium at tip-of-tree, with a permalink).
    the JS stack on every Layout. [Details](./cpu-profiling.md#why-the-cpu-pass-is-separate-tracing-contaminates-sampling).
 4. **A driver step's `wallMs` is mostly the driver.** It is measured node-side around the action and
    its settle, so identical work reads 40.5 ms via `page.click`, 31.9 ms via `page.evaluate` and
-   1.1 ms in `--bench`. `page.click` alone costs ~20 ms; the settle floor is ~31 ms. Use
+   1.1 ms in `--bench`. `page.click` alone costs ~20 ms; the settle floor is ~31 ms under
+   new-headless (`--headless-mode new`, ~60 Hz), ~half that on the default shell mode. Use
    `interaction.processingMs` or the per-step counts for what the page did.
    [Details](./driver-timing.md#wallms-is-a-bound-on-the-step-not-the-cost-of-the-page).
 

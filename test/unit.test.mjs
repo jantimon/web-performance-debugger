@@ -31,6 +31,7 @@ import { assertCmd } from "../dist/commands/assert.js";
 import { countProvenance } from "../dist/commands/summaryView.js";
 import { blameSemanticFor, noteCountScope } from "../dist/commands/record.js";
 import { capsFor } from "../dist/browser/backend.js";
+import { resolveHeadless } from "../dist/browser/launch.js";
 import { interactionBreakdown } from "../dist/browser/driver.js";
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
@@ -1210,6 +1211,18 @@ test("noteCountScope: describes the pass plan that ran, per lane", () => {
     null,
     "no CDP counters means no bracket to describe",
   );
+});
+
+test("resolveHeadless: defaults to chrome-headless-shell, new-headless is opt-in, headed wins", () => {
+  // No flavour passed => shell (the ~120Hz default); explicit "shell" too.
+  assert.equal(resolveHeadless(true, undefined), "shell", "default headless flavour is shell");
+  assert.equal(resolveHeadless(true, "shell"), "shell");
+  // "new" opts back into full-Chrome new-headless (puppeteer's `headless: true`).
+  assert.equal(resolveHeadless(true, "new"), true);
+  // Headed (--no-headless) wins regardless of the flavour.
+  assert.equal(resolveHeadless(false, undefined), false);
+  assert.equal(resolveHeadless(false, "shell"), false);
+  assert.equal(resolveHeadless(false, "new"), false);
 });
 
 // prepare() runs ONCE, before the timed loop, so a step it measures has one sample no matter what

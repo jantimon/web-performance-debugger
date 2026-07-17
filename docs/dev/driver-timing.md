@@ -6,6 +6,10 @@ Everything below is **[measured]** against `test/fixtures/driver-probe.html` (40
 an `offsetWidth` read between each, so every row forces a synchronous layout) and
 `test/fixtures/slow-handler.html` (a click handler that busy-waits a known 45 ms), headless Chrome.
 
+Every wall/settle number below is measured under **new-headless** (`--headless-mode new`, full
+Chrome, ~60 Hz cadence). On the default shell mode (chrome-headless-shell, ~120 Hz) the settle floor
+is ~half of these figures; the drive-independent counts and self-time are unchanged.
+
 ## `wallMs` is a bound on the step, not the cost of the page
 
 A step's wall is measured **node-side** (`node:perf_hooks`), around `await action()` **plus**

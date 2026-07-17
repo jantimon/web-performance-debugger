@@ -130,8 +130,7 @@ program
   )
   .option(
     "--headless-mode <mode>",
-    "chrome headless flavour: new (default, full Chrome) | shell (chrome-headless-shell, ~120Hz frames, halves the wall/INP frame floor)",
-    "new",
+    "chrome headless flavour: shell (default, chrome-headless-shell, ~120Hz frames) | new (full Chrome, ~60Hz frames). See docs/dev/frame-floor.md",
   )
   .option("--format <fmt>", "on-disk format: json | toon", "json")
   .action(async (module: string, cmdOpts: any) => {
@@ -146,12 +145,17 @@ program
     const bench = !!cmdOpts.bench;
     const node = cmdOpts.target === "node";
     const firefox = cmdOpts.target === "firefox";
-    if (!["new", "shell"].includes(cmdOpts.headlessMode))
+    // undefined = flag not passed; the flavour then defaults to shell in launchBrowser. The two
+    // guards below fire only on an EXPLICIT --headless-mode, so plain --no-headless stays headed
+    // and a firefox/node run is not rejected for a default it never asked for.
+    if (cmdOpts.headlessMode !== undefined && !["new", "shell"].includes(cmdOpts.headlessMode))
       program.error("--headless-mode must be new or shell");
-    // --headless-mode is a Chrome CDP-launch flavour; Firefox and node have no equivalent.
-    if (cmdOpts.headlessMode === "shell" && (firefox || node))
-      program.error(`--headless-mode shell is chrome-only (target is ${cmdOpts.target})`);
-    // chrome-headless-shell is a headless binary; there is no headed shell to launch.
+    // --headless-mode is a Chrome CDP-launch flavour; Firefox and node have no equivalent, so any
+    // explicit value (shell or new) is rejected there.
+    if (cmdOpts.headlessMode !== undefined && (firefox || node))
+      program.error(`--headless-mode is chrome-only (target is ${cmdOpts.target})`);
+    // chrome-headless-shell is a headless binary; there is no headed shell to launch. Only an
+    // explicit --headless-mode shell conflicts with --no-headless; the shell default does not.
     if (cmdOpts.headlessMode === "shell" && cmdOpts.headless === false)
       program.error("--headless-mode shell requires headless (drop --no-headless)");
     if (cmdOpts.breakdown) {

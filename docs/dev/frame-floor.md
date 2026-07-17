@@ -5,8 +5,9 @@ flag, or before explaining why two libraries with different re-render cost repor
 
 `wall` and `INP` cannot report less than one display frame, because the measured interval ends at a
 paint and a paint happens on a frame boundary. That floor is real and correct for a latency number,
-but its height depends on the frame cadence, and wpd's default cadence is set by a Puppeteer default
-that is easy to mistake for a property of the engine or the machine.
+but its height depends on the frame cadence, which is a property of the **headless mode**, not the
+engine or the machine. wpd defaults to **shell-headless** (chrome-headless-shell, ~120 Hz, ~8.3 ms
+floor); `--headless-mode new` selects new-headless (~60 Hz, ~16.6 ms floor).
 
 Probes below are **[measured]** on a 120 Hz ProMotion Mac, Puppeteer 25.2.1 (Chrome-for-Testing
 150), Playwright chromium 149, and wpd's Firefox lane over BiDi. Each is a driver module timing
@@ -43,8 +44,8 @@ Median of 60 consecutive `requestAnimationFrame` deltas:
 
 | lane | cadence | rate |
 | --- | --- | --- |
-| Chrome **new-headless** (Puppeteer default) | **16.7 ms** | ~60 Hz |
-| Chrome **shell-headless** (`headless: 'shell'`) | **8.3 ms** | ~120 Hz |
+| Chrome **new-headless** (`--headless-mode new`; Puppeteer's `headless: true`) | **16.7 ms** | ~60 Hz |
+| Chrome **shell-headless** (wpd default; `headless: 'shell'`) | **8.3 ms** | ~120 Hz |
 | Chrome **headed** | **8.4 ms or 16.7 ms**, run to run | 120 / 60 Hz, variable |
 | Firefox headless | **8.3 ms** | ~120 Hz |
 | Firefox headed | **8.3 ms** | ~120 Hz |
@@ -71,9 +72,9 @@ Isolated by crossover **[measured]**:
 
 Puppeteer 25 resolves `headless: true` to **new** headless (a full Chrome), which rate-limits
 `BeginFrame` to ~60 Hz. **chrome-headless-shell** runs `BeginFrame` at ~120 Hz, and Playwright's
-default behaves like shell. wpd sets `headless: opts.headless` (a boolean) at
-`src/browser/launch.ts`, so it inherits the new-headless 60 Hz floor. This is why gen (Playwright,
-~8 ms) and wpd (Puppeteer, 16.6 ms) disagree on the "same headless Chrome".
+default behaves like shell. wpd defaults to `headless: 'shell'` (`resolveHeadless` in
+`src/browser/launch.ts`), so it runs the ~120 Hz / 8.3 ms floor and lines up with Playwright-based
+harnesses; `--headless-mode new` selects the new-headless 60 Hz floor.
 
 Flags do not fix it cleanly: `--disable-frame-rate-limit` alone does nothing; only
 `--disable-frame-rate-limit --disable-gpu-vsync --run-all-compositor-stages-before-draw` together
@@ -83,11 +84,11 @@ is the knob, not the flags.
 ## The settle floor is exactly twice this
 
 `measureStep`'s settle is two `requestAnimationFrame`s (`browser/settle.ts`, and `paintFlush` in
-`browser/driver.ts`). An empty-action step measures **30.7 ms** wall, ~= 2 x 16.6 (slightly under
-2 x 16.7 because the first rAF lands partway into the current frame). That is the "~31 ms settle
-floor" [driver-timing.md](./driver-timing.md) records. **Corollary:** in shell or Firefox mode
-(8.3 ms frame) the same 2-rAF settle floor is ~16 ms, so the headless mode halves the biggest fixed
-cost in a driver step's wall.
+`browser/driver.ts`). Under `--headless-mode new` (16.6 ms frame) an empty-action step measures
+**30.7 ms** wall, ~= 2 x 16.6 (slightly under 2 x 16.7 because the first rAF lands partway into the
+current frame): the "~31 ms settle floor" [driver-timing.md](./driver-timing.md) records. On the
+default shell mode (8.3 ms frame), and on Firefox, the same 2-rAF settle floor is ~16 ms, so the
+default halves the biggest fixed cost in a driver step's wall.
 
 ## What this means for reading the numbers
 
@@ -106,8 +107,8 @@ code on the work axis, and to know `wall`/`INP` carries a one-frame floor.
 
 ## The mode decision
 
-If wpd must ship one deterministic default, it should be **shell-headless (120 Hz / 8.3 ms)**, for
-three reasons:
+wpd's default is **shell-headless (120 Hz / 8.3 ms)**. Of the deterministic modes it is the right
+default for three reasons:
 
 1. **Resolution is recoverable; coarseness is not.** An 8.3 ms floor contains the 60 Hz answer (round
    work up to the next 16.6 ms to model a 60 Hz user). A 16.6 ms floor has already destroyed every
@@ -122,30 +123,27 @@ field-RUM predictor, and its own trust tier calls `wall`/`INP` directional. A co
 optimized for signal separation; the "what would a 60 Hz user feel" reading layers on top of a
 fine-grained number and cannot be extracted from a coarse one.
 
-Headed is realistic but disqualified as a *default* by its non-determinism above; keep it reachable
-for someone who explicitly wants it, with that caveat attached.
+Headed is realistic but disqualified as a *default* by its non-determinism above; it stays reachable
+via `--no-headless` for someone who explicitly wants it, with that caveat attached.
 
-Recommended shape: default to shell, keep new-headless reachable behind a `--headless-mode
-new|shell|headed` flag for anyone who wants faithful new-Chrome or a 60 Hz model, and document the
-floor either way.
+Implemented shape: default to shell, with `--headless-mode new` for faithful new-Chrome or a 60 Hz
+model and `--no-headless` for headed, and the floor documented either way.
 
-## What is assumed, and must be verified before switching the default
+## What is established, and what is still open
 
-- **[assumption] shell-headless changes only the cadence.** chrome-headless-shell is the lighter
-  legacy renderer. Before defaulting to it, verify that `layoutCount`/`styleCount`/`paintCount`, CPU
-  self-time, and forced-layout blame come out identical to new-headless on the same probe; only the
-  rAF cadence (and therefore `wall`/`INP`) should move. It is the same Blink layout/style/paint
-  pipeline, so no change is expected, but this session's rule is to probe the plausible mechanism,
-  not assume it. If anything but cadence shifts, the pick changes.
+- **[measured] shell-headless changes only the cadence.** On the same forced-layout probe,
+  `layoutCount`/`styleCount`/`paintCount` and the forced counts are byte-identical between shell and
+  new-headless, forced-layout blame is identical, and CPU self-time overlaps; only the rAF cadence
+  (and therefore `wall`/`INP`) moves. Full e2e is green under shell. It is the same Blink
+  layout/style/paint pipeline, so the rendering-cost path does not diverge; the feature-level
+  divergences of new-headless vs the automation build (extensions, printing, some APIs) do not touch
+  layout/style/paint attribution.
 - **[assumption] shell's cadence on non-ProMotion hardware.** Shell measured 120 Hz here, on a 120 Hz
   machine. Whether shell tracks the physical display (and would report 60 Hz on a 60 Hz host) or runs
   a fixed 120 Hz `BeginFrame` regardless is not established. It matters for reproducibility across
-  contributor machines and CI. Measure on a 60 Hz display before relying on a fixed 8.3 ms.
-- **[assumption] new-headless is "more faithful to real Chrome" in a way that matters here.** New
-  headless is a full Chrome and shell is the automation-oriented build; the known divergences are
-  around features (extensions, printing, some APIs), not the rendering-cost path. Treat "the
-  divergence is irrelevant to layout/style/paint attribution" as unverified until the first
-  assumption's comparison confirms it.
+  contributor machines and CI. Verification recipe: run `examples/forces-layout.mjs` on a native
+  60 Hz display and read the median rAF delta / the empty-step settle floor; a fixed 8.3 ms holds the
+  claim, a 16.6 ms means shell tracks the display and the floor is host-dependent.
 - **[assumption] gen's ~8 ms is shell-mode cadence, not headed.** Playwright's chromium measured
   8.3 ms headless here, which matches gen's number, but whether gen itself runs headed or headless is
   not confirmed. If gen runs headed on a ProMotion Mac, its ~8 ms is the display, and the

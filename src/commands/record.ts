@@ -66,7 +66,7 @@ export interface RecordOptions {
   warmup: number;
   out?: string;
   headless: boolean;
-  /** chrome headless flavour: "new" (default) or "shell" (~120Hz frames); ignored when headed/firefox */
+  /** chrome headless flavour: "shell" (default, ~120Hz frames) or "new"; ignored when headed/firefox */
   headlessMode?: HeadlessMode;
   /** persistent Chrome profile dir (resolved absolute); reuse one login across passes/runs */
   userDataDir?: string;
@@ -229,6 +229,8 @@ interface PassResult {
   geckoDumpPath?: string;
   /** interval the CPU sampler actually ran at, read back from the profile itself */
   cpuSampleIntervalUs?: number;
+  /** WARNING when chrome-headless-shell was missing and the launch fell back to new-headless */
+  headlessFallback?: string;
 }
 
 function slug(label: string): string {
@@ -401,7 +403,7 @@ async function runPass(
         `wpd-gecko-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
       )
     : undefined;
-  const { browser, page, client } = await launchBrowser({
+  const { browser, page, client, headlessFallback } = await launchBrowser({
     browser: browserName,
     headless: opts.headless,
     headlessMode: opts.headlessMode,
@@ -593,6 +595,7 @@ async function runPass(
       driverSteps,
       stepWindows,
       cpuProfile,
+      headlessFallback,
     };
   } finally {
     // Closing Firefox flushes the Gecko shutdown dump, so the parse below must run after this.
@@ -972,6 +975,10 @@ export async function record(opts: RecordOptions): Promise<{
       );
     }
   }
+  // chrome-headless-shell was missing on at least one pass, so the launch fell back to new-headless.
+  // Both passes fall back identically, so the note is the same on each: report it once.
+  const headlessFallbackNote = results.find((pass) => pass.headlessFallback)?.headlessFallback;
+  if (headlessFallbackNote) notes.push(headlessFallbackNote);
   const countScope = noteCountScope(specs, opts, capsFor(browserName));
   if (countScope) notes.push(countScope);
   if (opts.cpuThrottle || opts.network) {

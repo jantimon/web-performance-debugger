@@ -7,6 +7,9 @@ export interface BrowserHandle {
   page: Page;
   /** null on Firefox: WebDriver BiDi has no CDP session (guard every CDP call with the caps). */
   client: CDPSession | null;
+  /** Set when the requested chrome-headless-shell binary was missing and the launch fell back to
+   * new-headless. A WARNING for meta.notes naming the cadence cost and the install command. */
+  headlessFallback?: string;
 }
 
 /** Gecko's sampling floor: asking for less just yields this. Also the default when the caller
@@ -59,17 +62,33 @@ function missingBrowserMessage(error: Error, browser: BrowserName): Error {
 }
 
 /**
- * Chrome headless flavour. "new" is Puppeteer's default full-Chrome headless; "shell" launches
- * chrome-headless-shell (`headless: 'shell'`), which runs BeginFrame at ~120Hz instead of ~60Hz,
- * halving the one-frame floor on wall/INP (16.6 -> 8.3ms). See docs/dev/frame-floor.md. Ignored
- * when the browser is headed (--no-headless) or Firefox.
+ * Chrome headless flavour. "shell" (the default) launches chrome-headless-shell
+ * (`headless: 'shell'`), which runs BeginFrame at ~120Hz, halving the one-frame floor on wall/INP
+ * (16.6 -> 8.3ms). "new" is Puppeteer's full-Chrome new-headless, which caps BeginFrame at ~60Hz.
+ * See docs/dev/frame-floor.md. Ignored when the browser is headed (--no-headless) or Firefox.
  */
 export type HeadlessMode = "new" | "shell";
+
+/** WARNING pushed to meta.notes when chrome-headless-shell is missing and the run falls back to
+ * new-headless. chrome-headless-shell is a separate Puppeteer download; the default install fetches
+ * it, but PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD or a chrome-only browser install omits it. */
+export const SHELL_FALLBACK_NOTE =
+  "WARNING: chrome-headless-shell is not installed, so this run fell back to new-headless (~60Hz frames): wall/INP carry the ~16.6ms one-frame floor instead of ~8.3ms. Install it with `npx puppeteer browsers install chrome-headless-shell`, or pass --headless-mode new to select new-headless deliberately.";
+
+/**
+ * Resolve puppeteer's `headless` launch value from wpd's two knobs. Headed (`--no-headless`) wins
+ * and returns false; otherwise the flavour defaults to shell (chrome-headless-shell, ~120Hz), and
+ * only "new" opts back into full-Chrome new-headless (~60Hz). See docs/dev/frame-floor.md.
+ */
+export function resolveHeadless(headless: boolean, headlessMode?: HeadlessMode): boolean | "shell" {
+  if (!headless) return false;
+  return headlessMode === "new" ? true : "shell";
+}
 
 export async function launchBrowser(opts: {
   browser: BrowserName;
   headless: boolean;
-  /** chrome only: "new" (default) or "shell" (chrome-headless-shell, ~120Hz frames) */
+  /** chrome only: "shell" (default, chrome-headless-shell, ~120Hz frames) or "new" (full Chrome) */
   headlessMode?: HeadlessMode;
   userDataDir?: string;
   /**
@@ -114,9 +133,25 @@ async function launchOrThrow(opts: {
     return { browser, page, client: null };
   }
 
-  // Headed (--no-headless) stays false; headless picks new (true) or shell. Shell runs
-  // BeginFrame at ~120Hz, halving the wall/INP frame floor (docs/dev/frame-floor.md).
-  const headless = opts.headless ? (opts.headlessMode === "shell" ? "shell" : true) : false;
+  // Headed (--no-headless) => false; otherwise shell (default, ~120Hz) or new-headless.
+  const headless = resolveHeadless(opts.headless, opts.headlessMode);
+  if (headless !== "shell") return launchChrome(headless, opts);
+  // chrome-headless-shell is a separate download. If the environment skipped it, it is missing at
+  // launch: never fail a run over the frame-cadence flavour, fall back to new-headless and warn.
+  try {
+    return await launchChrome("shell", opts);
+  } catch (error) {
+    if (!/could not find chrome/i.test((error as Error).message)) throw error;
+    const handle = await launchChrome(true, opts);
+    handle.headlessFallback = SHELL_FALLBACK_NOTE;
+    return handle;
+  }
+}
+
+async function launchChrome(
+  headless: boolean | "shell",
+  opts: { userDataDir?: string; protocolTimeoutMs?: number },
+): Promise<BrowserHandle> {
   const browser = await puppeteer.launch({
     headless,
     // Persistent profile dir: reuses cookies/session across passes and runs (puppeteer
