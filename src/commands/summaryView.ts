@@ -1,5 +1,6 @@
 import type { Recording } from "../model/recording.js";
 import { kv, num, sparkline, table } from "../output/ascii.js";
+import { dim } from "../output/color.js";
 import { capsFor } from "../browser/backend.js";
 
 /**
@@ -64,6 +65,26 @@ export function printSummary(rec: Recording): void {
       ["wall (whole run window)", summary.wallMs == null ? "—" : `${num(summary.wallMs)} ms`],
     ]),
   );
+  // Where that INP went. This is the part of a driver report that describes the PAGE: a step's
+  // wall carries the driver's own overhead (see StepTiming / docs/dev/driver-timing.md), while
+  // these come from the in-page Event Timing observer and answer the standard triage.
+  if (summary.interaction) {
+    const { inputDelayMs, processingMs, presentationDelayMs } = summary.interaction;
+    console.log("\nWhere that interaction's time went (in-page, Core Web Vitals split)\n");
+    console.log(
+      kv([
+        ["input delay", `${num(inputDelayMs, 2)} ms   ${dim("(main thread busy at input)")}`],
+        [
+          "processing",
+          `${num(processingMs, 2)} ms   ${dim("(handlers, first start to last end)")}`,
+        ],
+        [
+          "presentation delay",
+          `${num(presentationDelayMs, 2)} ms   ${dim("(rendering the result)")}`,
+        ],
+      ]),
+    );
+  }
   if (summary.forcedLayoutCount > 0) {
     console.log("  ⚠ layout thrashing — run `query blame --forced` to see the source lines");
   }

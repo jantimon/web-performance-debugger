@@ -10,7 +10,7 @@ import { runDriver, type DriverStep } from "../browser/driver.js";
 import { applyCpuThrottle, applyNetworkPreset } from "../browser/throttle.js";
 import { traceCategories } from "../trace/categories.js";
 import { parseTrace, findWindow, findSteps } from "../trace/parse.js";
-import { labelWindows, mergeSteps, type LabelledWindow } from "../trace/steps.js";
+import { labelWindows, mergeSteps, type LabelledWindow, type MergedStep } from "../trace/steps.js";
 import { attachStacks } from "../trace/stacks.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { markForced } from "../trace/analysis.js";
@@ -860,13 +860,15 @@ export async function record(opts: RecordOptions): Promise<{
   // was fixed: summary.inpMs 56 while every step's median was 24, i.e. the recording contradicting
   // its own step index, and `assert --max-inp` getting stricter the more confidence you asked for.
   // "Worst interaction" still means worst interaction; it just no longer means worst outlier.
-  const overallInp = mergedSteps?.length
-    ? mergedSteps.reduce<number | null>(
-        (worst, step) =>
-          step.inpMs != null && (worst == null || step.inpMs > worst) ? step.inpMs : worst,
-        null,
-      )
-    : null;
+  const worstStep = (mergedSteps ?? []).reduce<MergedStep | null>(
+    (worst, step) =>
+      step.inpMs != null && (worst?.inpMs == null || step.inpMs > worst.inpMs) ? step : worst,
+    null,
+  );
+  const overallInp = worstStep?.inpMs ?? null;
+  // The breakdown comes from the SAME step as the headline, not from a max across steps: input
+  // delay from one step and processing from another would describe an interaction nobody had.
+  const overallInteraction = worstStep?.interaction ?? null;
 
   const recording: Recording = {
     meta,
@@ -894,6 +896,7 @@ export async function record(opts: RecordOptions): Promise<{
       // silently disabled `assert --max-wall`).
       wallMs: runWallMs,
       inpMs: overallInp,
+      interaction: overallInteraction,
       // No window => not measured (see traceWindowMissing note); don't count the whole trace.
       detailEvents: traceWindowMissing ? [] : detail.events,
       detailWindowStart: detail.windowStart,
@@ -991,6 +994,7 @@ export async function record(opts: RecordOptions): Promise<{
         summary: buildSummary({
           wallMs: step.wallMs,
           inpMs: step.inpMs,
+          interaction: step.interaction,
           detailEvents: evs,
           detailWindowStart: step.startTs,
           cdpDelta: step.cdpDelta,
@@ -1015,6 +1019,7 @@ export async function record(opts: RecordOptions): Promise<{
         wallMs: step.wallMs,
         stats: summary.stats,
         inpMs: step.inpMs,
+        interaction: step.interaction,
         headline: {
           layoutCount: summary.layoutCount,
           forcedLayoutCount: summary.forcedLayoutCount,

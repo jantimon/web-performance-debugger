@@ -4,6 +4,7 @@ import type { CDPSession, Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
 import { snapshotMetricsIfAvailable, metricsDelta } from "../metrics/cdp.js";
 import { duplicateLabelError } from "../trace/steps.js";
+import type { InteractionTiming } from "../model/recording.js";
 
 export interface DriverStep {
   /** this step's position WITHIN its iteration; the same label gets the same index every time */
@@ -29,9 +30,89 @@ export interface DriverStep {
    */
   markIndex?: number;
   label: string;
+  /**
+   * Node-side elapsed time around the action plus its settle. This is a BOUND on the step, not the
+   * page's cost: it carries the driver's own overhead. Measured on identical 40-row forced-layout
+   * work, `page.click` reports 40.5ms and `page.evaluate` 31.9ms, of which the page did 1.1ms; the
+   * settle floor alone is ~31ms (two frames). Use `interaction.processingMs` or the per-step counts
+   * for what the page actually did. See docs/dev/driver-timing.md.
+   */
   wallMs: number;
   inpMs: number | null;
+  /** in-page CWV split of `inpMs`; null when no interaction crossed the 16ms Event Timing floor */
+  interaction: InteractionTiming | null;
   cdpDelta: Record<string, number>;
+}
+
+/** One Event Timing entry, as read back out of the page. */
+export interface RawEventTiming {
+  startTime: number;
+  processingStart: number;
+  processingEnd: number;
+  duration: number;
+  /** 0 for events that are not part of an interaction (pointerover, mouseover, ...) */
+  interactionId: number;
+}
+
+/**
+ * Split the worst interaction's latency into the three CWV parts.
+ *
+ * Group by `interactionId`, take the worst group, then keep only the entries in it that share the
+ * group's LONGEST duration. That last step is the subtle one, and skipping it produced nonsense.
+ * One interaction can span more than one paint: on a held click (measured, `delay: 250`)
+ * `pointerdown` painted at 43.3 with `duration: 24` while `pointerup`/`click` painted at 336.1 with
+ * `duration: 64`. Mixing them -- reading `startTime` off `pointerdown` and `duration` off `click` --
+ * reported `processingMs: 297.5` and `presentationDelayMs: -241.8` for a 45ms handler.
+ *
+ * The max-duration entries are the right anchor because `duration` IS the interaction's latency to
+ * its paint, and INP is that maximum: describing that journey describes the number being reported.
+ * Anchoring on the earliest event instead would price `pointerdown`'s own paint and lose the click
+ * handler entirely (15.7ms of a measured 45.3). Durations are 8ms multiples, so equality here needs
+ * no epsilon; entries reaching the same paint from starts 0.1ms apart still share one duration
+ * (measured: a plain click's pointerdown/pointerup/click all read 64).
+ *
+ * Non-negative by construction: paintTime is clamped to be >= processingStart, and processingEnd is
+ * clamped to be <= paintTime, mirroring the same two guards in web-vitals.
+ *
+ * Returns null when nothing carries an interactionId. That is not a failure and must not be 0: a
+ * programmatic step (`page.evaluate`) fires untrusted events, which Event Timing does not observe at
+ * all (measured: zero entries), and an interaction faster than the spec's 16ms floor produces none.
+ */
+export function interactionBreakdown(entries: RawEventTiming[]): InteractionTiming | null {
+  const groups = new Map<number, RawEventTiming[]>();
+  for (const entry of entries) {
+    if (!entry.interactionId) continue;
+    const group = groups.get(entry.interactionId) ?? [];
+    group.push(entry);
+    groups.set(entry.interactionId, group);
+  }
+  let worstGroup: RawEventTiming[] | null = null;
+  let worstDuration = -1;
+  for (const group of groups.values()) {
+    const duration = Math.max(...group.map((entry) => entry.duration));
+    if (duration > worstDuration) {
+      worstDuration = duration;
+      worstGroup = group;
+    }
+  }
+  if (!worstGroup) return null;
+
+  // Only the events that reached the paint this interaction is measured by.
+  const atWorstPaint = worstGroup.filter((entry) => entry.duration === worstDuration);
+  const startTime = Math.min(...atWorstPaint.map((entry) => entry.startTime));
+  const processingStart = Math.min(...atWorstPaint.map((entry) => entry.processingStart));
+  // max(): a handler that starts after its own frame deadline would otherwise push presentation
+  // delay negative. min(): processing cannot outlast the paint it is being measured against.
+  const paintTime = Math.max(startTime + worstDuration, processingStart);
+  const processingEnd = Math.min(
+    Math.max(...atWorstPaint.map((entry) => entry.processingEnd)),
+    paintTime,
+  );
+  return {
+    inputDelayMs: processingStart - startTime,
+    processingMs: processingEnd - processingStart,
+    presentationDelayMs: paintTime - processingEnd,
+  };
 }
 
 export interface DriverResult {
@@ -118,7 +199,18 @@ export async function runDriver(
     win.__cpInp = [];
     try {
       new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) win.__cpInp.push((entry as any).duration);
+        for (const entry of list.getEntries()) {
+          const event = entry as any;
+          // The whole entry, not just duration: processingStart/End are what split the latency into
+          // input delay / processing / presentation, and unlike duration they are not rounded to 8ms.
+          win.__cpInp.push({
+            startTime: event.startTime,
+            processingStart: event.processingStart,
+            processingEnd: event.processingEnd,
+            duration: event.duration,
+            interactionId: event.interactionId ?? 0,
+          });
+        }
       }).observe({ type: "event", durationThreshold: 16, buffered: true } as any);
     } catch {
       /* event-timing unsupported */
@@ -190,17 +282,22 @@ export async function runDriver(
     // presented. Flush a frame + a macrotask so a slow interaction's entry lands before
     // we read it, rather than being dropped or misattributed to the next step. null
     // (not 0) means "no interaction measured"; keep them distinct.
-    const inp = (await page.evaluate(
+    const observed = (await page.evaluate(
       () =>
-        new Promise<number | null>((resolve) => {
+        new Promise<RawEventTiming[]>((resolve) => {
           requestAnimationFrame(() =>
-            setTimeout(() => {
-              const inpDurations = (window as any).__cpInp as number[];
-              resolve(inpDurations && inpDurations.length ? Math.max(...inpDurations) : null);
-            }, 0),
+            setTimeout(() => resolve(((window as any).__cpInp as RawEventTiming[]) ?? []), 0),
           );
         }),
-    )) as number | null;
+    )) as RawEventTiming[];
+    // INP stays max-over-every-entry, deliberately: Chrome emits the whole pointer sequence with
+    // every entry sharing one duration to the same next paint, and Firefox emits only the events
+    // that did work, so this finds the interaction's latency in both. Verified in both engines:
+    // docs/dev/gecko-profile-format.md. The breakdown below needs the interactionId grouping the
+    // spec defines; the headline does not, and narrowing it here would change a measured behaviour
+    // for no gain.
+    const inp = observed.length ? Math.max(...observed.map((entry) => entry.duration)) : null;
+    const interaction = interactionBreakdown(observed);
     steps.push({
       index,
       iteration,
@@ -209,6 +306,7 @@ export async function runDriver(
       label,
       wallMs,
       inpMs: inp,
+      interaction,
       cdpDelta: metricsDelta(before, after),
     });
   }

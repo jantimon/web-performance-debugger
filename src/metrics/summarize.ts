@@ -1,5 +1,6 @@
 import type {
   BenchStats,
+  InteractionTiming,
   NormalizedEvent,
   RecordingSummary,
   StepTiming,
@@ -34,6 +35,8 @@ export interface SummaryInputs {
   cdpDelta: Record<string, number>;
   wallMs?: number | null;
   inpMs?: number | null;
+  /** in-page CWV split of the interaction that produced `inpMs` */
+  interaction?: InteractionTiming | null;
   /** bench (in-page iterations) per-iteration wall times */
   perIteration?: number[];
   /**
@@ -106,6 +109,7 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
   return {
     wallMs: input.wallMs ?? null,
     inpMs: input.inpMs ?? null,
+    interaction: input.interaction,
     // Prefer authoritative low-overhead CDP counters; fall back to trace counts.
     layoutCount: cdpDelta.LayoutCount ?? traceLayoutCount,
     layoutMs:

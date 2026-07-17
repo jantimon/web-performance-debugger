@@ -28,6 +28,7 @@ import { assertCmd } from "../dist/commands/assert.js";
 import { countProvenance } from "../dist/commands/summaryView.js";
 import { blameSemanticFor, noteCountScope } from "../dist/commands/record.js";
 import { capsFor } from "../dist/browser/backend.js";
+import { interactionBreakdown } from "../dist/browser/driver.js";
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -1002,4 +1003,82 @@ test("mergeSteps: a step measured in prepare() is single-sample, not an idempote
   ];
   const withWindows = mergeSteps(steps, windows);
   assert.equal(withWindows.find((step) => step.label === "boot").startTs, 10);
+});
+
+// Fixtures below are REAL captures from headless Chrome against test/fixtures/slow-handler.html
+// (a click handler that busy-waits a known 45ms), not hand-written shapes. An earlier version of
+// this test invented the numbers, labelled them measured, and asserted only two of the three parts
+// -- which let a negative presentation delay ship green. Assert all three, and assert the sum.
+const eventTiming = (name, startTime, processingStart, processingEnd, duration, interactionId) => ({
+  name, startTime, processingStart, processingEnd, duration, interactionId,
+});
+
+// A plain page.click: every event reaches the same paint, so all three share one duration.
+const PLAIN_CLICK = [
+  eventTiming("pointerover", 37.1, 37.3, 37.3, 64, 0),
+  eventTiming("mouseover", 37.1, 37.3, 37.3, 64, 0),
+  eventTiming("pointerdown", 37.2, 37.4, 37.4, 64, 6694),
+  eventTiming("mousedown", 37.2, 37.4, 37.4, 64, 0),
+  eventTiming("pointerup", 37.3, 37.7, 37.7, 64, 6694),
+  eventTiming("mouseup", 37.3, 37.7, 37.7, 64, 0),
+  eventTiming("click", 37.3, 37.7, 82.8, 64, 6694),
+];
+
+// A HELD click (delay 250, i.e. an ordinary human press). The interaction spans TWO paints:
+// pointerdown painted at 43.3 (duration 24), pointerup/click at 336.1 (duration 64).
+const HELD_CLICK = [
+  eventTiming("pointerover", 19.3, 19.4, 19.5, 24, 0),
+  eventTiming("pointerdown", 19.3, 19.5, 19.5, 24, 6747),
+  eventTiming("pointerup", 272.1, 272.4, 272.5, 64, 6747),
+  eventTiming("mouseup", 272.1, 272.5, 272.5, 64, 0),
+  eventTiming("click", 272.1, 272.5, 317.7, 64, 6747),
+];
+
+const nonNegative = (split, label) => {
+  for (const [part, value] of Object.entries(split))
+    assert.ok(value >= 0, `${label}: ${part} must not be negative, got ${value}`);
+};
+
+test("interactionBreakdown: recovers the handler from a plain click", () => {
+  const split = interactionBreakdown(PLAIN_CLICK);
+  nonNegative(split, "plain click");
+  // Off the interaction's group, not the pointerover entries, which tie on duration and do nothing.
+  assert.ok(Math.abs(split.inputDelayMs - 0.2) < 0.05, `input delay ${split.inputDelayMs}`);
+  assert.ok(Math.abs(split.processingMs - 45.4) < 0.05, `the 45ms handler, got ${split.processingMs}`);
+  // The parts reconstruct the interaction's duration, which is what INP reports.
+  const total = split.inputDelayMs + split.processingMs + split.presentationDelayMs;
+  assert.ok(Math.abs(total - 64) < 0.05, `parts sum to the interaction duration, got ${total}`);
+});
+
+// The regression this function shipped with: mixing pointerdown's startTime with click's duration
+// reported processingMs 297.5 and presentationDelayMs -241.8 for the same 45ms handler.
+test("interactionBreakdown: a held click spans two paints and still prices the handler", () => {
+  const split = interactionBreakdown(HELD_CLICK);
+  nonNegative(split, "held click");
+  assert.ok(Math.abs(split.processingMs - 45.3) < 0.05, `the 45ms handler, got ${split.processingMs}`);
+  // Anchored on the paint INP is measured by (duration 64), not on pointerdown's earlier paint
+  // (duration 24) -- that would price the button being held and lose the handler.
+  const total = split.inputDelayMs + split.processingMs + split.presentationDelayMs;
+  assert.ok(Math.abs(total - 64) < 0.05, `parts sum to the worst paint's duration, got ${total}`);
+});
+
+test("interactionBreakdown: null when nothing is an interaction", () => {
+  // A programmatic step (page.evaluate -> el.click()) fires untrusted events, which Event Timing
+  // does not observe at all. Verified in headless Chrome: zero entries. Reporting 0ms of handler
+  // for that would read as "your handler is free" rather than "not measured".
+  assert.equal(interactionBreakdown([]), null);
+  assert.equal(
+    interactionBreakdown(PLAIN_CLICK.filter((entry) => !entry.interactionId)),
+    null,
+    "entries with no interactionId are not an interaction",
+  );
+});
+
+test("interactionBreakdown: picks the worst interaction when a step has several", () => {
+  const split = interactionBreakdown([
+    eventTiming("click", 0, 0.5, 2.0, 24, 1),
+    eventTiming("click", 100, 100.5, 180.0, 96, 2), // the slow one
+  ]);
+  nonNegative(split, "two interactions");
+  assert.ok(Math.abs(split.processingMs - 79.5) < 0.05, "the worst interaction's handler, not the first");
 });

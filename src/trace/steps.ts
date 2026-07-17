@@ -1,5 +1,6 @@
 import type { DriverStep } from "../browser/driver.js";
 import type { StepWindow } from "./parse.js";
+import type { InteractionTiming } from "../model/recording.js";
 
 /**
  * A step's trace window keyed by label instead of index. Step indices are only meaningful
@@ -30,6 +31,8 @@ export interface MergedStep {
   /** the median of `perIteration`; identical to the single sample when there is only one */
   wallMs: number;
   inpMs: number | null;
+  /** each part medianed across the iterations that measured an interaction; null if none did */
+  interaction: InteractionTiming | null;
   /** from the FIRST timed iteration, so counts never scale with --iterations */
   cdpDelta: Record<string, number>;
   startTs: number | null;
@@ -233,12 +236,27 @@ export function mergeSteps(
     const inpSamples = ordered
       .map((step) => step.inpMs)
       .filter((inpMs): inpMs is number => inpMs != null);
+    // Each part medianed independently, for the same reason INP is: taking the worst would make
+    // every part climb with --iterations. They can therefore sum to slightly more or less than the
+    // INP median, which is honest -- three medians are not one interaction, and pretending
+    // otherwise would mean picking one iteration's breakdown and calling it typical.
+    const measured = ordered
+      .map((step) => step.interaction)
+      .filter((entry): entry is InteractionTiming => entry != null);
+    const interaction: InteractionTiming | null = measured.length
+      ? {
+          inputDelayMs: median(measured.map((entry) => entry.inputDelayMs)),
+          processingMs: median(measured.map((entry) => entry.processingMs)),
+          presentationDelayMs: median(measured.map((entry) => entry.presentationDelayMs)),
+        }
+      : null;
     merged.push({
       index: first.index,
       label,
       perIteration,
       wallMs: median(perIteration),
       inpMs: inpSamples.length ? median(inpSamples) : null,
+      interaction,
       // From the first timed iteration, matching the window above: counts and events must
       // describe the same iteration, and neither may scale with --iterations.
       cdpDelta: first.cdpDelta,
