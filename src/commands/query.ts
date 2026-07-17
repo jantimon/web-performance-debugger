@@ -11,6 +11,7 @@ import type { BlameEntry } from "../model/query.js";
 import { num, table } from "../output/ascii.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
 import { buildDigest } from "./digest.js";
+import { printSpanBreakdowns } from "./cpu.js";
 import { printSummary } from "./summaryView.js";
 import { resolveTarget } from "./resolve.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
@@ -51,6 +52,9 @@ export async function queryDigest(file: string, opts: OutOpts): Promise<void> {
   if (fmt) return emit(digest, fmt);
 
   printSummary(rec);
+  // --breakdown recordings carry per-span seven-slice bars; print them here so `query digest`
+  // matches the `record` report. Absent on every other mode, so this is a no-op there.
+  if (digest.breakdowns?.length) printSpanBreakdowns(digest.breakdowns);
   if (digest.forced.length) {
     console.log(
       "\nLayout thrashing — forced layout/style by source (run `query blame --forced` for all):",
@@ -136,7 +140,8 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
         step.inpMs == null ? "—" : num(step.inpMs, 1),
         step.interaction == null ? "—" : num(step.interaction.processingMs, 2),
         step.headline.layoutCount,
-        step.headline.forcedLayoutCount,
+        // null = not measured (e.g. a --breakdown step); show a placeholder, never a fake 0.
+        step.headline.forcedLayoutCount ?? "—",
         step.headline.paintCount,
         step.headline.layoutInvalidations,
         step.headline.longTaskCount,

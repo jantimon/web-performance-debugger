@@ -1,4 +1,4 @@
-import type { CpuModel } from "../model/recording.js";
+import type { CpuModel, SpanBreakdown } from "../model/recording.js";
 import type { CpuOverview, FrameQueryResult } from "../model/query.js";
 import { num, table } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
@@ -90,6 +90,60 @@ export function printCpuBreakdown(model: CpuModel): void {
         "js includes synchronous engine work JS triggered (e.g. forced layout bills to the forcing frame); it is not pure JS.",
       ),
     );
+}
+
+/**
+ * The reconciling seven-slice bar per span (--breakdown mode): `js · style · layout · paint · gc ·
+ * other · idle`, tiling each span's window exactly (Σ slices + idle == wallMs). `other` stays
+ * visible and `idle` is annotated; the js slice carries a compact by-package annotation. In
+ * --breakdown mode this replaces the single js/browser/gc/idle profile bar (printCpuBreakdown).
+ */
+export function printSpanBreakdowns(breakdowns: SpanBreakdown[]): void {
+  if (!breakdowns.length) return;
+  console.log(`\nCPU time breakdown ${dim("(per span: Σ slices + idle = wall)")}`);
+  for (const span of breakdowns) {
+    const { wallMs, slices, residualMs } = span.breakdown;
+    const label = `${span.label} ${dim(`(${span.kind}, ${num(wallMs, 1)} ms)`)}`;
+    console.log(`\n${bold(label)}`);
+    if (wallMs <= 0) {
+      console.log(dim("  (empty window; nothing to tile)"));
+      continue;
+    }
+    const pct = (ms: number): string => `${num((ms / wallMs) * 100, 1)}%`;
+    const topPackages = Object.entries(slices.js.byPackage)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, BREAKDOWN_TOP_PACKAGES)
+      .map(([owner, ms]) => `${owner} ${num(ms, 1)}`)
+      .join(" · ");
+    // Fixed order: real work first, idle last, so the eye lands on the cost.
+    const rows: [string, number, string][] = [
+      ["js", slices.js.ms, topPackages],
+      ["style", slices.style.ms, ""],
+      ["layout", slices.layout.ms, ""],
+      ["paint", slices.paint.ms, ""],
+      ["gc", slices.gc.ms, ""],
+      ["other", slices.other.ms, dim("(task remainder + unclassified)")],
+      ["idle", slices.idle.ms, dim("(waiting, not work)")],
+    ];
+    console.log(
+      table(
+        HEAD(["slice", "ms", "%", ""]),
+        rows.map(([name, ms, note]) => [
+          name,
+          num(ms, 1),
+          heat((ms / wallMs) * 100, pct(ms)),
+          note,
+        ]),
+      ),
+    );
+    if (residualMs != null)
+      console.log(dim(`  residual ${num(residualMs, 3)} ms (tiling did not fully close)`));
+  }
+  console.log(
+    dim(
+      "\njs includes synchronous engine work JS triggered (e.g. forced layout bills to the forcing frame); it is not pure JS.",
+    ),
+  );
 }
 
 interface OutOpts {

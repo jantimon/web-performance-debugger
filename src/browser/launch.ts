@@ -58,9 +58,19 @@ function missingBrowserMessage(error: Error, browser: BrowserName): Error {
   );
 }
 
+/**
+ * Chrome headless flavour. "new" is Puppeteer's default full-Chrome headless; "shell" launches
+ * chrome-headless-shell (`headless: 'shell'`), which runs BeginFrame at ~120Hz instead of ~60Hz,
+ * halving the one-frame floor on wall/INP (16.6 -> 8.3ms). See docs/dev/frame-floor.md. Ignored
+ * when the browser is headed (--no-headless) or Firefox.
+ */
+export type HeadlessMode = "new" | "shell";
+
 export async function launchBrowser(opts: {
   browser: BrowserName;
   headless: boolean;
+  /** chrome only: "new" (default) or "shell" (chrome-headless-shell, ~120Hz frames) */
+  headlessMode?: HeadlessMode;
   userDataDir?: string;
   /**
    * Timeout (ms) for a single protocol call, on both browsers. Raise it when a traced interaction
@@ -85,6 +95,7 @@ export async function launchBrowser(opts: {
 async function launchOrThrow(opts: {
   browser: BrowserName;
   headless: boolean;
+  headlessMode?: HeadlessMode;
   userDataDir?: string;
   protocolTimeoutMs?: number;
   gecko?: GeckoLaunch;
@@ -103,8 +114,11 @@ async function launchOrThrow(opts: {
     return { browser, page, client: null };
   }
 
+  // Headed (--no-headless) stays false; headless picks new (true) or shell. Shell runs
+  // BeginFrame at ~120Hz, halving the wall/INP frame floor (docs/dev/frame-floor.md).
+  const headless = opts.headless ? (opts.headlessMode === "shell" ? "shell" : true) : false;
   const browser = await puppeteer.launch({
-    headless: opts.headless,
+    headless,
     // Persistent profile dir: reuses cookies/session across passes and runs (puppeteer
     // ignores undefined, so this is a no-op when the flag is absent).
     userDataDir: opts.userDataDir,

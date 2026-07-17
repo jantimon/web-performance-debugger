@@ -34,6 +34,15 @@ const INVALIDATION = new Set([
   "InvalidateLayout",
   "LayoutImageUnsized",
 ]);
+// Garbage collection on the renderer main thread. [measured, real trace] the light --breakdown
+// category set (devtools.timeline, no v8.gc) emits `MinorGC`/`MajorGC` as complete events with a
+// duration on the main thread; the `V8.GC*` family is mostly instant markers / background-thread
+// work, matched here defensively so any main-thread member nests as gc rather than leaking into
+// `other`. classify() runs in every mode, so `MinorGC`/`MajorGC`/`V8.GC*` reclassify from `other`
+// to `gc` everywhere, not just under --breakdown; no rendering count derives from the gc kind, so
+// only the kind label shifts (the seven-slice breakdown is what consumes the gc slice). See
+// docs/dev/rendering-counts.md.
+const GC = new Set(["MinorGC", "MajorGC"]);
 const TASK = new Set(["RunTask"]);
 const SCRIPTING = new Set([
   "FunctionCall",
@@ -53,6 +62,7 @@ export const EVENT_KINDS: EventKind[] = [
   "composite",
   "invalidation",
   "scripting",
+  "gc",
   "task",
   "usertiming",
   "other",
@@ -67,6 +77,9 @@ export function classify(name: string, cat: string): EventKind {
   if (PAINT.has(name)) return "paint";
   if (COMPOSITE.has(name)) return "composite";
   if (INVALIDATION.has(name)) return "invalidation";
+  // Before the scripting fallback: a GC event's category can include "v8", which would otherwise
+  // classify it as scripting and hide it inside the js slice.
+  if (GC.has(name) || name.startsWith("V8.GC")) return "gc";
   if (TASK.has(name)) return "task";
   if (cat.includes("blink.user_timing")) return "usertiming";
   if (SCRIPTING.has(name) || cat.includes("v8")) return "scripting";

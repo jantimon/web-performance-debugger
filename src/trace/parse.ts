@@ -12,10 +12,20 @@ interface RawTraceEvent {
   args?: unknown;
 }
 
-/** Parse a raw DevTools trace buffer (JSON) into normalized, classified events. */
-export function parseTrace(rawJson: string | { traceEvents?: RawTraceEvent[] }): NormalizedEvent[] {
+/**
+ * Parse a raw DevTools trace buffer (JSON) into normalized, classified events.
+ *
+ * `keepThreadIds` retains each event's `pid`/`tid`. Off by default so no other mode carries thread
+ * ids on its stored events; --breakdown turns it on because the seven-slice engine tiles the
+ * renderer main thread alone and must tell it from raster/compositor threads.
+ */
+export function parseTrace(
+  rawJson: string | { traceEvents?: RawTraceEvent[] },
+  options?: { keepThreadIds?: boolean },
+): NormalizedEvent[] {
   const obj = typeof rawJson === "string" ? JSON.parse(rawJson) : rawJson;
   const raw: RawTraceEvent[] = Array.isArray(obj) ? obj : (obj.traceEvents ?? []);
+  const keepThreadIds = options?.keepThreadIds === true;
   const out: NormalizedEvent[] = [];
   let id = 0;
   for (const rawEvent of raw) {
@@ -23,7 +33,7 @@ export function parseTrace(rawJson: string | { traceEvents?: RawTraceEvent[] }):
     // keep complete (X), instant (I/R), and async begin (b) events; drop metadata (M)
     if (rawEvent.ph === "M") continue;
     const cat = rawEvent.cat ?? "";
-    out.push({
+    const event: NormalizedEvent = {
       id: id++,
       name: rawEvent.name,
       ts: rawEvent.ts,
@@ -31,7 +41,12 @@ export function parseTrace(rawJson: string | { traceEvents?: RawTraceEvent[] }):
       ph: rawEvent.ph,
       kind: classify(rawEvent.name, cat),
       args: rawEvent.args,
-    });
+    };
+    if (keepThreadIds) {
+      if (typeof rawEvent.pid === "number") event.pid = rawEvent.pid;
+      if (typeof rawEvent.tid === "number") event.tid = rawEvent.tid;
+    }
+    out.push(event);
   }
   out.sort((left, right) => left.ts - right.ts);
   return out;

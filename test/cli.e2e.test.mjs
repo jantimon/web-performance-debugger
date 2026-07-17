@@ -227,3 +227,97 @@ e2e("driver --iterations repeats the flow: per-step medians, per-iteration count
   );
   assert.ok(many.index.steps[0].stats?.samples === 5, "the step index exposes the spread");
 });
+
+// --- the fused --breakdown pass and the reconciling seven-slice bar ---
+
+const SLICE_NAMES = ["js", "style", "layout", "paint", "gc", "other", "idle"];
+const sliceSum = (breakdown) =>
+  SLICE_NAMES.reduce((total, name) => total + breakdown.slices[name].ms, 0);
+
+// Flagship reconciliation: on a forced-layout-heavy workload every span must tile its own window
+// (Σ slices + idle == wall) and the style+layout slices must carry real, substantial ms: the
+// forced-layout probe's cost is style recalc plus layout, ~5.5+2.0 ms measured, not one "forced
+// layout" number.
+e2e("record --breakdown: every span reconciles, and style+layout carry real ms", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "bd-forced");
+  runCli([
+    "record", path.join(examples, "forces-layout.mjs"),
+    "--bench", "--breakdown", "--iterations", "5", "--out", out,
+  ]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+
+  assert.ok(Array.isArray(rec.breakdowns) && rec.breakdowns.length > 0, "breakdowns present");
+  const runSpan = rec.breakdowns.find((span) => span.kind === "run");
+  assert.ok(runSpan, "a run span exists");
+
+  for (const span of rec.breakdowns) {
+    const breakdown = span.breakdown;
+    const sum = sliceSum(breakdown);
+    assert.ok(
+      Math.abs(sum - breakdown.wallMs) < 0.01,
+      `${span.label}: slices+idle ${sum} must equal wall ${breakdown.wallMs}`,
+    );
+    assert.equal(breakdown.residualMs, undefined, `${span.label}: an exact tiling carries no residual`);
+  }
+
+  // This workload dirties style + layout on every iteration; over 5 iterations their combined ms is
+  // several ms (measured single-iteration: style ~5.5 ms + layout ~2.0 ms).
+  const styleLayout = runSpan.breakdown.slices.style.ms + runSpan.breakdown.slices.layout.ms;
+  assert.ok(styleLayout > 3, `style+layout should be several ms, got ${styleLayout}`);
+
+  // Forced-layout count is NOT measured in breakdown mode (no `.stack`): null, never a fake 0.
+  assert.equal(rec.summary.forcedLayoutCount, null, "forced is reported as not-measured, not 0");
+});
+
+// The idle edge probe C left untested: a run() that only awaits is ~pure waiting, so idle must
+// dominate the window and the sum must still close.
+e2e("record --breakdown: a waiting-dominated span is mostly idle and still closes", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "bd-idle");
+  runCli([
+    "record", path.join(examples, "awaits-only.mjs"),
+    "--bench", "--breakdown", "--iterations", "3", "--out", out,
+  ]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+  const runSpan = rec.breakdowns.find((span) => span.kind === "run");
+  assert.ok(runSpan, "a run span exists");
+
+  const { wallMs, slices } = runSpan.breakdown;
+  assert.ok(slices.idle.ms / wallMs > 0.8, `idle should dominate a waiting window, got ${(slices.idle.ms / wallMs) * 100}%`);
+  const sum = sliceSum(runSpan.breakdown);
+  assert.ok(Math.abs(sum - wallMs) < 0.01, `slices+idle ${sum} must equal wall ${wallMs}`);
+});
+
+// The mark bridge: a page-side performance.measure becomes a span with its own breakdown.
+e2e("record --breakdown: a user performance.measure appears as a span", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "bd-measure");
+  runCli([
+    "record", path.join(repoRoot, "test", "fixtures", "user-measure.mjs"),
+    "--bench", "--breakdown", "--iterations", "2", "--out", out,
+  ]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+
+  const measureSpan = rec.breakdowns.find((span) => span.kind === "measure" && span.label === "user-span");
+  assert.ok(measureSpan, "the user 'user-span' measure surfaces as a span");
+  assert.ok(measureSpan.breakdown.wallMs > 0, "the measure span has a positive wall");
+  const sum = sliceSum(measureSpan.breakdown);
+  assert.ok(
+    Math.abs(sum - measureSpan.breakdown.wallMs) < 0.01,
+    `the measure span reconciles: ${sum} vs ${measureSpan.breakdown.wallMs}`,
+  );
+  // The work inside the measure is a JS loop, so its js slice must be the dominant one.
+  assert.ok(measureSpan.breakdown.slices.js.ms > 0, "the measured JS work lands in the js slice");
+});
+
+// The flag guards reject before any browser launches, so this runs everywhere (not gated on Chrome).
+test("record --headless-mode shell errors when combined with --no-headless", () => {
+  const result = spawnSync(
+    process.execPath,
+    [cli, "record", path.join(examples, "forces-layout.mjs"), "--headless-mode", "shell", "--no-headless"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.notEqual(result.status, 0, "the bad flag combo exits non-zero");
+  assert.match(result.stderr, /--headless-mode shell requires headless \(drop --no-headless\)/);
+});

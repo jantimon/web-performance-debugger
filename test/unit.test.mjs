@@ -22,6 +22,8 @@ import {
 } from "../dist/profile/gecko.js";
 import { attachStacks } from "../dist/trace/stacks.js";
 import { SourceMapResolver } from "../dist/trace/sourcemap.js";
+import { computeSpanBreakdown } from "../dist/trace/breakdown.js";
+import { userMeasureSpans } from "../dist/commands/record.js";
 import { findWindow } from "../dist/trace/parse.js";
 import { labelWindows, mergeSteps } from "../dist/trace/steps.js";
 import { diffCmd } from "../dist/commands/diff.js";
@@ -45,6 +47,18 @@ test("classify maps trace event names to kinds", () => {
   assert.equal(classify("LayoutInvalidationTracking", ""), "invalidation");
   assert.equal(classify("Whatever", "blink.user_timing"), "usertiming");
   assert.equal(classify("Nope", ""), "other");
+});
+
+// The gc kind is a sanctioned coupling-point addition for the seven-slice breakdown. [measured on a
+// real light-trace capture] the main-thread GC events are MinorGC/MajorGC (from devtools.timeline,
+// so no v8.gc category is needed); the V8.GC* family is matched defensively. The check must sit
+// BEFORE the scripting fallback, or a GC event whose category includes "v8" would land in js.
+test("classify maps GC events to the gc kind, ahead of the v8 scripting fallback", () => {
+  assert.equal(classify("MinorGC", "disabled-by-default-devtools.timeline"), "gc");
+  assert.equal(classify("MajorGC", "disabled-by-default-devtools.timeline"), "gc");
+  assert.equal(classify("V8.GCScavenger", "disabled-by-default-v8.gc"), "gc");
+  // a non-GC v8 event still classifies as scripting
+  assert.equal(classify("v8.run", "v8"), "scripting");
 });
 
 test("invalidationKind classifies by name", () => {
@@ -91,6 +105,114 @@ test("longTasks finds >=50ms tasks with dominant kind", () => {
   assert.equal(tasks.length, 1);
   assert.equal(tasks[0].durMs, 60);
   assert.equal(tasks[0].dominantKind, "layout");
+});
+
+// --- The seven-slice breakdown engine (pure; fixtures, no browser) ---
+//
+// A nested main-thread flame chart, in microseconds. RunTask contains a FunctionCall (js), which
+// contains a Layout; the RunTask also contains a Paint. Disjoint self-time is standard flame-chart
+// self-time (children subtracted), so RunTask's own remainder is the `other` bucket.
+const NESTED_EVENTS = [
+  { id: 0, name: "RunTask", ts: 0, dur: 100000, ph: "X", kind: "task" },
+  { id: 1, name: "FunctionCall", ts: 10000, dur: 30000, ph: "X", kind: "scripting" },
+  { id: 2, name: "Layout", ts: 20000, dur: 10000, ph: "X", kind: "layout" },
+  { id: 3, name: "Paint", ts: 50000, dur: 10000, ph: "X", kind: "paint" },
+];
+const NESTED_WINDOW = { startTs: 0, endTs: 100000 };
+
+test("computeSpanBreakdown: disjoint self-time over nesting, and the `other` remainder", () => {
+  const breakdown = computeSpanBreakdown(NESTED_EVENTS, [], NESTED_WINDOW);
+  const { js, style, layout, paint, gc, other, idle } = breakdown.slices;
+  // FunctionCall self = 30 - 10 (Layout child) = 20; Layout = 10; Paint = 10.
+  assert.equal(js.ms, 20);
+  assert.equal(layout.ms, 10);
+  assert.equal(paint.ms, 10);
+  assert.equal(style.ms, 0);
+  assert.equal(gc.ms, 0);
+  // RunTask self = 100 - 30 (FunctionCall subtree) - 10 (Paint) = 60, the task remainder.
+  assert.equal(other.ms, 60);
+  // window is 100% busy, so idle is 0.
+  assert.equal(idle.ms, 0);
+});
+
+test("computeSpanBreakdown: Σ slices + idle == wall EXACTLY (the product promise)", () => {
+  // A window with an idle gap: the RunTask covers [0,50000] only, so [50000,100000) is idle and the
+  // sum must still close to the wall with zero residual.
+  const events = [
+    { id: 0, name: "RunTask", ts: 0, dur: 50000, ph: "X", kind: "task" },
+    { id: 1, name: "FunctionCall", ts: 10000, dur: 20000, ph: "X", kind: "scripting" },
+  ];
+  const breakdown = computeSpanBreakdown(events, [], { startTs: 0, endTs: 100000 });
+  const { js, style, layout, paint, gc, other, idle } = breakdown.slices;
+  assert.equal(js.ms, 20); // FunctionCall self
+  assert.equal(other.ms, 30); // RunTask remainder (50 - 20)
+  assert.equal(idle.ms, 50); // [50000,100000) uncovered
+  const sum = js.ms + style.ms + layout.ms + paint.ms + gc.ms + other.ms + idle.ms;
+  assert.ok(Math.abs(sum - breakdown.wallMs) < 1e-9, `sum ${sum} must equal wall ${breakdown.wallMs}`);
+  assert.equal(breakdown.residualMs, undefined, "an exact tiling carries no residual");
+});
+
+test("computeSpanBreakdown: js slice is split by sampled package, samples outside js excluded", () => {
+  // js self-time regions are [10000,20000) and [30000,40000) (FunctionCall minus the Layout child).
+  const samples = [
+    { ts: 15000, package: "react-dom" }, // inside a js region
+    { ts: 15500, package: "react-dom" }, // inside a js region
+    { ts: 35000, package: "app" }, // inside a js region
+    { ts: 25000, package: "react-dom" }, // inside the Layout region -> NOT a js sample
+    { ts: 55000, package: "app" }, // inside the Paint region -> NOT a js sample
+    { ts: 12000, package: null }, // in a js region but unattributable -> excluded from the split
+  ];
+  const breakdown = computeSpanBreakdown(NESTED_EVENTS, samples, NESTED_WINDOW);
+  const { js } = breakdown.slices;
+  assert.equal(js.ms, 20);
+  // three counted js samples: react-dom x2, app x1 -> 2/3 and 1/3 of the TRACE-measured 20ms.
+  assert.ok(Math.abs(js.byPackage["react-dom"] - (20 * 2) / 3) < 1e-9);
+  assert.ok(Math.abs(js.byPackage["app"] - (20 * 1) / 3) < 1e-9);
+  const pkgSum = Object.values(js.byPackage).reduce((total, value) => total + value, 0);
+  assert.ok(Math.abs(pkgSum - js.ms) < 1e-9, "byPackage must sum to js.ms");
+});
+
+test("computeSpanBreakdown: zero samples in the js regions leaves byPackage empty, not fabricated", () => {
+  const breakdown = computeSpanBreakdown(NESTED_EVENTS, [{ ts: 55000, package: "app" }], NESTED_WINDOW);
+  assert.deepEqual(breakdown.slices.js.byPackage, {}, "a sample outside js contributes no package");
+  assert.equal(breakdown.slices.js.ms, 20, "the js ms is still the trace-measured value");
+});
+
+test("userMeasureSpans: pairs user measures, excludes wpd:*, drops out-of-window, keeps first", () => {
+  const usertiming = (name, ph, ts) => ({ id: ts, name, ts, dur: 0, ph, kind: "usertiming" });
+  const events = [
+    usertiming("wpd:run", "b", 100), // wpd's own measure -> excluded
+    usertiming("user-span", "b", 150),
+    usertiming("user-span", "e", 400),
+    usertiming("wpd:run", "e", 1000),
+    usertiming("hydrate", "b", 200),
+    usertiming("hydrate", "e", 300),
+    usertiming("user-span", "b", 500), // a repeat of the same name -> first pair wins
+    usertiming("user-span", "e", 600),
+    usertiming("late", "b", 900),
+    usertiming("late", "e", 1200), // ends after the run window -> dropped
+  ];
+  const spans = userMeasureSpans(events, 100, 1000);
+  assert.deepEqual(spans, [
+    { label: "user-span", startTs: 150, endTs: 400 },
+    { label: "hydrate", startTs: 200, endTs: 300 },
+  ]);
+});
+
+// A recording written before --breakdown existed has no `breakdowns` field and a numeric
+// forcedLayoutCount; both must still load and behave. Guards the additive-compatibility promise.
+test("buildSummary: forcedMeasured false reports forced as null (never a fake 0)", () => {
+  const events = [{ id: 0, name: "Layout", ts: 1, dur: 2000, ph: "X", kind: "layout" }];
+  const measured = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
+  assert.equal(measured.forcedLayoutCount, 0, "default: measured, and this window forced nothing");
+  const notMeasured = buildSummary({
+    detailEvents: events,
+    detailWindowStart: null,
+    cdpDelta: {},
+    forcedMeasured: false,
+  });
+  assert.equal(notMeasured.forcedLayoutCount, null, "breakdown mode: not measured, so null");
+  assert.equal(notMeasured.forcedLayoutMs, null);
 });
 
 test("buildSummary prefers CDP counts, falls back to trace", () => {
@@ -914,6 +1036,14 @@ test("assert: a satisfied threshold on a measured metric passes", async () => {
   assert.equal(code, undefined);
 });
 
+// --breakdown reports forced as null (not measured). A gate on it must FAIL loudly, exactly like
+// --max-inp on a run with no interaction, never silently pass on a fake 0.
+test("assert: --max-forced on a breakdown recording (forced null) FAILS, not silently passes", async () => {
+  const rec = writeRecording("assert-null-forced.json", { forcedLayoutCount: null });
+  const code = await captureExitCode(() => assertCmd(rec, { forced: 0 }));
+  assert.equal(code, 1);
+});
+
 // Regression: DEFAULT_CPU_INTERVAL_US was duplicated in commands/record.ts and runtime/node.ts, so
 // the 50 -> 200 change landed on the browser lanes only. The node lane -- the very lane the
 // interval was measured on -- kept sampling at 50us while --help and the changelog said 200. The
@@ -1022,6 +1152,12 @@ test("noteCountScope: describes the pass plan that ran, per lane", () => {
   const tracePinned = { name: "trace", categories: ["devtools.timeline"], iterations: 1 };
   const traceAll = { name: "trace", categories: ["devtools.timeline"] };
   const gecko = { name: "gecko", categories: null, gecko: true };
+  const breakdownPass = {
+    name: "breakdown",
+    categories: ["devtools.timeline"],
+    cpu: true,
+    keepThreadIds: true,
+  };
   const bench = (iterations) => ({ driver: false, iterations });
   // Real caps, not hand-rolled objects: the note must stay tied to what the backend can do.
   const chrome = capsFor("chrome");
@@ -1052,6 +1188,13 @@ test("noteCountScope: describes the pass plan that ran, per lane", () => {
   const noIsolate = noteCountScope([traceAll], bench(20), chrome);
   assert.match(noIsolate, /TOTALS across all 20/);
   assert.match(noIsolate, /--no-isolate/);
+
+  // --breakdown: one fused pass (light trace + sampler) carries wall AND counts, so it runs every
+  // iteration and its counts total. noteCountScope must disclose this, not return null.
+  const breakdown = noteCountScope([breakdownPass], bench(3), chrome);
+  assert.ok(breakdown, "the breakdown lane discloses its count scope");
+  assert.match(breakdown, /TOTALS across all 3/);
+  assert.match(breakdown, /--breakdown fuses/);
 
   // Firefox: the gecko pass is the lane's CPU sampler, so it runs every iteration and totals.
   const firefox = noteCountScope([timing, gecko], bench(20), firefoxCaps);

@@ -45,11 +45,18 @@ export interface SummaryInputs {
    * computeStats contract, and no caller can invent a statistic that bypasses it.
    */
   perStep?: Omit<StepTiming, "stats">[];
+  /**
+   * Whether forced-layout detection ran (default true). False when the trace lacked the `.stack`
+   * category (--breakdown): forced is then reported as null (not measured), never a fake 0, because
+   * every layout in the window WOULD count as unforced with no stack to prove otherwise.
+   */
+  forcedMeasured?: boolean;
 }
 
 export function buildSummary(input: SummaryInputs): RecordingSummary {
   const { detailEvents, detailWindowStart, cdpDelta } = input;
   const perIteration = input.perIteration ?? [];
+  const forcedMeasured = input.forcedMeasured !== false;
 
   let paintCount = 0;
   let paintUs = 0;
@@ -121,8 +128,10 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     layoutInvalidations: layoutInval,
     paintInvalidations: paintInval,
     styleInvalidations: styleInval,
-    forcedLayoutCount,
-    forcedLayoutMs: forcedLayoutUs / 1000,
+    // null (not 0) when detection did not run: --breakdown drops the `.stack` category forced
+    // detection needs, so a 0 here would read as "no thrashing" instead of "not measured".
+    forcedLayoutCount: forcedMeasured ? forcedLayoutCount : null,
+    forcedLayoutMs: forcedMeasured ? forcedLayoutUs / 1000 : null,
     longTaskCount,
     longestTaskMs: longestTaskUs / 1000,
     scriptingMs: (cdpDelta.ScriptDuration ?? 0) * 1000,

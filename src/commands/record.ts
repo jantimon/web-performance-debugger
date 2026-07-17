@@ -1,19 +1,20 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { launchBrowser, GECKO_MIN_INTERVAL_MS } from "../browser/launch.js";
+import { launchBrowser, GECKO_MIN_INTERVAL_MS, type HeadlessMode } from "../browser/launch.js";
 import { capsFor, type BrowserCaps, type BrowserName } from "../browser/backend.js";
 import { startStaticServer, type StaticServer } from "../browser/server.js";
 import { parseGecko, geckoToRawCpuProfile, geckoToRenderingEvents } from "../profile/gecko.js";
 import { runHarness } from "../browser/harness.js";
 import { runDriver, type DriverStep } from "../browser/driver.js";
 import { applyCpuThrottle, applyNetworkPreset } from "../browser/throttle.js";
-import { traceCategories } from "../trace/categories.js";
+import { traceCategories, breakdownTraceCategories } from "../trace/categories.js";
 import { parseTrace, findWindow, findSteps } from "../trace/parse.js";
 import { labelWindows, mergeSteps, type LabelledWindow, type MergedStep } from "../trace/steps.js";
 import { attachStacks } from "../trace/stacks.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { markForced } from "../trace/analysis.js";
+import { computeSpanBreakdown, type BreakdownSample } from "../trace/breakdown.js";
 import {
   enableMetrics,
   snapshotMetricsIfAvailable,
@@ -24,10 +25,11 @@ import {
 import { buildSummary } from "../metrics/summarize.js";
 import {
   buildCpuModel,
+  packagesByProfileNode,
   DEFAULT_CPU_INTERVAL_US,
   type RawCpuProfile,
 } from "../profile/cpuprofile.js";
-import { printCpuHeadline, printCpuBreakdown } from "./cpu.js";
+import { printCpuHeadline, printCpuBreakdown, printSpanBreakdowns } from "./cpu.js";
 import { printSummary } from "./summaryView.js";
 import { kv, num, sparkline } from "../output/ascii.js";
 import { bold, cyan, dim } from "../output/color.js";
@@ -45,6 +47,7 @@ import type {
   ScreenshotRefs,
   SourceMapDiagnostics,
   SourceMapFailure,
+  SpanBreakdown,
   StepIndex,
   StepIndexEntry,
   TimingEntry,
@@ -63,6 +66,8 @@ export interface RecordOptions {
   warmup: number;
   out?: string;
   headless: boolean;
+  /** chrome headless flavour: "new" (default) or "shell" (~120Hz frames); ignored when headed/firefox */
+  headlessMode?: HeadlessMode;
   /** persistent Chrome profile dir (resolved absolute); reuse one login across passes/runs */
   userDataDir?: string;
   screenshot?: "before" | "after" | "both";
@@ -88,6 +93,13 @@ export interface RecordOptions {
   trace?: boolean;
   /** include the invalidationTracking trace category (default true); false drops it to cut overhead on invalidation-heavy pages */
   invalidationTracking?: boolean;
+  /**
+   * Single-pass seven-slice breakdown mode (chrome only): a light trace (no `.stack`, no
+   * invalidationTracking) fused with the CPU sampler in ONE pass, producing a reconciling
+   * js/style/layout/paint/gc/other/idle decomposition per span. Cannot report forced-layout counts
+   * or blame (they need `.stack`).
+   */
+  breakdown?: boolean;
 }
 
 interface PassSpec {
@@ -96,6 +108,12 @@ interface PassSpec {
   categories: string[] | null;
   /** capture a CPU sampling profile during this pass (tracing stays off) */
   cpu?: boolean;
+  /**
+   * Keep each trace event's pid/tid (parseTrace drops them otherwise). Only the --breakdown pass
+   * sets this: the seven-slice engine tiles the renderer main thread and must tell it from
+   * raster/compositor threads. Off elsewhere, so those recordings' events stay byte-for-byte.
+   */
+  keepThreadIds?: boolean;
   /** Firefox: run under the Gecko profiler; the shutdown dump yields CPU samples AND
    * layout/style markers (blame) from this one pass. */
   gecko?: boolean;
@@ -135,14 +153,19 @@ export function noteCountScope(
   if (opts.iterations <= 1) return null;
   const tracePass = specs.find((spec) => spec.name === "trace");
   const geckoPass = specs.find((spec) => spec.name === "gecko");
+  const breakdownPass = specs.find((spec) => spec.name === "breakdown");
   // --no-isolate: one pass carries wall AND counts, so it must run every iteration and its counts
   // are totals. Gecko: that pass is also the lane's only CPU sampler, and pinning it to one
   // iteration would starve the profile of samples, which costs more than the counts gain.
-  const totalling = (tracePass && tracePass.iterations !== 1) || geckoPass;
+  // --breakdown: one fused pass (light trace + sampler) is the only pass, so it too carries wall AND
+  // counts, runs every iteration, and its counts total.
+  const totalling = (tracePass && tracePass.iterations !== 1) || geckoPass || breakdownPass;
   if (totalling) {
     const why = geckoPass
       ? "the Gecko pass is also this lane's CPU sampler, so it runs every iteration"
-      : "--no-isolate collapses to one pass, which must run every iteration for the wall samples";
+      : breakdownPass
+        ? "--breakdown fuses the light trace and CPU sampler into one pass, which must run every iteration for the wall samples"
+        : "--no-isolate collapses to one pass, which must run every iteration for the wall samples";
     // Driver per-step counts are unaffected: each measureStep brackets its own counters and
     // mergeSteps keeps the first iteration's, so only THIS recording's overall counts total up.
     // Saying "counts are totals" flatly would send a reader to re-derive per-step numbers that
@@ -174,7 +197,10 @@ export function noteCountScope(
  */
 export function blameSemanticFor(specs: PassSpec[]): BlameSemantic | undefined {
   if (specs.some((spec) => spec.gecko)) return "invalidation-site";
-  if (specs.some((spec) => spec.categories)) return "flush-site";
+  // Flush-site blame is Blink's stack at the forced flush, which needs the `.stack` category. The
+  // --breakdown pass has categories but drops `.stack`, so it produces no blame; excluding it by
+  // name keeps this from claiming a semantic for lines that were never captured.
+  if (specs.some((spec) => spec.categories && spec.name !== "breakdown")) return "flush-site";
   return undefined;
 }
 
@@ -378,6 +404,7 @@ async function runPass(
   const { browser, page, client } = await launchBrowser({
     browser: browserName,
     headless: opts.headless,
+    headlessMode: opts.headlessMode,
     userDataDir: opts.userDataDir,
     protocolTimeoutMs: opts.protocolTimeoutMs,
     gecko: geckoDumpPath
@@ -508,7 +535,9 @@ async function runPass(
     let stepWindows: LabelledWindow[] | undefined;
     if (spec.categories && caps.trace) {
       const buf = await page.tracing.stop();
-      events = parseTrace(buf ? new TextDecoder("utf-8").decode(buf) : "[]");
+      events = parseTrace(buf ? new TextDecoder("utf-8").decode(buf) : "[]", {
+        keepThreadIds: spec.keepThreadIds,
+      });
       // Rewrite trace stack urls back to local source files for blame/source lookup.
       await attachStacks(events, server.url, root, maps);
       // Flag forced (synchronous) layout/style: the layout-thrashing signal.
@@ -594,6 +623,137 @@ async function runPass(
   return result;
 }
 
+/**
+ * The renderer main thread's pid/tid, plus how it was picked: `marker` when `wpd:run:start` (the
+ * mark the page makes on its own main thread) named the thread, `heuristic` when that marker was
+ * missing and the thread carrying the most layout/paint work stood in. A lost marker degrades to a
+ * heuristic rather than to nothing; null when no candidate exists at all.
+ */
+function mainThread(
+  events: NormalizedEvent[],
+): { pid: number; tid: number; via: "marker" | "heuristic" } | null {
+  const start = events.find((event) => event.name === "wpd:run:start");
+  if (start?.pid != null && start.tid != null)
+    return { pid: start.pid, tid: start.tid, via: "marker" };
+  const activity = new Map<string, { pid: number; tid: number; count: number }>();
+  for (const event of events) {
+    if (event.pid == null || event.tid == null) continue;
+    if (event.kind !== "layout" && event.kind !== "paint") continue;
+    const key = `${event.pid}/${event.tid}`;
+    const entry = activity.get(key) ?? { pid: event.pid, tid: event.tid, count: 0 };
+    entry.count++;
+    activity.set(key, entry);
+  }
+  let best: { pid: number; tid: number; count: number } | null = null;
+  for (const entry of activity.values()) if (!best || entry.count > best.count) best = entry;
+  return best ? { pid: best.pid, tid: best.tid, via: "heuristic" } : null;
+}
+
+/** Pair user `performance.measure` async begin/end trace events (blink.user_timing, ph b/e) into
+ * named windows. wpd's own `wpd:*` measures are excluded -- the run/step spans come from marks, not
+ * here. A repeated name (measured once per --iteration) keeps its FIRST in-window pair. */
+export function userMeasureSpans(
+  events: NormalizedEvent[],
+  runStart: number,
+  runEnd: number,
+): { label: string; startTs: number; endTs: number }[] {
+  const begins = new Map<string, number[]>();
+  const out = new Map<string, { label: string; startTs: number; endTs: number }>();
+  for (const event of events) {
+    if (event.kind !== "usertiming" || event.name.startsWith("wpd:")) continue;
+    if (event.ph === "b") {
+      const list = begins.get(event.name) ?? [];
+      list.push(event.ts);
+      begins.set(event.name, list);
+    } else if (event.ph === "e") {
+      const list = begins.get(event.name);
+      const startTs = list?.shift();
+      if (startTs == null) continue;
+      const endTs = event.ts;
+      if (out.has(event.name)) continue;
+      if (startTs < runStart || endTs > runEnd || endTs <= startTs) continue;
+      out.set(event.name, { label: event.name, startTs, endTs });
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * Build one seven-slice breakdown per span (--breakdown mode). Spans are the run window, each driver
+ * step window, and every user `performance.measure` inside the run window. Durations come from the
+ * main-thread trace events; the js slice is subdivided from the CPU samples projected onto the same
+ * trace clock (they share Chrome's base::TimeTicks). Returns [] if no run window was found.
+ */
+async function buildBreakdowns(
+  events: NormalizedEvent[],
+  raw: RawCpuProfile,
+  runWindow: { startTs: number | null; endTs: number | null },
+  mergedSteps: MergedStep[] | undefined,
+  context: { serverUrl: string; root: string; maps: SourceMapResolver; notes: string[] },
+): Promise<SpanBreakdown[]> {
+  if (runWindow.startTs == null || runWindow.endTs == null) return [];
+  const main = mainThread(events);
+  if (!main) return [];
+  // The marker path names the page's own main thread; the heuristic only guesses from where the
+  // rendering work landed, so another thread doing more layout/paint would steal the attribution.
+  if (main.via === "heuristic")
+    context.notes.push(
+      "WARNING: the wpd:run:start marker was not found, so the breakdown's main thread was picked by layout/paint activity (heuristic). Per-span breakdown attribution may be on the wrong thread.",
+    );
+  const mainEvents = events.filter(
+    (event) => event.pid === main.pid && event.tid === main.tid && event.dur > 0,
+  );
+
+  // Project every sample onto the trace clock: absolute ts = startTime + cumulative timeDeltas.
+  const packagesByNode = await packagesByProfileNode(raw, context);
+  const samples: BreakdownSample[] = [];
+  let clock = raw.startTime;
+  for (let index = 0; index < raw.samples.length; index++) {
+    clock += raw.timeDeltas[index] ?? 0;
+    samples.push({ ts: clock, package: packagesByNode.get(raw.samples[index]) ?? null });
+  }
+
+  const spans: { label: string; kind: SpanBreakdown["kind"]; startTs: number; endTs: number }[] = [
+    { label: "run", kind: "run", startTs: runWindow.startTs, endTs: runWindow.endTs },
+  ];
+  for (const step of mergedSteps ?? []) {
+    // A step whose end marker was lost runs to the end of the run window rather than being dropped.
+    if (step.startTs == null) continue;
+    spans.push({
+      label: step.label,
+      kind: "step",
+      startTs: step.startTs,
+      endTs: step.endTs ?? runWindow.endTs,
+    });
+  }
+  for (const measure of userMeasureSpans(events, runWindow.startTs, runWindow.endTs))
+    spans.push({
+      label: measure.label,
+      kind: "measure",
+      startTs: measure.startTs,
+      endTs: measure.endTs,
+    });
+
+  const breakdowns: SpanBreakdown[] = [];
+  for (const span of spans) {
+    const windowEvents = mainEvents.filter(
+      (event) => event.ts < span.endTs && event.ts + event.dur > span.startTs,
+    );
+    const windowSamples = samples.filter(
+      (sample) => sample.ts >= span.startTs && sample.ts <= span.endTs,
+    );
+    breakdowns.push({
+      label: span.label,
+      kind: span.kind,
+      breakdown: computeSpanBreakdown(windowEvents, windowSamples, {
+        startTs: span.startTs,
+        endTs: span.endTs,
+      }),
+    });
+  }
+  return breakdowns;
+}
+
 export async function record(opts: RecordOptions): Promise<{
   recording: Recording;
   outPath: string;
@@ -645,11 +805,27 @@ export async function record(opts: RecordOptions): Promise<{
     cpu: opts.cpuProfile,
     bracketFirstIteration: true,
   };
+  // --breakdown fuses a light trace (no `.stack`, no invalidationTracking) with the CPU sampler in
+  // ONE pass, so trace events and samples share a clock and the seven-slice breakdown reconciles.
+  // [measured] the light trace leaves self-time clean (+0-1%) and costs ~2-5% wall (probes A-C).
+  // It carries wall AND counts like --no-isolate, so it does NOT bracket the first iteration (that
+  // would put one iteration's CDP counts beside the whole-window trace counts); noteCountScope
+  // includes the "breakdown" pass in its totalling set, so it discloses that counts total across
+  // --iterations. keepThreadIds so the engine can pick the main thread.
+  const breakdownSpec: PassSpec = {
+    name: "breakdown",
+    categories: breakdownTraceCategories(),
+    cpu: true,
+    keepThreadIds: true,
+  };
   // --no-trace skips the heavy trace pass entirely: counts come from CDP (timing
   // pass) and optionally a CPU profile, with no paint/forced/invalidation detail.
   // The fallback for pages whose invalidationTracking pass pins the main thread.
   let specs: PassSpec[];
-  if (browserName === "firefox") {
+  if (opts.breakdown) {
+    // Chrome-only single pass (the CLI rejects firefox/node and the contradictory isolation flags).
+    specs = [breakdownSpec];
+  } else if (browserName === "firefox") {
     // Firefox has no CDP trace/counters: a clean timing pass, plus one
     // Gecko-profiler pass that yields CPU samples AND layout/style markers (blame) together.
     // The gecko pass keeps --iterations (unlike Chrome's trace pass, pinned to 1 below): it is
@@ -711,8 +887,30 @@ export async function record(opts: RecordOptions): Promise<{
       ? mergeSteps(timing.driverSteps, detail.windowStart == null ? undefined : detail.stepWindows)
       : undefined;
 
+  // The pass whose profile feeds the CPU model AND (in breakdown mode) the per-span bars. Found
+  // here, before the notes, so the breakdown notes describe bars that were actually produced.
+  const cpuPass = results.find((pass) => pass.cpuProfile);
+
   const notes: string[] = [];
-  if (browserName === "firefox") {
+  if (opts.breakdown && !cpuPass?.cpuProfile) {
+    // The fused pass yielded no sampler profile, so buildBreakdowns produces nothing. Do NOT emit
+    // the breakdown-mode notes below: they describe bars this run did not compute.
+    notes.push(
+      "WARNING: --breakdown could not be computed: the fused pass produced no CPU sampler profile, so no per-span breakdown was generated.",
+    );
+  } else if (opts.breakdown) {
+    // The seven-slice breakdown is the product here; state its shape and, loudly, what a light trace
+    // structurally cannot measure so a 0 is never read as clean.
+    notes.push(
+      "Breakdown mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (Σ slices + idle = wall). Timing rides this pass, so per-iteration wall is ~2-5% above a pristine timing pass.",
+    );
+    notes.push(
+      "NOT measured in breakdown mode: forced-layout count and forced-layout blame (they need the `.stack` trace category, which this mode drops); reported as 'not measured', never 0. Run the default mode (no --breakdown) for forced-layout blame.",
+    );
+    notes.push(
+      "NOT measured in breakdown mode: invalidation counts (layout/style/paint), because the invalidationTracking category is dropped. A 0 there means unmeasured, not clean. Layout/style/paint counts, long tasks, and CPU self-time ARE measured.",
+    );
+  } else if (browserName === "firefox") {
     notes.push(
       "Firefox backend (WebDriver BiDi): no CDP, so no exact counters and no CPU/network throttling. Wall timing rides performance.now (directional).",
     );
@@ -911,6 +1109,9 @@ export async function record(opts: RecordOptions): Promise<{
       detailEvents: traceWindowMissing ? [] : detail.events,
       detailWindowStart: detail.windowStart,
       cdpDelta: timing.cdpDelta,
+      // --breakdown drops the `.stack` category, so forced layout cannot be detected: report null,
+      // not a fake 0. Every other mode measured it.
+      forcedMeasured: !opts.breakdown,
     }),
   };
 
@@ -923,7 +1124,6 @@ export async function record(opts: RecordOptions): Promise<{
   let cpuProfilePath: string | undefined;
   let cpuModelPath: string | undefined;
   let cpuModel: CpuModel | undefined;
-  const cpuPass = results.find((pass) => pass.cpuProfile);
   if (cpuPass?.cpuProfile) {
     if (cpuPass.geckoDumpPath) {
       // Firefox: the authoritative raw artifact is the Gecko dump (loads at profiler.firefox.com);
@@ -946,6 +1146,19 @@ export async function record(opts: RecordOptions): Promise<{
       root,
       maps,
     });
+  }
+
+  // --breakdown: one reconciling seven-slice breakdown per span (run, driver steps, user measures).
+  // Built here because it needs both the trace events (with pid/tid) and the raw CPU samples, and
+  // it shares the run's one resolver so a sample's package matches `query cpu --by package`.
+  if (opts.breakdown && cpuPass?.cpuProfile) {
+    recording.breakdowns = await buildBreakdowns(
+      detail.events,
+      cpuPass.cpuProfile,
+      { startTs: detail.windowStart, endTs: detail.windowEnd },
+      mergedSteps,
+      { serverUrl: server.url, root, maps, notes },
+    );
   }
 
   // Every frame the run will ever resolve has now been resolved, so the tally is final. A failed
@@ -1011,6 +1224,7 @@ export async function record(opts: RecordOptions): Promise<{
           // This step's own repetitions, so a per-step recording carries the same samples+stats
           // contract as a bench one: `wallMs` is their median, `stats` their spread.
           perIteration: step.perIteration,
+          forcedMeasured: !opts.breakdown,
         }),
       };
       const stepBase = `${base}.step-${step.index}-${slug(step.label)}`;
@@ -1150,7 +1364,9 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     printCpuHeadline(cpuModel);
     // Directly under the package table, because it says whether that table can be believed.
     printSourcemapLine(recording.meta.sourcemaps, cpuModel.unmappedFrames ?? 0);
-    printCpuBreakdown(cpuModel);
+    // In --breakdown mode the seven-slice per-span bars replace the single profile-only bar.
+    if (recording.breakdowns?.length) printSpanBreakdowns(recording.breakdowns);
+    else printCpuBreakdown(cpuModel);
   }
   if (recording.meta.throttle) {
     const throttle = recording.meta.throttle;

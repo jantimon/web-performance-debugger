@@ -83,10 +83,16 @@ export function printSummary(rec: Recording): void {
     ]),
   );
 
+  // forced is null when the run did not measure it (--breakdown drops the `.stack` category); say
+  // "not measured" and point at the mode that does, never print 0 (which reads as "no thrashing").
+  const forcedCell =
+    summary.forcedLayoutCount == null
+      ? dim("not measured (run the default mode for forced-layout blame)")
+      : `${summary.forcedLayoutCount}  (${num(summary.forcedLayoutMs ?? 0)} ms)`;
   console.log("\nHotspots\n");
   console.log(
     kv([
-      ["forced layout/style", `${summary.forcedLayoutCount}  (${num(summary.forcedLayoutMs)} ms)`],
+      ["forced layout/style", forcedCell],
       ["long tasks ≥50ms", `${summary.longTaskCount}  (longest ${num(summary.longestTaskMs)} ms)`],
       ["INP (worst interaction)", summary.inpMs == null ? "—" : `${num(summary.inpMs)} ms`],
       ...wallRow(rec),
@@ -112,7 +118,7 @@ export function printSummary(rec: Recording): void {
       ]),
     );
   }
-  if (summary.forcedLayoutCount > 0) {
+  if (summary.forcedLayoutCount != null && summary.forcedLayoutCount > 0) {
     console.log("  ⚠ layout thrashing — run `query blame --forced` to see the source lines");
   }
 

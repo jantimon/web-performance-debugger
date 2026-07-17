@@ -124,6 +124,15 @@ program
     "--no-trace",
     "skip the trace pass: counts from CDP + the CPU model only, no paint/forced/invalidation detail. Use when the trace pass hangs on a pathological interaction",
   )
+  .option(
+    "--breakdown",
+    "chrome only: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (run, driver steps, user performance.measure). Cannot report forced-layout counts or blame (they need the dropped `.stack` category)",
+  )
+  .option(
+    "--headless-mode <mode>",
+    "chrome headless flavour: new (default, full Chrome) | shell (chrome-headless-shell, ~120Hz frames, halves the wall/INP frame floor)",
+    "new",
+  )
   .option("--format <fmt>", "on-disk format: json | toon", "json")
   .action(async (module: string, cmdOpts: any) => {
     if (cmdOpts.screenshot && !["before", "after", "both"].includes(cmdOpts.screenshot)) {
@@ -137,6 +146,30 @@ program
     const bench = !!cmdOpts.bench;
     const node = cmdOpts.target === "node";
     const firefox = cmdOpts.target === "firefox";
+    if (!["new", "shell"].includes(cmdOpts.headlessMode))
+      program.error("--headless-mode must be new or shell");
+    // --headless-mode is a Chrome CDP-launch flavour; Firefox and node have no equivalent.
+    if (cmdOpts.headlessMode === "shell" && (firefox || node))
+      program.error(`--headless-mode shell is chrome-only (target is ${cmdOpts.target})`);
+    // chrome-headless-shell is a headless binary; there is no headed shell to launch.
+    if (cmdOpts.headlessMode === "shell" && cmdOpts.headless === false)
+      program.error("--headless-mode shell requires headless (drop --no-headless)");
+    if (cmdOpts.breakdown) {
+      // Breakdown needs a trace on ONE fused pass; the conflicting flags each break that shape.
+      // firefox/node have no DevTools trace; --no-isolate/--no-cpu-profile contradict the fusion;
+      // --no-trace/--no-invalidation-tracking are meaningless (the light trace is fixed).
+      const conflicts = [
+        firefox && "--target firefox (no DevTools trace, and Gecko records no honest idle)",
+        node && "--target node (no DevTools trace)",
+        cmdOpts.isolate === false && "--no-isolate (breakdown IS a single pass)",
+        cmdOpts.cpuProfile === false &&
+          "--no-cpu-profile (the sampler is required for the js split)",
+        cmdOpts.trace === false && "--no-trace (the trace IS the breakdown's timeline)",
+        cmdOpts.invalidationTracking === false &&
+          "--no-invalidation-tracking (breakdown already drops it)",
+      ].filter(Boolean);
+      if (conflicts.length) program.error(`--breakdown conflicts with: ${conflicts.join("; ")}`);
+    }
     if (firefox) {
       // Firefox is driven over BiDi, and wpd implements these three through CDP, which it has no
       // access to there. Not all of them are beyond Gecko: `--network offline` has a BiDi
@@ -206,6 +239,7 @@ program
       warmup: cmdOpts.warmup,
       out: cmdOpts.out,
       headless: cmdOpts.headless,
+      headlessMode: cmdOpts.headlessMode,
       userDataDir: cmdOpts.userDataDir ? path.resolve(cmdOpts.userDataDir) : undefined,
       screenshot: cmdOpts.screenshot,
       isolate: cmdOpts.isolate,
@@ -222,6 +256,7 @@ program
       protocolTimeoutMs: cmdOpts.protocolTimeout,
       trace: cmdOpts.trace,
       invalidationTracking: cmdOpts.invalidationTracking,
+      breakdown: !!cmdOpts.breakdown,
     };
     try {
       await recordAndReport(opts);

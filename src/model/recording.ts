@@ -5,6 +5,7 @@ export type EventKind =
   | "composite"
   | "invalidation"
   | "scripting"
+  | "gc"
   | "task"
   | "usertiming"
   | "other";
@@ -34,6 +35,13 @@ export interface NormalizedEvent {
   dur: number;
   ph: string;
   kind: EventKind;
+  /**
+   * Trace process/thread the event ran on. Populated ONLY in --breakdown mode (parseTrace keeps
+   * them when asked): the seven-slice engine tiles the renderer main thread alone, so it must tell
+   * main-thread work from raster/compositor threads. Every other mode leaves these fields absent.
+   */
+  pid?: number;
+  tid?: number;
   /** JS stack that triggered this event (top frame first), if Chrome captured one */
   stack?: StackFrame[];
   /** convenience: top meaningful frame as "source:line:col" */
@@ -100,9 +108,14 @@ export interface RecordingSummary {
   paintInvalidations: number;
   styleInvalidations: number;
 
-  /** layout/style synchronously forced by JS (thrashing) */
-  forcedLayoutCount: number;
-  forcedLayoutMs: number;
+  /**
+   * layout/style synchronously forced by JS (thrashing). null = NOT measured on this run, which is
+   * a different fact than 0 (no thrashing): forced detection needs the `.stack` trace category, so
+   * a mode that drops it (--breakdown) reports null and points at the default two-pass mode. A gate
+   * like `assert --max-forced` treats null as a loud failure, never a silent pass.
+   */
+  forcedLayoutCount: number | null;
+  forcedLayoutMs: number | null;
 
   /** tasks >= 50ms ("long tasks") in the window */
   longTaskCount: number;
@@ -288,6 +301,57 @@ export interface RecordingMeta {
   screenshots?: ScreenshotRefs;
 }
 
+/**
+ * The seven work slices of a span, plus idle. Every slice is main-thread self-time from the TRACE
+ * (children subtracted from parents), so they never overlap; `idle` is the window remainder. The
+ * `js` slice alone is subdivided by package, from the CPU samples that landed inside its self-time
+ * regions (proportions only -- sampled ms are never added to trace ms). See trace/breakdown.ts.
+ */
+export interface BreakdownSlices {
+  /** scripting self-time, split by owning package (same buckets as packageRollup) */
+  js: CpuJsSlice;
+  /** style recalc (UpdateLayoutTree/RecalcStyles) */
+  style: CpuSlice;
+  /** layout (reflow) */
+  layout: CpuSlice;
+  /** main-thread paint record */
+  paint: CpuSlice;
+  /** garbage collection (MinorGC/MajorGC) */
+  gc: CpuSlice;
+  /** task remainder + anything unclassified (composite/invalidation/user-timing/other) */
+  other: CpuSlice;
+  /** the window not covered by any main-thread work; on a paint-terminated span this is vsync wait */
+  idle: CpuSlice;
+}
+
+/**
+ * A reconciling decomposition of one span's trace window: `Σ slices + idle === wallMs` exactly in
+ * memory. On disk the numbers are rounded to 4 decimals by serialize, so a persisted slice sum can
+ * differ from `wallMs` by up to ~1e-3 ms; that rounding dust is not a `residualMs`.
+ *
+ * Durations come from the trace (disjoint main-thread self-time), so the sum is exact by
+ * construction, not a proportional allocation against an external wall. The one honesty valve is
+ * `residualMs`: if the tiling ever fails to close (lost events, clock skew), the gap is carried
+ * here rather than rescaling a slice to force the sum. It is absent/0 in the normal case.
+ */
+export interface Breakdown {
+  /** the span's trace window span, ms (endTs - startTs) */
+  wallMs: number;
+  slices: BreakdownSlices;
+  /** wallMs - (Σ slices + idle); present only when the tiling did not close within float dust */
+  residualMs?: number;
+}
+
+/** Which kind of span a breakdown describes. */
+export type SpanKind = "run" | "step" | "measure";
+
+/** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure). */
+export interface SpanBreakdown {
+  label: string;
+  kind: SpanKind;
+  breakdown: Breakdown;
+}
+
 export interface Recording {
   meta: RecordingMeta;
   window: RecordingWindow;
@@ -295,6 +359,12 @@ export interface Recording {
   metrics: MetricsBlock;
   events: NormalizedEvent[];
   summary: RecordingSummary;
+  /**
+   * Per-span seven-slice time breakdowns (--breakdown mode only). Absent otherwise, so existing
+   * recordings are unchanged and every reader that predates the field keeps working. Additive: no
+   * schema major bump.
+   */
+  breakdowns?: SpanBreakdown[];
 }
 
 /**
@@ -313,6 +383,8 @@ export interface Digest {
   /** longest tasks (>= threshold) as drill-in entry points */
   longTasks: { id: number; ts: number; durMs: number; dominantKind?: string; at?: string }[];
   invalidationsByReason: { kind: string; reason: string; count: number; sampleAt?: string }[];
+  /** per-span seven-slice time breakdowns (--breakdown mode only); absent otherwise */
+  breakdowns?: SpanBreakdown[];
   hints: string[];
 }
 
@@ -329,7 +401,8 @@ export interface StepIndexEntry {
   stats?: BenchStats | null;
   headline: {
     layoutCount: number;
-    forcedLayoutCount: number;
+    /** null when forced detection was not run for this step (see RecordingSummary.forcedLayoutCount) */
+    forcedLayoutCount: number | null;
     paintCount: number;
     layoutInvalidations: number;
     styleInvalidations: number;
@@ -408,9 +481,11 @@ export interface CpuJsSlice extends CpuSlice {
  *
  * Built from the raw profile's `samples[]` + `timeDeltas[]`: every time delta is attributed to its
  * sample's node, and each node classifies into exactly one slice, so
- * `js + browser + gc + idle === wallMs` EXACTLY, with zero residual. `wallMs` is the sum of the
- * profile's own time deltas (not an external wall), which is also `CpuModel.totalMs`. That exact
- * tiling is the product promise; it is not a proportional allocation.
+ * `js + browser + gc + idle === wallMs` EXACTLY in memory, with zero residual. On disk the numbers
+ * are rounded to 4 decimals by serialize, so a persisted slice sum can differ from `wallMs` by up to
+ * ~1e-3 ms; that rounding dust is not a residual. `wallMs` is the sum of the profile's own time
+ * deltas (not an external wall), which is also `CpuModel.totalMs`. That exact tiling is the product
+ * promise; it is not a proportional allocation.
  *
  * Honesty constraints, both from docs/dev:
  *  - On browser lanes the `js` slice is NOT pure JS: synchronous engine work JS triggered (a forced

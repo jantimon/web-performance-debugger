@@ -89,6 +89,9 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
     })),
     longTasks: tasks,
     invalidationsByReason,
+    // --breakdown mode only; carried through so `query digest` exposes the per-span bars (and JSON
+    // consumers get them automatically). Absent on every other mode.
+    breakdowns: rec.breakdowns,
     hints: [
       `Full record: ${recordingPath} — do NOT read it wholesale.`,
       `Layout thrashing (with source lines): wpd query blame --forced "${recordingPath}"`,

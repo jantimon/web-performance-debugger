@@ -17,7 +17,8 @@ export interface Thresholds {
 }
 
 interface Metrics {
-  forcedLayoutCount: number;
+  /** null when the run did not measure forced layout (--breakdown); a gate on it then FAILs loudly */
+  forcedLayoutCount: number | null;
   layoutCount: number;
   paintCount: number;
   layoutInvalidations: number;

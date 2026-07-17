@@ -542,6 +542,55 @@ export async function buildCpuModel(
   };
 }
 
+/**
+ * Owning package per cpuprofile node id, for the --breakdown js-slice subdivision. Reuses the exact
+ * resolution the CPU model uses (`resolveCallFrame` + the shared sourcemap resolver + package
+ * walk), so a sample's package matches `query cpu --by package`. System pseudo-frames
+ * ((idle)/(garbage collector)/(program)/(root)) and the tool's own harness frames map to null: they
+ * are never a real owner, so a stray sample on one must not skew the js-by-package split.
+ *
+ * Deliberately re-walks call-frame resolution here: the CpuModel exposes no node-id-to-package map,
+ * and the shared resolver cache means this re-walk fetches no script or map twice.
+ */
+export async function packagesByProfileNode(
+  raw: RawCpuProfile,
+  context: {
+    serverUrl?: string;
+    root: string;
+    runtime?: "chrome" | "node";
+    maps?: SourceMapResolver;
+  },
+): Promise<Map<number, string | null>> {
+  const rewriteToLocal =
+    context.runtime === "node"
+      ? makeNodeSourceResolver()
+      : makeSourceResolver(context.serverUrl ?? "", context.root);
+  const maps = context.maps ?? new SourceMapResolver();
+  const packageCache = new Map<string, string | null>();
+  const packageByKey = new Map<string, string | null>();
+  const byNode = new Map<number, string | null>();
+  for (const node of raw.nodes) {
+    const { functionName, url } = node.callFrame;
+    if ((!url && SYSTEM_FRAMES.has(functionName)) || isToolFrameUrl(url)) {
+      byNode.set(node.id, null);
+      continue;
+    }
+    const key = frameKey(node.callFrame);
+    if (!packageByKey.has(key)) {
+      const resolved = await resolveCallFrame(
+        node.callFrame,
+        rewriteToLocal,
+        maps,
+        packageCache,
+        context.root,
+      );
+      packageByKey.set(key, resolved.package);
+    }
+    byNode.set(node.id, packageByKey.get(key) ?? null);
+  }
+  return byNode;
+}
+
 /** Self time bucketed by a per-function key (package or file), descending. */
 function rollup(model: CpuModel, keyOf: (fn: CpuFunction) => string): CpuGroupStat[] {
   const byKey = new Map<string, { selfMs: number; functions: number }>();
