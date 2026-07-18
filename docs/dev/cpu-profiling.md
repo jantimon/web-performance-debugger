@@ -100,8 +100,32 @@ above. From inside the folded pass the two are indistinguishable. One is product
 is measurement apparatus that exists only because we asked for it. Reporting 10.4ms for a line that
 costs 8.4ms in production is precisely the fake number this project refuses elsewhere.
 
+A **second, independent signal** stands behind the same prohibition: `.stack` inflates *real*
+style-recalc time **~4.6x** on a style-churn workload. **[measured]** CDP reads **~234 ms** of recalc
+with `.stack` on vs **~51 ms** without, for identical work, and the trace agrees with CDP on **both**
+sides (0% apart each). So the category does not merely change the sampler's *view* of recalc time; it
+slows the page itself, and CDP's own counter sees the inflation too. Two measurements that share no
+apparatus — sampler self-time +21% and real recalc duration ~4.6x — land on the same rule: **never
+run the sampler on the trace pass, and never read a style duration off a `.stack` trace.**
+
 Counts are never at risk: `layoutCount`/`styleCount`/`forcedLayoutCount` are byte-identical
 (22/23/43) across all 20 runs of the A/B.
+
+### CDP durations share the trace clock, so they are not a more trustworthy source
+
+**[measured]** CDP `LayoutDuration`/`RecalcStyleDuration` measure the **same `base::TimeTicks` code
+region** the `Layout`/`UpdateLayoutTree` trace events do — the same clock, and the same `.stack`
+inflation above. On the light (no-`.stack`) set, the trace-summed `Σ dur` tracks the CDP deltas
+closely: layout to **-0.3..-1.0%** (systematic, trace slightly under, non-compounding with event
+count) and style to **~0.01 ms** absolute (the relative % is large only where style work is itself
+sub-0.1 ms). There is **no accuracy tier between the two sources**: both are wall-tier
+`base::TimeTicks` ms (directional, ~1%) of the same region — not the exact count tier, and not the
+profiler's own clock. Read `layoutMs`/`styleMs` off the light trace; a `.stack` trace inflates the
+style duration and must never feed a duration compared against a no-`.stack` one. The **+38%** here
+and the **~4.6x** above are different workloads, not a contradiction: this is a layout-dominated
+comparison set where style is sub-0.1 ms absolute, so a few-microsecond `.stack` delta reads as a
+large percent; the ~4.6x is the style-churn probe where recalc *is* the work (~234 ms vs ~51 ms).
+Same direction — `.stack` slows recalc — with magnitude that scales with how much style work there is.
 
 ### Do not "correct" the contamination arithmetically
 

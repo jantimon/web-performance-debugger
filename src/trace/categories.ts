@@ -1,7 +1,7 @@
 export const INVALIDATION_TRACKING_CATEGORY =
   "disabled-by-default-devtools.timeline.invalidationTracking";
 
-/** JS call stacks on timeline events (Layout/RecalcStyles): forced-reflow attribution + blame. */
+/** JS call stacks on timeline events (Layout/UpdateLayoutTree): forced-reflow attribution + blame. */
 export const STACK_CATEGORY = "disabled-by-default-devtools.timeline.stack";
 
 /** DevTools timeline categories that surface layout, paint, and invalidation events. */

@@ -6,6 +6,7 @@ import type {
   StepTiming,
 } from "../model/recording.js";
 import { invalidationKind } from "../trace/classify.js";
+import { STYLE_PARSE_NAMES } from "../trace/taxonomy.js";
 import { measuredIf } from "../model/measured.js";
 import { usToMs, msToUs, cdpSecondsToMs } from "../model/time.js";
 import { LONG_TASK_MS, inWindow } from "../trace/analysis.js";
@@ -96,8 +97,14 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
         traceLayoutUs += event.dur;
         break;
       case "style":
-        traceStyleCount++;
-        traceStyleUs += event.dur;
+        // The trace-derived count/duration is the fallback when a CDP delta is absent (per-step
+        // summaries, --no-isolate). It must match CDP RecalcStyleCount/RecalcStyleDuration, which
+        // Blink never increments for a stylesheet PARSE: ParseAuthorStyleSheet is real style time on
+        // the `style` slice but not a recalc, so it is excluded here. See docs/dev/rendering-counts.md.
+        if (!STYLE_PARSE_NAMES.has(event.name)) {
+          traceStyleCount++;
+          traceStyleUs += event.dur;
+        }
         break;
       case "task":
         if (event.dur >= msToUs(LONG_TASK_MS)) longTaskCount++;

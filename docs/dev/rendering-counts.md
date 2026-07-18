@@ -27,6 +27,62 @@ double-counts the forced work. The field spans forced **style recalc and forced 
 layout alone (`event.forced` is set on layout AND style events): the name says layout, the coverage
 is both.
 
+## Layout and style counts match the CDP counters 1:1
+
+**[measured]** Trace-derived layout/style counts equal Blink's CDP `getMetrics` counter deltas
+exactly, per window, on every workload measured — Blink emits **one trace event per counter
+increment**:
+
+    trace `Layout` count           == LayoutCount        (unconditionally)
+    trace `UpdateLayoutTree` count == RecalcStyleCount    (excluding ParseAuthorStyleSheet)
+
+`Layout` matches `LayoutCount` 1:1 with zero variance. `UpdateLayoutTree` matches `RecalcStyleCount`
+1:1 **only when `ParseAuthorStyleSheet` is excluded** from the style count: that event is a
+stylesheet *parse*, not a recalc. It fires only when new author CSS is parsed inside the window (an
+injected/loaded `<link rel=stylesheet>`, i.e. a lazy-loaded CSS chunk), and Blink logs it **without**
+incrementing `RecalcStyleCount`. Inline `<style>`, `CSSStyleSheet.insertRule`, and DOM/class
+mutations never emit it, so on the common interaction (mutate DOM -> recalc -> layout -> paint) trace
+and CDP are bit-identical.
+
+The shipped `styleCount` is CDP `RecalcStyleCount` (the merge prefers it), which Blink increments
+without ever counting the parse, so it is already parse-free with no filtering needed.
+`ParseAuthorStyleSheet`'s time is real main-thread style work, so `taxonomy.ts` keeps it mapped to the
+`style` slice (the breakdown bar bills it). The exclusion matters for a *trace-derived* count only:
+summing every `style` event gives recalc + parses, so the trace fallback (used when a CDP delta is
+absent, e.g. per-step summaries and `--no-isolate`) sums `UpdateLayoutTree` alone — `summarize` skips
+`STYLE_PARSE_NAMES` — to match `RecalcStyleCount`.
+
+**No-op mutations** (a write that sets the same value) increment **neither** the counters nor the
+events — both correctly skip them.
+
+This is the exact trust tier, not "close enough": the single divergence between a raw trace-`style`
+sum and the CDP counter is name-identifiable and deterministic (one event name), not statistical
+noise — and the shipped CDP-preferred count never sees it.
+
+## `getMetrics` is top-process-scoped; the trace is browser-wide
+
+**[measured]** `getMetrics` aggregates only the render process of the target it is called on. The top
+page's counters count the **top process** — same-origin (same-process) iframes are inside it, since
+they share that render process. A `page.tracing` trace, by contrast, captures **every** renderer
+process. So a cross-origin **out-of-process iframe** (OOPIF), which runs in its own render process,
+has its layout/style work in the trace (on its own `pid`) but **never** in the top page's CDP
+counters.
+
+Measured under `--site-per-process`, a top page doing 6 counted flushes with an OOPIF doing 12:
+
+| source | scope | LayoutCount |
+| --- | --- | --- |
+| `getMetrics`, top target | top process only | 6 |
+| `getMetrics`, OOPIF target | child process only | 12 |
+| trace `Layout`, all pids | every renderer process | 18 |
+| trace `Layout`, top pid only | top main thread | 6 |
+
+The all-pids trace sum is 18 = 6 + 12; filtering the trace to the top pid reproduces the top
+`getMetrics` exactly (6 = 6). The frame boundary alone does not split the count (same-origin iframes
+sit inside both sides); only the **process** boundary does. wpd's merge prefers CDP counts, so today's layout/style counts are
+**top-process-scoped**, and the breakdown bar filters to one main thread and shares that scope — count
+and bar agree.
+
 ## `Paint` is exact, and it is per-chunk
 
 | dirtied regions | 0 | 1 | 2 | 5 | 10 | 20 | 40 |
