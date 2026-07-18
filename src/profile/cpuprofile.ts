@@ -113,15 +113,33 @@ function classifyPseudoUrl(url: string | undefined): { package: string; label: s
 export const DEFAULT_CPU_INTERVAL_US = 200;
 
 /**
+ * IANA dynamic/private port range: a `listen(0)` server (a dev or test server, e.g. the host page a
+ * `--bench --url` run points at) is assigned a port here, and that port changes every run. It carries
+ * no cross-run identity, so an unmapped frame served from `http://127.0.0.1:54927/...` must bucket by
+ * host alone or the same code splits across a new `(127.0.0.1:PORT)` bucket per run. A registered
+ * port (`:3000`, `:8080`, `:443`) names a service the user runs on purpose and stays in the bucket.
+ */
+const EPHEMERAL_PORT_MIN = 49152;
+const EPHEMERAL_PORT_MAX = 65535;
+
+/**
  * Bucket for a remote script whose sourcemap did not resolve: we know its origin and nothing
  * else. Blaming it on "app" would be a guess, and a wrong one for every third-party script
  * (analytics, CDN widgets), whose cost would land in the user's own bucket. Parenthesized to
  * match the other "not a real package" buckets ((blob)/(inline)/(wasm)/(node)/(native)).
+ *
+ * The port is dropped from the key when it is in the ephemeral range: an OS-assigned dev/test-server
+ * port is a per-run accident, and keeping it would give the same unmapped code a fresh bucket every
+ * run and split every cross-run cpu-diff / functionJoinKey join.
  */
 function unmappedOriginBucket(url: string | undefined): string {
   if (!url) return "(unmapped)";
   try {
-    return `(${new URL(url).host})`;
+    const parsed = new URL(url);
+    const port = Number(parsed.port);
+    const ephemeral =
+      parsed.port !== "" && port >= EPHEMERAL_PORT_MIN && port <= EPHEMERAL_PORT_MAX;
+    return `(${ephemeral ? parsed.hostname : parsed.host})`;
   } catch {
     return "(unmapped)";
   }
@@ -182,16 +200,13 @@ async function packageForFile(
 
 /**
  * Attribution for a frame still pointing at wpd's OWN served origin (bench mode serves the user's
- * module tree over http). Returns null unless `url` is an EXACT origin match against the served
- * origin: a user profiling their own dev server (--url http://localhost:3000) has a stable host:port
- * that must keep normal origin bucketing, so match the origin, not "any localhost".
+ * module tree over http) whose source did not land on disk. Returns null unless `url` is an EXACT
+ * origin match against the served origin, so a genuinely remote host is left to the branches below.
  *
  * The server roots at the project root, so map the served pathname back to the local file and let
  * `packageForFile` attribute it like any on-disk source (the real npm/workspace package or the real
  * relative file). Only when the pathname names no existing local file fall back to the stable
- * literal `(served)` bucket. Never a fabricated origin key: the ephemeral localhost port changes
- * every run, which would split every cross-run cpu-diff join and scatter one logical cost across a
- * new bucket per run.
+ * literal `(served)` bucket, rather than fs-walking the missing path up to a stray package.json.
  */
 async function attributeServedOrigin(
   url: string | undefined,
@@ -291,14 +306,14 @@ async function resolveCallFrame(
     };
   }
   // A frame from wpd's OWN served origin (bench mode serves the module tree over an ephemeral
-  // localhost port) that did not land on an existing local source: `makeSourceResolver` rewrote it
-  // to a `root/pathname` that is not on disk, or the sourcemap mapped it to a source that is not on
-  // disk. Left alone it would either bucket by the ephemeral host:port (a key that changes every
-  // run and splits cross-run cpu-diff joins) or fs-walk the missing path to a stray package.json.
-  // Instead attribute it to the local file the server actually served, or the stable literal
-  // `(served)` bucket when the served pathname names no on-disk file. A frame that DID resolve to an
-  // existing source (the common case: makeSourceResolver -> the served bundle on disk, or a mapped
-  // original source) is already the best, stablest answer and is left to the branches below.
+  // localhost port) whose source is not on disk: the sourcemap mapped the served bundle to an
+  // original source that is not on disk (a bundle built elsewhere, or a stale map). Left alone,
+  // `packageForFile` fs-walks that missing path up to whatever stray package.json it first hits and
+  // mis-blames the cost there. Instead attribute it to the local file the server actually served
+  // (the real npm/workspace package), or the stable literal `(served)` bucket when the served
+  // pathname names no on-disk file. A frame that DID resolve to an existing source (the common case:
+  // makeSourceResolver -> the served bundle on disk, or a mapped original source) is already the
+  // best, stablest answer and is left to the branches below.
   const sourceExists =
     frame.source != null && path.isAbsolute(frame.source) && existsSync(frame.source);
   if (!sourceExists) {
