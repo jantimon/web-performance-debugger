@@ -304,6 +304,50 @@ test("served-origin frames with an off-disk source get the local package, or (se
   assert.equal(missing.file, "(served)");
 });
 
+// The scenario attributeServedOrigin EXISTS for, and the case (a) above does NOT hit: the served
+// bundle IS on disk, but its sourcemap resolves frame.source to an OFF-DISK original (a bundle built
+// elsewhere, or a stale map). frame.source is then not on disk, so the local branch cannot answer;
+// the served pathname is re-derived to the real package via packageForFile. A regression that makes
+// the helper always return `(served)` would pass the fallback-only assertions above but fail here.
+test("served frame with an on-disk bundle but off-disk sourcemap source gets the real served package", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wpd-served-map-"));
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "my-served-app" }));
+  mkdirSync(path.join(root, "dist"));
+  // The served bundle exists; its sidecar map points sources at a file that is NOT on disk.
+  writeFileSync(path.join(root, "dist", "entry.js"), "function hot(){}\n//# sourceMappingURL=entry.js.map\n");
+  writeFileSync(path.join(root, "dist", "entry.js.map"), sourcemapFor("../src/off-disk-original.ts", "hot"));
+  const servedOrigin = "http://127.0.0.1:57999";
+  const model = await buildCpuModel(remoteProfile(`${servedOrigin}/dist/entry.js`), {
+    profilePath: "served.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+    serverUrl: servedOrigin,
+    root,
+  });
+  const hot = model.functions.find((fn) => fn.fn === "hot");
+  // Re-derived from the served pathname to the real package + relative on-disk file, NOT `(served)`.
+  assert.equal(hot.package, "my-served-app");
+  assert.equal(hot.file, "dist/entry.js");
+});
+
+// Guard: a served frame whose URL is the bare origin (pathname "/") joins "/" to root itself, which
+// exists; `packageForFile(root)` would then climb to an ancestor package.json (the stray walk the
+// fallback exists to avoid). Such a frame must go to the stable `(served)` bucket. Reached here via
+// an origin that MATCHES servedOrigin but string-mismatches serverUrl (rewriteToLocal is a string
+// prefix, attributeServedOrigin is origin equality), so the frame stays remote and unresolved.
+test("served frame with a bare `/` pathname falls back to (served), never a root-up walk", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wpd-served-root-"));
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "my-served-app" }));
+  const model = await buildCpuModel(remoteProfile("http://127.0.0.1:57999"), {
+    profilePath: "served.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+    serverUrl: "http://127.0.0.1:57999/",
+    root,
+  });
+  assert.equal(model.functions.find((fn) => fn.fn === "hot").package, "(served)");
+});
+
 // The leak the bench sees: a `--bench --url http://127.0.0.1:<port>` run points the page at a host
 // server whose port `listen(0)` re-picks every run. An unmapped frame from that origin (its bundle's
 // map loaded but position-missed this line) is genuinely remote -- NOT wpd's own served origin -- so
@@ -332,7 +376,13 @@ test("unmapped remote origins: an ephemeral (listen(0)) port is dropped, a regis
   assert.equal(await pkgOf("http://localhost:3000/app.js"), "(localhost:3000)");
   assert.equal(await pkgOf("http://127.0.0.1:9/x.js"), "(127.0.0.1:9)");
 
-  // (c) a real remote host (a CDN) keeps its full authority: the host alone already identifies it.
+  // (c) the ephemeral boundary, pinned at both edges so moving EITHER constant fails: 49151 is the
+  // last registered port (kept), 49152 the first ephemeral (dropped), 65535 the last ephemeral.
+  assert.equal(await pkgOf("http://127.0.0.1:49151/x.js"), "(127.0.0.1:49151)");
+  assert.equal(await pkgOf("http://127.0.0.1:49152/x.js"), "(127.0.0.1)");
+  assert.equal(await pkgOf("http://127.0.0.1:65535/x.js"), "(127.0.0.1)");
+
+  // (d) a real remote host (a CDN) keeps its full authority: the host alone already identifies it.
   assert.equal(await pkgOf("https://cdn.example.com/app.min.js"), "(cdn.example.com)");
 });
 

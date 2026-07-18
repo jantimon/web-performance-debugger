@@ -130,7 +130,9 @@ const EPHEMERAL_PORT_MAX = 65535;
  *
  * The port is dropped from the key when it is in the ephemeral range: an OS-assigned dev/test-server
  * port is a per-run accident, and keeping it would give the same unmapped code a fresh bucket every
- * run and split every cross-run cpu-diff / functionJoinKey join.
+ * run and split every cross-run cpu-diff / functionJoinKey join. The trade: two different
+ * ephemeral-port origins on one host merge into a single bucket, and an ephemeral-port remote host
+ * loses its port; accepted because unmapped-frame joins must survive a `listen(0)` re-pick.
  */
 function unmappedOriginBucket(url: string | undefined): string {
   if (!url) return "(unmapped)";
@@ -231,9 +233,11 @@ async function attributeServedOrigin(
   }
   const localPath = path.join(root, pathname.replace(/^[\\/]+/, ""));
   const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
-  // A pathname that escapes root, or names no on-disk file, cannot be honestly attributed to a
-  // local package; `(served)` is the stable answer rather than a guess.
-  if ((localPath !== root && !localPath.startsWith(rootPrefix)) || !existsSync(localPath)) {
+  // A pathname that resolves to root itself (bare `/` or empty), escapes root, or names no on-disk
+  // file cannot be honestly attributed to a local package; `(served)` is the stable answer rather
+  // than a guess. root is included on purpose: `packageForFile(root)` walks UPWARD to an ancestor
+  // package.json, the stray walk this fallback exists to avoid.
+  if (!localPath.startsWith(rootPrefix) || !existsSync(localPath)) {
     return { package: "(served)" };
   }
   return { package: await packageForFile(localPath, cache), file: localPath };

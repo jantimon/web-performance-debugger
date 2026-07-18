@@ -8,5 +8,7 @@ every run, so a frame whose sourcemap loaded but position-missed landed under a 
 `(127.0.0.1:<port>)` "package" each time and split every cross-run `cpu-diff` / `functionJoinKey`
 join, including the `--breakdown` and firefox `jsByPackage` splits. Ports in the ephemeral range now
 drop out of the bucket (`(127.0.0.1)`); a registered port like `:3000` names a real service and
-stays. A frame from wpd's own served origin whose sourcemap points at an off-disk source resolves to
-the served file, or the stable `(served)` bucket.
+stays. The trade: two different ephemeral-port origins on one host now share a bucket (and an
+ephemeral-port remote host loses its port), accepted so unmapped-frame joins survive a `listen(0)`
+re-pick. A frame from wpd's own served origin whose sourcemap points at an off-disk source resolves
+to the served file, or the stable `(served)` bucket.
