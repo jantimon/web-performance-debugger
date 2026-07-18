@@ -148,7 +148,7 @@ test("computeSpanBreakdown: 50 random nested flame charts each tile the window w
   }
 });
 
-test("userMeasureSpans: pairs user measures, excludes wpd:*, drops out-of-window, keeps first", () => {
+test("userMeasureSpans: pairs user measures, excludes wpd:*, drops out-of-window, keeps EVERY occurrence", () => {
   const usertiming = (name, ph, ts) => ({ id: ts, name, ts, dur: 0, ph, kind: "usertiming" });
   const events = [
     usertiming("wpd:run", "b", 100), // wpd's own measure -> excluded
@@ -157,15 +157,18 @@ test("userMeasureSpans: pairs user measures, excludes wpd:*, drops out-of-window
     usertiming("wpd:run", "e", 1000),
     usertiming("hydrate", "b", 200),
     usertiming("hydrate", "e", 300),
-    usertiming("user-span", "b", 500), // a repeat of the same name -> first pair wins
+    usertiming("user-span", "b", 500), // a repeat of the same name -> its own sample, kept
     usertiming("user-span", "e", 600),
     usertiming("late", "b", 900),
     usertiming("late", "e", 1200), // ends after the run window -> dropped
   ];
   const spans = userMeasureSpans(events, 100, 1000);
+  // Every in-window occurrence is returned in end-event order; the repeat is a second sample of the
+  // same label, merged per label downstream (span-merge), not dropped here.
   assert.deepEqual(spans, [
     { label: "user-span", startTs: 150, endTs: 400 },
     { label: "hydrate", startTs: 200, endTs: 300 },
+    { label: "user-span", startTs: 500, endTs: 600 },
   ]);
 });
 

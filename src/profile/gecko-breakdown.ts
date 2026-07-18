@@ -12,6 +12,7 @@ import type { RawCpuProfile } from "./cpuprofile.js";
 import type { Breakdown, CpuBreakdown, SpanBreakdown } from "../model/recording.js";
 import { usToMs } from "../model/time.js";
 import { reconcileResidual } from "../model/reconcile.js";
+import { mergeSpanOccurrences } from "../model/span-merge.js";
 
 /** Per-slice microsecond sums for one window, plus the js by-package subdivision. */
 interface SliceSums {
@@ -224,5 +225,7 @@ export function buildGeckoSpanBreakdowns(
       breakdown: spanBreakdown(raw, packageByNode, bounds.from, bounds.to),
     });
   }
-  return spans;
+  // A measure label repeated once per --iteration produced one bar per occurrence above; collapse
+  // each label to its lower-median-by-wall real sample. The run span has a unique label -> unchanged.
+  return mergeSpanOccurrences(spans);
 }

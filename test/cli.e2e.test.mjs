@@ -289,24 +289,35 @@ e2e("record --breakdown: a waiting-dominated span is mostly idle and still close
   assert.ok(Math.abs(sum - wallMs) < 0.01, `slices+idle ${sum} must equal wall ${wallMs}`);
 });
 
-// The mark bridge: a page-side performance.measure becomes a span with its own breakdown.
-e2e("record --breakdown: a user performance.measure appears as a span", { timeout: TIMEOUT_MS }, () => {
+// The mark bridge: a page-side performance.measure becomes a span with its own breakdown. Repeated
+// once per --iteration, its occurrences are its samples: the stored bar is the lower-median-by-wall
+// real occurrence (samples == iterations), NOT iteration 1's, and it still reconciles because it is a
+// real sample rather than a per-slice average.
+e2e("record --breakdown: a repeated performance.measure merges to a median bar (samples == iterations)", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "bd-measure");
   runCli([
     "record", path.join(repoRoot, "test", "fixtures", "user-measure.mjs"),
-    "--bench", "--breakdown", "--iterations", "2", "--out", out,
+    "--bench", "--breakdown", "--iterations", "3", "--out", out,
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
-  const measureSpan = rec.breakdowns.find((span) => span.kind === "measure" && span.label === "user-span");
-  assert.ok(measureSpan, "the user 'user-span' measure surfaces as a span");
+  const measureBars = rec.breakdowns.filter((span) => span.kind === "measure" && span.label === "user-span");
+  assert.equal(measureBars.length, 1, "the repeated label collapses to ONE stored bar, not one per iteration");
+  const measureSpan = measureBars[0];
+  assert.equal(measureSpan.samples, 3, "samples == iterations (one occurrence per iteration, all merged)");
   assert.ok(measureSpan.breakdown.wallMs > 0, "the measure span has a positive wall");
+  // The kept bar is a real occurrence: its wall sits within the disclosed spread.
+  assert.ok(
+    measureSpan.wallMinMs <= measureSpan.breakdown.wallMs && measureSpan.breakdown.wallMs <= measureSpan.wallMaxMs,
+    `wall ${measureSpan.breakdown.wallMs} within spread ${measureSpan.wallMinMs}..${measureSpan.wallMaxMs}`,
+  );
   const sum = sliceSum(measureSpan.breakdown);
   assert.ok(
     Math.abs(sum - measureSpan.breakdown.wallMs) < 0.01,
-    `the measure span reconciles: ${sum} vs ${measureSpan.breakdown.wallMs}`,
+    `the median bar reconciles exactly (residual 0): ${sum} vs ${measureSpan.breakdown.wallMs}`,
   );
+  assert.equal(measureSpan.breakdown.residualMs, undefined, "a real reconciling sample carries no residual");
   // The work inside the measure is a JS loop, so its js slice must be the dominant one.
   assert.ok(measureSpan.breakdown.slices.js.ms > 0, "the measured JS work lands in the js slice");
 });
@@ -333,10 +344,13 @@ e2e("query spans: unified per-span shape over a chrome --breakdown recording", {
   for (const key of ["js", "style", "layout", "paint", "gc", "other", "idle"])
     assert.ok(key in measure.slices, `slice '${key}' present in the unified shape`);
   assert.ok(measure.slices.js.byPackage, "js keeps its by-package split");
-  // The aggregation contract: the run window spans both iterations (a sum), the measure is the
-  // first occurrence; both stamp the recording's iteration count (recorded with --iterations 2).
+  // The aggregation contract: the run window spans every iteration (a sum), the repeated measure is
+  // the median of its per-iteration occurrences; both stamp the recording's iteration count.
   assert.equal(runSpan.aggregation, "sum", "the run span is a total across iterations");
-  assert.equal(measure.aggregation, "first", "a measure span is its first in-window occurrence");
+  assert.equal(measure.aggregation, "median", "a repeated measure span reports its median sample");
+  assert.equal(measure.samples, 2, "samples == iterations (recorded with --iterations 2)");
+  assert.ok(measure.wallMinMs <= measure.wallMs && measure.wallMs <= measure.wallMaxMs, "wall within the disclosed spread");
+  assert.equal(runSpan.samples, undefined, "the run span carries no merge disclosure fields");
   assert.equal(runSpan.iterations, 2, "the run span carries the recording's iteration count");
   assert.equal(measure.iterations, 2, "the measure span carries the recording's iteration count");
 

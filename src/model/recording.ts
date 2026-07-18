@@ -432,6 +432,19 @@ export interface SpanBreakdown {
    * `breakdown`, never gated. See FrameSideTrack.
    */
   frames?: FrameSideTrack;
+  /**
+   * How many real occurrences of this label were merged into `breakdown` (a `measure` label that
+   * recurs once per --iteration and/or within one iteration; see model/span-merge.ts). Absent means a
+   * single occurrence -- the run span, a step, or an unrepeated measure -- so old recordings and
+   * unrepeated flows carry nothing extra. When present (> 1), `breakdown` is the lower-median-by-wall
+   * occurrence VERBATIM (a real reconciling sample, not per-slice averages), and the aggregation is
+   * `"median"`.
+   */
+  samples?: number;
+  /** wall (ms) of the shortest merged occurrence; disclosed with `samples`, so a reader sees the spread. */
+  wallMinMs?: number;
+  /** wall (ms) of the longest merged occurrence; disclosed with `samples`. */
+  wallMaxMs?: number;
 }
 
 export interface Recording {

@@ -135,10 +135,48 @@ test("buildSpans: aggregation is per-kind (run=sum, step/measure=first) and iter
     assert.equal(span.iterations, 7, "iterations is stamped on every span from the recording meta");
 });
 
-test("spanAggregation: run is a sum, step and measure are first", () => {
+test("spanAggregation: run is a sum, step and measure are first; a repeated measure is a median", () => {
   assert.equal(spanAggregation("run"), "sum");
   assert.equal(spanAggregation("step"), "first");
-  assert.equal(spanAggregation("measure"), "first");
+  assert.equal(spanAggregation("measure"), "first", "a single-occurrence measure is its first pair");
+  assert.equal(spanAggregation("measure", 1), "first", "one sample is still first, not median");
+  assert.equal(spanAggregation("measure", 4), "median", "a repeated measure reports its median sample");
+  assert.equal(spanAggregation("run", 4), "sum", "the run span is a sum regardless of samples");
+  assert.equal(spanAggregation("step", 4), "first", "a step never becomes a median");
+});
+
+test("buildSpans: a merged measure surfaces aggregation median + samples + wall spread", () => {
+  const bars = [
+    { label: "run", kind: "run", breakdown: chromeBreakdown(20) },
+    {
+      label: "inp:frame",
+      kind: "measure",
+      breakdown: chromeBreakdown(3),
+      samples: 5,
+      wallMinMs: 1,
+      wallMaxMs: 9,
+    },
+  ];
+  const result = buildSpans(bars, undefined, "chrome", 5);
+  const measure = result.spans.find((span) => span.kind === "measure");
+  assert.equal(measure.aggregation, "median", "the merged bar declares itself a median pick");
+  assert.equal(measure.samples, 5, "samples counts real occurrences");
+  assert.equal(measure.wallMinMs, 1, "the wall spread min passes through");
+  assert.equal(measure.wallMaxMs, 9, "the wall spread max passes through");
+  assert.ok(measure.wallMinMs <= measure.wallMs && measure.wallMs <= measure.wallMaxMs, "wall is within the spread");
+  // The run span carries no merge fields (unique label), so it is untouched.
+  const run = result.spans.find((span) => span.kind === "run");
+  assert.equal(run.samples, undefined, "the run span carries no samples field");
+  assert.equal(run.aggregation, "sum");
+});
+
+test("buildSpans: an old-shape measure (no samples) loads as aggregation first, no fabricated spread", () => {
+  const bars = [{ label: "work", kind: "measure", breakdown: chromeBreakdown(3) }];
+  const measure = buildSpans(bars, undefined, "chrome", 3).spans[0];
+  assert.equal(measure.aggregation, "first", "no samples field => the old first-occurrence contract");
+  assert.equal(measure.samples, undefined, "no samples field is invented");
+  assert.equal(measure.wallMinMs, undefined, "no spread is fabricated");
+  assert.equal(measure.wallMaxMs, undefined);
 });
 
 test("buildSpans: the CpuModel-synthesized run span is a sum; iterations defaults to 1", () => {

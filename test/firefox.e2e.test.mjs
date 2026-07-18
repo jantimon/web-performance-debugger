@@ -175,12 +175,19 @@ e2e(
 
     const digest = JSON.parse(runCli(["query", "digest", out, "--json"]));
     assert.ok(Array.isArray(digest.breakdowns), "breakdowns present");
-    const span = digest.breakdowns.find((entry) => entry.kind === "measure" && entry.label === "work");
-    assert.ok(span, "the user performance.measure 'work' appears as a span");
+    const bars = digest.breakdowns.filter((entry) => entry.kind === "measure" && entry.label === "work");
+    assert.equal(bars.length, 1, "the repeated 'work' label collapses to ONE stored bar");
+    const span = bars[0];
+    // Repeated once per --iteration: the bar is the lower-median-by-wall occurrence, samples == iterations.
+    assert.equal(span.samples, 5, "samples == iterations (one occurrence per iteration, all merged)");
+    assert.ok(
+      span.wallMinMs <= span.breakdown.wallMs && span.breakdown.wallMs <= span.wallMaxMs,
+      `wall ${span.breakdown.wallMs} within spread ${span.wallMinMs}..${span.wallMaxMs}`,
+    );
     const slices = span.breakdown.slices;
     const sum =
       slices.js.ms + slices.style.ms + slices.layout.ms + slices.paint.ms + slices.gc.ms + slices.other.ms + slices.idle.ms;
-    assert.ok(Math.abs(sum - span.breakdown.wallMs) < 0.01, "the span breakdown tiles its own window");
+    assert.ok(Math.abs(sum - span.breakdown.wallMs) < 0.01, "the median bar tiles its own window (a real sample reconciles)");
     assert.equal(slices.paint.ms, 0, "paint is 0 on firefox (off-main-thread)");
   },
 );
@@ -208,10 +215,13 @@ e2e(
       assert.ok(key in measure.slices, `slice '${key}' present in the unified shape`);
     assert.notEqual(measure.slices.style, null, "firefox splits style");
     assert.notEqual(measure.slices.layout, null, "firefox splits layout");
-    // The aggregation contract crosses the engine unchanged: run = a total over the loop, measure =
-    // the first occurrence, both stamping the iteration count (recorded with --iterations 5).
+    // The aggregation contract crosses the engine unchanged: run = a total over the loop, a repeated
+    // measure = the median of its per-iteration occurrences, with identical spread disclosure to chrome.
     assert.equal(runSpan.aggregation, "sum", "the run span is a total across iterations");
-    assert.equal(measure.aggregation, "first", "a measure span is its first in-window occurrence");
+    assert.equal(measure.aggregation, "median", "a repeated measure span reports its median sample");
+    assert.equal(measure.samples, 5, "samples == iterations (recorded with --iterations 5)");
+    assert.ok(measure.wallMinMs <= measure.wallMs && measure.wallMs <= measure.wallMaxMs, "wall within the disclosed spread");
+    assert.equal(runSpan.samples, undefined, "the run span carries no merge disclosure fields");
     assert.equal(runSpan.iterations, 5, "the run span carries the recording's iteration count");
     assert.equal(measure.iterations, 5, "the measure span carries the recording's iteration count");
 
