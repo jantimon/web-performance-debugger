@@ -6,14 +6,21 @@ import { serialize, isFormat, type Format } from "../output/format.js";
 import { spanAggregation } from "../model/spans.js";
 
 /**
- * The `(first|sum of N iterations)` suffix a bar prints when `--iterations` repeated the flow, so a
- * reader knows a run bar is a TOTAL while a step/measure bar is one iteration. Empty at N<=1 (nothing
- * to disambiguate) or when the caller passes no iteration count (the single profile-only
- * `printCpuBreakdown` bar, called without one).
+ * The `(first|sum of N iterations)` / `(median of N samples)` suffix a bar prints, so a reader knows a
+ * run bar is a TOTAL, a step bar is one iteration, and a repeated-measure bar is the median of its
+ * occurrences. A merged measure (`samples > 1`) names its occurrence count regardless of the
+ * iteration count; otherwise the suffix is empty at N<=1 (nothing to disambiguate) or when the caller
+ * passes no iteration count (the single profile-only `printCpuBreakdown` bar, called without one).
  */
-function aggregationSuffix(kind: SpanBreakdown["kind"], iterations?: number): string {
+function aggregationSuffix(
+  kind: SpanBreakdown["kind"],
+  iterations?: number,
+  samples?: number,
+): string {
+  const aggregation = spanAggregation(kind, samples);
+  if (aggregation === "median") return `, median of ${samples} samples`;
   if (iterations == null || iterations <= 1) return "";
-  return `, ${spanAggregation(kind)} of ${iterations} iterations`;
+  return `, ${aggregation} of ${iterations} iterations`;
 }
 
 // Warm "heat" for a self-time share: the bigger the cost, the louder the color.
@@ -120,12 +127,19 @@ export function printSpanBreakdowns(breakdowns: SpanBreakdown[], iterations?: nu
   console.log(`\nCPU time breakdown ${dim("(per span: Σ slices + idle = wall)")}`);
   for (const span of breakdowns) {
     const { wallMs, slices, residualMs } = span.breakdown;
-    const label = `${span.label} ${dim(`(${span.kind}, ${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations)})`)}`;
+    const label = `${span.label} ${dim(`(${span.kind}, ${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)})`)}`;
     console.log(`\n${bold(label)}`);
     if (wallMs <= 0) {
       console.log(dim("  (empty window; nothing to tile)"));
       continue;
     }
+    // A merged measure bar is a real picked sample; disclose the spread it stands in for.
+    if (span.samples != null && span.wallMinMs != null && span.wallMaxMs != null)
+      console.log(
+        dim(
+          `  wall spread ${num(span.wallMinMs, 1)}..${num(span.wallMaxMs, 1)} ms across ${span.samples} samples`,
+        ),
+      );
     const pct = (ms: number): string => `${num((ms / wallMs) * 100, 1)}%`;
     const topPackages = Object.entries(slices.js.byPackage)
       .sort((left, right) => right[1] - left[1])

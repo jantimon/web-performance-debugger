@@ -727,7 +727,6 @@ export function geckoReadSiteBlameEvents(context: GeckoContext): NormalizedEvent
 export function geckoUserMeasures(context: GeckoContext): GeckoMeasureWindow[] {
   const { thread, windowStartMs, windowEndMs } = context;
   const schema = thread.markers.schema;
-  const seen = new Set<string>();
   const measures: GeckoMeasureWindow[] = [];
   for (const markerRow of thread.markers.data) {
     if (thread.stringTable[markerRow[schema.name] as number] !== "UserTiming") continue;
@@ -740,9 +739,8 @@ export function geckoUserMeasures(context: GeckoContext): GeckoMeasureWindow[] {
     if (typeof startMs !== "number" || typeof endMs !== "number" || endMs <= startMs) continue;
     if (windowStartMs != null && startMs < windowStartMs) continue;
     if (windowEndMs != null && endMs > windowEndMs) continue;
-    // A measure repeated once per --iteration keeps its FIRST in-window occurrence (chrome parity).
-    if (seen.has(label)) continue;
-    seen.add(label);
+    // EVERY in-window occurrence is kept, including a label repeated once per --iteration: those
+    // repetitions are the label's samples, merged per label downstream (see model/span-merge.ts).
     measures.push({ label, startTs: msToUs(startMs), endTs: msToUs(endMs) });
   }
   return measures;

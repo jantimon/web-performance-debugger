@@ -14,16 +14,19 @@ import type {
 import type { SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
 
 /**
- * How a span of this kind combines the recording's timed iterations. `run` is a TOTAL across every
- * iteration (its window spans the whole loop; the CpuModel-synthesized run brackets the whole timed
- * loop), so `"sum"`. `step` is windowed to the FIRST timed iteration (`MergedStep` start/end come
- * from iteration 0, so counts never scale with `--iterations`) and `measure` keeps its FIRST
- * in-window occurrence, so both are `"first"`. At `iterations === 1` the labels coincide, but the
- * per-kind label stays the truthful description of what the numbers are. Single source of truth for
- * the adapter and the human printers.
+ * How a span combines the recording's timed iterations. `run` is a TOTAL across every iteration (its
+ * window spans the whole loop; the CpuModel-synthesized run brackets the whole timed loop), so
+ * `"sum"`. `step` is windowed to the FIRST timed iteration (`MergedStep` start/end come from
+ * iteration 0, so counts never scale with `--iterations`), so `"first"`. A `measure` label that
+ * recurred (`samples > 1`) reports the lower-median-by-wall occurrence, so `"median"`; a single
+ * occurrence stays `"first"`. At `iterations === 1` the labels coincide, but the per-kind label stays
+ * the truthful description of what the numbers are. Single source of truth for the adapter and the
+ * human printers.
  */
-export function spanAggregation(kind: SpanKind): "first" | "sum" {
-  return kind === "run" ? "sum" : "first";
+export function spanAggregation(kind: SpanKind, samples?: number): "first" | "sum" | "median" {
+  if (kind === "run") return "sum";
+  if (kind === "measure" && samples != null && samples > 1) return "median";
+  return "first";
 }
 
 /**
@@ -65,11 +68,15 @@ function entryFromBreakdown(span: SpanBreakdown, iterations: number): SpanEntry 
     label: span.label,
     kind: span.kind,
     wallMs: span.breakdown.wallMs,
-    aggregation: spanAggregation(span.kind),
+    aggregation: spanAggregation(span.kind, span.samples),
     iterations,
     slices: slicesFromBreakdown(span.breakdown),
     ...(span.frames ? { frames: span.frames } : {}),
     ...(span.breakdown.residualMs != null ? { residualMs: span.breakdown.residualMs } : {}),
+    // Disclosure of a merged `measure` bar; absent (single occurrence) leaves an old-shape entry.
+    ...(span.samples != null ? { samples: span.samples } : {}),
+    ...(span.wallMinMs != null ? { wallMinMs: span.wallMinMs } : {}),
+    ...(span.wallMaxMs != null ? { wallMaxMs: span.wallMaxMs } : {}),
   };
 }
 

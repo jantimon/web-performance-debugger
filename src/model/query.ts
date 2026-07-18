@@ -115,15 +115,17 @@ export interface SpanEntry {
   wallMs: number;
   /**
    * How this span's numbers combine the recording's timed iterations -- the one contract a consumer
-   * needs before comparing spans, because a recording mixes both. `"sum"`: the window spans every
+   * needs before comparing spans, because a recording mixes them. `"sum"`: the window spans every
    * iteration, so slices/`wallMs` are a TOTAL across `iterations` (the run span: chrome's `wpd:run`
    * window covers the whole loop; the CpuModel-synthesized run brackets the whole timed loop).
-   * `"first"`: the numbers describe ONE iteration -- a step span windowed to the FIRST timed
-   * iteration (counts never scale with `--iterations`), or a `performance.measure` span kept from its
-   * FIRST in-window occurrence. Per-iteration distributions are not produced. At `iterations === 1`
-   * the two coincide; the label is still the truthful one for the span kind.
+   * `"first"`: the numbers describe ONE iteration -- a step span windowed to the FIRST timed iteration
+   * (counts never scale with `--iterations`), or a `performance.measure` seen only once. `"median"`: a
+   * `performance.measure` label that recurred, reported as the lower-median-by-wall occurrence (a real
+   * reconciling sample, not per-slice averages); `samples`/`wallMinMs`/`wallMaxMs` disclose the merge.
+   * At `iterations === 1` with no repeated measures the labels coincide; the label is still the
+   * truthful one for the span.
    */
-  aggregation: "first" | "sum";
+  aggregation: "first" | "sum" | "median";
   /** timed iterations behind this recording (`meta.iterations`); 1 unless `--iterations` repeated run() */
   iterations: number;
   slices: UnifiedSlices;
@@ -131,6 +133,16 @@ export interface SpanEntry {
   frames?: FrameSideTrack;
   /** carried through when the source breakdown did not fully close (lost events/clock skew) */
   residualMs?: number;
+  /**
+   * Real occurrences merged into this bar when `aggregation` is `"median"` (a repeated
+   * `performance.measure` label). Absent for run/step spans and single-occurrence measures. Counts
+   * real occurrences, not lookups: the bar IS one of these samples.
+   */
+  samples?: number;
+  /** wall (ms) of the shortest merged occurrence; disclosed with `samples`. `wallMinMs <= wallMs <= wallMaxMs`. */
+  wallMinMs?: number;
+  /** wall (ms) of the longest merged occurrence; disclosed with `samples`. */
+  wallMaxMs?: number;
 }
 
 /**

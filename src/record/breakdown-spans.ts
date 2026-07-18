@@ -5,6 +5,7 @@ import type { MergedStep } from "../trace/steps.js";
 import type { SourceMapResolver } from "../trace/sourcemap.js";
 import { RUN_START_MARK, WPD_MARK_PREFIX } from "../model/marks.js";
 import { breakdownHeuristicMainThread } from "./notes.js";
+import { mergeSpanOccurrences } from "../model/span-merge.js";
 import type { NormalizedEvent, SpanBreakdown } from "../model/recording.js";
 
 /**
@@ -35,14 +36,16 @@ function mainThread(
 
 /** Pair user `performance.measure` async begin/end trace events (blink.user_timing, ph b/e) into
  * named windows. wpd's own `wpd:*` measures are excluded -- the run/step spans come from marks, not
- * here. A repeated name (measured once per --iteration) keeps its FIRST in-window pair. */
+ * here. EVERY in-window occurrence is returned, including a label repeated across --iterations and
+ * within one iteration: those repetitions are the label's samples, merged per label downstream (see
+ * model/span-merge.ts). Order is by end event, so the first occurrence of each label comes first. */
 export function userMeasureSpans(
   events: NormalizedEvent[],
   runStart: number,
   runEnd: number,
 ): { label: string; startTs: number; endTs: number }[] {
   const begins = new Map<string, number[]>();
-  const out = new Map<string, { label: string; startTs: number; endTs: number }>();
+  const out: { label: string; startTs: number; endTs: number }[] = [];
   for (const event of events) {
     if (event.kind !== "usertiming" || event.name.startsWith(WPD_MARK_PREFIX)) continue;
     if (event.ph === "b") {
@@ -50,16 +53,14 @@ export function userMeasureSpans(
       list.push(event.ts);
       begins.set(event.name, list);
     } else if (event.ph === "e") {
-      const list = begins.get(event.name);
-      const startTs = list?.shift();
+      const startTs = begins.get(event.name)?.shift();
       if (startTs == null) continue;
       const endTs = event.ts;
-      if (out.has(event.name)) continue;
       if (startTs < runStart || endTs > runEnd || endTs <= startTs) continue;
-      out.set(event.name, { label: event.name, startTs, endTs });
+      out.push({ label: event.name, startTs, endTs });
     }
   }
-  return [...out.values()];
+  return out;
 }
 
 /**
@@ -143,5 +144,8 @@ export async function buildBreakdowns(
       ...(frames ? { frames } : {}),
     });
   }
-  return breakdowns;
+  // A `performance.measure` label repeated across --iterations produced one bar per occurrence above;
+  // collapse each label to its lower-median-by-wall real sample. run/steps have unique labels and
+  // pass through unchanged.
+  return mergeSpanOccurrences(breakdowns);
 }
