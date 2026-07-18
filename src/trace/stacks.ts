@@ -14,7 +14,7 @@ interface RawFrame {
 /**
  * Pull the JS stack out of a trace event's args. Chrome puts it in different
  * places depending on the event:
- *   - Layout / UpdateLayoutTree / RecalcStyles -> args.beginData.stackTrace
+ *   - Layout / UpdateLayoutTree                -> args.beginData.stackTrace
  *   - *InvalidationTracking / TimerFire / rAF  -> args.data.stackTrace
  *   - FunctionCall / EvaluateScript            -> a single frame in args.data
  */

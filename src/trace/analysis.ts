@@ -13,7 +13,7 @@ export const inWindow = (event: NormalizedEvent, start: number | null) =>
 
 /**
  * Mark layout/style events that were forced synchronously by JS. The browser only
- * attaches a JS stack to a Layout/RecalcStyle when script triggered it mid-task
+ * attaches a JS stack to a Layout/UpdateLayoutTree when script triggered it mid-task
  * (reading offsetTop etc.); natural frame-boundary layout has no stack. So:
  * layout/style kind + a resolvable user stack = forced.
  */

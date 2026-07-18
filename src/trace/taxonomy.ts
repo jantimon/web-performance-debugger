@@ -29,8 +29,20 @@ interface KindRow {
 // scripting v8-category fallback.
 export const TAXONOMY: Record<EventKind, KindRow> = {
   layout: { names: new Set(["Layout"]), slice: "layout" },
+  // The style-event names Chrome 150 emits: `UpdateLayoutTree` (the recalc) and
+  // `ParseAuthorStyleSheet` (parsing author CSS). Both bill to the `style` slice.
+  //
+  // [measured] `ParseAuthorStyleSheet` is a stylesheet PARSE, not a recalc: it fires only when new
+  // author CSS is parsed inside the window (an injected/loaded `<link rel=stylesheet>`), and Blink
+  // logs it WITHOUT incrementing `RecalcStyleCount`. Inline `<style>`, `insertRule`, and DOM/class
+  // mutations never emit it. Its time is real main-thread style work, so it stays on the `style`
+  // slice. The reported `styleCount` is CDP `RecalcStyleCount` (the merge prefers it), already
+  // parse-free because Blink never counts the parse, so no code filters this event out. Only a
+  // trace-DERIVED count would need to: summing every `style` event gives recalc + parses >
+  // `RecalcStyleCount`, so a trace-only style count must sum `UpdateLayoutTree` alone.
+  // See docs/dev/rendering-counts.md.
   style: {
-    names: new Set(["UpdateLayoutTree", "RecalcStyles", "RecalcStyle", "ParseAuthorStyleSheet"]),
+    names: new Set(["UpdateLayoutTree", "ParseAuthorStyleSheet"]),
     slice: "style",
   },
   // Main-thread paint only, and deliberately just this one name.
