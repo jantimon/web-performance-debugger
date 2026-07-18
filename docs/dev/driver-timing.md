@@ -144,3 +144,9 @@ to round the parts to whole ms where Chrome does not.
   when it is comparing a wall that waits for a frame against one that does not. The claim that
   survives is narrower and still worth the switch: bench prices the code, while the driver's wall is
   dominated by a frame wait that does not move when the code gets slower.
+- **`performance.measure` spans are the third way, for a phase *inside* `run()`.** Under
+  `--breakdown` (Chrome) and automatically on Firefox, any `performance.measure(name, a, b)` the page
+  emits becomes its own reconciling span with a full breakdown, keyed by the measure name. So a
+  sub-`run()` phase (an app's `__hydrateMs` / `__mountMs`) is timed in-page on the page's own clock —
+  no driver wall, no frame wait, and finer-grained than bench's single `run()` window. `query spans
+  latest` lists them; see [cpu-profiling.md](./cpu-profiling.md).

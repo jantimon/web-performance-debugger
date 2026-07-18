@@ -22,10 +22,17 @@ chromium at tip-of-tree, with a permalink).
 
 ## The four things most likely to bite you
 
-1. **`query blame --forced` means a different thing per engine.** Chrome's stack names the geometry
-   **read** that forced the flush; Gecko's cause stack names the **write** that dirtied the DOM.
-   Measured: zero line overlap on the same probe.
-   [Details](./engine-mapping.md#forced-layout-blame-differs-by-engine).
+1. **In `--breakdown` (and `--no-isolate`, and Firefox) counts TOTAL across `--iterations`.** The one
+   fused/single pass carries wall AND counts, so it runs every iteration and `layout/style/paint/
+   forced` are totals, not one iteration's work — `assert --max-layouts` silently scales with
+   `--iterations` (the default two-pass Chrome plan pins its count pass to one iteration and does
+   not). `noteCountScope` says which lane you are on; use `--iterations 1` to assert on counts. And a
+   `Measured<>` field a mode did not measure is `null`, never 0 (`--breakdown` reports
+   `forcedLayoutCount`/`forcedLayoutMs` as `null`): `assert` FAILs on `null`, so `assert
+   --max-forced 0` fails under `--breakdown` by design, rather than passing on a fake 0. Firefox's
+   unmeasured plain-number counts cannot hold `null` — paint reports a literal `0` disclosed by a
+   loud `meta.notes` entry ("A 0 in those means unmeasured, not clean"), which is exactly why that
+   note exists.
 2. **`selfMs` on the browser lanes is not pure JS.** It is JS *plus the synchronous engine work JS
    triggered* — a forced layout shows up as self-time on the line that forced it (~85% of the
    probe's "JS" time is reflow). Only `--target node` measures pure JS.

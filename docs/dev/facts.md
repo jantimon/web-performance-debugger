@@ -21,5 +21,8 @@ listed here), and only list a file that genuinely contains the string.
 | Paint count exactness | exactly N+1 for N dirtied regions | N+1 | docs/dev/rendering-counts.md | src/trace/taxonomy.ts, src/model/recording.ts, src/commands/diff.ts, docs/dev/rendering-counts.md |
 | Default CPU sampler interval | 200 us | 200 | docs/dev/cpu-profiling.md (why 200) | src/profile/cpuprofile.ts, docs/dev/cpu-profiling.md |
 | Fused (--breakdown) pass wall cost | ~2-5% above a pristine timing pass | 2-5% | src/record/passplan.ts (breakdownSpec) | src/record/passplan.ts, src/record/notes.ts |
+| Fused (--breakdown) pass CPU cleanliness | light trace leaves sampled self-time clean vs sampler-only | +0-1% | docs/dev/cpu-profiling.md (the pass plan, breakdown bullet) | src/record/passplan.ts, docs/dev/cpu-profiling.md |
+| Firefox read-site blame line overlap with Chrome | 12 of Chrome's 21 forced read lines matched exactly | 12/21 | docs/dev/engine-mapping.md (forced-layout blame) | docs/dev/engine-mapping.md, src/model/recording.ts |
+| Firefox sub-ms sampling declined (keep the 1ms floor) | 0.5ms is delivered on macOS but worsens reconciliation/size | 0.499 | docs/dev/cpu-profiling.md (the Firefox sampler config) | docs/dev/cpu-profiling.md |
 | Firefox honest idle via threadCPUDelta | js,cpu populates the CPU column; a pure-wait window reads 95.7% idle (js-only leaves it 0% populated) | 95.7% | docs/dev/cpu-profiling.md | src/browser/launch.ts, src/profile/gecko.ts, src/record/notes.ts, docs/dev/cpu-profiling.md |
 | Frame side-track swing on unchanged code | PipelineReporter total swings 1->28 on an identical 20-box paint | 1->28 | docs/dev/rendering-counts.md (the off-thread frame side track is display-only) | src/trace/frames.ts, docs/dev/rendering-counts.md |

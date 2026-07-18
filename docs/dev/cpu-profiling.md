@@ -47,9 +47,10 @@ But it constrains what may be claimed:
 ## The pass plan
 
 ```
-chrome:  [timing+sampler] [trace]
-firefox: [timing]          [gecko]
-node:    [node-cpu]
+chrome:              [timing+sampler] [trace]
+chrome --breakdown:  [light-trace+sampler]      (one fused pass)
+firefox:             [timing]          [gecko]
+node:                [node-cpu]
 ```
 
 - **timing** — `categories: null`, tracing off. Clean wall/per-iteration times + CDP counters, and
@@ -58,6 +59,14 @@ node:    [node-cpu]
   Durations here are distorted by instrumentation **by design**; timing comes from the timing pass.
   **The sampler must never run in this pass** (see below).
 - **gecko** — firefox only; one Gecko-profiler run yields CPU samples *and* layout/style markers.
+- **breakdown** — chrome `--breakdown` only; ONE fused pass: a light trace (the shipped categories
+  MINUS `disabled-by-default-devtools.timeline.stack` and MINUS `invalidationTracking`, plus gc
+  events) with the sampler riding it. Trace events and samples share a clock, so the seven-slice bar
+  reconciles. **[measured]** the light trace leaves self-time clean (**+0-1%** vs the sampler-only
+  baseline, no invented functions) and costs **~2-5%** wall (probes A-C); dropping `.stack` is what
+  removes the +21% contamination below. It carries wall AND counts (like `--no-isolate`), so counts
+  total across `--iterations`; forced counts and blame need `.stack`, so this mode reports them
+  `null`, never 0.
 
 CPU profiling is **on by default on every target** and costs no extra pass. Opting out is only
 meaningful on chrome: node has nothing left to measure without it, and firefox without it reports
@@ -212,6 +221,26 @@ Firefox is pinned to Gecko's ~1ms floor
 (`GECKO_MIN_INTERVAL_MS`), so a near-zero window reads a fixed ~5ms of a handful of samples and needs
 higher `--iterations` before the number is trustworthy. Both prove the point: the work axis reports
 what the one-frame `wall`/`INP` floor hides.
+
+### The Firefox sampler config: `js,cpu`, 1 ms, and what not to chase
+
+**[measured]** `examples/cpu-busywork.mjs --bench --target firefox`, interleaved arms, RAW dumps.
+
+- **The 1 ms floor is a measured choice, not the OS limit.** Requesting 0.5 ms *is* delivered on
+  macOS — achieved **0.50 ms** median (0.499-0.50 raw over 5 runs), so the `usleep()` floor does
+  not hold — but it is declined: it doubles samples for resolution wpd does not use (function lists +
+  self-% are interval-stable, above), and it *worsens* the two things that matter — scriptingMs-vs-
+  bench-wall reconciliation **+4%->+7%**, dump size **+1.5 MB**, with no fidelity gain. Sub-frame
+  fidelity comes from `--iterations` + measure-spans instead.
+- **Profiler self-overhead is 0.03-0.13% on the category axis — nothing to subtract.** wpd's dumps
+  are unsymbolicated, so sample leaves are raw JIT addresses with no category and the `Profiler`
+  category survives only on a handful of pseudo-frames. The sampler's real cost shows up as wall
+  (~4% in reconciliation), not as a category slice, so `selfMs` needs no overhead correction.
+- **ENTRIES is not a dump-size lever.** The 16M-entry ring is a ~128 MB ceiling never approached;
+  size scales with samples *used* (threads x whole-browser-lifetime x features: `cpu` +0.5 MB,
+  `stackwalk` +0.7 MB), so a dump is ~15-23 MB regardless of workload. Do NOT shrink it by lowering
+  ENTRIES: undersizing silently overwrites (drops) the window's *earliest* samples. `stackwalk`
+  stays off (zero signal on shallow JIT stacks, +0.7 MB).
 
 ## Sourcemap note gating
 

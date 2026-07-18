@@ -67,11 +67,16 @@ Started at launch and dumped on browser exit via `launch({ env })`:
 
 - `MOZ_PROFILER_STARTUP=1`
 - `MOZ_PROFILER_SHUTDOWN=<abs path>` (JSON written on `browser.close()`)
-- `MOZ_PROFILER_STARTUP_FEATURES=js` (sufficient: gives JS stacks, UserTiming markers, and
-  Reflow/Styles markers with JS cause stacks. `stackwalk` not needed and would only add native
-  C++ frames we collapse anyway.)
+- `MOZ_PROFILER_STARTUP_FEATURES=js,cpu`. An explicit features string **replaces** Gecko's default
+  set, so it must name everything wpd needs: `js` gives JS stacks, UserTiming markers, and
+  Reflow/Styles markers with JS cause stacks; `cpu` populates the per-sample `threadCPUDelta` column
+  (`js` alone leaves it structurally empty), whose ~0 values are the honest idle signal the
+  reconciling bar tiles ([cpu-profiling.md](./cpu-profiling.md)). `stackwalk` is NOT added (zero
+  signal on the shallow JIT stacks, and it would only add native C++ frames we collapse); neither is
+  `cpuallthreads` (`cpu` reproduces the idle result sampling only registered threads).
 - `MOZ_PROFILER_STARTUP_INTERVAL=1` (ms floor; the real sample delta measured was ~1ms median)
-- `MOZ_PROFILER_STARTUP_ENTRIES=16000000` (big ring buffer so the window is not overwritten)
+- `MOZ_PROFILER_STARTUP_ENTRIES=16000000` (big ring buffer so the window is not overwritten; NOT a
+  size lever — undersizing silently drops the window's earliest samples, dumps stay ~15-23MB)
 
 The dump is written **asynchronously** after `close()`. We poll for the file to exist AND stop
 growing (3 stable reads, ~15s timeout) before parsing. A 4.5s workload produced a 26MB dump.

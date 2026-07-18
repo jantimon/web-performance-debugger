@@ -191,6 +191,7 @@ agreeing within 5%). See
 | --- | --- | --- | --- |
 | CPU self-time of the forcing fn | 8.41 ms | 8.79 ms | **yes, ~5%** |
 | `interaction.processingMs` | 45.1 ms | 45.0 ms | **yes, ~0.2%** |
+| forced-blame read line | exact (`.stack`) | sampled (~1 ms) | **yes, line granularity** (12/21 exact) |
 | `inpMs` | 56 ms | 48 ms | no, and see below |
 | forced layout ms | 7.17 ms | 1.08 ms | no, 7x |
 | layout batches | 22 | 70 | no, 3x |

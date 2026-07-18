@@ -79,6 +79,15 @@ summary, so they structurally cannot gate on it. Nothing in it is summed into a 
 (the wall is main-thread self-time; these frames run off-thread). `Paint` stays the only exact,
 gate-able rendering signal.
 
+## Layer count is a CDP snapshot, not a windowed count
+
+**[measured]** The *layer count* the composite section above says neither engine hands us IS
+obtainable — but only as a point-in-time snapshot, never as a per-span count. CDP `LayerTree.enable`
++ `layerTreeDidChange` fires **only on a structural change**: run 0 reports a stable count (paint
+probe **4**, forces-layout probe **8**) and runs 1-9 fire **0 times**, because recoloring boxes does
+not restructure the layer tree. So a layer count is a CDP-bracket *snapshot* value, not a gate-able
+per-interaction count — a steady-state interaction emits no event to window.
+
 ## Firefox: paint stays unmeasured, on purpose
 
 A real Gecko dump has paint-ish markers -- `DisplayList`, `WrDisplayList`, `Image Paint`,
