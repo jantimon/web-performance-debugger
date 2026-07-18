@@ -505,6 +505,7 @@ wpd query cpu latest
 | --- | --- |
 | `digest <file>` | entry point: summary, thrashing, long tasks, slowest events |
 | `index <file>` | per-step table (driver runs) |
+| `spans <file>` | per-span time breakdown, one shape across targets (`--label <L>`) |
 | `events <file>` | the classified event log (`--kind`, `--name`, `--forced`, `--top`, `--sort`) |
 | `blame <file>` | events grouped by source line (`--forced`, `--all`, `--kind`, `--top`) |
 | `get <file> <id>` | one event, full stack and args |
@@ -513,6 +514,19 @@ wpd query cpu latest
 
 Any `<file>` may be `latest`. Verbs emit JSON with `--json` or `--format toon` (`get` takes
 `--format` only)
+
+**`query spans` is the one surface for per-interaction breakdowns across every target.** It returns
+one entry per span — the run window, each driver step, and every user `performance.measure` — each
+with the same slice keys (`js` with `byPackage`, `style`, `layout`, `paint`, `gc`, `other`, `idle`)
+whether the recording came from chrome `--breakdown`, `--target firefox`, or `--target node`. A
+slice a lane could not measure is an explicit `null`, never a fabricated `0`. That null-vs-0
+distinction is not target-stable, though: on the same target `paint` can be `null` on a run-only
+recording but a measured `0` once a stored breakdown exists, so a consumer normalizing across
+recordings should read `paint?.ms ?? 0` rather than treat null-vs-0 as a per-target signal. Filter to one span
+with `--label <L>` (exact, case-sensitive, like a `performance.measure` name). This is the
+label-keyed join a matrix consumer performs: `spans[]` keyed by `label`, the same access path on
+every engine — no hand-parsing `digest.breakdowns` and no special-casing Firefox's differently
+shaped `cpu.breakdown`.
 
 Human output is colorized when stdout is a terminal. Control it with `--color auto|always|never`
 (default `auto`); `NO_COLOR` is honored, and piped, redirected, and `--json`/`--format` output is
@@ -604,6 +618,7 @@ const model: CpuModel = JSON.parse(await readFile("run.cpu.json", "utf8"));
 | `.digest.json` | `Digest` |
 | `.index.json` (stepped runs) | `StepIndex` |
 | `query cpu` / `frame` / `blame` | `CpuOverview` / `FrameQueryResult` / `BlameEntry[]` |
+| `query spans` | `SpansResult` (spans: `SpanEntry`, slices: `UnifiedSlices`) |
 | `cpu-diff` | `CpuDiffResult` |
 | `query get` / `events` | `NormalizedEvent` / `NormalizedEvent[]` |
 

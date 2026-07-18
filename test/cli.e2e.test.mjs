@@ -311,6 +311,34 @@ e2e("record --breakdown: a user performance.measure appears as a span", { timeou
   assert.ok(measureSpan.breakdown.slices.js.ms > 0, "the measured JS work lands in the js slice");
 });
 
+// `query spans`: the unified per-span surface. On chrome --breakdown it sources the stored
+// seven-slice bars, so a consumer reads the run span AND the user measure with one shape and one
+// access path (spans[], keyed by label) -- the label-keyed join a matrix consumer performs.
+e2e("query spans: unified per-span shape over a chrome --breakdown recording", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "spans-chrome");
+  runCli([
+    "record", path.join(repoRoot, "test", "fixtures", "user-measure.mjs"),
+    "--bench", "--breakdown", "--iterations", "2", "--out", out,
+  ]);
+
+  const spans = JSON.parse(runCli(["query", "spans", out, "--json"]));
+  assert.equal(spans.source, "breakdowns", "chrome --breakdown sources the stored per-span bars");
+  assert.ok(Array.isArray(spans.spans) && spans.spans.length > 0, "spans present");
+  assert.ok(spans.spans.some((span) => span.kind === "run"), "the run span is always present");
+  const measure = spans.spans.find((span) => span.kind === "measure" && span.label === "user-span");
+  assert.ok(measure, "the user performance.measure surfaces as a labeled span");
+  // The unified superset shape: every slice key present; chrome measures them all.
+  for (const key of ["js", "style", "layout", "paint", "gc", "other", "idle"])
+    assert.ok(key in measure.slices, `slice '${key}' present in the unified shape`);
+  assert.ok(measure.slices.js.byPackage, "js keeps its by-package split");
+
+  // --label narrows to the exact span.
+  const filtered = JSON.parse(runCli(["query", "spans", out, "--json", "--label", "user-span"]));
+  assert.equal(filtered.spans.length, 1);
+  assert.equal(filtered.spans[0].label, "user-span");
+});
+
 // The off-thread frame side track (Chrome --breakdown). It is DISPLAY-ONLY -- the frame count is
 // scheduler/settle noise that swings 1->28 on unchanged code (FP-1), so this asserts PRESENCE and
 // SHAPE only, never exact counts: the field exists, tallies to `total`, and the compact line is

@@ -184,3 +184,32 @@ e2e(
     assert.equal(slices.paint.ms, 0, "paint is 0 on firefox (off-main-thread)");
   },
 );
+
+// `query spans` reads the SAME unified shape on firefox as on chrome: the run span plus the user
+// performance.measure, keyed by label. This is the cross-engine join the dogfooding report asked
+// for -- a firefox consumer no longer special-cases CpuModel.breakdown or misses per-measure spans.
+e2e(
+  "query spans: unified per-span shape over a firefox recording (run + performance.measure)",
+  { timeout: TIMEOUT_MS },
+  () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+    const out = path.join(dir, "spans");
+    runCli(["record", path.join(examples, "measure-span.mjs"), "--bench", "--target", "firefox", "--iterations", "5", "--out", out]);
+
+    const spans = JSON.parse(runCli(["query", "spans", out, "--json"]));
+    assert.equal(spans.target, "firefox", "spans records the firefox target");
+    assert.ok(Array.isArray(spans.spans) && spans.spans.length > 0, "spans present");
+    assert.ok(spans.spans.some((span) => span.kind === "run"), "the run span is present");
+    const measure = spans.spans.find((span) => span.kind === "measure" && span.label === "work");
+    assert.ok(measure, "the user performance.measure 'work' surfaces as a labeled span on firefox");
+    // Same superset shape as chrome: every slice key present, style/layout measured on firefox.
+    for (const key of ["js", "style", "layout", "paint", "gc", "other", "idle"])
+      assert.ok(key in measure.slices, `slice '${key}' present in the unified shape`);
+    assert.notEqual(measure.slices.style, null, "firefox splits style");
+    assert.notEqual(measure.slices.layout, null, "firefox splits layout");
+
+    // The convergence hint: `query cpu --json` points firefox consumers at this surface.
+    const cpu = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+    assert.ok(cpu.hints.some((hint) => /query spans/.test(hint)), "query cpu points at the spans surface");
+  },
+);

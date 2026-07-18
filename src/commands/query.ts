@@ -2,16 +2,20 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type {
   BlameSemantic,
+  CpuBreakdown,
+  CpuModel,
   EventKind,
   NormalizedEvent,
   Recording,
   StepIndex,
 } from "../model/recording.js";
 import type { BlameEntry } from "../model/query.js";
+import { buildSpans, recordingLane } from "../model/spans.js";
 import { num, table } from "../output/ascii.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
 import { buildDigest } from "./digest.js";
-import { printSpanBreakdowns } from "./cpu.js";
+import { printSpanBreakdowns, printCpuBreakdown } from "./cpu.js";
+import { loadCpuModel } from "../profile/cpuprofile.js";
 import { printSummary } from "./summaryView.js";
 import { resolveTarget } from "./resolve.js";
 import { formatMeasured } from "../model/measured.js";
@@ -90,6 +94,64 @@ export async function queryDigest(file: string, opts: OutOpts): Promise<void> {
         .map((event) => [event.id, event.kind, event.name, num(event.durMs, 3), event.at ?? ""]),
     ),
   );
+}
+
+export interface SpansQuery extends OutOpts {
+  /** exact span label to keep (case-sensitive, like a performance.measure name) */
+  label?: string;
+}
+
+/**
+ * `query spans`: ONE unified per-span breakdown across chrome/firefox/node -- the run window, each
+ * driver step, and every user `performance.measure`, each in the same slice shape. Sources the
+ * recording's stored per-span bars when present, else synthesizes the `run` span from
+ * `CpuModel.breakdown`, so a recording carrying any bar is never empty. `--label` filters by exact
+ * label.
+ */
+export async function querySpans(file: string, query: SpansQuery): Promise<void> {
+  const abs = await resolveTarget(file, "recording");
+  const rec = await load(abs);
+  // Prefer the recording's stored per-span bars; reach for the sibling CPU model only when there are
+  // none (firefox/node without measures, or a rung-1 chrome run), where the run bar lives on
+  // CpuModel.breakdown instead of Recording.breakdowns.
+  let model: CpuModel | undefined;
+  let cpuBreakdown: CpuBreakdown | undefined;
+  if (!rec.breakdowns?.length) {
+    try {
+      model = await loadCpuModel(abs);
+      cpuBreakdown = model.breakdown;
+    } catch {
+      // No sibling CPU model: buildSpans returns null below and we report the empty case.
+    }
+  }
+  const result = buildSpans(rec.breakdowns, cpuBreakdown, recordingLane(rec.meta));
+  if (!result)
+    throw new Error(
+      `${file} carries no per-span breakdown. Record with \`--breakdown\` (chrome), \`--target ` +
+        `firefox\`, or \`--target node\` to produce span bars; an older recording or a ` +
+        `--no-cpu-profile run has none.`,
+    );
+
+  const label = query.label;
+  const spans = label ? result.spans.filter((span) => span.label === label) : result.spans;
+
+  const fmt = structuredFormat(query);
+  if (fmt) return emit({ ...result, spans }, fmt);
+
+  // Human output reuses the existing bar renderers. The stored-bars path prints the seven-slice
+  // per-span table; the synthesized run bar prints the CpuModel bar, which already labels
+  // style/layout and browser/native honestly for its lane.
+  if (result.source === "breakdowns") {
+    const bars = label ? rec.breakdowns!.filter((span) => span.label === label) : rec.breakdowns!;
+    if (!bars.length) return void console.log(`No span labelled '${label}' in ${file}.`);
+    printSpanBreakdowns(bars);
+    return;
+  }
+  if (label && label !== "run")
+    return void console.log(
+      `No span labelled '${label}' in ${file} (this lane carries only the 'run' bar).`,
+    );
+  printCpuBreakdown(model!);
 }
 
 export async function queryIndex(file: string, opts: OutOpts): Promise<void> {

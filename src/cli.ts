@@ -2,7 +2,14 @@
 import path from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import { recordAndReport, type RecordOptions } from "./commands/record.js";
-import { queryBlame, queryDigest, queryEvents, queryGet, queryIndex } from "./commands/query.js";
+import {
+  queryBlame,
+  queryDigest,
+  queryEvents,
+  queryGet,
+  queryIndex,
+  querySpans,
+} from "./commands/query.js";
 import { queryCpu, queryFrame } from "./commands/cpu.js";
 import { assertCmd, type Thresholds } from "./commands/assert.js";
 import { diffCmd } from "./commands/diff.js";
@@ -290,6 +297,14 @@ fmtOpts(
 fmtOpts(
   query.command("index <file>").description("stepped run: per-step headline numbers + file paths"),
 ).action((file, opts) => run(queryIndex(file, opts)));
+fmtOpts(
+  query
+    .command("spans <file>")
+    .description(
+      "per-span time breakdown (run + steps + performance.measure), one shape across targets",
+    )
+    .option("--label <label>", "keep only the span with this exact label (case-sensitive)"),
+).action((file, opts) => run(querySpans(file, opts)));
 fmtOpts(
   query
     .command("events <file>")

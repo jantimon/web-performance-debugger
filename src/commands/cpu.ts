@@ -223,6 +223,18 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
 
   const fmt = structuredFormat(opts);
   if (fmt) {
+    const hints = [
+      "Drill one function by id: wpd query frame latest <id>",
+      "Group differently: wpd query cpu latest --by file",
+      "Compare two runs: wpd cpu-diff <baseline.cpu.json> <current.cpu.json>",
+    ];
+    // On firefox the run bar lives here on CpuModel.breakdown (a different shape than chrome's
+    // SpanBreakdown), and `query cpu` cannot isolate a performance.measure span. Point the consumer
+    // at the unified per-span surface, which reports the same shape as chrome and honors --label.
+    if (model.meta.browser === "firefox")
+      hints.unshift(
+        "Per-span bars (run + your performance.measure spans), unified with chrome: wpd query spans latest",
+      );
     const overview: CpuOverview = {
       profile: model.profile,
       scriptingMs: model.scriptingMs,
@@ -235,11 +247,7 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
       byFile,
       hot,
       dropped,
-      hints: [
-        "Drill one function by id: wpd query frame latest <id>",
-        "Group differently: wpd query cpu latest --by file",
-        "Compare two runs: wpd cpu-diff <baseline.cpu.json> <current.cpu.json>",
-      ],
+      hints,
     };
     return emit(overview, fmt);
   }
@@ -259,6 +267,10 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
       ),
     );
   printCpuBreakdown(model);
+  // Firefox surfaces its run bar here, but per-span (performance.measure) bars and the chrome-shaped
+  // slice set live on `query spans`; point there so a consumer does not read this as the only surface.
+  if (model.meta.browser === "firefox")
+    console.log(dim("per-span bars (run + your performance.measure spans): query spans"));
   if (by !== "function") {
     const grouping = by === "file" ? byFile : byPackage;
     console.log(`\nBy ${by} (self time):\n`);
