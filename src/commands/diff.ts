@@ -21,6 +21,11 @@ import type { Recording, RecordingSummary } from "../model/recording.js";
 //
 // Advisory metrics still show in the table as a directional signal. (For a real JS-cost gate use
 // `cpu-diff`, which has a sampling-noise floor.)
+//
+// The off-thread frame side track (SpanBreakdown.frames) is intentionally NOT a metric here: its
+// counts are scheduler noise (see docs/dev/rendering-counts.md), so it is display-only and would
+// manufacture regressions. This diff reads only `summary`, where the side track does not live, so
+// no frame delta can be produced.
 const METRICS: {
   label: string;
   key: keyof RecordingSummary;

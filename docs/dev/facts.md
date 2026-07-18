@@ -22,3 +22,4 @@ listed here), and only list a file that genuinely contains the string.
 | Default CPU sampler interval | 200 us | 200 | docs/dev/cpu-profiling.md (why 200) | src/profile/cpuprofile.ts, docs/dev/cpu-profiling.md |
 | Fused (--breakdown) pass wall cost | ~2-5% above a pristine timing pass | 2-5% | src/record/passplan.ts (breakdownSpec) | src/record/passplan.ts, src/record/notes.ts |
 | Firefox honest idle via threadCPUDelta | js,cpu populates the CPU column; a pure-wait window reads 95.7% idle (js-only leaves it 0% populated) | 95.7% | docs/dev/cpu-profiling.md | src/browser/launch.ts, src/profile/gecko.ts, src/record/notes.ts, docs/dev/cpu-profiling.md |
+| Frame side-track swing on unchanged code | PipelineReporter total swings 1->28 on an identical 20-box paint | 1->28 | docs/dev/rendering-counts.md (the off-thread frame side track is display-only) | src/trace/frames.ts, docs/dev/rendering-counts.md |

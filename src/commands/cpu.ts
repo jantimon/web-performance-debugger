@@ -1,4 +1,4 @@
-import type { CpuModel, SpanBreakdown } from "../model/recording.js";
+import type { CpuModel, FrameSideTrack, SpanBreakdown } from "../model/recording.js";
 import type { CpuOverview, FrameQueryResult } from "../model/query.js";
 import { num, table } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
@@ -140,12 +140,44 @@ export function printSpanBreakdowns(breakdowns: SpanBreakdown[]): void {
     );
     if (residualMs != null)
       console.log(dim(`  residual ${num(residualMs, 3)} ms (tiling did not fully close)`));
+    if (span.frames) printFrameSideTrack(span.frames);
   }
   console.log(
     dim(
       "\njs includes synchronous engine work JS triggered (e.g. forced layout bills to the forcing frame); it is not pure JS.",
     ),
   );
+}
+
+/**
+ * One compact off-thread frame line under a span's bar, plus a line naming any dropped or
+ * smoothness-affecting frame and the slowest presented (incl. partial) frame's top stages.
+ * DISPLAY-ONLY: these numbers are scheduler noise (see docs/dev/rendering-counts.md) and never feed a
+ * bar or a gate.
+ */
+function printFrameSideTrack(frames: FrameSideTrack): void {
+  const parts = [
+    `${frames.presented} presented`,
+    `${frames.presentedPartial} partial`,
+    `${frames.dropped} dropped`,
+  ];
+  if (frames.noUpdate > 0) parts.push(`${frames.noUpdate} no-update`);
+  console.log(`  frames: ${parts.join(" · ")} ${dim("(off-thread; display-only, never gate)")}`);
+  const jank = frames.frames.filter(
+    (frame) => frame.state === "dropped" || frame.affectsSmoothness,
+  );
+  for (const frame of jank)
+    console.log(
+      yellow(
+        `  ⚠ frame ${frame.sequence}: ${frame.state}${frame.affectsSmoothness ? ", affects smoothness" : ""} (${num(frame.durMs, 1)} ms)`,
+      ),
+    );
+  if (frames.worstStages?.length) {
+    const stages = frames.worstStages
+      .map((stage) => `${stage.name} ${num(stage.ms, 1)}`)
+      .join(" · ");
+    console.log(dim(`  slowest presented (incl. partial) frame stages: ${stages}`));
+  }
 }
 
 interface OutOpts {

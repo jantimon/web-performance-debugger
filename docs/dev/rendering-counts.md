@@ -59,6 +59,26 @@ long did we wait" cannot be named `compositeCount` without inviting the misreadi
 gate on, so there is no such field. The compositor signal worth wanting is *layer count*, which is a
 different measurement neither engine hands us today.
 
+## The off-thread frame side track is display-only, for the same reason
+
+Chrome's frame pipeline (`PipelineReporter` async slices + `BeginFrame`/`DrawFrame`/`DroppedFrame`/
+`Commit`, all on the already-enabled `disabled-by-default-devtools.timeline.frame` category) is
+parsed into a per-span side track under `--breakdown` (`SpanBreakdown.frames`). It is **display-only,
+never gate-able**, by the same rule as `compositeCount`:
+
+- Its counts are scheduler/settle noise. Same unchanged 20-box paint, N=10: the per-run
+  `PipelineReporter` total swings **1->28** (compositor warmth + how many vsync ticks the settle
+  window spans), and 20 recolored boxes present as the same **1** frame as 1 box -- so a frame count
+  does not even track paint work. Contrast main-thread `Paint`: **21 in all 10 runs, zero variance**.
+- Its stage slices (`BeginImplFrameToSendBeginMainFrame` -> ... ->
+  `SubmitCompositorFrameToPresentationCompositorFrame`) are inter-event **durations** on scheduler/viz
+  threads -- wall-time, not work, exactly what killed `UpdateLayer`+`Commit` above.
+
+So the side track lives on the breakdowns, NOT on `RecordingSummary`; `assert`/`diff` read only the
+summary, so they structurally cannot gate on it. Nothing in it is summed into a breakdown bar either
+(the wall is main-thread self-time; these frames run off-thread). `Paint` stays the only exact,
+gate-able rendering signal.
+
 ## Firefox: paint stays unmeasured, on purpose
 
 A real Gecko dump has paint-ish markers -- `DisplayList`, `WrDisplayList`, `Image Paint`,

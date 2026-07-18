@@ -10,6 +10,9 @@ interface RawTraceEvent {
   ph: string;
   pid?: number;
   tid?: number;
+  /** async-event correlation id: `id2.{local,global}` (nestable async) or the flat `id` (numeric at runtime) */
+  id?: string | number;
+  id2?: { local?: string; global?: string };
   args?: unknown;
 }
 
@@ -46,6 +49,11 @@ export function parseTrace(
     if (keepThreadIds) {
       if (typeof rawEvent.pid === "number") event.pid = rawEvent.pid;
       if (typeof rawEvent.tid === "number") event.tid = rawEvent.tid;
+      // Pairing key for async begin/end slices (the frame side track pairs PipelineReporter b/e).
+      // Kept only here so non-breakdown recordings' events stay byte-for-byte.
+      const asyncId = rawEvent.id2?.local ?? rawEvent.id2?.global ?? rawEvent.id;
+      // the flat `id` can be numeric; store a string so asyncId keys pair uniformly.
+      if (asyncId != null) event.asyncId = String(asyncId);
     }
     out.push(event);
   }

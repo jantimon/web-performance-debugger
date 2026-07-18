@@ -135,7 +135,7 @@ test("facts.md ledger: every cited file still agrees with the ledger value", asy
     // drop the header row and the "--- | ---" separator
     .filter((cells) => cells[1] !== "Fact" && !/^-+$/.test(cells[1]));
 
-  assert.ok(rows.length >= 9, `expected the ledger's facts, parsed ${rows.length}`);
+  assert.ok(rows.length >= 10, `expected the ledger's facts, parsed ${rows.length}`);
 
   const fileCache = new Map();
   const readCited = async (relPath) => {

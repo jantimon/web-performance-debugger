@@ -6,6 +6,10 @@ import { resolveTarget } from "./resolve.js";
 import { gateMeasured, type Measured } from "../model/measured.js";
 import type { Recording, RecordingSummary, StepIndex } from "../model/recording.js";
 
+// Every threshold gates a `summary` field. The off-thread frame side track
+// (SpanBreakdown.frames) is deliberately absent: its counts are scheduler noise (see
+// docs/dev/rendering-counts.md), so it is DISPLAY-ONLY and must never gate. It also lives on the
+// breakdowns, not the summary this file reads, so a frame threshold cannot be added by accident.
 export interface Thresholds {
   forced?: number;
   layouts?: number;

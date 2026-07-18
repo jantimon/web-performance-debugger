@@ -1,5 +1,6 @@
 import { packagesByProfileNode, type RawCpuProfile } from "../profile/cpuprofile.js";
 import { computeSpanBreakdown, type BreakdownSample } from "../trace/breakdown.js";
+import { parseFrames, windowFrames, summarizeFrames } from "../trace/frames.js";
 import type { MergedStep } from "../trace/steps.js";
 import type { SourceMapResolver } from "../trace/sourcemap.js";
 import { RUN_START_MARK, WPD_MARK_PREFIX } from "../model/marks.js";
@@ -114,6 +115,11 @@ export async function buildBreakdowns(
       endTs: measure.endTs,
     });
 
+  // The off-thread compositor frame side track (display-only, never summed into a bar and never
+  // gated; see trace/frames.ts). Parsed once from ALL events -- the frame track lives on
+  // compositor/viz threads, not `mainEvents` -- then windowed per span below.
+  const allFrames = parseFrames(events);
+
   const breakdowns: SpanBreakdown[] = [];
   for (const span of spans) {
     const windowEvents = mainEvents.filter(
@@ -122,6 +128,11 @@ export async function buildBreakdowns(
     const windowSamples = samples.filter(
       (sample) => sample.traceTs >= span.startTs && sample.traceTs <= span.endTs,
     );
+    // The run span is start-onward (its presented frame lands in the settle tail, after run:end);
+    // a step/measure sub-span is bounded by its own window. See windowFrames.
+    const frames = summarizeFrames(
+      windowFrames(allFrames, span.startTs, span.endTs, span.kind === "run"),
+    );
     breakdowns.push({
       label: span.label,
       kind: span.kind,
@@ -129,6 +140,7 @@ export async function buildBreakdowns(
         startTs: span.startTs,
         endTs: span.endTs,
       }),
+      ...(frames ? { frames } : {}),
     });
   }
   return breakdowns;

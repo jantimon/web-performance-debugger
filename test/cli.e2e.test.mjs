@@ -311,6 +311,41 @@ e2e("record --breakdown: a user performance.measure appears as a span", { timeou
   assert.ok(measureSpan.breakdown.slices.js.ms > 0, "the measured JS work lands in the js slice");
 });
 
+// The off-thread frame side track (Chrome --breakdown). It is DISPLAY-ONLY -- the frame count is
+// scheduler/settle noise that swings 1->28 on unchanged code (FP-1), so this asserts PRESENCE and
+// SHAPE only, never exact counts: the field exists, tallies to `total`, and the compact line is
+// printed alongside the bar. Exact-count assertions would flake by design.
+e2e("record --breakdown: a per-span frame side track is recorded and printed", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "bd-frames");
+  const stdout = runCli([
+    "record", path.join(examples, "forces-layout.mjs"),
+    "--bench", "--breakdown", "--iterations", "5", "--out", out,
+  ]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+
+  const runSpan = rec.breakdowns.find((span) => span.kind === "run");
+  assert.ok(runSpan?.frames, "the run span carries a frame side track");
+  const frames = runSpan.frames;
+  // A painting workload produces at least one compositor frame in the run window (start-onward,
+  // so the settle-tail presentation is included). Only presence is asserted, not how many.
+  assert.ok(frames.total > 0, "the run span caught at least one frame");
+  assert.equal(
+    frames.presented + frames.presentedPartial + frames.dropped + frames.noUpdate,
+    frames.total,
+    "the four verdict tallies sum to total",
+  );
+  assert.equal(frames.frames.length, frames.total, "one raw record per frame");
+  // The side track is display-only: it never leaks into the summary the gates read.
+  assert.equal(
+    Object.keys(rec.summary).some((key) => /frame/i.test(key) && !/forced/i.test(key)),
+    false,
+    "no frame field on summary, so assert/diff structurally cannot gate on it",
+  );
+  // ...and it is printed alongside the bar.
+  assert.match(stdout, /frames: \d+ presented · \d+ partial · \d+ dropped/);
+});
+
 // The flag guards reject before any browser launches, so this runs everywhere (not gated on Chrome).
 test("record --headless-mode shell errors when combined with --no-headless", () => {
   const result = spawnSync(
