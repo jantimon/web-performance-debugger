@@ -1,0 +1,147 @@
+import { packagesByProfileNode, type RawCpuProfile } from "../profile/cpuprofile.js";
+import { computeSpanBreakdown, type BreakdownSample } from "../trace/breakdown.js";
+import { parseFrames, windowFrames, summarizeFrames } from "../trace/frames.js";
+import type { MergedStep } from "../trace/steps.js";
+import type { SourceMapResolver } from "../trace/sourcemap.js";
+import { RUN_START_MARK, WPD_MARK_PREFIX } from "../model/marks.js";
+import { breakdownHeuristicMainThread } from "./notes.js";
+import type { NormalizedEvent, SpanBreakdown } from "../model/recording.js";
+
+/**
+ * The renderer main thread's pid/tid, plus how it was picked: `marker` when `wpd:run:start` (the
+ * mark the page makes on its own main thread) named the thread, `heuristic` when that marker was
+ * missing and the thread carrying the most layout/paint work stood in. A lost marker degrades to a
+ * heuristic rather than to nothing; null when no candidate exists at all.
+ */
+function mainThread(
+  events: NormalizedEvent[],
+): { pid: number; tid: number; via: "marker" | "heuristic" } | null {
+  const start = events.find((event) => event.name === RUN_START_MARK);
+  if (start?.pid != null && start.tid != null)
+    return { pid: start.pid, tid: start.tid, via: "marker" };
+  const activity = new Map<string, { pid: number; tid: number; count: number }>();
+  for (const event of events) {
+    if (event.pid == null || event.tid == null) continue;
+    if (event.kind !== "layout" && event.kind !== "paint") continue;
+    const key = `${event.pid}/${event.tid}`;
+    const entry = activity.get(key) ?? { pid: event.pid, tid: event.tid, count: 0 };
+    entry.count++;
+    activity.set(key, entry);
+  }
+  let best: { pid: number; tid: number; count: number } | null = null;
+  for (const entry of activity.values()) if (!best || entry.count > best.count) best = entry;
+  return best ? { pid: best.pid, tid: best.tid, via: "heuristic" } : null;
+}
+
+/** Pair user `performance.measure` async begin/end trace events (blink.user_timing, ph b/e) into
+ * named windows. wpd's own `wpd:*` measures are excluded -- the run/step spans come from marks, not
+ * here. A repeated name (measured once per --iteration) keeps its FIRST in-window pair. */
+export function userMeasureSpans(
+  events: NormalizedEvent[],
+  runStart: number,
+  runEnd: number,
+): { label: string; startTs: number; endTs: number }[] {
+  const begins = new Map<string, number[]>();
+  const out = new Map<string, { label: string; startTs: number; endTs: number }>();
+  for (const event of events) {
+    if (event.kind !== "usertiming" || event.name.startsWith(WPD_MARK_PREFIX)) continue;
+    if (event.ph === "b") {
+      const list = begins.get(event.name) ?? [];
+      list.push(event.ts);
+      begins.set(event.name, list);
+    } else if (event.ph === "e") {
+      const list = begins.get(event.name);
+      const startTs = list?.shift();
+      if (startTs == null) continue;
+      const endTs = event.ts;
+      if (out.has(event.name)) continue;
+      if (startTs < runStart || endTs > runEnd || endTs <= startTs) continue;
+      out.set(event.name, { label: event.name, startTs, endTs });
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * Build one seven-slice breakdown per span (--breakdown mode). Spans are the run window, each driver
+ * step window, and every user `performance.measure` inside the run window. Durations come from the
+ * main-thread trace events; the js slice is subdivided from the CPU samples projected onto the same
+ * trace clock (they share Chrome's base::TimeTicks). Returns [] if no run window was found.
+ */
+export async function buildBreakdowns(
+  events: NormalizedEvent[],
+  raw: RawCpuProfile,
+  runWindow: { startTs: number | null; endTs: number | null },
+  mergedSteps: MergedStep[] | undefined,
+  context: { serverUrl: string; root: string; maps: SourceMapResolver; notes: string[] },
+): Promise<SpanBreakdown[]> {
+  if (runWindow.startTs == null || runWindow.endTs == null) return [];
+  const main = mainThread(events);
+  if (!main) return [];
+  // The marker path names the page's own main thread; the heuristic only guesses from where the
+  // rendering work landed, so another thread doing more layout/paint would steal the attribution.
+  if (main.via === "heuristic") context.notes.push(breakdownHeuristicMainThread());
+  const mainEvents = events.filter(
+    (event) => event.pid === main.pid && event.tid === main.tid && event.dur > 0,
+  );
+
+  // Project every sample onto the trace clock: absolute ts = startTime + cumulative timeDeltas.
+  const packagesByNode = await packagesByProfileNode(raw, context);
+  const samples: BreakdownSample[] = [];
+  let clock = raw.startTime;
+  for (let index = 0; index < raw.samples.length; index++) {
+    clock += raw.timeDeltas[index] ?? 0;
+    samples.push({ traceTs: clock, package: packagesByNode.get(raw.samples[index]) ?? null });
+  }
+
+  const spans: { label: string; kind: SpanBreakdown["kind"]; startTs: number; endTs: number }[] = [
+    { label: "run", kind: "run", startTs: runWindow.startTs, endTs: runWindow.endTs },
+  ];
+  for (const step of mergedSteps ?? []) {
+    // A step whose end marker was lost runs to the end of the run window rather than being dropped.
+    if (step.startTs == null) continue;
+    spans.push({
+      label: step.label,
+      kind: "step",
+      startTs: step.startTs,
+      endTs: step.endTs ?? runWindow.endTs,
+    });
+  }
+  for (const measure of userMeasureSpans(events, runWindow.startTs, runWindow.endTs))
+    spans.push({
+      label: measure.label,
+      kind: "measure",
+      startTs: measure.startTs,
+      endTs: measure.endTs,
+    });
+
+  // The off-thread compositor frame side track (display-only, never summed into a bar and never
+  // gated; see trace/frames.ts). Parsed once from ALL events -- the frame track lives on
+  // compositor/viz threads, not `mainEvents` -- then windowed per span below.
+  const allFrames = parseFrames(events);
+
+  const breakdowns: SpanBreakdown[] = [];
+  for (const span of spans) {
+    const windowEvents = mainEvents.filter(
+      (event) => event.ts < span.endTs && event.ts + event.dur > span.startTs,
+    );
+    const windowSamples = samples.filter(
+      (sample) => sample.traceTs >= span.startTs && sample.traceTs <= span.endTs,
+    );
+    // The run span is start-onward (its presented frame lands in the settle tail, after run:end);
+    // a step/measure sub-span is bounded by its own window. See windowFrames.
+    const frames = summarizeFrames(
+      windowFrames(allFrames, span.startTs, span.endTs, span.kind === "run"),
+    );
+    breakdowns.push({
+      label: span.label,
+      kind: span.kind,
+      breakdown: computeSpanBreakdown(windowEvents, windowSamples, {
+        startTs: span.startTs,
+        endTs: span.endTs,
+      }),
+      ...(frames ? { frames } : {}),
+    });
+  }
+  return breakdowns;
+}

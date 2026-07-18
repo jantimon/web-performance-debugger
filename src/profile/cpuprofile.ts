@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type {
+  CpuBreakdown,
   CpuEdge,
   CpuFunction,
   CpuGroupStat,
@@ -15,6 +16,10 @@ import {
   isToolFrameUrl,
 } from "../trace/stacks.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
+import type { GeckoSlice } from "./gecko.js";
+import { computeGeckoCpuBreakdown } from "./gecko-breakdown.js";
+import { usToMs, msToUs } from "../model/time.js";
+import { reconcileResidual } from "../model/reconcile.js";
 import { deserialize } from "../output/format.js";
 import { resolveTarget } from "../commands/resolve.js";
 
@@ -25,6 +30,12 @@ export interface RawCpuProfile {
   endTime: number;
   samples: number[];
   timeDeltas: number[];
+  /**
+   * Firefox (js,cpu) only: per-sample breakdown data the Gecko converter attaches, parallel to
+   * `samples`/`timeDeltas`. Absent on chrome/node (their breakdown reads node classification) and on
+   * firefox dumps with an empty `threadCPUDelta` column (no honest idle signal, so no breakdown).
+   */
+  gecko?: { sampleSlices: GeckoSlice[] };
 }
 
 export interface RawProfileNode {
@@ -272,6 +283,82 @@ async function resolveCallFrame(
 }
 
 /**
+ * Reconciling `js · browser · gc · idle` decomposition of the profile's own sampled window.
+ *
+ * Built from `samples[]` + `timeDeltas[]` (via `selfUsByNode`, which already attributed each delta
+ * to its sample's node), NOT from `selfMs` aggregates: every node classifies into exactly one slice
+ * and every delta belongs to a node, so `js + browser + gc + idle === wallMs` EXACTLY with zero
+ * residual. `wallMs` is the sum of the profile's time deltas (which equals `CpuModel.totalMs`), not
+ * an external wall: `endTime - startTime` carries a small tail after the last sample that belongs to
+ * no delta, which would break the closure.
+ *
+ * Classification of a node:
+ *  - (idle)              -> idle
+ *  - (garbage collector) -> gc
+ *  - (program)/(root), or a tool harness frame -> browser (engine/runtime work with the profiled
+ *    JS not on the stack; left unsplit)
+ *  - everything else     -> js, bucketed by the SAME resolved package as `functions`/packageRollup,
+ *    so `byPackage` matches `query cpu --by package` and sums to `js.ms`.
+ */
+function computeBreakdown(
+  nodes: RawProfileNode[],
+  selfUsByNode: Map<number, number>,
+  resolvedByKey: Map<string, ResolvedFrame>,
+  totalMs: number,
+): CpuBreakdown {
+  let idleUs = 0;
+  let gcUs = 0;
+  let browserUs = 0;
+  let jsUs = 0;
+  const byPackageUs = new Map<string, number>();
+  for (const node of nodes) {
+    const selfUs = selfUsByNode.get(node.id) ?? 0;
+    if (selfUs === 0) continue;
+    const { functionName, url } = node.callFrame;
+    if (!url && functionName === "(idle)") {
+      idleUs += selfUs;
+    } else if (!url && functionName === "(garbage collector)") {
+      gcUs += selfUs;
+    } else if (!url && (functionName === "(program)" || functionName === "(root)")) {
+      browserUs += selfUs;
+    } else if (isToolFrameUrl(url)) {
+      browserUs += selfUs;
+    } else {
+      // resolvedByKey is keyed by frameKey over these same raw.nodes, so this lookup always hits;
+      // fall back to jsUs staying unattributed rather than inventing a "(native)" bucket.
+      const owner = resolvedByKey.get(frameKey(node.callFrame))?.package;
+      if (owner == null) continue;
+      jsUs += selfUs;
+      byPackageUs.set(owner, (byPackageUs.get(owner) ?? 0) + selfUs);
+    }
+  }
+  const byPackage: Record<string, number> = {};
+  for (const [owner, microseconds] of [...byPackageUs].sort((left, right) => right[1] - left[1]))
+    byPackage[owner] = usToMs(microseconds);
+  const breakdown: CpuBreakdown = {
+    wallMs: totalMs,
+    slices: {
+      js: { ms: usToMs(jsUs), byPackage },
+      browser: { ms: usToMs(browserUs) },
+      gc: { ms: usToMs(gcUs) },
+      idle: { ms: usToMs(idleUs) },
+    },
+  };
+  // Every classified node adds its selfUs to exactly one slice, so the four sum to totalMs by
+  // construction. The one leak is a node whose owner resolves to null (the `continue` above): its
+  // time belongs to no slice. The residual surfaces that instead of letting the bar quietly fall
+  // short of wall; same epsilon + escape valve as the seven-slice breakdown.
+  const sliceSum =
+    breakdown.slices.js.ms +
+    breakdown.slices.browser.ms +
+    breakdown.slices.gc.ms +
+    breakdown.slices.idle.ms;
+  const residual = reconcileResidual(breakdown.wallMs, sliceSum);
+  if (residual !== undefined) breakdown.residualMs = residual;
+  return breakdown;
+}
+
+/**
  * Turn a raw CPU profile into a resolved, self-contained model: per-function self/total
  * time, system buckets, and a thresholded call-graph. Sized by function count, not by
  * sample count, so it stays small for complex pages and needs no re-resolution later.
@@ -380,7 +467,7 @@ export async function buildCpuModel(
     [...callFrameByKey].reduce(
       (sum, [key, callFrame]) =>
         callFrame.functionName === name && !callFrame.url
-          ? sum + (selfUsByKey.get(key) ?? 0) / 1000
+          ? sum + usToMs(selfUsByKey.get(key) ?? 0)
           : sum,
       0,
     );
@@ -390,8 +477,8 @@ export async function buildCpuModel(
     programMs: systemMs("(program)"),
   };
   const sampledUs = [...selfUsByNode.values()].reduce((sum, value) => sum + value, 0);
-  const idleUs = system.idleMs * 1000;
-  const scriptingMs = Math.max(0, (sampledUs - idleUs) / 1000);
+  const idleUs = msToUs(system.idleMs);
+  const scriptingMs = Math.max(0, usToMs(sampledUs - idleUs));
 
   const ranked = [...callFrameByKey.keys()]
     .filter((key) => {
@@ -409,8 +496,8 @@ export async function buildCpuModel(
         source: resolved.source,
         file: resolved.file,
         package: resolved.package,
-        selfMs: (selfUsByKey.get(key) ?? 0) / 1000,
-        totalMs: (totalUsByKey.get(key) ?? 0) / 1000,
+        selfMs: usToMs(selfUsByKey.get(key) ?? 0),
+        totalMs: usToMs(totalUsByKey.get(key) ?? 0),
       };
     })
     .sort((left, right) => right.selfMs - left.selfMs || left.key.localeCompare(right.key));
@@ -446,9 +533,27 @@ export async function buildCpuModel(
     const separatorAt = edgeId.indexOf(EDGE_SEPARATOR);
     const caller = idByKey.get(edgeId.slice(0, separatorAt));
     const callee = idByKey.get(edgeId.slice(separatorAt + 1));
-    const ms = microseconds / 1000;
+    const ms = usToMs(microseconds);
     if (caller != null && callee != null && ms >= EDGE_THRESHOLD_MS)
       edges.push({ caller, callee, ms });
+  }
+
+  const totalMs = usToMs(raw.timeDeltas.reduce((sum, value) => sum + Math.max(0, value), 0));
+  // Firefox reconciles too, but off a different axis: idle is the per-sample CPU-usage signal
+  // (threadCPUDelta ~0 == descheduled/waiting) and style/layout come from the per-sample
+  // Layout-category frame, both carried on `raw.gecko` when the `cpu` profiler feature populated the
+  // column. Without that signal (js-only or an older dump) idle cannot be told from (program), so no
+  // breakdown is emitted rather than a fabricated one. Chrome/node classify V8's synthetic frames.
+  let breakdown: CpuBreakdown | undefined;
+  if (context.meta.browser === "firefox") {
+    if (raw.gecko) {
+      const packageByNode = new Map<number, string | null>();
+      for (const node of raw.nodes)
+        packageByNode.set(node.id, resolvedByKey.get(frameKey(node.callFrame))?.package ?? null);
+      breakdown = computeGeckoCpuBreakdown(raw, packageByNode, totalMs);
+    }
+  } else {
+    breakdown = computeBreakdown(raw.nodes, selfUsByNode, resolvedByKey, totalMs);
   }
 
   return {
@@ -456,13 +561,63 @@ export async function buildCpuModel(
     meta: context.meta,
     sampleCount: raw.samples.length,
     sampleIntervalUs: context.sampleIntervalUs,
-    totalMs: raw.timeDeltas.reduce((sum, value) => sum + Math.max(0, value), 0) / 1000,
+    totalMs,
     scriptingMs,
     system,
+    breakdown,
     functions,
     edges,
     unmappedFrames,
   };
+}
+
+/**
+ * Owning package per cpuprofile node id, for the --breakdown js-slice subdivision. Reuses the exact
+ * resolution the CPU model uses (`resolveCallFrame` + the shared sourcemap resolver + package
+ * walk), so a sample's package matches `query cpu --by package`. System pseudo-frames
+ * ((idle)/(garbage collector)/(program)/(root)) and the tool's own harness frames map to null: they
+ * are never a real owner, so a stray sample on one must not skew the js-by-package split.
+ *
+ * Deliberately re-walks call-frame resolution here: the CpuModel exposes no node-id-to-package map,
+ * and the shared resolver cache means this re-walk fetches no script or map twice.
+ */
+export async function packagesByProfileNode(
+  raw: RawCpuProfile,
+  context: {
+    serverUrl?: string;
+    root: string;
+    runtime?: "chrome" | "node";
+    maps?: SourceMapResolver;
+  },
+): Promise<Map<number, string | null>> {
+  const rewriteToLocal =
+    context.runtime === "node"
+      ? makeNodeSourceResolver()
+      : makeSourceResolver(context.serverUrl ?? "", context.root);
+  const maps = context.maps ?? new SourceMapResolver();
+  const packageCache = new Map<string, string | null>();
+  const packageByKey = new Map<string, string | null>();
+  const byNode = new Map<number, string | null>();
+  for (const node of raw.nodes) {
+    const { functionName, url } = node.callFrame;
+    if ((!url && SYSTEM_FRAMES.has(functionName)) || isToolFrameUrl(url)) {
+      byNode.set(node.id, null);
+      continue;
+    }
+    const key = frameKey(node.callFrame);
+    if (!packageByKey.has(key)) {
+      const resolved = await resolveCallFrame(
+        node.callFrame,
+        rewriteToLocal,
+        maps,
+        packageCache,
+        context.root,
+      );
+      packageByKey.set(key, resolved.package);
+    }
+    byNode.set(node.id, packageByKey.get(key) ?? null);
+  }
+  return byNode;
 }
 
 /** Self time bucketed by a per-function key (package or file), descending. */

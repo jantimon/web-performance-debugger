@@ -3,8 +3,13 @@ import path from "node:path";
 import { deserialize } from "../output/format.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget } from "./resolve.js";
+import { gateMeasured, type Measured } from "../model/measured.js";
 import type { Recording, RecordingSummary, StepIndex } from "../model/recording.js";
 
+// Every threshold gates a `summary` field. The off-thread frame side track
+// (SpanBreakdown.frames) is deliberately absent: its counts are scheduler noise (see
+// docs/dev/rendering-counts.md), so it is DISPLAY-ONLY and must never gate. It also lives on the
+// breakdowns, not the summary this file reads, so a frame threshold cannot be added by accident.
 export interface Thresholds {
   forced?: number;
   layouts?: number;
@@ -17,14 +22,16 @@ export interface Thresholds {
 }
 
 interface Metrics {
-  forcedLayoutCount: number;
+  /** Measured (model/measured.ts): null when the run did not measure forced layout (--breakdown),
+   * which a gate on it turns into a loud FAIL. Same for inpMs/wallMs on lanes that never observed them. */
+  forcedLayoutCount: Measured<number>;
   layoutCount: number;
   paintCount: number;
   layoutInvalidations: number;
   styleInvalidations: number;
   longTaskCount: number;
-  inpMs: number | null;
-  wallMs: number | null;
+  inpMs: Measured<number>;
+  wallMs: Measured<number>;
 }
 
 const CHECKS: { label: string; key: keyof Metrics; opt: keyof Thresholds }[] = [
@@ -93,9 +100,9 @@ export async function assertCmd(file: string, thresholds: Thresholds): Promise<v
   const rows: (string | number)[][] = [];
   for (const target of targets) {
     for (const check of active) {
-      const val = target.m[check.key];
       const max = thresholds[check.opt]!;
-      if (val == null) {
+      const gate = gateMeasured(target.m[check.key], max);
+      if (!gate.measured) {
         // A gate you asked for but can't evaluate must FAIL, not silently pass; e.g.
         // --max-inp on an in-page run that captured no interaction. Skipping it green
         // is a CI gate that doesn't gate.
@@ -109,9 +116,8 @@ export async function assertCmd(file: string, thresholds: Thresholds): Promise<v
         rows.push([target.label, check.label, "n/a", max, "FAIL"]);
         continue;
       }
-      const ok = val <= max;
-      if (!ok) violations.push(`${target.label}: ${check.label} ${num(val)} > ${max}`);
-      rows.push([target.label, check.label, num(val), max, ok ? "ok" : "FAIL"]);
+      if (!gate.ok) violations.push(`${target.label}: ${check.label} ${num(gate.value)} > ${max}`);
+      rows.push([target.label, check.label, num(gate.value), max, gate.ok ? "ok" : "FAIL"]);
     }
   }
 

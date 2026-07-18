@@ -1,12 +1,16 @@
 import puppeteer from "puppeteer";
 import type { Browser, CDPSession, Page } from "puppeteer";
 import type { BrowserName } from "./backend.js";
+import { shellFallback } from "../record/notes.js";
 
 export interface BrowserHandle {
   browser: Browser;
   page: Page;
   /** null on Firefox: WebDriver BiDi has no CDP session (guard every CDP call with the caps). */
   client: CDPSession | null;
+  /** Set when the requested chrome-headless-shell binary was missing and the launch fell back to
+   * new-headless. A WARNING for meta.notes naming the cadence cost and the install command. */
+  headlessFallback?: string;
 }
 
 /** Gecko's sampling floor: asking for less just yields this. Also the default when the caller
@@ -32,8 +36,14 @@ function geckoEnv(base: NodeJS.ProcessEnv, gecko: GeckoLaunch): NodeJS.ProcessEn
     ...base,
     MOZ_PROFILER_STARTUP: "1",
     MOZ_PROFILER_SHUTDOWN: gecko.dumpPath,
-    // js: JS stacks + UserTiming markers (windowing) + Reflow/Styles cause stacks (blame).
-    MOZ_PROFILER_STARTUP_FEATURES: "js",
+    // js,cpu: js gives JS stacks + UserTiming markers (windowing) + Reflow/Styles cause stacks
+    // (blame) + the DOM/Layout label frames read-site blame keys on. cpu populates the per-sample
+    // `threadCPUDelta` column, which is the honest-idle signal the reconciling breakdown needs.
+    // [measured, Firefox 152, macOS] an explicit features string REPLACES the default set, so
+    // `js` alone leaves threadCPUDelta 0% populated; adding `cpu` populates it 100% and a pure-wait
+    // window reads 95.7% idle, at ~1% wall and +0.5MB dump. `cpuallthreads` is unnecessary (wpd
+    // reconciles the content main thread alone) and `stackwalk` adds zero signal, so neither is set.
+    MOZ_PROFILER_STARTUP_FEATURES: "js,cpu",
     MOZ_PROFILER_STARTUP_INTERVAL: String(intervalMs),
     MOZ_PROFILER_STARTUP_ENTRIES: String(GECKO_PROFILER_ENTRIES),
   };
@@ -58,9 +68,29 @@ function missingBrowserMessage(error: Error, browser: BrowserName): Error {
   );
 }
 
+/**
+ * Chrome headless flavour. "shell" (the default) launches chrome-headless-shell
+ * (`headless: 'shell'`), which runs BeginFrame at ~120Hz, halving the one-frame floor on wall/INP
+ * (16.6 -> 8.3ms). "new" is Puppeteer's full-Chrome new-headless, which caps BeginFrame at ~60Hz.
+ * See docs/dev/frame-floor.md. Ignored when the browser is headed (--no-headless) or Firefox.
+ */
+export type HeadlessMode = "new" | "shell";
+
+/**
+ * Resolve puppeteer's `headless` launch value from wpd's two knobs. Headed (`--no-headless`) wins
+ * and returns false; otherwise the flavour defaults to shell (chrome-headless-shell, ~120Hz), and
+ * only "new" opts back into full-Chrome new-headless (~60Hz). See docs/dev/frame-floor.md.
+ */
+export function resolveHeadless(headless: boolean, headlessMode?: HeadlessMode): boolean | "shell" {
+  if (!headless) return false;
+  return headlessMode === "new" ? true : "shell";
+}
+
 export async function launchBrowser(opts: {
   browser: BrowserName;
   headless: boolean;
+  /** chrome only: "shell" (default, chrome-headless-shell, ~120Hz frames) or "new" (full Chrome) */
+  headlessMode?: HeadlessMode;
   userDataDir?: string;
   /**
    * Timeout (ms) for a single protocol call, on both browsers. Raise it when a traced interaction
@@ -85,6 +115,7 @@ export async function launchBrowser(opts: {
 async function launchOrThrow(opts: {
   browser: BrowserName;
   headless: boolean;
+  headlessMode?: HeadlessMode;
   userDataDir?: string;
   protocolTimeoutMs?: number;
   gecko?: GeckoLaunch;
@@ -103,8 +134,29 @@ async function launchOrThrow(opts: {
     return { browser, page, client: null };
   }
 
+  // Headed (--no-headless) => false; otherwise shell (default, ~120Hz) or new-headless.
+  const headless = resolveHeadless(opts.headless, opts.headlessMode);
+  if (headless !== "shell") return launchChrome(headless, opts);
+  // chrome-headless-shell is a separate download. If the environment skipped it, it is missing at
+  // launch: never fail a run over the frame-cadence flavour, fall back to new-headless and warn.
+  try {
+    return await launchChrome("shell", opts);
+  } catch (error) {
+    if (!/could not find chrome/i.test((error as Error).message)) throw error;
+    const handle = await launchChrome(true, opts);
+    // chrome-headless-shell is a separate Puppeteer download; the default install fetches it, but
+    // PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD or a chrome-only browser install omits it.
+    handle.headlessFallback = shellFallback();
+    return handle;
+  }
+}
+
+async function launchChrome(
+  headless: boolean | "shell",
+  opts: { userDataDir?: string; protocolTimeoutMs?: number },
+): Promise<BrowserHandle> {
   const browser = await puppeteer.launch({
-    headless: opts.headless,
+    headless,
     // Persistent profile dir: reuses cookies/session across passes and runs (puppeteer
     // ignores undefined, so this is a no-op when the flag is absent).
     userDataDir: opts.userDataDir,

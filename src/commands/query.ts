@@ -2,17 +2,24 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type {
   BlameSemantic,
+  CpuBreakdown,
+  CpuModel,
   EventKind,
   NormalizedEvent,
   Recording,
   StepIndex,
 } from "../model/recording.js";
 import type { BlameEntry } from "../model/query.js";
+import { buildSpans, recordingLane } from "../model/spans.js";
 import { num, table } from "../output/ascii.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
 import { buildDigest } from "./digest.js";
+import { printSpanBreakdowns, printCpuBreakdown } from "./cpu.js";
+import { loadCpuModel } from "../profile/cpuprofile.js";
 import { printSummary } from "./summaryView.js";
 import { resolveTarget } from "./resolve.js";
+import { formatMeasured } from "../model/measured.js";
+import { usToMs } from "../model/time.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
 
 interface OutOpts {
@@ -51,6 +58,9 @@ export async function queryDigest(file: string, opts: OutOpts): Promise<void> {
   if (fmt) return emit(digest, fmt);
 
   printSummary(rec);
+  // --breakdown recordings carry per-span seven-slice bars; print them here so `query digest`
+  // matches the `record` report. Absent on every other mode, so this is a no-op there.
+  if (digest.breakdowns?.length) printSpanBreakdowns(digest.breakdowns, digest.meta.iterations);
   if (digest.forced.length) {
     console.log(
       "\nLayout thrashing — forced layout/style by source (run `query blame --forced` for all):",
@@ -84,6 +94,65 @@ export async function queryDigest(file: string, opts: OutOpts): Promise<void> {
         .map((event) => [event.id, event.kind, event.name, num(event.durMs, 3), event.at ?? ""]),
     ),
   );
+}
+
+export interface SpansQuery extends OutOpts {
+  /** exact span label to keep (case-sensitive, like a performance.measure name) */
+  label?: string;
+}
+
+/**
+ * `query spans`: ONE unified per-span breakdown across chrome/firefox/node -- the run window, each
+ * driver step, and every user `performance.measure`, each in the same slice shape. Sources the
+ * recording's stored per-span bars when present, else synthesizes the `run` span from
+ * `CpuModel.breakdown`, so a recording carrying any bar is never empty. `--label` filters by exact
+ * label.
+ */
+export async function querySpans(file: string, query: SpansQuery): Promise<void> {
+  const abs = await resolveTarget(file, "recording");
+  const rec = await load(abs);
+  // Prefer the recording's stored per-span bars; reach for the sibling CPU model only when there are
+  // none (firefox/node without measures, or a rung-1 chrome run), where the run bar lives on
+  // CpuModel.breakdown instead of Recording.breakdowns.
+  let model: CpuModel | undefined;
+  let cpuBreakdown: CpuBreakdown | undefined;
+  if (!rec.breakdowns?.length) {
+    try {
+      model = await loadCpuModel(abs);
+      cpuBreakdown = model.breakdown;
+    } catch {
+      // No sibling CPU model: buildSpans returns null below and we report the empty case.
+    }
+  }
+  const iterations = rec.meta.iterations ?? 1;
+  const result = buildSpans(rec.breakdowns, cpuBreakdown, recordingLane(rec.meta), iterations);
+  if (!result)
+    throw new Error(
+      `${file} carries no per-span breakdown. Record with \`--breakdown\` (chrome), \`--target ` +
+        `firefox\`, or \`--target node\` to produce span bars; an older recording or a ` +
+        `--no-cpu-profile run has none.`,
+    );
+
+  const label = query.label;
+  const spans = label ? result.spans.filter((span) => span.label === label) : result.spans;
+
+  const fmt = structuredFormat(query);
+  if (fmt) return emit({ ...result, spans }, fmt);
+
+  // Human output reuses the existing bar renderers. The stored-bars path prints the seven-slice
+  // per-span table; the synthesized run bar prints the CpuModel bar, which already labels
+  // style/layout and browser/native honestly for its lane.
+  if (result.source === "breakdowns") {
+    const bars = label ? rec.breakdowns!.filter((span) => span.label === label) : rec.breakdowns!;
+    if (!bars.length) return void console.log(`No span labelled '${label}' in ${file}.`);
+    printSpanBreakdowns(bars, iterations);
+    return;
+  }
+  if (label && label !== "run")
+    return void console.log(
+      `No span labelled '${label}' in ${file} (this lane carries only the 'run' bar).`,
+    );
+  printCpuBreakdown(model!, iterations);
 }
 
 export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
@@ -136,7 +205,8 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
         step.inpMs == null ? "—" : num(step.inpMs, 1),
         step.interaction == null ? "—" : num(step.interaction.processingMs, 2),
         step.headline.layoutCount,
-        step.headline.forcedLayoutCount,
+        // null = not measured (e.g. a --breakdown step); show a placeholder, never a fake 0.
+        formatMeasured(step.headline.forcedLayoutCount, (count) => String(count)),
         step.headline.paintCount,
         step.headline.layoutInvalidations,
         step.headline.longTaskCount,
@@ -193,7 +263,7 @@ export async function queryEvents(file: string, query: EventsQuery): Promise<voi
         event.id,
         event.kind,
         event.name,
-        num(event.dur / 1000, 3),
+        num(usToMs(event.dur), 3),
         event.at ?? "",
       ]),
     ),
@@ -220,7 +290,14 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
 
   const groups = new Map<
     string,
-    { at: string; count: number; forced: number; durMs: number; kinds: Set<string> }
+    {
+      at: string;
+      count: number;
+      forced: number;
+      durMs: number;
+      kinds: Set<string>;
+      properties: Set<string>;
+    }
   >();
   for (const event of events) {
     const group = groups.get(event.at!) ?? {
@@ -229,11 +306,15 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       forced: 0,
       durMs: 0,
       kinds: new Set<string>(),
+      properties: new Set<string>(),
     };
     group.count++;
     if (event.forced) group.forced++;
-    group.durMs += event.dur / 1000;
+    group.durMs += usToMs(event.dur);
     group.kinds.add(event.kind);
+    // The forcing DOM property (Firefox read-site blame), stashed on the sampled event's args.
+    const property = (event.args as { data?: { property?: string } } | undefined)?.data?.property;
+    if (typeof property === "string") group.properties.add(property);
     groups.set(event.at!, group);
   }
   let rows = [...groups.values()].sort(
@@ -250,6 +331,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       forced: row.forced,
       durMs: row.durMs,
       kinds: [...row.kinds] as EventKind[],
+      properties: row.properties.size ? [...row.properties] : undefined,
     }));
     return emit(entries, fmt);
   }
@@ -261,6 +343,9 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     );
     return;
   }
+  // The source cell carries the forcing DOM property when the lane names it (Firefox read-site).
+  const sourceCell = (row: { at: string; properties: Set<string> }): string =>
+    row.properties.size ? `${row.at} (${[...row.properties].join(", ")})` : row.at;
   // `--all` shows the forced column so "ran but forced 0" lines are first-class.
   console.log(
     query.all
@@ -271,12 +356,17 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
             row.forced,
             num(row.durMs, 3),
             [...row.kinds].join(","),
-            row.at,
+            sourceCell(row),
           ]),
         )
       : table(
           ["count", "ms", "kinds", "source"],
-          rows.map((row) => [row.count, num(row.durMs, 3), [...row.kinds].join(","), row.at]),
+          rows.map((row) => [
+            row.count,
+            num(row.durMs, 3),
+            [...row.kinds].join(","),
+            sourceCell(row),
+          ]),
         ),
   );
   // Only the forced rows have an engine-specific meaning worth naming, so the note is gated on
@@ -285,7 +375,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   // all. Saying so over such a table would print the exact read/write confusion the semantic
   // exists to prevent (Chrome's invalidation stacks name the WRITE: docs/dev/engine-mapping.md).
   if (rows.some((row) => row.forced > 0)) {
-    const semantic = blameSemanticLine(rec.meta.blameSemantic);
+    const semantic = blameSemanticLine(rec.meta.blameSemantic, rec.meta.browser);
     if (semantic) console.log(`\n${semantic}`);
   }
 }
@@ -299,7 +389,7 @@ function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
   if (semantic === "invalidation-site")
     return "Firefox captures cause stacks for layout/style via the Gecko profiler";
   if (semantic === "flush-site")
-    return "Chrome captures stacks for layout/style/invalidation/scripting";
+    return "the run captures the geometry read that forced the flush (Chrome via the trace's `.stack`, Firefox via the sampled DOM-accessor stacks)";
   return "this run recorded no blame pass: --no-trace and --target node collect none";
 }
 
@@ -310,16 +400,21 @@ function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
  * structured consumers read `meta.blameSemantic` off the recording or digest, which is durable and
  * does not depend on having run this verb.
  */
-function blameSemanticLine(semantic: BlameSemantic | undefined): string | null {
+function blameSemanticLine(
+  semantic: BlameSemantic | undefined,
+  browser: "chrome" | "firefox" | undefined,
+): string | null {
   if (semantic === "flush-site")
-    return (
-      "forced rows: source = the geometry read that forced the flush (Chrome). Firefox blames the " +
-      "write that dirtied the DOM instead, so these lines are not comparable across engines."
-    );
+    return browser === "firefox"
+      ? "forced rows: source = the geometry read that forced the flush, named from the sampled " +
+          "DOM-accessor stacks (with the property). Same read-site semantic as Chrome; it is a " +
+          "sampled estimate, so cheap reads can be missed and the line can lag one statement."
+      : "forced rows: source = the geometry read that forced the flush. Firefox now names the same " +
+          "read site (sampled), so the two engines' forced lines are comparable at line granularity.";
   if (semantic === "invalidation-site")
     return (
-      "forced rows: source = the write that dirtied the DOM (Firefox), not the read that forced " +
-      "the flush. Chrome blames the read instead, so these lines are not comparable across engines."
+      "forced rows: source = the write that dirtied the DOM (older Firefox recording), not the read " +
+      "that forced the flush. Newer runs and Chrome name the read instead."
     );
   return null;
 }

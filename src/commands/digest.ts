@@ -1,4 +1,5 @@
 import type { Digest, NormalizedEvent, Recording } from "../model/recording.js";
+import { usToMs } from "../model/time.js";
 import { forcedLayouts, longTasks, extractInvalidations } from "../trace/analysis.js";
 
 export function buildDigest(rec: Recording, recordingPath: string, topN = 20): Digest {
@@ -7,15 +8,18 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
     (event) => start == null || event.ts >= start,
   );
 
+  // Sampled events are Firefox read-site blame annotations, not measured durations: they feed
+  // topBlame/forced below but must not rank among the slowest events, where their duration is not a
+  // real wall measurement.
   const slowestEvents = [...inWindow]
-    .filter((event) => event.dur > 0 && event.kind !== "task")
+    .filter((event) => event.dur > 0 && event.kind !== "task" && !event.sampled)
     .sort((firstEvent, secondEvent) => secondEvent.dur - firstEvent.dur)
     .slice(0, topN)
     .map((event) => ({
       id: event.id,
       kind: event.kind,
       name: event.name,
-      durMs: event.dur / 1000,
+      durMs: usToMs(event.dur),
       at: event.at,
     }));
 
@@ -29,7 +33,7 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
       kinds: new Set<string>(),
     };
     group.count++;
-    group.durMs += event.dur / 1000;
+    group.durMs += usToMs(event.dur);
     group.kinds.add(event.kind);
     blame.set(event.at, group);
   }
@@ -89,6 +93,9 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
     })),
     longTasks: tasks,
     invalidationsByReason,
+    // --breakdown mode only; carried through so `query digest` exposes the per-span bars (and JSON
+    // consumers get them automatically). Absent on every other mode.
+    breakdowns: rec.breakdowns,
     hints: [
       `Full record: ${recordingPath} — do NOT read it wholesale.`,
       `Layout thrashing (with source lines): wpd query blame --forced "${recordingPath}"`,

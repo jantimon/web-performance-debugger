@@ -16,14 +16,23 @@ chromium at tip-of-tree, with a permalink).
 | [gecko-profile-format.md](./gecko-profile-format.md) | touching the Gecko converter, or debugging a Firefox dump that stopped parsing |
 | [cpu-profiling.md](./cpu-profiling.md) | changing the pass plan, the sampler interval, or how `selfMs` is described |
 | [driver-timing.md](./driver-timing.md) | touching `browser/driver.ts`, or presenting a step's `wallMs` as a cost |
+| [frame-floor.md](./frame-floor.md) | changing the headless mode, adding a headless flag, or explaining why libraries with different cost report the same `wallMs` |
 | [rendering-counts.md](./rendering-counts.md) | adding a name to `trace/classify.ts`, gating a count in `diff.ts`/`assert.ts`, or calling a count "exact" |
+| [facts.md](./facts.md) | changing any load-bearing measured number (a ledger of them + the files that must agree, checked by a unit test) |
 
 ## The four things most likely to bite you
 
-1. **`query blame --forced` means a different thing per engine.** Chrome's stack names the geometry
-   **read** that forced the flush; Gecko's cause stack names the **write** that dirtied the DOM.
-   Measured: zero line overlap on the same probe.
-   [Details](./engine-mapping.md#forced-layout-blame-differs-by-engine).
+1. **In `--breakdown` (and `--no-isolate`, and Firefox) counts TOTAL across `--iterations`.** The one
+   fused/single pass carries wall AND counts, so it runs every iteration and `layout/style/paint/
+   forced` are totals, not one iteration's work — `assert --max-layouts` silently scales with
+   `--iterations` (the default two-pass Chrome plan pins its count pass to one iteration and does
+   not). `noteCountScope` says which lane you are on; use `--iterations 1` to assert on counts. And a
+   `Measured<>` field a mode did not measure is `null`, never 0 (`--breakdown` reports
+   `forcedLayoutCount`/`forcedLayoutMs` as `null`): `assert` FAILs on `null`, so `assert
+   --max-forced 0` fails under `--breakdown` by design, rather than passing on a fake 0. Firefox's
+   unmeasured plain-number counts cannot hold `null` — paint reports a literal `0` disclosed by a
+   loud `meta.notes` entry ("A 0 in those means unmeasured, not clean"), which is exactly why that
+   note exists.
 2. **`selfMs` on the browser lanes is not pure JS.** It is JS *plus the synchronous engine work JS
    triggered* — a forced layout shows up as self-time on the line that forced it (~85% of the
    probe's "JS" time is reflow). Only `--target node` measures pure JS.
@@ -33,7 +42,8 @@ chromium at tip-of-tree, with a permalink).
    the JS stack on every Layout. [Details](./cpu-profiling.md#why-the-cpu-pass-is-separate-tracing-contaminates-sampling).
 4. **A driver step's `wallMs` is mostly the driver.** It is measured node-side around the action and
    its settle, so identical work reads 40.5 ms via `page.click`, 31.9 ms via `page.evaluate` and
-   1.1 ms in `--bench`. `page.click` alone costs ~20 ms; the settle floor is ~31 ms. Use
+   1.1 ms in `--bench`. `page.click` alone costs ~20 ms; the settle floor is ~31 ms under
+   new-headless (`--headless-mode new`, ~60 Hz), ~half that on the default shell mode. Use
    `interaction.processingMs` or the per-step counts for what the page did.
    [Details](./driver-timing.md#wallms-is-a-bound-on-the-step-not-the-cost-of-the-page).
 

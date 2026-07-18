@@ -1,0 +1,253 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { classify, invalidationKind } from "../../dist/trace/classify.js";
+import { computeStats, buildSummary } from "../../dist/metrics/summarize.js";
+import { forcedLayouts, longTasks, markForced } from "../../dist/trace/analysis.js";
+import { computeSpanBreakdown } from "../../dist/trace/breakdown.js";
+import { userMeasureSpans } from "../../dist/commands/record.js";
+import { NESTED_EVENTS, NESTED_WINDOW, lcg, BREAKDOWN_KINDS, randomNestedEvents } from "./helpers.mjs";
+
+test("classify maps trace event names to kinds", () => {
+  assert.equal(classify("Layout", ""), "layout");
+  assert.equal(classify("UpdateLayoutTree", ""), "style");
+  assert.equal(classify("Paint", ""), "paint");
+  assert.equal(classify("RunTask", ""), "task");
+  assert.equal(classify("LayoutInvalidationTracking", ""), "invalidation");
+  assert.equal(classify("Whatever", "blink.user_timing"), "usertiming");
+  assert.equal(classify("Nope", ""), "other");
+});
+
+// The gc kind is a sanctioned coupling-point addition for the seven-slice breakdown. [measured on a
+// real light-trace capture] the main-thread GC events are MinorGC/MajorGC (from devtools.timeline,
+// so no v8.gc category is needed); the V8.GC* family is matched defensively. The check must sit
+// BEFORE the scripting fallback, or a GC event whose category includes "v8" would land in js.
+test("classify maps GC events to the gc kind, ahead of the v8 scripting fallback", () => {
+  assert.equal(classify("MinorGC", "disabled-by-default-devtools.timeline"), "gc");
+  assert.equal(classify("MajorGC", "disabled-by-default-devtools.timeline"), "gc");
+  assert.equal(classify("V8.GCScavenger", "disabled-by-default-v8.gc"), "gc");
+  // a non-GC v8 event still classifies as scripting
+  assert.equal(classify("v8.run", "v8"), "scripting");
+});
+
+test("invalidationKind classifies by name", () => {
+  assert.equal(invalidationKind("LayoutInvalidationTracking"), "layout");
+  assert.equal(invalidationKind("PaintInvalidationTracking"), "paint");
+  assert.equal(invalidationKind("StyleRecalcInvalidationTracking"), "style");
+});
+
+test("computeStats: null below 2 samples, correct median/mean", () => {
+  assert.equal(computeStats([]), null);
+  assert.equal(computeStats([5]), null);
+  const s = computeStats([4, 1, 3, 2]);
+  assert.equal(s.samples, 4);
+  assert.equal(s.minMs, 1);
+  assert.equal(s.maxMs, 4);
+  assert.equal(s.medianMs, 2.5);
+  assert.equal(s.meanMs, 2.5);
+});
+
+test("markForced + forcedLayouts group by source", () => {
+  const events = [
+    { id: 0, name: "Layout", ts: 10, dur: 1000, ph: "X", kind: "layout", at: "a.js:1:1" },
+    { id: 1, name: "Layout", ts: 20, dur: 2000, ph: "X", kind: "layout", at: "a.js:1:1" },
+    { id: 2, name: "Layout", ts: 30, dur: 500, ph: "X", kind: "layout" }, // no stack -> not forced
+  ];
+  markForced(events);
+  assert.equal(events[0].forced, true);
+  assert.equal(events[2].forced, undefined);
+  const groups = forcedLayouts(events, null);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].at, "a.js:1:1");
+  assert.equal(groups[0].count, 2);
+  assert.equal(groups[0].durMs, 3); // (1000 + 2000) / 1000
+});
+
+test("longTasks finds >=50ms tasks with dominant kind", () => {
+  const events = [
+    { id: 0, name: "RunTask", ts: 0, dur: 60000, ph: "X", kind: "task" },
+    { id: 1, name: "Layout", ts: 10, dur: 40000, ph: "X", kind: "layout" },
+    { id: 2, name: "Paint", ts: 20, dur: 5000, ph: "X", kind: "paint" },
+    { id: 3, name: "RunTask", ts: 100000, dur: 1000, ph: "X", kind: "task" }, // too short
+  ];
+  const tasks = longTasks(events, null);
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].durMs, 60);
+  assert.equal(tasks[0].dominantKind, "layout");
+});
+
+test("computeSpanBreakdown: disjoint self-time over nesting, and the `other` remainder", () => {
+  const breakdown = computeSpanBreakdown(NESTED_EVENTS, [], NESTED_WINDOW);
+  const { js, style, layout, paint, gc, other, idle } = breakdown.slices;
+  // FunctionCall self = 30 - 10 (Layout child) = 20; Layout = 10; Paint = 10.
+  assert.equal(js.ms, 20);
+  assert.equal(layout.ms, 10);
+  assert.equal(paint.ms, 10);
+  assert.equal(style.ms, 0);
+  assert.equal(gc.ms, 0);
+  // RunTask self = 100 - 30 (FunctionCall subtree) - 10 (Paint) = 60, the task remainder.
+  assert.equal(other.ms, 60);
+  // window is 100% busy, so idle is 0.
+  assert.equal(idle.ms, 0);
+});
+
+test("computeSpanBreakdown: Σ slices + idle == wall EXACTLY (the product promise)", () => {
+  // A window with an idle gap: the RunTask covers [0,50000] only, so [50000,100000) is idle and the
+  // sum must still close to the wall with zero residual.
+  const events = [
+    { id: 0, name: "RunTask", ts: 0, dur: 50000, ph: "X", kind: "task" },
+    { id: 1, name: "FunctionCall", ts: 10000, dur: 20000, ph: "X", kind: "scripting" },
+  ];
+  const breakdown = computeSpanBreakdown(events, [], { startTs: 0, endTs: 100000 });
+  const { js, style, layout, paint, gc, other, idle } = breakdown.slices;
+  assert.equal(js.ms, 20); // FunctionCall self
+  assert.equal(other.ms, 30); // RunTask remainder (50 - 20)
+  assert.equal(idle.ms, 50); // [50000,100000) uncovered
+  const sum = js.ms + style.ms + layout.ms + paint.ms + gc.ms + other.ms + idle.ms;
+  assert.ok(Math.abs(sum - breakdown.wallMs) < 1e-9, `sum ${sum} must equal wall ${breakdown.wallMs}`);
+  assert.equal(breakdown.residualMs, undefined, "an exact tiling carries no residual");
+});
+
+test("computeSpanBreakdown: js slice is split by sampled package, samples outside js excluded", () => {
+  // js self-time regions are [10000,20000) and [30000,40000) (FunctionCall minus the Layout child).
+  const samples = [
+    { traceTs: 15000, package: "react-dom" }, // inside a js region
+    { traceTs: 15500, package: "react-dom" }, // inside a js region
+    { traceTs: 35000, package: "app" }, // inside a js region
+    { traceTs: 25000, package: "react-dom" }, // inside the Layout region -> NOT a js sample
+    { traceTs: 55000, package: "app" }, // inside the Paint region -> NOT a js sample
+    { traceTs: 12000, package: null }, // in a js region but unattributable -> excluded from the split
+  ];
+  const breakdown = computeSpanBreakdown(NESTED_EVENTS, samples, NESTED_WINDOW);
+  const { js } = breakdown.slices;
+  assert.equal(js.ms, 20);
+  // three counted js samples: react-dom x2, app x1 -> 2/3 and 1/3 of the TRACE-measured 20ms.
+  assert.ok(Math.abs(js.byPackage["react-dom"] - (20 * 2) / 3) < 1e-9);
+  assert.ok(Math.abs(js.byPackage["app"] - (20 * 1) / 3) < 1e-9);
+  const pkgSum = Object.values(js.byPackage).reduce((total, value) => total + value, 0);
+  assert.ok(Math.abs(pkgSum - js.ms) < 1e-9, "byPackage must sum to js.ms");
+});
+
+test("computeSpanBreakdown: zero samples in the js regions leaves byPackage empty, not fabricated", () => {
+  const breakdown = computeSpanBreakdown(NESTED_EVENTS, [{ traceTs: 55000, package: "app" }], NESTED_WINDOW);
+  assert.deepEqual(breakdown.slices.js.byPackage, {}, "a sample outside js contributes no package");
+  assert.equal(breakdown.slices.js.ms, 20, "the js ms is still the trace-measured value");
+});
+
+test("computeSpanBreakdown: 50 random nested flame charts each tile the window with no residual", () => {
+  const rand = lcg(0x9e3779b9);
+  for (let iteration = 0; iteration < 50; iteration++) {
+    const { events, window } = randomNestedEvents(rand);
+    const breakdown = computeSpanBreakdown(events, [], window);
+    const { js, style, layout, paint, gc, other, idle } = breakdown.slices;
+    const sum = js.ms + style.ms + layout.ms + paint.ms + gc.ms + other.ms + idle.ms;
+    assert.ok(
+      Math.abs(sum - breakdown.wallMs) < 1e-9,
+      `case ${iteration}: Σ ${sum} must equal wall ${breakdown.wallMs}`,
+    );
+    assert.equal(breakdown.residualMs, undefined, `case ${iteration}: an exact tiling carries no residual`);
+  }
+});
+
+test("userMeasureSpans: pairs user measures, excludes wpd:*, drops out-of-window, keeps first", () => {
+  const usertiming = (name, ph, ts) => ({ id: ts, name, ts, dur: 0, ph, kind: "usertiming" });
+  const events = [
+    usertiming("wpd:run", "b", 100), // wpd's own measure -> excluded
+    usertiming("user-span", "b", 150),
+    usertiming("user-span", "e", 400),
+    usertiming("wpd:run", "e", 1000),
+    usertiming("hydrate", "b", 200),
+    usertiming("hydrate", "e", 300),
+    usertiming("user-span", "b", 500), // a repeat of the same name -> first pair wins
+    usertiming("user-span", "e", 600),
+    usertiming("late", "b", 900),
+    usertiming("late", "e", 1200), // ends after the run window -> dropped
+  ];
+  const spans = userMeasureSpans(events, 100, 1000);
+  assert.deepEqual(spans, [
+    { label: "user-span", startTs: 150, endTs: 400 },
+    { label: "hydrate", startTs: 200, endTs: 300 },
+  ]);
+});
+
+// A recording written before --breakdown existed has no `breakdowns` field and a numeric
+// forcedLayoutCount; both must still load and behave. Guards the additive-compatibility promise.
+test("buildSummary: forcedMeasured false reports forced as null (never a fake 0)", () => {
+  const events = [{ id: 0, name: "Layout", ts: 1, dur: 2000, ph: "X", kind: "layout" }];
+  const measured = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
+  assert.equal(measured.forcedLayoutCount, 0, "default: measured, and this window forced nothing");
+  const notMeasured = buildSummary({
+    detailEvents: events,
+    detailWindowStart: null,
+    cdpDelta: {},
+    forcedMeasured: false,
+  });
+  assert.equal(notMeasured.forcedLayoutCount, null, "breakdown mode: not measured, so null");
+  assert.equal(notMeasured.forcedLayoutMs, null);
+});
+
+test("buildSummary prefers CDP counts, falls back to trace", () => {
+  const events = [
+    { id: 0, name: "Layout", ts: 1, dur: 2000, ph: "X", kind: "layout" },
+    { id: 1, name: "Paint", ts: 2, dur: 1000, ph: "X", kind: "paint" },
+  ];
+  const withCdp = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: { LayoutCount: 7 } });
+  assert.equal(withCdp.layoutCount, 7); // CDP wins
+  assert.equal(withCdp.paintCount, 1); // trace
+  const noCdp = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
+  assert.equal(noCdp.layoutCount, 1); // trace fallback
+});
+
+// Driver steps are heterogeneous ("mount" vs "inp"), so the ONLY meaningful aggregation is each
+// step against itself. A median pooled across steps, or leaking into the bench-shaped top-level
+// stats, would render a meaningless number as a real one.
+test("buildSummary: perStep aggregates each step against itself, never across steps", () => {
+  const base = { detailEvents: [], detailWindowStart: null, cdpDelta: {} };
+  const summary = buildSummary({
+    ...base,
+    perStep: [
+      { label: "mount", perIteration: [40, 44, 42] },
+      { label: "inp", perIteration: [5, 9, 7] },
+    ],
+  });
+
+  const stepOf = (label) => summary.perStep.find((step) => step.label === label);
+  // each step's own median, computed only from its own samples
+  assert.equal(stepOf("mount").stats.medianMs, 42);
+  assert.equal(stepOf("inp").stats.medianMs, 7);
+  assert.equal(stepOf("mount").stats.samples, 3);
+  // raw samples are kept, not collapsed to the statistic
+  assert.deepEqual(stepOf("inp").perIteration, [5, 9, 7]);
+
+  // per-step walls must not leak into the bench-shaped top-level stats either (pooling all six
+  // samples would yield a real-looking median of 24.5 that describes no actual work)
+  assert.deepEqual(summary.perIteration, []);
+  assert.equal(summary.stats, null);
+});
+
+test("buildSummary: a step measured once has stats null but keeps its sample", () => {
+  const summary = buildSummary({
+    detailEvents: [],
+    detailWindowStart: null,
+    cdpDelta: {},
+    perStep: [{ label: "mount", perIteration: [36.7] }],
+  });
+  // same contract as the bench stats: no statistic below 2 samples, rather than a fake one
+  assert.equal(summary.perStep[0].stats, null);
+  assert.deepEqual(summary.perStep[0].perIteration, [36.7]);
+});
+
+test("longTasks blames the source by duration, not event count", () => {
+  // cheap.js fires 3 short layouts (high count); hot.js fires 1 long one (high duration).
+  // The blamed `at` must be the expensive site, matching how dominantKind is chosen.
+  const events = [
+    { id: 0, name: "RunTask", ts: 0, dur: 60000, ph: "X", kind: "task" },
+    { id: 1, name: "Layout", ts: 1, dur: 1000, ph: "X", kind: "layout", at: "cheap.js:1" },
+    { id: 2, name: "Layout", ts: 2, dur: 1000, ph: "X", kind: "layout", at: "cheap.js:1" },
+    { id: 3, name: "Layout", ts: 3, dur: 1000, ph: "X", kind: "layout", at: "cheap.js:1" },
+    { id: 4, name: "Layout", ts: 4, dur: 30000, ph: "X", kind: "layout", at: "hot.js:1" },
+  ];
+  const tasks = longTasks(events, null);
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].at, "hot.js:1");
+  assert.equal(tasks[0].dominantKind, "layout");
+});

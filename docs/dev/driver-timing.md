@@ -6,6 +6,10 @@ Everything below is **[measured]** against `test/fixtures/driver-probe.html` (40
 an `offsetWidth` read between each, so every row forces a synchronous layout) and
 `test/fixtures/slow-handler.html` (a click handler that busy-waits a known 45 ms), headless Chrome.
 
+Every wall/settle number below is measured under **new-headless** (`--headless-mode new`, full
+Chrome, ~60 Hz cadence). On the default shell mode (chrome-headless-shell, ~120 Hz) the settle floor
+is ~half of these figures; the drive-independent counts and self-time are unchanged.
+
 ## `wallMs` is a bound on the step, not the cost of the page
 
 A step's wall is measured **node-side** (`node:perf_hooks`), around `await action()` **plus**
@@ -140,3 +144,9 @@ to round the parts to whole ms where Chrome does not.
   when it is comparing a wall that waits for a frame against one that does not. The claim that
   survives is narrower and still worth the switch: bench prices the code, while the driver's wall is
   dominated by a frame wait that does not move when the code gets slower.
+- **`performance.measure` spans are the third way, for a phase *inside* `run()`.** Under
+  `--breakdown` (Chrome) and automatically on Firefox, any `performance.measure(name, a, b)` the page
+  emits becomes its own reconciling span with a full breakdown, keyed by the measure name. So a
+  sub-`run()` phase (an app's `__hydrateMs` / `__mountMs`) is timed in-page on the page's own clock —
+  no driver wall, no frame wait, and finer-grained than bench's single `run()` window. `query spans
+  latest` lists them; see [cpu-profiling.md](./cpu-profiling.md).

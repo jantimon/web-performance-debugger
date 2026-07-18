@@ -143,9 +143,11 @@ subtlety.
 `examples/forces-layout.mjs` separates the two halves cleanly: it writes inside `bump()` and reads
 each geometry property on its own line. Same module, both engines:
 
-- **Chrome** blames `52:14`, `56:14`, `60:14`, `64:14`, `68:14`, ... — every geometry **read**.
-- **Firefox** blames `15:3`, `13:14` (inside `bump`), `21:3` (inside `bumpDoc`), `51:7`, `55:7`,
-  `59:7`, `63:7`, ... — the **writes**. Chrome produces **zero** of those lines.
+- **Chrome**'s `.stack` blames `52:14`, `56:14`, `60:14`, `64:14`, `68:14`, ... — every geometry
+  **read**.
+- **Gecko's marker cause stack** names `15:3`, `13:14` (inside `bump`), `21:3` (inside `bumpDoc`),
+  ... — the **writes**; Chrome's read stacks produce **zero** of those lines. This is why wpd keeps
+  the marker cause OFF `query blame` (see below) and samples the read site instead.
 
 Because:
 
@@ -158,18 +160,27 @@ Because:
 The cause chain [gecko-profile-format.md](./gecko-profile-format.md) records for a Gecko flush
 marker (`Node.appendChild -> ...`) is the tell: `appendChild` is the **write**, not a geometry read.
 
-Consequences, all live today:
+**So `query blame --forced` no longer uses that marker cause.** The read site is instead **sampled
+from the stacks**: a DOM-accessor label frame (`get HTMLElement.offsetWidth`) sitting over a
+Layout-category flush, attributed to the nearest JS ancestor's per-sample **executing line**
+(`frameTable.line`), with the property named. Measured [GL-1]: 12/21 of Chrome's read lines matched
+exactly, **zero** landed on a marker write line, and the other recovered lines are the same read
+statements with Gecko's per-sample line lagging one executed statement (10 of 11 exactly N-1).
+`meta.blameSemantic` is `flush-site` on both engines; the write cause stays reachable under
+`args.data.invalidationStack` for `query get`, but is not the `--forced` answer.
 
-- `query blame --forced` means a **different thing** per engine, and nothing in the output says so.
-- The README's "the same probe, verified in both engines" snippet invites a line-by-line comparison
-  that cannot hold.
-- Firefox's marker-derived `forcedLayoutMs` also badly under-reports: **1.08ms vs Chrome's 7.17ms**
-  for identical work on this probe.
+Two caveats remain, both honest and documented in the blame output:
 
-**The fix is mostly free**, and it is the non-obvious payoff of the CPU lane: the sampled CPU model
-*already* attributes forced-layout cost to the **forcing** frame on both engines (`run()` at
-**8.41ms** chrome / **8.79ms** firefox, agreeing within 5%). So `query cpu` already answers the
-question `query blame` gets wrong on Firefox. See
+- The read line is a **sampled estimate** at Gecko's ~1ms interval, so cheap reads can be missed and
+  a line can lag one statement. (Chrome's `.stack` is exact.)
+- Firefox's marker-derived `forcedLayoutMs` still under-reports the flush duration: **1.08ms vs
+  Chrome's 7.17ms** (**7x**) for identical work on this probe at low iterations. That number comes
+  from the Reflow/Styles markers, which also drive `forcedLayoutCount`; the read-site blame events
+  are `sampled` and never enter those counts.
+
+The CPU lane corroborates the read-site direction: the sampled CPU model attributes forced-layout
+cost to the **forcing** frame on both engines (`run()` at **8.41ms** chrome / **8.79ms** firefox,
+agreeing within 5%). See
 [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
 
 ## What is actually comparable across engines
@@ -180,6 +191,7 @@ question `query blame` gets wrong on Firefox. See
 | --- | --- | --- | --- |
 | CPU self-time of the forcing fn | 8.41 ms | 8.79 ms | **yes, ~5%** |
 | `interaction.processingMs` | 45.1 ms | 45.0 ms | **yes, ~0.2%** |
+| forced-blame read line | exact (`.stack`) | sampled (~1 ms) | **yes, line granularity** (12/21 exact) |
 | `inpMs` | 56 ms | 48 ms | no, and see below |
 | forced layout ms | 7.17 ms | 1.08 ms | no, 7x |
 | layout batches | 22 | 70 | no, 3x |

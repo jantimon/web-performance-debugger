@@ -104,12 +104,12 @@ e2e(
 );
 
 e2e(
-  "record --target firefox attributes forced layout to source (Reflow/Styles markers)",
+  "record --target firefox attributes forced layout to the READ site with the property (not the write)",
   { timeout: TIMEOUT_MS },
   () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
     const out = path.join(dir, "blame");
-    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "3", "--out", out]);
+    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "40", "--out", out]);
 
     const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
     assert.ok(Array.isArray(blame) && blame.length > 0, "at least one forced layout/style source group");
@@ -118,5 +118,105 @@ e2e(
     assert.ok(fromExample[0].forced > 0, "forced count is positive");
     const kinds = new Set(fromExample.flatMap((row) => row.kinds ?? []));
     assert.ok(kinds.has("layout") || kinds.has("style"), "kinds include layout or style");
+
+    // Read-site semantics: the geometry READ lines are named, never the bump()/style-write lines.
+    const blamedLines = new Set(
+      fromExample.map((row) => Number(row.at.match(/forces-layout\.mjs:(\d+)/)?.[1])),
+    );
+    for (const writeLine of [13, 15, 16, 17, 19, 21])
+      assert.ok(!blamedLines.has(writeLine), `write line ${writeLine} must never be blamed`);
+    // At least one line inside the reads block (46..145), where the geometry reads live.
+    assert.ok([...blamedLines].some((line) => line >= 46 && line <= 145), "a geometry-read line");
+    // The forcing DOM property is spelled out on the read-site rows.
+    const properties = fromExample.flatMap((row) => row.properties ?? []);
+    assert.ok(
+      properties.some((property) => /offset|scroll|client|Height|Width|Rect|getComputed/.test(property)),
+      "at least one forcing DOM property is named",
+    );
+
+    // The recording's blame semantic is now read-site (flush-site), matching Chrome.
+    const digest = JSON.parse(runCli(["query", "digest", out, "--json"]));
+    assert.equal(digest.meta.blameSemantic, "flush-site", "firefox now names the read site");
+  },
+);
+
+e2e(
+  "record --target firefox emits a reconciling breakdown with honest idle",
+  { timeout: TIMEOUT_MS },
+  () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+    const out = path.join(dir, "awaits");
+    runCli(["record", path.join(examples, "awaits-only.mjs"), "--bench", "--target", "firefox", "--iterations", "2", "--out", out]);
+
+    const model = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+    const breakdown = model.breakdown;
+    assert.ok(breakdown, "firefox CPU breakdown is emitted (idle from threadCPUDelta)");
+    assert.ok(breakdown.slices.style && breakdown.slices.layout, "style/layout slices present");
+    const sum =
+      breakdown.slices.js.ms +
+      breakdown.slices.style.ms +
+      breakdown.slices.layout.ms +
+      breakdown.slices.browser.ms +
+      breakdown.slices.gc.ms +
+      breakdown.slices.idle.ms;
+    assert.ok(Math.abs(sum - breakdown.wallMs) < 0.01, "slices tile the sampled window (reconciles)");
+    // A pure-wait run is dominated by idle.
+    assert.ok(breakdown.slices.idle.ms / breakdown.wallMs > 0.8, "idle > 80% on a pure-wait run");
+  },
+);
+
+e2e(
+  "record --target firefox surfaces a performance.measure span with its own breakdown",
+  { timeout: TIMEOUT_MS },
+  () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+    const out = path.join(dir, "measure");
+    runCli(["record", path.join(examples, "measure-span.mjs"), "--bench", "--target", "firefox", "--iterations", "5", "--out", out]);
+
+    const digest = JSON.parse(runCli(["query", "digest", out, "--json"]));
+    assert.ok(Array.isArray(digest.breakdowns), "breakdowns present");
+    const span = digest.breakdowns.find((entry) => entry.kind === "measure" && entry.label === "work");
+    assert.ok(span, "the user performance.measure 'work' appears as a span");
+    const slices = span.breakdown.slices;
+    const sum =
+      slices.js.ms + slices.style.ms + slices.layout.ms + slices.paint.ms + slices.gc.ms + slices.other.ms + slices.idle.ms;
+    assert.ok(Math.abs(sum - span.breakdown.wallMs) < 0.01, "the span breakdown tiles its own window");
+    assert.equal(slices.paint.ms, 0, "paint is 0 on firefox (off-main-thread)");
+  },
+);
+
+// `query spans` reads the SAME unified shape on firefox as on chrome: the run span plus the user
+// performance.measure, keyed by label. This is the cross-engine join the dogfooding report asked
+// for -- a firefox consumer no longer special-cases CpuModel.breakdown or misses per-measure spans.
+e2e(
+  "query spans: unified per-span shape over a firefox recording (run + performance.measure)",
+  { timeout: TIMEOUT_MS },
+  () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+    const out = path.join(dir, "spans");
+    runCli(["record", path.join(examples, "measure-span.mjs"), "--bench", "--target", "firefox", "--iterations", "5", "--out", out]);
+
+    const spans = JSON.parse(runCli(["query", "spans", out, "--json"]));
+    assert.equal(spans.target, "firefox", "spans records the firefox target");
+    assert.ok(Array.isArray(spans.spans) && spans.spans.length > 0, "spans present");
+    const runSpan = spans.spans.find((span) => span.kind === "run");
+    assert.ok(runSpan, "the run span is present");
+    const measure = spans.spans.find((span) => span.kind === "measure" && span.label === "work");
+    assert.ok(measure, "the user performance.measure 'work' surfaces as a labeled span on firefox");
+    // Same superset shape as chrome: every slice key present, style/layout measured on firefox.
+    for (const key of ["js", "style", "layout", "paint", "gc", "other", "idle"])
+      assert.ok(key in measure.slices, `slice '${key}' present in the unified shape`);
+    assert.notEqual(measure.slices.style, null, "firefox splits style");
+    assert.notEqual(measure.slices.layout, null, "firefox splits layout");
+    // The aggregation contract crosses the engine unchanged: run = a total over the loop, measure =
+    // the first occurrence, both stamping the iteration count (recorded with --iterations 5).
+    assert.equal(runSpan.aggregation, "sum", "the run span is a total across iterations");
+    assert.equal(measure.aggregation, "first", "a measure span is its first in-window occurrence");
+    assert.equal(runSpan.iterations, 5, "the run span carries the recording's iteration count");
+    assert.equal(measure.iterations, 5, "the measure span carries the recording's iteration count");
+
+    // The convergence hint: `query cpu --json` points firefox consumers at this surface.
+    const cpu = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+    assert.ok(cpu.hints.some((hint) => /query spans/.test(hint)), "query cpu points at the spans surface");
   },
 );

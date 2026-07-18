@@ -1,56 +1,44 @@
 import { promises as fs } from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { launchBrowser, GECKO_MIN_INTERVAL_MS } from "../browser/launch.js";
-import { capsFor, type BrowserCaps, type BrowserName } from "../browser/backend.js";
-import { startStaticServer, type StaticServer } from "../browser/server.js";
-import { parseGecko, geckoToRawCpuProfile, geckoToRenderingEvents } from "../profile/gecko.js";
-import { runHarness } from "../browser/harness.js";
-import { runDriver, type DriverStep } from "../browser/driver.js";
-import { applyCpuThrottle, applyNetworkPreset } from "../browser/throttle.js";
-import { traceCategories } from "../trace/categories.js";
-import { parseTrace, findWindow, findSteps } from "../trace/parse.js";
-import { labelWindows, mergeSteps, type LabelledWindow, type MergedStep } from "../trace/steps.js";
-import { attachStacks } from "../trace/stacks.js";
+import type { HeadlessMode } from "../browser/launch.js";
+import { capsFor, type BrowserName } from "../browser/backend.js";
+import { startStaticServer } from "../browser/server.js";
+import { mergeSteps, type MergedStep } from "../trace/steps.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
-import { markForced } from "../trace/analysis.js";
-import {
-  enableMetrics,
-  snapshotMetricsIfAvailable,
-  metricsDelta,
-  startCpuProfile,
-  stopCpuProfile,
-} from "../metrics/cdp.js";
 import { buildSummary } from "../metrics/summarize.js";
 import {
   buildCpuModel,
+  packagesByProfileNode,
   DEFAULT_CPU_INTERVAL_US,
-  type RawCpuProfile,
 } from "../profile/cpuprofile.js";
-import { printCpuHeadline } from "./cpu.js";
+import { buildGeckoSpanBreakdowns } from "../profile/gecko-breakdown.js";
+import { buildPassSpecs, blameSemanticFor, noteCountScope } from "../record/passplan.js";
+import { runPass, type PassResult } from "../record/runpass.js";
+import { buildBreakdowns, userMeasureSpans } from "../record/breakdown-spans.js";
+import { writeRecording, writeDigest, writeCpuModel, writeStepIndex } from "../record/artifacts.js";
+import * as notesCatalog from "../record/notes.js";
+import { RUN_START_MARK, RUN_END_MARK, RUN_MEASURE } from "../model/marks.js";
+import { printCpuHeadline, printCpuBreakdown, printSpanBreakdowns } from "./cpu.js";
 import { printSummary } from "./summaryView.js";
 import { kv, num, sparkline } from "../output/ascii.js";
 import { bold, cyan, dim } from "../output/color.js";
-import { buildDigest } from "./digest.js";
 import { writePointer } from "./resolve.js";
-import { serialize, extFor, type Format } from "../output/format.js";
+import { extFor, type Format } from "../output/format.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 import type {
-  BlameSemantic,
   CpuModel,
-  NormalizedEvent,
   Recording,
   RecordingMeta,
-  ScreenshotRefs,
   SourceMapDiagnostics,
   SourceMapFailure,
-  StepIndex,
-  StepIndexEntry,
-  TimingEntry,
 } from "../model/recording.js";
 
-const US_PER_MS = 1000;
+// The two-pass machinery, the seven-slice span builder, and the artifact writers live in
+// src/record/. record.ts stays the orchestrator: it wires the passes, mutates `meta` in the one
+// load-bearing order, and drives the writers. These re-exports keep the compiled dist surface
+// stable for the tests and programmatic consumers that import them from this module.
+export { blameSemanticFor, noteCountScope, userMeasureSpans };
 
 export interface RecordOptions {
   module: string;
@@ -63,6 +51,8 @@ export interface RecordOptions {
   warmup: number;
   out?: string;
   headless: boolean;
+  /** chrome headless flavour: "shell" (default, ~120Hz frames) or "new"; ignored when headed/firefox */
+  headlessMode?: HeadlessMode;
   /** persistent Chrome profile dir (resolved absolute); reuse one login across passes/runs */
   userDataDir?: string;
   screenshot?: "before" | "after" | "both";
@@ -88,145 +78,13 @@ export interface RecordOptions {
   trace?: boolean;
   /** include the invalidationTracking trace category (default true); false drops it to cut overhead on invalidation-heavy pages */
   invalidationTracking?: boolean;
-}
-
-interface PassSpec {
-  name: string;
-  /** null = run with tracing OFF (clean timing) */
-  categories: string[] | null;
-  /** capture a CPU sampling profile during this pass (tracing stays off) */
-  cpu?: boolean;
-  /** Firefox: run under the Gecko profiler; the shutdown dump yields CPU samples AND
-   * layout/style markers (blame) from this one pass. */
-  gecko?: boolean;
   /**
-   * bench: timed iterations this pass runs, overriding --iterations. The trace pass runs 1
-   * because its numbers are counts, which describe one iteration's work and must not scale with
-   * --iterations; the timing pass runs them all because its numbers are wall samples, which only
-   * mean something in bulk. Unset => --iterations.
+   * Single-pass seven-slice breakdown mode (chrome only): a light trace (no `.stack`, no
+   * invalidationTracking) fused with the CPU sampler in ONE pass, producing a reconciling
+   * js/style/layout/paint/gc/other/idle decomposition per span. Cannot report forced-layout counts
+   * or blame (they need `.stack`).
    */
-  iterations?: number;
-  /**
-   * bench: close the CDP counter bracket after the first timed iteration instead of around the
-   * whole loop. Only for a pass that runs every iteration for wall yet whose counters should
-   * describe one (the timing pass). A pass that is ALSO the only count source must not set this:
-   * its trace-derived counts cover every iteration, so per-iteration CDP counts beside them put
-   * two different windows in one summary (measured under --no-isolate: layoutCount 22 from one
-   * iteration next to forcedLayoutCount 323 from eight).
-   */
-  bracketFirstIteration?: boolean;
-}
-
-/**
- * Says what a run's counts are scoped to, when --iterations makes the question real (at 1 there is
- * nothing to scale). Applies to both modes: --iterations repeats run() in either.
- *
- * Counts answer "how much work does one iteration cause"; wall answers "how long does it take",
- * which needs repetition. Summing counts over --iterations conflates the two and silently rescales
- * every threshold: `assert --max-layouts 30` would pass at --iterations 1 and fail at 10 on the
- * same page (measured: layoutCount 22 -> 102 -> 202 at 1/5/10). The pass plan keeps them apart, and
- * the lanes that cannot say so here.
- */
-export function noteCountScope(
-  specs: PassSpec[],
-  opts: RecordOptions,
-  caps: BrowserCaps,
-): string | null {
-  if (opts.iterations <= 1) return null;
-  const tracePass = specs.find((spec) => spec.name === "trace");
-  const geckoPass = specs.find((spec) => spec.name === "gecko");
-  // --no-isolate: one pass carries wall AND counts, so it must run every iteration and its counts
-  // are totals. Gecko: that pass is also the lane's only CPU sampler, and pinning it to one
-  // iteration would starve the profile of samples, which costs more than the counts gain.
-  const totalling = (tracePass && tracePass.iterations !== 1) || geckoPass;
-  if (totalling) {
-    const why = geckoPass
-      ? "the Gecko pass is also this lane's CPU sampler, so it runs every iteration"
-      : "--no-isolate collapses to one pass, which must run every iteration for the wall samples";
-    // Driver per-step counts are unaffected: each measureStep brackets its own counters and
-    // mergeSteps keeps the first iteration's, so only THIS recording's overall counts total up.
-    // Saying "counts are totals" flatly would send a reader to re-derive per-step numbers that
-    // are already right.
-    const perStep = opts.driver
-      ? " Per-step counts are unaffected: they describe the first timed iteration."
-      : "";
-    return `Counts (layout/style/paint/forced) on this recording are TOTALS across all ${opts.iterations} iterations, not one iteration's work: ${why}. A threshold like 'assert --max-layouts' therefore scales with --iterations. Use --iterations 1 to assert on counts.${perStep}`;
-  }
-  // Name only the mechanisms that actually ran: under --no-trace there is no trace pass, and
-  // claiming one "runs a single iteration" would describe a pass that does not exist. The caps
-  // gate is not redundant with bracketFirstIteration: runPass also requires cdpCounts to split,
-  // so reading the spec alone would promise a CDP bracket on Firefox, where there are no CDP
-  // counters and the note two lines up says every count is 0.
-  const how: string[] = [];
-  if (caps.cdpCounts && specs.some((spec) => spec.bracketFirstIteration))
-    how.push("the CDP counters bracket the first iteration");
-  if (tracePass?.iterations === 1) how.push("the trace pass runs a single iteration");
-  if (!how.length) return null;
-  return `Counts describe the FIRST timed iteration, not all ${opts.iterations} (${how.join("; ")}), so they mean the same at any --iterations. Wall/stats still come from all ${opts.iterations}.`;
-}
-
-/**
- * What this run's blame lines name, read off the pass plan that actually ran rather than the
- * browser name: the gecko pass is what produces Gecko's invalidation-site stacks, and the trace
- * pass is what produces Blink's flush-site ones, so a plan without either produces no blame and
- * gets no semantic (--target node, or Chrome with --no-trace). Deriving this from `opts` instead
- * would let a flag imply a pass that never ran.
- */
-export function blameSemanticFor(specs: PassSpec[]): BlameSemantic | undefined {
-  if (specs.some((spec) => spec.gecko)) return "invalidation-site";
-  if (specs.some((spec) => spec.categories)) return "flush-site";
-  return undefined;
-}
-
-interface PassResult {
-  name: string;
-  events: NormalizedEvent[];
-  windowStart: number | null;
-  windowEnd: number | null;
-  cdpDelta: Record<string, number>;
-  cdpBefore: Record<string, number>;
-  cdpAfter: Record<string, number>;
-  perIteration: number[];
-  lifecycle: string[];
-  marks: TimingEntry[];
-  measures: TimingEntry[];
-  screenshots?: ScreenshotRefs;
-  /** driver mode: per-step wall time + clean CDP delta (from timing pass) */
-  driverSteps?: DriverStep[];
-  /** driver mode: this pass's own trace windows, already re-keyed from index to label */
-  stepWindows?: LabelledWindow[];
-  /** raw V8 CPU sampling profile (only on the cpu pass) */
-  cpuProfile?: RawCpuProfile;
-  /** Firefox: temp path of the raw Gecko shutdown dump, copied verbatim to the
-   * .geckoprofile.json artifact and removed. Kept as a path, not a string: the dump can be
-   * hundreds of MB and holding it would pin that for the rest of the run. */
-  geckoDumpPath?: string;
-  /** interval the CPU sampler actually ran at, read back from the profile itself */
-  cpuSampleIntervalUs?: number;
-}
-
-function slug(label: string): string {
-  return (
-    label
-      .replace(/[^a-z0-9]+/gi, "-")
-      .replace(/^-+|-+$/g, "")
-      .toLowerCase()
-      .slice(0, 40) || "step"
-  );
-}
-
-function indexPathHint(outDir: string, base: string, ext: string): string {
-  return path.join(outDir, `${base}.index${ext}`);
-}
-
-function toServedUrl(server: StaticServer, root: string, absFile: string): string {
-  const rel = path.relative(root, absFile);
-  if (rel.startsWith("..")) {
-    throw new Error(
-      `File ${absFile} must live within the working directory (${root}) so it can be served to the browser.`,
-    );
-  }
-  return `${server.url}/${rel.split(path.sep).join("/")}`;
+  breakdown?: boolean;
 }
 
 /** Persistent-profile path for meta: shorter of relative-to-root vs absolute, or null if unused. */
@@ -308,292 +166,6 @@ function sourcemapNote(diagnostics: SourceMapDiagnostics, unmappedFrames: number
   return `WARNING: ${scope}, so 'query cpu --by package' cannot be believed for them: ${damage}. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-/** How long to wait for Firefox to flush its shutdown dump before giving up. Generous: a large
- * ring buffer serializes to a multi-hundred-MB file on a slow disk. */
-const GECKO_DUMP_TIMEOUT_MS = 15_000;
-/** Poll cadence while waiting for the dump. */
-const GECKO_DUMP_POLL_MS = 250;
-/** Consecutive equal sizes that count as "done growing" (the dump is written incrementally). */
-const GECKO_DUMP_STABLE_READS = 3;
-
-/** The Gecko sampling interval for this run: --cpu-interval is expressed in microseconds (the V8
- * unit) and Gecko takes milliseconds, clamped up to its ~1ms floor by geckoEnv. Unset => the floor. */
-function geckoIntervalMs(opts: RecordOptions): number {
-  return opts.cpuIntervalUs != null
-    ? Math.max(GECKO_MIN_INTERVAL_MS, opts.cpuIntervalUs / US_PER_MS)
-    : GECKO_MIN_INTERVAL_MS;
-}
-
-/** Firefox writes the Gecko shutdown dump asynchronously after browser.close(); wait for the
- * file to exist AND stop growing (stable across reads) before parsing it. */
-async function waitForGeckoDump(
-  dumpPath: string,
-  timeoutMs = GECKO_DUMP_TIMEOUT_MS,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  let lastSize = -1;
-  let stableReads = 0;
-  while (Date.now() < deadline) {
-    let size = -1;
-    try {
-      size = (await fs.stat(dumpPath)).size;
-    } catch {
-      size = -1;
-    }
-    if (size > 0 && size === lastSize) {
-      if (++stableReads >= GECKO_DUMP_STABLE_READS) return fs.readFile(dumpPath, "utf8");
-    } else {
-      stableReads = 0;
-    }
-    lastSize = size;
-    await sleep(GECKO_DUMP_POLL_MS);
-  }
-  throw new Error(
-    `Gecko profile dump was not written to ${dumpPath} within ${timeoutMs}ms (Firefox gecko pass).`,
-  );
-}
-
-async function runPass(
-  server: StaticServer,
-  root: string,
-  spec: PassSpec,
-  opts: RecordOptions,
-  mode: "module" | "html" | "url",
-  absModule: string,
-  shots: { before: boolean; after: boolean; dir: string; base: string } | null,
-  maps: SourceMapResolver,
-): Promise<PassResult> {
-  const browserName: BrowserName = opts.browser ?? "chrome";
-  const caps = capsFor(browserName);
-  // Firefox: the Gecko pass profiles for its whole lifetime and dumps on exit; a fresh temp
-  // file per pass keeps concurrent/retried runs from colliding.
-  const geckoDumpPath = spec.gecko
-    ? path.join(
-        os.tmpdir(),
-        `wpd-gecko-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-      )
-    : undefined;
-  const { browser, page, client } = await launchBrowser({
-    browser: browserName,
-    headless: opts.headless,
-    userDataDir: opts.userDataDir,
-    protocolTimeoutMs: opts.protocolTimeoutMs,
-    gecko: geckoDumpPath
-      ? { dumpPath: geckoDumpPath, intervalMs: geckoIntervalMs(opts) }
-      : undefined,
-  });
-  // On Firefox client is null; every CDP call is guarded by the caps object or this helper.
-  const countsClient = caps.cdpCounts ? client : null;
-  const snapshot = () => snapshotMetricsIfAvailable(countsClient);
-  const screenshots: ScreenshotRefs = {};
-  let result: PassResult;
-  try {
-    if (countsClient) await enableMetrics(countsClient);
-    if (opts.cpuThrottle && client && caps.throttle)
-      await applyCpuThrottle(client, opts.cpuThrottle);
-    if (opts.network && client && caps.throttle) await applyNetworkPreset(client, opts.network);
-
-    if (mode === "html") {
-      await page.goto(toServedUrl(server, root, path.resolve(opts.html!)), {
-        waitUntil: "load",
-        timeout: 30000,
-      });
-    } else if (mode === "url") {
-      await page.goto(opts.url!, { waitUntil: "load", timeout: 30000 });
-    } else {
-      // Same-origin blank page so the module import() below is not cross-origin.
-      await page.goto(`${server.url}/__wpd_blank__`, { waitUntil: "load" });
-    }
-
-    if (shots?.before) {
-      const screenshotPath = path.join(shots.dir, `${shots.base}.${spec.name}.before.png`);
-      await page.screenshot({ path: screenshotPath as `${string}.png` });
-      screenshots.before = screenshotPath;
-    }
-
-    let perIteration: number[];
-    let lifecycle: string[];
-    let driverSteps: DriverStep[] | undefined;
-    // Teardown is deferred until after tracing stops + counters are snapshotted, so it
-    // never inflates the measured counts.
-    let runCleanup: (() => unknown | Promise<unknown>) | undefined;
-    let cdpBefore: Record<string, number>;
-    // Set only when the timed phase was split: the counter snapshot taken right after the first
-    // timed iteration, which becomes this pass's authoritative `after` so the counts describe one
-    // iteration instead of --iterations of them.
-    let countsAfter: Record<string, number> | undefined;
-    let cpuProfile: RawCpuProfile | undefined;
-    const cpuIntervalUs = opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
-
-    if (opts.driver) {
-      if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
-      if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
-      // runDriver snapshots cdpBefore at run:start (after prepare()), so setup DOM work stays
-      // out of the authoritative counts (consistent with bench mode below).
-      // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
-      // just won't resolve through makeSourceResolver (which keys off the served-url prefix),
-      // so its own frames stay unresolved; the page's frames are unaffected.
-      const driverResult = await runDriver(page, client, absModule, opts.fn, {
-        iterations: spec.iterations ?? opts.iterations,
-        warmup: opts.warmup,
-      });
-      cdpBefore = driverResult.cdpBefore;
-      // Same contract as the bench split: the overall counts describe the first timed iteration,
-      // so they mean the same at any --iterations. runDriver closes the bracket itself (its
-      // counter reads already happen in Node, so unlike bench there is nothing to split).
-      if (spec.bracketFirstIteration && caps.cdpCounts)
-        countsAfter = driverResult.cdpAfterFirstIteration;
-      driverSteps = driverResult.steps;
-      lifecycle = driverResult.lifecycle;
-      perIteration = driverResult.steps.map((step) => step.wallMs);
-      runCleanup = driverResult.cleanup;
-    } else {
-      const passIterations = spec.iterations ?? opts.iterations;
-      const harnessArg = {
-        // Bench mode only: the module is import()ed INSIDE the page, so it must be servable.
-        // Driver mode imports it in Node (see runDriver above) and needs no url.
-        moduleUrl: toServedUrl(server, root, absModule),
-        fnName: opts.fn,
-        iterations: passIterations,
-        warmup: opts.warmup,
-      };
-      // prepare() + warmup run BEFORE the CDP snapshot / tracing so their layout/style
-      // work isn't folded into the authoritative counts (warmup especially would inflate
-      // them and disagree with the trace-window-scoped forced/paint counts).
-      const setup = await page.evaluate(runHarness, { ...harnessArg, phase: "setup" as const });
-      lifecycle = setup.lifecycle;
-      cdpBefore = await snapshot();
-      if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
-      if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
-      // Counts must mean the same thing at --iterations 1 and 50, so the CDP counters bracket the
-      // FIRST timed iteration alone rather than the whole loop. The counters are read from Node,
-      // so the only way to close that bracket mid-loop is to return from page.evaluate: hence the
-      // split. Skipped at one iteration (nothing to split), on lanes without CDP counters
-      // (Firefox), and on passes that are their own count source (see bracketFirstIteration).
-      const splitCounts = !!spec.bracketFirstIteration && passIterations > 1 && caps.cdpCounts;
-      const first = await page.evaluate(runHarness, {
-        ...harnessArg,
-        phase: "timed" as const,
-        iterations: splitCounts ? 1 : passIterations,
-        offset: 0,
-        runEnd: !splitCounts,
-      });
-      perIteration = first.perIteration;
-      if (splitCounts) {
-        // Closes the counts bracket. The gap costs one CDP round trip between iteration 0 and 1;
-        // per-iteration wall is measured in-page, so the samples themselves are unaffected.
-        countsAfter = await snapshot();
-        const rest = await page.evaluate(runHarness, {
-          ...harnessArg,
-          phase: "timed" as const,
-          iterations: passIterations - 1,
-          offset: 1,
-          runStart: false,
-        });
-        perIteration = perIteration.concat(rest.perIteration);
-      }
-      runCleanup = () => page.evaluate(runHarness, { ...harnessArg, phase: "cleanup" as const });
-    }
-
-    // Let asynchronous paint/composite work flush before we stop tracing.
-    await sleep(opts.settleMs);
-
-    if (spec.cpu && client && caps.cpuProfile) cpuProfile = await stopCpuProfile(client);
-
-    let events: NormalizedEvent[] = [];
-    let windowStart: number | null = null;
-    let windowEnd: number | null = null;
-    let stepWindows: LabelledWindow[] | undefined;
-    if (spec.categories && caps.trace) {
-      const buf = await page.tracing.stop();
-      events = parseTrace(buf ? new TextDecoder("utf-8").decode(buf) : "[]");
-      // Rewrite trace stack urls back to local source files for blame/source lookup.
-      await attachStacks(events, server.url, root, maps);
-      // Flag forced (synchronous) layout/style: the layout-thrashing signal.
-      markForced(events);
-      const runWindow = findWindow(events);
-      windowStart = runWindow.startTs;
-      windowEnd = runWindow.endTs;
-      // Re-key this pass's windows from index to label immediately: the index is only meaningful
-      // inside the pass that produced it, and both sides are right here.
-      if (opts.driver && driverSteps) stepWindows = labelWindows(driverSteps, findSteps(events));
-    }
-
-    // A split phase already closed the bracket after iteration 0; reuse it rather than snapshot
-    // again, so `delta === after - before` holds and the metrics block describes one coherent
-    // window. Unsplit, this is the post-settle snapshot.
-    const cdpAfter = countsAfter ?? (await snapshot());
-
-    // Teardown now; tracing is stopped and both counters are captured, so cleanup work
-    // stays out of the measured window (the after-screenshot still shows post-cleanup).
-    if (runCleanup) await runCleanup();
-
-    if (shots?.after) {
-      const screenshotPath = path.join(shots.dir, `${shots.base}.${spec.name}.after.png`);
-      await page.screenshot({ path: screenshotPath as `${string}.png` });
-      screenshots.after = screenshotPath;
-    }
-
-    const entries = (await page.evaluate(() => {
-      const markEntries = performance
-        .getEntriesByType("mark")
-        .map((entry) => ({ name: entry.name, startTime: entry.startTime }));
-      const measureEntries = performance.getEntriesByType("measure").map((entry) => ({
-        name: entry.name,
-        startTime: entry.startTime,
-        duration: entry.duration,
-      }));
-      return { marks: markEntries, measures: measureEntries };
-    })) as { marks: TimingEntry[]; measures: TimingEntry[] };
-
-    result = {
-      name: spec.name,
-      events,
-      windowStart,
-      windowEnd,
-      cdpBefore,
-      cdpAfter,
-      cdpDelta: metricsDelta(cdpBefore, cdpAfter),
-      perIteration,
-      lifecycle,
-      marks: entries.marks,
-      measures: entries.measures,
-      screenshots: shots ? screenshots : undefined,
-      driverSteps,
-      stepWindows,
-      cpuProfile,
-    };
-  } finally {
-    // Closing Firefox flushes the Gecko shutdown dump, so the parse below must run after this.
-    await browser.close();
-  }
-
-  // Firefox: parse the shutdown dump into the same shapes the Chrome path produces. One gecko
-  // pass yields BOTH the CPU samples (RawCpuProfile) and layout/style blame events (from Reflow/
-  // Styles markers). The run window comes from the wpd:run UserTiming marks inside the profile.
-  if (spec.gecko && geckoDumpPath) {
-    // Parse from a scoped string so the dump (potentially hundreds of MB) is collectable once
-    // the model is built; the artifact is copied straight from the file by the caller.
-    const geckoContext = parseGecko(JSON.parse(await waitForGeckoDump(geckoDumpPath)));
-    result.geckoDumpPath = geckoDumpPath;
-    result.cpuProfile = geckoToRawCpuProfile(geckoContext);
-    // The interval the sampler actually ran at, not what we asked for.
-    result.cpuSampleIntervalUs = geckoContext.intervalMs * US_PER_MS;
-    const renderingEvents = geckoToRenderingEvents(geckoContext);
-    await attachStacks(renderingEvents, server.url, root, maps);
-    markForced(renderingEvents);
-    result.events = renderingEvents;
-    const geckoWindow = findWindow(renderingEvents);
-    result.windowStart = geckoWindow.startTs;
-    result.windowEnd = geckoWindow.endTs;
-    if (opts.driver && result.driverSteps)
-      result.stepWindows = labelWindows(result.driverSteps, findSteps(renderingEvents));
-  }
-  return result;
-}
-
 export async function record(opts: RecordOptions): Promise<{
   recording: Recording;
   outPath: string;
@@ -625,51 +197,8 @@ export async function record(opts: RecordOptions): Promise<{
   const wantBefore = opts.screenshot === "before" || opts.screenshot === "both";
   const wantAfter = opts.screenshot === "after" || opts.screenshot === "both";
 
-  // Pass isolation: heavy invalidationTracking distorts timing, so measure timing
-  // in a tracing-free pass and the paint/invalidation detail in a separate pass.
   const wantTrace = opts.trace !== false;
-  const traceCats = traceCategories({ invalidationTracking: opts.invalidationTracking !== false });
-  const traceSpec: PassSpec = { name: "trace", categories: traceCats };
-  // The sampler rides the timing pass rather than a pass of its own: both specs are
-  // `categories: null`, so a separate cpu pass would differ from the timing pass only by the
-  // sampler and would buy isolation from the *timing* pass, which is not what matters.
-  // What matters is isolation from TRACING. NEVER move `cpu` onto traceSpec: sampling there
-  // inflates CPU self-time +21% with non-overlapping ranges, because `devtools.timeline.stack`
-  // makes Blink walk the JS stack on every Layout and the sampler bills that work to the JS frame
-  // that forced it -- landing on the same frame as the real forced-layout cost, so the two are
-  // indistinguishable after the fact. Riding the timing pass costs ~10% on wall (already the
-  // directional signal), which --no-cpu-profile buys back. Measurements: docs/dev/cpu-profiling.md.
-  const timingSpec: PassSpec = {
-    name: "timing",
-    categories: null,
-    cpu: opts.cpuProfile,
-    bracketFirstIteration: true,
-  };
-  // --no-trace skips the heavy trace pass entirely: counts come from CDP (timing
-  // pass) and optionally a CPU profile, with no paint/forced/invalidation detail.
-  // The fallback for pages whose invalidationTracking pass pins the main thread.
-  let specs: PassSpec[];
-  if (browserName === "firefox") {
-    // Firefox has no CDP trace/counters: a clean timing pass, plus one
-    // Gecko-profiler pass that yields CPU samples AND layout/style markers (blame) together.
-    // The gecko pass keeps --iterations (unlike Chrome's trace pass, pinned to 1 below): it is
-    // also the only CPU sampler on this lane, and one iteration would starve it of samples.
-    // Counts therefore still scale with --iterations here; noteBenchCountScope says so.
-    specs = [timingSpec];
-    if (opts.cpuProfile) specs.push({ name: "gecko", categories: null, gecko: true });
-  } else {
-    // No cpu pass: the sampler rides timingSpec (see the note there).
-    // The trace pass is pinned to one iteration ONLY when a timing pass exists to carry the wall
-    // samples. Under --no-isolate it is the only pass, so it has to run them all, and its counts
-    // scale with --iterations again (disclosed, not silently wrong).
-    specs = opts.isolate
-      ? wantTrace
-        ? [timingSpec, { ...traceSpec, iterations: 1 }]
-        : [timingSpec]
-      : wantTrace
-        ? [traceSpec]
-        : [timingSpec];
-  }
+  const specs = buildPassSpecs(opts, browserName);
 
   const server = await startStaticServer(root);
   // One resolver for the whole run: every pass's stack resolution and the CPU model share its
@@ -711,29 +240,41 @@ export async function record(opts: RecordOptions): Promise<{
       ? mergeSteps(timing.driverSteps, detail.windowStart == null ? undefined : detail.stepWindows)
       : undefined;
 
+  // The pass whose profile feeds the CPU model AND (in breakdown mode) the per-span bars. Found
+  // here, before the notes, so the breakdown notes describe bars that were actually produced.
+  const cpuPass = results.find((pass) => pass.cpuProfile);
+
   const notes: string[] = [];
-  if (browserName === "firefox") {
-    notes.push(
-      "Firefox backend (WebDriver BiDi): no CDP, so no exact counters and no CPU/network throttling. Wall timing rides performance.now (directional).",
-    );
+  if (opts.breakdown && !cpuPass?.cpuProfile) {
+    // The fused pass yielded no sampler profile, so buildBreakdowns produces nothing. Do NOT emit
+    // the breakdown-mode notes below: they describe bars this run did not compute.
+    notes.push(notesCatalog.breakdownNoProfile());
+  } else if (opts.breakdown) {
+    // The seven-slice breakdown is the product here; state its shape and, loudly, what a light trace
+    // structurally cannot measure so a 0 is never read as clean.
+    notes.push(notesCatalog.breakdownShape());
+    notes.push(notesCatalog.breakdownForcedNotMeasured());
+    notes.push(notesCatalog.breakdownInvalidationNotMeasured());
+  } else if (browserName === "firefox") {
+    notes.push(notesCatalog.firefoxBackend());
     // The counts are NOT simply absent on Firefox: with a gecko pass, summarize falls back to
     // counting Reflow/Styles markers, so layoutCount/styleCount/forcedLayoutCount carry real
     // numbers. Saying "not measured" would hide a working signal; leaving them unqualified would
     // invite diffing them against Chrome's CDP counts, which count a differently-batched thing.
     // Name which fields are real, which are a hard 0, and what the real ones may be compared to.
+    // The cpuProfile:false branch is unreachable from the CLI (it errors on --target firefox
+    // --no-cpu-profile); a programmatic caller can still land there.
     notes.push(
       opts.cpuProfile
-        ? "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's CDP counts: read them against another Firefox run. NOT measured at all and reported as 0: paintCount, invalidation counts, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and scriptingMs. A 0 in those means unmeasured, not clean."
-        : // Unreachable from the CLI (it errors on --target firefox --no-cpu-profile); a
-          // programmatic caller passing cpuProfile:false can still land here.
-          "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.",
+        ? notesCatalog.firefoxRenderingCountsMeasured()
+        : notesCatalog.firefoxRenderingCountsDisabled(),
     );
     // INP is deliberately NOT in the caps list above: it never came from CDP. It is the same
     // in-page Event Timing observer Chrome uses, so it works here; the honest caveat is that the
     // two engines' numbers are not interchangeable, not that Firefox cannot measure it.
-    notes.push(
-      "INP IS measured on Firefox (in-page Event Timing, the same observer Chrome uses). The two engines' values are not interchangeable: both span the interaction through the next paint and round to 8 ms, but Firefox reports a systematically lower number for identical work because presentation delay differs by engine. Compare a browser against itself across a change, not one engine against the other.",
-    );
+    notes.push(notesCatalog.firefoxInp());
+    // The reconciling CPU breakdown note is pushed AFTER the CPU model is built (below), where its
+    // presence is known: it is produced when the Gecko dump carried the threadCPUDelta CPU signal.
   } else {
     // Describe the pass plan that was actually BUILT, never the flags that were asked for. Those
     // diverge: `--no-isolate --no-trace` leaves one clean timing pass, so branching on
@@ -745,36 +286,22 @@ export async function record(opts: RecordOptions): Promise<{
     // The measured-timing pass is whichever pass the summary's wall times came from.
     const timingIsTraced = !timingPass;
 
-    notes.push(
-      timingIsTraced
-        ? "Single-pass mode (--no-isolate): instrumentation was active during timing, so per-iteration timings are inflated. Drop --no-isolate for trustworthy timing."
-        : "Timing/stats come from a low-overhead pass with tracing OFF.",
-    );
-    notes.push(
-      tracePass
-        ? "Paint & invalidation counts come from a separate heavy-instrumentation pass; do not compare durations across the two."
-        : "No trace pass ran (--no-trace): counts come from CDP only. Paint, forced-layout, invalidation and long-task detail is NOT collected and is reported as 0 — that means unmeasured, not clean.",
-    );
-    if (timingPass?.cpu) {
-      notes.push(
-        "The CPU sampler ran during the timing pass, which inflates per-iteration wall by roughly 10%: it is systematic, so it cancels in `diff`, but use --no-cpu-profile for absolute wall numbers.",
-      );
-    }
+    notes.push(timingIsTraced ? notesCatalog.timingInstrumented() : notesCatalog.timingClean());
+    notes.push(tracePass ? notesCatalog.paintCountsSeparatePass() : notesCatalog.noTracePass());
+    if (timingPass?.cpu) notes.push(notesCatalog.cpuSamplerOnTimingPass());
     // The sampler must not ride the trace pass (it would inflate self-time ~21%; see the timingSpec
     // note), so a plan with no timing pass has no CPU model. Say so: silently dropping it would
     // read as "this run had no JS worth sampling".
-    if (opts.cpuProfile && !timingPass) {
-      notes.push(
-        "No CPU model in this run: --no-isolate collapses to the single trace pass, and CPU sampling during tracing would inflate self-time by ~21% (trace instrumentation is billed to the JS frame that triggered it). Drop --no-isolate to get a CPU model, or add --no-trace to sample without tracing.",
-      );
-    }
+    if (opts.cpuProfile && !timingPass) notes.push(notesCatalog.noCpuModelNoIsolate());
   }
+  // chrome-headless-shell was missing on at least one pass, so the launch fell back to new-headless.
+  // Both passes fall back identically, so the note is the same on each: report it once.
+  const headlessFallbackNote = results.find((pass) => pass.headlessFallback)?.headlessFallback;
+  if (headlessFallbackNote) notes.push(headlessFallbackNote);
   const countScope = noteCountScope(specs, opts, capsFor(browserName));
   if (countScope) notes.push(countScope);
   if (opts.cpuThrottle || opts.network) {
-    notes.push(
-      `Artificial slowdown applied (${[opts.cpuThrottle ? `cpu ${opts.cpuThrottle}x` : null, opts.network].filter(Boolean).join(", ")}); timings are not comparable to an unthrottled run.`,
-    );
+    notes.push(notesCatalog.artificialSlowdown(opts.cpuThrottle, opts.network));
   }
   // The trace pass ran but its run-window markers are absent (truncated/overflowed trace
   // buffer, or the user_timing category got dropped). Without a window, inWindow() would count
@@ -787,11 +314,7 @@ export async function record(opts: RecordOptions): Promise<{
   // "raise --settle because the trace buffer overflowed" sends them to debug a pass they turned
   // off; the --no-trace note above already states what is unmeasured.
   const traceWindowMissing = detail.windowStart == null && browserName !== "firefox" && wantTrace;
-  if (traceWindowMissing) {
-    notes.push(
-      "WARNING: trace run-window markers (wpd:run:start/end) were not found, so paint/forced-layout/invalidation/long-task counts are NOT measured for this run and are reported as 0. CDP counters (layout/style/scripting) are unaffected. This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce work or raise --settle if it persists.",
-    );
-  }
+  if (traceWindowMissing) notes.push(notesCatalog.traceWindowMissing());
 
   const throttle =
     opts.cpuThrottle || opts.network
@@ -824,8 +347,8 @@ export async function record(opts: RecordOptions): Promise<{
   // Last resort for an in-page run whose harness reported no samples (e.g. run() threw after the
   // marks landed): the wpd:run marks span the timed loop on the clean pass.
   const wallFromMarks = (): number | null => {
-    const start = timing.marks.find((entry) => entry.name === "wpd:run:start")?.startTime;
-    const end = timing.marks.find((entry) => entry.name === "wpd:run:end")?.startTime;
+    const start = timing.marks.find((entry) => entry.name === RUN_START_MARK)?.startTime;
+    const end = timing.marks.find((entry) => entry.name === RUN_END_MARK)?.startTime;
     return start != null && end != null ? end - start : null;
   };
   // Bench wall is the time actually spent in run(), summed over every timed iteration.
@@ -879,7 +402,7 @@ export async function record(opts: RecordOptions): Promise<{
   const recording: Recording = {
     meta,
     window: {
-      measure: "wpd:run",
+      measure: RUN_MEASURE,
       startTs: detail.windowStart,
       endTs: detail.windowEnd,
       wallMs: runWallMs,
@@ -906,6 +429,9 @@ export async function record(opts: RecordOptions): Promise<{
       detailEvents: traceWindowMissing ? [] : detail.events,
       detailWindowStart: detail.windowStart,
       cdpDelta: timing.cdpDelta,
+      // --breakdown drops the `.stack` category, so forced layout cannot be detected: report null,
+      // not a fake 0. Every other mode measured it.
+      forcedMeasured: !opts.breakdown,
     }),
   };
 
@@ -918,7 +444,6 @@ export async function record(opts: RecordOptions): Promise<{
   let cpuProfilePath: string | undefined;
   let cpuModelPath: string | undefined;
   let cpuModel: CpuModel | undefined;
-  const cpuPass = results.find((pass) => pass.cpuProfile);
   if (cpuPass?.cpuProfile) {
     if (cpuPass.geckoDumpPath) {
       // Firefox: the authoritative raw artifact is the Gecko dump (loads at profiler.firefox.com);
@@ -943,6 +468,54 @@ export async function record(opts: RecordOptions): Promise<{
     });
   }
 
+  // Firefox CPU breakdown note: produced when the Gecko dump carried the threadCPUDelta CPU signal
+  // (js,cpu feature), absent otherwise (an older dump). Pushed here, after the model exists, so it
+  // describes the bar that was actually built.
+  if (browserName === "firefox") {
+    notes.push(
+      cpuModel?.breakdown ? notesCatalog.firefoxBreakdown() : notesCatalog.firefoxNoCpuBreakdown(),
+    );
+  }
+
+  // --breakdown: one reconciling seven-slice breakdown per span (run, driver steps, user measures).
+  // Built here because it needs both the trace events (with pid/tid) and the raw CPU samples, and
+  // it shares the run's one resolver so a sample's package matches `query cpu --by package`.
+  if (opts.breakdown && cpuPass?.cpuProfile) {
+    recording.breakdowns = await buildBreakdowns(
+      detail.events,
+      cpuPass.cpuProfile,
+      { startTs: detail.windowStart, endTs: detail.windowEnd },
+      mergedSteps,
+      { serverUrl: server.url, root, maps, notes },
+    );
+  }
+
+  // Firefox mark bridge: a per-span breakdown for each user performance.measure inside the run
+  // window, built from the same Gecko sample slices as CpuModel.breakdown (run bar). Only when the
+  // CPU signal produced a reconciling breakdown (cpuPass.cpuProfile.gecko) and the flow made
+  // measures; otherwise Recording.breakdowns stays unset and the run bar shows via CpuModel.breakdown.
+  if (
+    browserName === "firefox" &&
+    cpuPass?.cpuProfile?.gecko &&
+    cpuPass.geckoMeasures?.length &&
+    cpuModel?.breakdown
+  ) {
+    const packageByNode = await packagesByProfileNode(cpuPass.cpuProfile, {
+      serverUrl: server.url,
+      root,
+      maps,
+    });
+    recording.breakdowns = buildGeckoSpanBreakdowns(
+      cpuPass.cpuProfile,
+      packageByNode,
+      cpuPass.geckoMeasures,
+      {
+        startTs: detail.windowStart,
+        endTs: detail.windowEnd,
+      },
+    );
+  }
+
   // Every frame the run will ever resolve has now been resolved, so the tally is final. A failed
   // map is otherwise silent: frames keep their minified names and bundle path, and per-package CPU
   // numbers look plausible while attributing everything to the bundle. Mutating `meta` here (not
@@ -960,99 +533,32 @@ export async function record(opts: RecordOptions): Promise<{
     if (note) notes.push(note);
   }
 
-  await fs.writeFile(outPath, serialize(recording, opts.format), "utf8");
+  // Artifact writes, kept together in one visual field and AFTER the meta mutation above: `meta` is
+  // shared by reference with every file below, so its sourcemap verdict has to be final before the
+  // first serialize. The writers themselves are pure (src/record/artifacts.ts); their ORDER, and
+  // that it follows the mutation, is the load-bearing part and stays here.
+  await writeRecording(outPath, recording, opts.format);
   if (cpuModel && cpuProfilePath) {
     cpuModelPath = path.join(outDir, `${base}.cpu${extFor(opts.format)}`);
-    await fs.writeFile(cpuModelPath, serialize(cpuModel, opts.format), "utf8");
+    await writeCpuModel(cpuModelPath, cpuModel, opts.format);
   }
-
   // Small, context-friendly entry point that points back into the big file by id.
   const digestPath = path.join(outDir, `${base}.digest${extFor(opts.format)}`);
-  const digest = buildDigest(recording, outPath, 20);
-  await fs.writeFile(digestPath, serialize(digest, opts.format), "utf8");
-
+  await writeDigest(digestPath, recording, outPath, opts.format, 20);
   // Driver/stepped runs: split the report into one file per step + an index.
   let indexPath: string | undefined;
   if (mergedSteps) {
-    const ext = extFor(opts.format);
-    const steps = mergedSteps;
-
-    const entries: StepIndexEntry[] = [];
-    for (const step of steps) {
-      const evs = detail.events.filter(
-        (event) =>
-          step.startTs != null &&
-          event.ts >= step.startTs &&
-          (step.endTs == null || event.ts <= step.endTs),
-      );
-      const stepRec: Recording = {
-        meta: { ...meta, step: { index: step.index, label: step.label } },
-        window: {
-          measure: `wpd:step:${step.index}`,
-          startTs: step.startTs,
-          endTs: step.endTs,
-          wallMs: step.wallMs,
-        },
-        marks: [],
-        metrics: { before: {}, after: {}, delta: step.cdpDelta },
-        events: evs,
-        summary: buildSummary({
-          wallMs: step.wallMs,
-          inpMs: step.inpMs,
-          interaction: step.interaction,
-          detailEvents: evs,
-          detailWindowStart: step.startTs,
-          cdpDelta: step.cdpDelta,
-          // This step's own repetitions, so a per-step recording carries the same samples+stats
-          // contract as a bench one: `wallMs` is their median, `stats` their spread.
-          perIteration: step.perIteration,
-        }),
-      };
-      const stepBase = `${base}.step-${step.index}-${slug(step.label)}`;
-      const stepRecPath = path.join(outDir, `${stepBase}${ext}`);
-      const stepDigestPath = path.join(outDir, `${stepBase}.digest${ext}`);
-      await fs.writeFile(stepRecPath, serialize(stepRec, opts.format), "utf8");
-      await fs.writeFile(
-        stepDigestPath,
-        serialize(buildDigest(stepRec, stepRecPath, 10), opts.format),
-        "utf8",
-      );
-      const summary = stepRec.summary;
-      entries.push({
-        index: step.index,
-        label: step.label,
-        wallMs: step.wallMs,
-        stats: summary.stats,
-        inpMs: step.inpMs,
-        interaction: step.interaction,
-        headline: {
-          layoutCount: summary.layoutCount,
-          forcedLayoutCount: summary.forcedLayoutCount,
-          paintCount: summary.paintCount,
-          layoutInvalidations: summary.layoutInvalidations,
-          styleInvalidations: summary.styleInvalidations,
-          longTaskCount: summary.longTaskCount,
-        },
-        recording: stepRecPath,
-        digest: stepDigestPath,
-      });
-    }
-
-    const index: StepIndex = {
+    indexPath = await writeStepIndex({
+      outDir,
+      base,
+      format: opts.format,
       meta,
-      recording: outPath,
-      steps: entries,
-      hints: [
-        "Entry point for a stepped run. Inspect a step's digest, then drill into its recording.",
-        `Per-step digest: wpd query digest "${entries[0]?.recording ?? "<step file>"}"`,
-        `Layout thrashing in a step: wpd query blame --forced "${entries[0]?.recording ?? "<step file>"}"`,
-        `Gate in CI: wpd assert "${indexPathHint(outDir, base, ext)}" --max-forced 0`,
-      ],
-    };
-    indexPath = path.join(outDir, `${base}.index${ext}`);
-    await fs.writeFile(indexPath, serialize(index, opts.format), "utf8");
+      recordingPath: outPath,
+      detailEvents: detail.events,
+      mergedSteps,
+      forcedMeasured: !opts.breakdown,
+    });
   }
-
   // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime).
   await writePointer({
     recording: outPath,
@@ -1077,6 +583,7 @@ function printNodeReport(result: {
   const meta = result.recording.meta;
   console.log(`\n${bold(meta.tool)} — node:${meta.target}  ${dim(`(fn: ${meta.fn})`)}`);
   printCpuHeadline(result.cpuModel);
+  printCpuBreakdown(result.cpuModel);
 
   const stats = result.recording.summary.stats;
   const perIteration = result.recording.summary.perIteration;
@@ -1144,6 +651,10 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     printCpuHeadline(cpuModel);
     // Directly under the package table, because it says whether that table can be believed.
     printSourcemapLine(recording.meta.sourcemaps, cpuModel.unmappedFrames ?? 0);
+    // In --breakdown mode the seven-slice per-span bars replace the single profile-only bar.
+    if (recording.breakdowns?.length)
+      printSpanBreakdowns(recording.breakdowns, recording.meta.iterations);
+    else printCpuBreakdown(cpuModel);
   }
   if (recording.meta.throttle) {
     const throttle = recording.meta.throttle;

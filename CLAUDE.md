@@ -37,12 +37,16 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 
 CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
 unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). Unit tests (`test/unit.test.mjs`) cover pure functions
-(classify/summarize/analysis/format) against compiled `dist/`. The e2e test (`test/cli.e2e.test.mjs`)
-spawns the built CLI against real headless Chrome and asserts the two flagship flows end-to-end:
-forced-layout `blame` attribution and CPU source resolution. It **self-skips when
-Chrome is not installed** (so `npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1`
-(set by `test:e2e`) turns a missing browser into a hard failure so the e2e job can't silently pass.
+`test:e2e`). The **85** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+`dist/` (classify/summarize/analysis/format, plus the breakdown engine, `query spans` adapter,
+gecko converter, the XDG pointer, frame side track, and the `facts.md` ledger drift check). The
+**12** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the built CLI against real headless Chrome:
+forced-layout `blame`, CPU source resolution, the `--breakdown` reconciling spans (incl. an idle-
+dominated span and a user `performance.measure`), `query spans`, and the frame side track. They
+**self-skip when Chrome is not installed** (so `npm test` and the `ci` job stay green and fast);
+`WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a missing browser into a hard failure so the e2e job
+can't silently pass. **7** firefox e2e tests (`test/firefox.e2e.test.mjs`, self-skipping) cover the
+gecko lane end-to-end.
 The broader smoke tests below stay manual (always `npm run build` first — the CLI runs `dist/`):
 
 ```bash
@@ -56,7 +60,13 @@ node dist/cli.js query index latest                                 # per-step o
 ## Architecture
 
 Flow: **`record` produces a `Recording` (model/recording.ts) → `query`/`assert`/`diff` consume it.**
-`src/cli.ts` (commander) is the only entry point and wires every command.
+`src/cli.ts` (commander) is the only entry point and wires every command. The model is split across
+`model/`: `recording.ts` (the `Recording`/`EventKind`/`Breakdown` types), `marks.ts` (the `wpd:*`
+mark namespace), `time.ts` (clock/us↔ms helpers), `measured.ts` (the `Measured<T>` not-measured-vs-0
+honesty wrapper), `reconcile.ts` (slice-sum-vs-wall residual), and `spans.ts` (the `query spans`
+adapter). `record` orchestration lives in `src/record/`: `passplan.ts` (the pass specs +
+`noteCountScope`/`blameSemanticFor`), `runpass.ts` (runs a spec, per-pass), `artifacts.ts`
+(serialization), `breakdown-spans.ts` (per-span bar assembly), and `notes.ts` (`meta.notes`).
 
 ### Two execution modes (this is the central design fork)
 
@@ -123,14 +133,29 @@ the same frame the real forced-layout cost lands on, so the two cannot be separa
 `--no-cpu-profile` buys back. `--no-isolate` collapses to the trace pass alone, so it yields no CPU
 model and says so. Measurements: [docs/dev/cpu-profiling.md](docs/dev/cpu-profiling.md).
 
+**`--breakdown` (chrome only) is the exception: ONE fused pass.** A light trace (the categories MINUS
+`.stack` and MINUS `invalidationTracking`, plus gc events, `keepThreadIds` on) with the sampler
+riding it, so trace events and CPU samples share a clock and `trace/breakdown.ts` tiles a
+reconciling `js·style·layout·paint·gc·other·idle` bar per span (the run window plus every user
+`performance.measure`). [measured] the light trace keeps self-time clean (+0-1%) at ~2-5% wall.
+Dropping `.stack` means no forced counts/blame, so this mode reports them **`null`, never 0**; and
+being the only pass, its counts total across `--iterations` (`noteCountScope` says so). The CLI
+rejects `--breakdown` on firefox/node and with the isolation flags.
+
 ### Trace pipeline (trace/)
 
 `parse.ts` (raw trace JSON → `NormalizedEvent[]`, `findWindow`/`findSteps` locate
-`wpd:run`/`:step:N` marker windows) → `classify.ts` (event name/category → `EventKind`:
-layout/style/paint/composite/invalidation/scripting/task/usertiming/other) → `stacks.ts`
+`wpd:run`/`:step:N` marker windows; `keepThreadIds` keeps `pid/tid` for the breakdown pass only) →
+`classify.ts` (event name/category → `EventKind`:
+layout/style/paint/composite/invalidation/scripting/gc/task/usertiming/other) → `stacks.ts`
 (rewrites trace stack URLs back to local source paths; **async** because it resolves bundle
 frames through sourcemaps via `sourcemap.ts`) → `analysis.ts` (`markForced`, `forcedLayouts`,
-`longTasks`, `extractInvalidations`).
+`longTasks`, `extractInvalidations`). Alongside: `taxonomy.ts` (the `EventKind` → work-slice map
+and paint classification), `steps.ts` (per-step windowing/merge), `frames.ts` (the off-thread frame
+side track parsed from the already-enabled `devtools.timeline.frame` category — display-only,
+[rendering-counts.md](docs/dev/rendering-counts.md)), and `breakdown.ts` (the `--breakdown` engine:
+`(trace events, profile samples, window) → Breakdown`, disjoint main-thread self-time tiled
+`js/style/layout/paint/gc/other`, `idle := window − Σ`).
 
 **Forced-reflow detection** is the key feature and depends on a non-obvious config: layout/style
 events only carry a JS stack when JS forced them synchronously, and capturing that stack requires
@@ -143,9 +168,13 @@ Two things this rule is **not**, both documented in
 - **Not DevTools' rule.** DevTools ignores the stack entirely and requires nesting inside a JS
   invocation event *plus* a >=30ms per-task aggregate. Ours flags cheap forced layouts DevTools
   stays silent on — defensible for a CI gate, but do not describe it as "what DevTools does".
-- **Not what Firefox does.** Chrome's stack names the geometry **read** that forced the flush;
-  Gecko's cause stack names the **write** that dirtied the DOM. Measured on the same probe: **zero**
-  line overlap. `query blame --forced` therefore means a different thing per engine today.
+- **Firefox reaches the same read site by a different route.** Chrome's `.stack` names the geometry
+  **read** at the flush. Firefox has no such stack, so `query blame --forced` samples it: a
+  DOM-accessor label frame over a Layout-category flush, attributed to the nearest JS ancestor's
+  executing line + the property name. Same read-site semantic, comparable at line granularity, but a
+  sampled estimate (cheap reads can be missed, the line can lag one statement). Gecko's marker
+  **cause** stack names the **write** instead, so it is kept off `blame` (reachable via `query get`
+  under `args.data.invalidationStack`), never the `--forced` answer.
 
 ### Output & consumption
 
@@ -153,11 +182,16 @@ Two things this rule is **not**, both documented in
 - `commands/digest.ts` builds the small `Digest` (the context-friendly entry point): slowest
   events with `id`s, blame, forced layouts, long tasks, invalidation rollup. **Agents/users
   should read the digest, not the multi-MB recording**, then drill via `query get <id>`.
-- `commands/query.ts` = 5 verbs: `digest`, `index`, `events`, `blame`, `get`. `assert.ts` gates
-  against thresholds (recording *or* StepIndex), `diff.ts` compares two recordings.
-- `commands/resolve.ts`: the `latest` keyword resolves via a pointer file
-  (`recordings/.wpd-last.json`) that `record` writes — **never resolve recordings by
-  mtime**.
+- `commands/query.ts` = 6 verbs: `digest`, `index`, `spans`, `events`, `blame`, `get` (plus `cpu`/
+  `frame` in `commands/cpu.ts`). `query spans` (via `model/spans.ts`) is a read-only OUTPUT ADAPTER
+  that folds whatever bar a recording already holds (seven-slice `SpanBreakdown` or four/six-slice
+  `CpuBreakdown`) onto one `UnifiedSlices` shape — no new stored type. `assert.ts` gates against
+  thresholds (recording *or* StepIndex), `diff.ts` compares two recordings.
+- `commands/resolve.ts`: the `latest` keyword resolves via a **cwd-keyed** pointer file under the XDG
+  state dir (`$XDG_STATE_HOME/wpd/pointers/<hash>.json`, else `~/.local/state/wpd/pointers/`) that
+  `record` writes — so no `recordings/` dir is dropped into a consumer's cwd. A legacy in-cwd
+  `recordings/.wpd-last.json` is still READ as a fallback, never written. **Never resolve recordings
+  by mtime**.
 - `output/format.ts`: every output supports JSON or TOON (`--format toon`); recordings are
   read back auto-detecting the format. `output/ascii.ts`: terminal tables/sparklines (ANSI-aware:
   widths are measured by *visible* length via `output/color.ts`'s `visibleLength`, so colored cells
@@ -246,7 +280,9 @@ throttling; the CLI errors on those flags and `meta.notes` says so loudly (never
 recordings stay valid).
 
 Pass plan `["timing","gecko"]` (the gecko pass is not opt-in; the CLI refuses `--no-cpu-profile`
-here, because without it a firefox recording reports every rendering count as 0). The **gecko pass** launches
+here, because the gecko pass is this lane's *only* source of CPU samples, layout/style markers, the
+reconciling breakdown bar, AND read-site blame — without it a firefox recording is timing-only and
+would report every rendering count as 0). The **gecko pass** launches
 Firefox with the Gecko profiler env vars, runs the flow, closes the browser (which flushes a
 shutdown dump), then `waitForGeckoDump` polls the file to stable before parsing. The dump stays a
 **path** on `PassResult` (never a retained string) and is `copyFile`d to the artifact: a 16M-entry
@@ -255,9 +291,15 @@ is converted to Gecko's ms and clamped up to `GECKO_MIN_INTERVAL_MS`; `sampleInt
 back from the dump's `meta.interval` (what the sampler *actually* ran at), never hardcoded.
 
 `profile/gecko.ts` converts the raw dump (v34) to a standard `RawCpuProfile` fed to `buildCpuModel`
-unchanged, plus `NormalizedEvent[]` from Reflow/Styles markers shaped as `args.data.stackTrace` so
-the existing `attachStacks`->`markForced`->blame pipeline works untouched. One gecko pass thus
-yields CPU + blame. `parseGecko` **throws** on a missing `JavaScript` category or an empty thread
+unchanged, plus `NormalizedEvent[]`: Reflow/Styles markers (kind layout/style, `forced` from a JS
+cause, driving the flush COUNTS) and **sampled read-site blame events** (`sampled:true`, the
+read line + property, driving `blame --forced`; `summarize` skips them so they never double-count a
+flush). One gecko pass thus yields CPU + blame. Launched with `MOZ_PROFILER_STARTUP_FEATURES=js,cpu`:
+the `cpu` feature populates the per-sample `threadCPUDelta` column, whose ~0 values are the honest
+`idle` signal `computeGeckoCpuBreakdown` (`profile/gecko-breakdown.ts`) tiles into a
+`js·style·layout·browser·gc·idle` bar (style/layout from the sampled Layout-category frame). Firefox
+`performance.measure` spans (from UserTiming interval markers) become per-span breakdowns on
+`Recording.breakdowns`. `parseGecko` **throws** on a missing `JavaScript` category or an empty thread
 list: both would otherwise yield an empty-but-valid model reporting ~0 scripting time, the fake zero
 this lane refuses to emit. `isToolFrameUrl` also drops `/__wpd_blank__` (BiDi attributes bench
 harness frames to the served host page). Fixture: a trimmed real dump at
@@ -265,22 +307,27 @@ harness frames to the served host page). Fixture: a trimmed real dump at
 `npm run test:e2e:firefox`), NOT wired into `WPD_E2E_REQUIRED`.
 
 **Before touching any of this, read [docs/dev/](docs/dev/README.md)** — the raw-format schemas, the
-INP measurements, the Gecko<->Blink name map, and the two known-wrong-today behaviours
-(Firefox blame names the write not the read; `forcedLayoutMs` under-reports ~7x) all live there with
-the probes that establish them.
+INP measurements, the Gecko<->Blink name map, and the honest caveats (Firefox `forcedLayoutMs`
+under-reports ~7x from the markers; read-site blame is a sampled estimate that can lag one statement)
+all live there with the probes that establish them.
 
 ## Conventions / gotchas
 
 - ESM throughout: relative imports **must** use `.js` extensions in `.ts` source (NodeNext).
 - Naming is standardized on **layout** (not "reflow") everywhere except the idiom *forced
   reflow*; **paint** (not "repaint"). Don't reintroduce the old names.
-- `EventKind` strings, the `wpd:*` mark namespace, and the trace category list are the
-  coupling points across files; change them in one place (`classify.ts` / `categories.ts`).
+- The `EventKind` union (`model/recording.ts`, mapped by `classify.ts`), the `wpd:*` mark namespace
+  (`model/marks.ts`), and the trace category list (`trace/categories.ts`) are the coupling points
+  across files; change each in its one home.
 - **No single-letter identifiers.** Locals, params, loop counters, `for...of`/`catch` bindings,
   destructured aliases, and sort-comparator params all get descriptive names (`event` not `e`,
   `group` not `g`, `frame` not `f`, `(left, right)` not `(a, b)`, `index` not `i`). This holds
   even inside browser-serialized functions (harness/driver/settle), where names don't affect
   serialization. Exported names, type names, and object property keys are exempt.
+- **When more than one clock is in scope, a timestamp identifier names its clock** (`traceTs`,
+  `pageNowMs`, `profileTs`), so a `* 1000` / `/ 1000` is never read for its direction. The unit
+  conversions live in one place (`model/time.ts`: `usToMs`/`msToUs`/`cdpSecondsToMs`); use them
+  rather than a bare factor.
 - **No em-dashes or AI-prose in comments.** Use ASCII punctuation (`:`, `;`, `()`, `.`) and keep
   comments terse and technical; drop chatty tells (`à la`, `Best-guess`, `Nudge the engine`).
   The standalone `"—"` used as a missing-value placeholder in table *output* is allowed.
@@ -308,7 +355,9 @@ the probes that establish them.
   actually comparable) before any cross-engine claim; `cpu-profiling.md` (pass plan, sampler
   contamination, what `selfMs` includes) before changing passes or the interval;
   `rendering-counts.md` (what each count counts, which ones reproduce, why there is no composite
-  count) before adding a name to `classify.ts` or gating a count.
+  count) before adding a name to `classify.ts` or gating a count; `frame-floor.md` (the one-frame
+  floor on `wall`/`INP`, and why the headless mode sets its height) before changing the headless
+  option or adding a headless flag.
 - **Claims about engine behaviour need a probe, not a mechanism.** A plausible mechanism is not
   evidence, however obviously true it reads: sourcemaps, INP, Gecko cause stacks and sampler
   isolation all behave in ways a mechanism alone predicts wrongly. Run `examples/forces-layout.mjs`
@@ -326,7 +375,10 @@ What it shows: the `--target node` CPU lane attributing SSR `renderToString` sel
 `react-dom` vs a styling library vs your component, down to a source line, via `query cpu`. It runs
 **`examples/ssr-demo`** (in this repo, JSX-free so no build step): `react-dom` ~44% vs
 `tailwind-merge` ~22% vs `app` ~9%, with `tailwind-merge get (lib/lru-cache.ts:35)` the single
-hottest function (~21%) as the punchline.
+hottest function (~21%) as the punchline. Both the `record` and `query cpu` output carry the
+four-slice CPU breakdown bar (`js · native · gc · idle`, node's engine slice is `native`), and the
+`query cpu` headline names the per-iteration divisor (`sum of 250 iterations`), so the GIF shows the
+slice split and the divisor alongside the package rollup.
 
 **Keep this demo runnable from a clean checkout**; that property is the point, not the exact
 percentages. A demo that depends on a pre-compiled bundle from a private repo can only be
@@ -344,10 +396,11 @@ Tape gotchas, if you tweak `demo.tape`:
   that row before publishing.
 - **`NODE_ENV=production` is load-bearing** (hidden in the tape). Without it React resolves to its
   development build: `react` outranks `react-dom`, and the profile shows a cost nobody ships.
-- **`FontSize 18` + `Width 1580`** avoid clipping; the widest line is the `record` report's longest
-  dimmed file-path + annotation (`Digest: ... rendering metrics are not collected`), not the table.
-  Those paths print relative to cwd (`displayPath`), which is what keeps them on one line -- absolute
-  paths wrap, and put the recorder's home directory into the GIF.
+- **`FontSize 18` + `Width 1580`**: the widest line is the `query cpu` iteration-divisor headline
+  (~188 chars), which soft-wraps to two rows in the final frame at this width; the `record` report's
+  dimmed Digest path no longer sets the width bound. Report paths still print relative to cwd
+  (`displayPath`), which keeps the recorder's home directory out of the GIF (absolute paths wrap and
+  leak it).
 - The record output is wiped with a hidden `clear` before `query cpu` so the final frame focuses on
   the result alone.
 - **Color is automatic**: VHS records in a real PTY, so `process.stdout.isTTY` is true and the

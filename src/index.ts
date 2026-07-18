@@ -41,6 +41,9 @@ export type {
   CpuEdgeRef,
   FrameQueryResult,
   BlameEntry,
+  UnifiedSlices,
+  SpanEntry,
+  SpansResult,
   CpuPackageDelta,
   CpuFunctionDelta,
   CpuDiffResult,
@@ -49,5 +52,5 @@ export type {
 // Raw V8 sampling profile (the .cpuprofile file, DevTools/Speedscope format).
 export type { RawCpuProfile } from "./profile/cpuprofile.js";
 
-// The `latest` pointer file (recordings/.wpd-last.json).
+// The `latest` pointer file (cwd-keyed, under the XDG state dir).
 export type { LastPointer } from "./commands/resolve.js";

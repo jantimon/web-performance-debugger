@@ -1,3 +1,5 @@
+import type { Measured } from "./measured.js";
+
 export type EventKind =
   | "layout"
   | "style"
@@ -5,6 +7,7 @@ export type EventKind =
   | "composite"
   | "invalidation"
   | "scripting"
+  | "gc"
   | "task"
   | "usertiming"
   | "other";
@@ -34,12 +37,33 @@ export interface NormalizedEvent {
   dur: number;
   ph: string;
   kind: EventKind;
+  /**
+   * Trace process/thread the event ran on. Populated ONLY in --breakdown mode (parseTrace keeps
+   * them when asked): the seven-slice engine tiles the renderer main thread alone, so it must tell
+   * main-thread work from raster/compositor threads. Every other mode leaves these fields absent.
+   */
+  pid?: number;
+  tid?: number;
+  /**
+   * The trace async-slice id (`id2.local`/`id2.global`/`id`) for a b/e async event. Populated ONLY
+   * in --breakdown mode (parseTrace keeps it alongside pid/tid), so the frame side track can pair
+   * each `PipelineReporter` begin/end into a frame; absent in every other mode, which keeps their
+   * stored events byte-for-byte.
+   */
+  asyncId?: string;
   /** JS stack that triggered this event (top frame first), if Chrome captured one */
   stack?: StackFrame[];
   /** convenience: top meaningful frame as "source:line:col" */
   at?: string;
   /** layout/style synchronously forced by JS (layout thrashing) */
   forced?: boolean;
+  /**
+   * A sampled blame annotation, not a measured event (Firefox read-site forced blame). It carries a
+   * source line + property for `query blame --forced` but is NOT a countable flush, so the summary
+   * skips it: the counts come from the Gecko Reflow/Styles markers, one per real flush. Absent on
+   * every trace-derived event.
+   */
+  sampled?: boolean;
   args?: unknown;
 }
 
@@ -100,9 +124,14 @@ export interface RecordingSummary {
   paintInvalidations: number;
   styleInvalidations: number;
 
-  /** layout/style synchronously forced by JS (thrashing) */
-  forcedLayoutCount: number;
-  forcedLayoutMs: number;
+  /**
+   * layout/style synchronously forced by JS (thrashing), as a `Measured` value (see
+   * model/measured.ts): a number is the count (0 = measured, no thrashing); null = NOT measured,
+   * because the mode dropped the `.stack` trace category forced detection needs (--breakdown). The
+   * tri-state contract -- incl. why a gate treats null as a loud failure -- lives on the Measured type.
+   */
+  forcedLayoutCount: Measured<number>;
+  forcedLayoutMs: Measured<number>;
 
   /** tasks >= 50ms ("long tasks") in the window */
   longTaskCount: number;
@@ -226,18 +255,19 @@ export interface InteractionTiming {
 }
 
 /**
- * What a forced-layout blame line names, which is NOT the same question in both engines:
+ * What a forced-layout blame line names:
  *
- * - "flush-site" (Chrome/Blink): the geometry READ that forced the pending layout to flush
- *   synchronously, e.g. the `offsetHeight` access. Blink captures the stack at the flush.
- * - "invalidation-site" (Firefox/Gecko): the WRITE that dirtied the DOM and made a flush
- *   necessary, e.g. the style assignment. Gecko captures the stack at invalidation, and only
- *   for the first invalidator since the last flush.
+ * - "flush-site": the geometry READ that forced the pending layout to flush synchronously, e.g.
+ *   the `offsetHeight` access, with the DOM property named. Produced on BOTH engines: Chrome/Blink
+ *   captures the stack at the flush (from the trace's `.stack` category), Firefox/Gecko samples it
+ *   from the DOM-accessor label frames on the stack. Comparable across engines at line granularity
+ *   (measured: 12/21 lines exact on the shared probe), with a one-statement line-lag caveat where a
+ *   sampled read lands on the adjacent statement.
+ * - "invalidation-site": the WRITE that dirtied the DOM and made a flush necessary, e.g. the style
+ *   assignment. The legacy Firefox semantic (Gecko cause stacks, first invalidator since the last
+ *   flush), present only on older recordings.
  *
- * Both are real, and neither is a worse answer; they are answers to different questions. Measured
- * on the same probe the two name ZERO lines in common, so diffing a Chrome blame list against a
- * Firefox one compares nothing. Compare each engine against itself, and use `query cpu` (self-time)
- * for the cross-engine view. See docs/dev/engine-mapping.md.
+ * See docs/dev/engine-mapping.md.
  */
 export type BlameSemantic = "flush-site" | "invalidation-site";
 
@@ -274,9 +304,10 @@ export interface RecordingMeta {
   /** browser backend: "chrome" (default, CDP) or "firefox" (BiDi + Gecko profiler). Absent => chrome. */
   browser?: "chrome" | "firefox";
   /**
-   * Which code this run's forced-layout blame names. The two engines answer different questions,
-   * so this is what a cross-engine consumer needs to refuse the comparison rather than make it
-   * wrongly. Absent => the run produced no blame (--target node, or Chrome with --no-trace).
+   * Which code this run's forced-layout blame names (see BlameSemantic). "flush-site" (the read) on
+   * both engines today, comparable at line granularity; "invalidation-site" (the write) only on
+   * older Firefox recordings. Absent => the run produced no blame (--target node, or Chrome with
+   * --no-trace).
    */
   blameSemantic?: BlameSemantic;
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
@@ -288,6 +319,109 @@ export interface RecordingMeta {
   screenshots?: ScreenshotRefs;
 }
 
+/**
+ * The seven work slices of a span, plus idle. Every slice is main-thread self-time from the TRACE
+ * (children subtracted from parents), so they never overlap; `idle` is the window remainder. The
+ * `js` slice alone is subdivided by package, from the CPU samples that landed inside its self-time
+ * regions (proportions only -- sampled ms are never added to trace ms). See trace/breakdown.ts.
+ */
+export interface BreakdownSlices {
+  /** scripting self-time, split by owning package (same buckets as packageRollup) */
+  js: CpuJsSlice;
+  /** style recalc (UpdateLayoutTree/RecalcStyles) */
+  style: CpuSlice;
+  /** layout (reflow) */
+  layout: CpuSlice;
+  /** main-thread paint record */
+  paint: CpuSlice;
+  /** garbage collection (MinorGC/MajorGC) */
+  gc: CpuSlice;
+  /** task remainder + anything unclassified (composite/invalidation/user-timing/other) */
+  other: CpuSlice;
+  /** the window not covered by any main-thread work; on a paint-terminated span this is vsync wait */
+  idle: CpuSlice;
+}
+
+/**
+ * A reconciling decomposition of one span's trace window: `Σ slices + idle === wallMs` exactly in
+ * memory. On disk the numbers are rounded to 4 decimals by serialize, so a persisted slice sum can
+ * differ from `wallMs` by up to ~1e-3 ms; that rounding dust is not a `residualMs`.
+ *
+ * Durations come from the trace (disjoint main-thread self-time), so the sum is exact by
+ * construction, not a proportional allocation against an external wall. The one honesty valve is
+ * `residualMs`: if the tiling ever fails to close (lost events, clock skew), the gap is carried
+ * here rather than rescaling a slice to force the sum. It is absent/0 in the normal case.
+ */
+export interface Breakdown {
+  /** the span's trace window span, ms (endTs - startTs) */
+  wallMs: number;
+  slices: BreakdownSlices;
+  /** wallMs - (Σ slices + idle); present only when the tiling did not close within float dust */
+  residualMs?: number;
+}
+
+/** Which kind of span a breakdown describes. */
+export type SpanKind = "run" | "step" | "measure";
+
+/** Terminal verdict of a compositor frame, from PipelineReporter's `frame_reporter.state`. */
+export type FrameState = "presented" | "presentedPartial" | "dropped" | "noUpdate";
+
+/**
+ * One compositor frame from Chrome's off-thread frame pipeline (a `PipelineReporter` async slice).
+ *
+ * DISPLAY-ONLY. These are scheduler/settle noise on unchanged code (compositor warmth + how many
+ * vsync ticks the settle window happens to span), and 20 recolored boxes present as the same frame
+ * count as 1 box, so a frame count does not even track paint work. Only main-thread `Paint` is exact
+ * enough to gate. See docs/dev/rendering-counts.md.
+ */
+export interface FrameRecord {
+  /** compositor `frame_sequence`: the frame's identity within the run */
+  sequence: number;
+  state: FrameState;
+  /** the frame was on the smoothness-critical path (a dropped/late one is visible jank) */
+  affectsSmoothness: boolean;
+  /** frame-pipeline duration (begin-impl-frame -> presentation), ms */
+  durMs: number;
+}
+
+/**
+ * The per-span off-thread frame side track (Chrome --breakdown only). Tallies `PipelineReporter`
+ * verdicts, and for the slowest presented (incl. partial) frame carries its top pipeline-stage
+ * durations.
+ *
+ * DISPLAY-ONLY, and the type is shaped so the rule is enforced by construction: this lives on
+ * SpanBreakdown, NEVER on RecordingSummary, so the gate readers (`assert`/`diff`, which see only the
+ * summary) structurally cannot reach it. Nothing here is summed into any breakdown bar either -- the
+ * wall is main-thread self-time and these frames run on compositor/viz threads (the §9 rule). The
+ * counts are scheduler noise, the one reason they must not gate; see FrameRecord and
+ * docs/dev/rendering-counts.md.
+ */
+export interface FrameSideTrack {
+  presented: number;
+  presentedPartial: number;
+  dropped: number;
+  noUpdate: number;
+  /** every frame in the span's window (presented + partial + dropped + noUpdate) */
+  total: number;
+  /** top pipeline-stage durations of the slowest presented (incl. partial) frame; absent when none presented */
+  worstStages?: { name: string; ms: number }[];
+  /** raw per-frame records (few per span), for JSON drill-in */
+  frames: FrameRecord[];
+}
+
+/** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure). */
+export interface SpanBreakdown {
+  label: string;
+  kind: SpanKind;
+  breakdown: Breakdown;
+  /**
+   * Off-thread compositor frame side track for this span (Chrome --breakdown only; absent
+   * otherwise, and on spans whose window caught no frame). DISPLAY-ONLY: never summed into
+   * `breakdown`, never gated. See FrameSideTrack.
+   */
+  frames?: FrameSideTrack;
+}
+
 export interface Recording {
   meta: RecordingMeta;
   window: RecordingWindow;
@@ -295,6 +429,12 @@ export interface Recording {
   metrics: MetricsBlock;
   events: NormalizedEvent[];
   summary: RecordingSummary;
+  /**
+   * Per-span seven-slice time breakdowns (--breakdown mode only). Absent otherwise, so existing
+   * recordings are unchanged and every reader that predates the field keeps working. Additive: no
+   * schema major bump.
+   */
+  breakdowns?: SpanBreakdown[];
 }
 
 /**
@@ -308,11 +448,17 @@ export interface Digest {
   summary: RecordingSummary;
   slowestEvents: { id: number; kind: EventKind; name: string; durMs: number; at?: string }[];
   topBlame: { at: string; count: number; durMs: number; kinds: EventKind[] }[];
-  /** forced (synchronous) layout/style grouped by source; prime optimization targets */
+  /**
+   * forced (synchronous) layout/style grouped by source; prime optimization targets. On Firefox
+   * these counts are sample-derived (one per read-site sample), while `summary.forcedLayoutCount`
+   * is marker-derived (one per real flush), so the two legitimately differ there.
+   */
   forced: { at: string; count: number; durMs: number }[];
   /** longest tasks (>= threshold) as drill-in entry points */
   longTasks: { id: number; ts: number; durMs: number; dominantKind?: string; at?: string }[];
   invalidationsByReason: { kind: string; reason: string; count: number; sampleAt?: string }[];
+  /** per-span seven-slice time breakdowns (--breakdown mode only); absent otherwise */
+  breakdowns?: SpanBreakdown[];
   hints: string[];
 }
 
@@ -329,7 +475,8 @@ export interface StepIndexEntry {
   stats?: BenchStats | null;
   headline: {
     layoutCount: number;
-    forcedLayoutCount: number;
+    /** Measured (see model/measured.ts): null when forced detection was not run for this step */
+    forcedLayoutCount: Measured<number>;
     paintCount: number;
     layoutInvalidations: number;
     styleInvalidations: number;
@@ -392,6 +539,65 @@ export interface CpuSystem {
   programMs: number;
 }
 
+/** One slice of the CPU-time breakdown. */
+export interface CpuSlice {
+  ms: number;
+}
+
+/** The `js` slice, subdivided by owning package (same buckets as packageRollup). */
+export interface CpuJsSlice extends CpuSlice {
+  /** self ms per owning package; sums to `ms` */
+  byPackage: Record<string, number>;
+}
+
+/**
+ * A reconciling decomposition of the CPU profile's own sampled window into where time went.
+ *
+ * Built from the raw profile's `samples[]` + `timeDeltas[]`: every time delta is attributed to its
+ * sample's node, and each node classifies into exactly one slice, so
+ * `js + browser + gc + idle === wallMs` EXACTLY in memory, with zero residual. On disk the numbers
+ * are rounded to 4 decimals by serialize, so a persisted slice sum can differ from `wallMs` by up to
+ * ~1e-3 ms; that rounding dust is not a residual. `wallMs` is the sum of the profile's own time
+ * deltas (not an external wall), which is also `CpuModel.totalMs`. That exact tiling is the product
+ * promise; it is not a proportional allocation.
+ *
+ * Honesty constraints, both from docs/dev:
+ *  - On browser lanes the `js` slice is NOT pure JS: synchronous engine work JS triggered (a forced
+ *    layout) is billed to the forcing frame (~85% of the layout probe's "JS" self-time is reflow).
+ *    Only `--target node` measures pure JS. The report annotates this on browser lanes.
+ *  - `browser` is engine/runtime work with the profiled JS not on the stack ((program)/(root) plus
+ *    the tool's own harness frames), left UNSPLIT: no invented style/layout/paint numbers, which
+ *    would require fusing the trace onto this timeline.
+ *
+ * On chrome/node this carries `js · browser · gc · idle`, all from V8's synthetic frames. On
+ * Firefox (js,cpu) it additionally splits `style` and `layout` out of the engine work, from the
+ * per-sample Layout-category frame, and idle is the per-sample CPU-usage signal (`threadCPUDelta`),
+ * not a category. Absent on a Firefox dump with no CPU signal (a fabricated idle is worse than
+ * none) and on older `.cpu.json` files. Optional throughout, so a reader that predates the field or
+ * the style/layout slices keeps working.
+ */
+export interface CpuBreakdown {
+  /** sum of the profile's time deltas, ms; equals CpuModel.totalMs */
+  wallMs: number;
+  slices: {
+    js: CpuJsSlice;
+    /** style recalc (Firefox: Layout-category style frames). Absent on chrome/node. */
+    style?: CpuSlice;
+    /** layout/reflow (Firefox: Layout-category reflow frames). Absent on chrome/node. */
+    layout?: CpuSlice;
+    /**
+     * (program)/(root) + tool harness frames on chrome/node; on Firefox also DOM-accessor time and
+     * Profiler self-overhead. Engine/runtime work with the profiled JS not on the stack, unsplit.
+     */
+    browser: CpuSlice;
+    gc: CpuSlice;
+    idle: CpuSlice;
+  };
+  /** wallMs - Σ slices; present only when a node's owner resolved to null so its time landed in no
+   * slice (the tiling did not close within float dust). Absent/0 in the normal case. */
+  residualMs?: number;
+}
+
 /**
  * Resolved, self-contained model of a CPU sampling profile. Sized by function count
  * (not sample count), already sourcemap-resolved, so `query cpu` / `query frame` /
@@ -409,6 +615,13 @@ export interface CpuModel {
   /** sampled time excluding idle, ms */
   scriptingMs: number;
   system: CpuSystem;
+  /**
+   * Reconciling decomposition of the sampled window (the slices tile it exactly): `js · browser ·
+   * gc · idle` on chrome/node, `js · style · layout · browser · gc · idle` on Firefox (js,cpu).
+   * Absent on a Firefox dump with no `threadCPUDelta` signal (idle would be fabricated) and on
+   * older models. Additive: readers that predate it are unaffected.
+   */
+  breakdown?: CpuBreakdown;
   /** functions sorted by self time descending; id is the index */
   functions: CpuFunction[];
   /** caller->callee edges (thresholded), for callers/callees drilling */

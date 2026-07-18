@@ -16,6 +16,17 @@ falls outside the measured window. Layout/style work is held constant; only pain
 - A count summed across raster worker threads swings 3->39 on identical work. It cannot gate,
   whatever it is named.
 
+## Forced counts are a subset of style + layout, not an addend
+
+`buildSummary` bills a forced event to `forcedLayoutCount`/`forcedLayoutMs` AND to the plain
+layout/style total in the same pass (`summarize.ts`: the `event.forced` branch increments the forced
+counters, then the `layout`/`style` case increments `traceLayoutCount`/`traceStyleCount`; CDP's
+`LayoutCount` likewise counts every layout, forced included). So `forcedLayout*` is a **strict subset
+of `styleMs + layoutMs`** and the layout/style counts: **never sum forced onto style + layout** — that
+double-counts the forced work. The field spans forced **style recalc and forced layout both**, not
+layout alone (`event.forced` is set on layout AND style events): the name says layout, the coverage
+is both.
+
 ## `Paint` is exact, and it is per-chunk
 
 | dirtied regions | 0 | 1 | 2 | 5 | 10 | 20 | 40 |
@@ -58,6 +69,35 @@ time. (1600 ms is erratic because Chrome stops committing once idle.) A number t
 long did we wait" cannot be named `compositeCount` without inviting the misreading `diff` would then
 gate on, so there is no such field. The compositor signal worth wanting is *layer count*, which is a
 different measurement neither engine hands us today.
+
+## The off-thread frame side track is display-only, for the same reason
+
+Chrome's frame pipeline (`PipelineReporter` async slices + `BeginFrame`/`DrawFrame`/`DroppedFrame`/
+`Commit`, all on the already-enabled `disabled-by-default-devtools.timeline.frame` category) is
+parsed into a per-span side track under `--breakdown` (`SpanBreakdown.frames`). It is **display-only,
+never gate-able**, by the same rule as `compositeCount`:
+
+- Its counts are scheduler/settle noise. Same unchanged 20-box paint, N=10: the per-run
+  `PipelineReporter` total swings **1->28** (compositor warmth + how many vsync ticks the settle
+  window spans), and 20 recolored boxes present as the same **1** frame as 1 box -- so a frame count
+  does not even track paint work. Contrast main-thread `Paint`: **21 in all 10 runs, zero variance**.
+- Its stage slices (`BeginImplFrameToSendBeginMainFrame` -> ... ->
+  `SubmitCompositorFrameToPresentationCompositorFrame`) are inter-event **durations** on scheduler/viz
+  threads -- wall-time, not work, exactly what killed `UpdateLayer`+`Commit` above.
+
+So the side track lives on the breakdowns, NOT on `RecordingSummary`; `assert`/`diff` read only the
+summary, so they structurally cannot gate on it. Nothing in it is summed into a breakdown bar either
+(the wall is main-thread self-time; these frames run off-thread). `Paint` stays the only exact,
+gate-able rendering signal.
+
+## Layer count is a CDP snapshot, not a windowed count
+
+**[measured]** The *layer count* the composite section above says neither engine hands us IS
+obtainable — but only as a point-in-time snapshot, never as a per-span count. CDP `LayerTree.enable`
++ `layerTreeDidChange` fires **only on a structural change**: run 0 reports a stable count (paint
+probe **4**, forces-layout probe **8**) and runs 1-9 fire **0 times**, because recoloring boxes does
+not restructure the layer tree. So a layer count is a CDP-bracket *snapshot* value, not a gate-able
+per-interaction count — a steady-state interaction emits no event to window.
 
 ## Firefox: paint stays unmeasured, on purpose
 
