@@ -187,11 +187,15 @@ test("remote sourcemaps resolve packages via comment AND SourceMap header; failu
     assert.equal(pkgOf("AppRoot"), "app");
 
     // Unmapped frames keep their minified names and must NOT be blamed on "app": their owner is
-    // genuinely unknown, so they bucket by origin. This is a real listen(0) server, so its ephemeral
-    // port is dropped and the bucket is the bare host (stable across runs).
-    const host = new URL(server.origin).hostname;
-    assert.equal(pkgOf("Qk"), `(${host})`);
-    assert.equal(pkgOf("Xy"), `(${host})`);
+    // genuinely unknown, so they bucket by origin. This is a real listen(0) server, so the OS picks
+    // its port; derive the expected bucket the way unmappedOriginBucket does (drop an ephemeral
+    // >=32768 port, keep any lower one) so the assertion is stable across every OS ephemeral range.
+    const parsedOrigin = new URL(server.origin);
+    const originPort = Number(parsedOrigin.port);
+    const expectedOrigin =
+      originPort >= 32768 && originPort <= 65535 ? parsedOrigin.hostname : parsedOrigin.host;
+    assert.equal(pkgOf("Qk"), `(${expectedOrigin})`);
+    assert.equal(pkgOf("Xy"), `(${expectedOrigin})`);
 
     // the minified name is kept as a secondary label when the map renamed the function
     assert.equal(model.functions.find((entry) => entry.fn === "lodashInner").minified, "Bh");
@@ -376,10 +380,11 @@ test("unmapped remote origins: an ephemeral (listen(0)) port is dropped, a regis
   assert.equal(await pkgOf("http://localhost:3000/app.js"), "(localhost:3000)");
   assert.equal(await pkgOf("http://127.0.0.1:9/x.js"), "(127.0.0.1:9)");
 
-  // (c) the ephemeral boundary, pinned at both edges so moving EITHER constant fails: 49151 is the
-  // last registered port (kept), 49152 the first ephemeral (dropped), 65535 the last ephemeral.
-  assert.equal(await pkgOf("http://127.0.0.1:49151/x.js"), "(127.0.0.1:49151)");
-  assert.equal(await pkgOf("http://127.0.0.1:49152/x.js"), "(127.0.0.1)");
+  // (c) the ephemeral boundary, pinned at both edges so moving EITHER constant fails: 32767 is the
+  // last kept port, 32768 the first ephemeral (dropped, Linux's default listen(0) floor), 65535 the
+  // last ephemeral.
+  assert.equal(await pkgOf("http://127.0.0.1:32767/x.js"), "(127.0.0.1:32767)");
+  assert.equal(await pkgOf("http://127.0.0.1:32768/x.js"), "(127.0.0.1)");
   assert.equal(await pkgOf("http://127.0.0.1:65535/x.js"), "(127.0.0.1)");
 
   // (d) a real remote host (a CDN) keeps its full authority: the host alone already identifies it.
