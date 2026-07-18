@@ -1,7 +1,9 @@
 // Pure-wait probe: run() does no JS work, it only awaits. The sampled window is ~pure waiting,
-// which Chrome and node fill with real (idle) samples but the Gecko profiler does not record as
-// idle at all. Backs the "Gecko profile has no idle" measurement in docs/dev/cpu-profiling.md:
-// on Chrome the breakdown reports ~99% idle, on Firefox the same window reads 0 idle.
+// reported as ~99% idle on Chrome and node (real idle samples fill the wait). Firefox reports the
+// same window as idle too, on a different axis: each sample's `threadCPUDelta` reads ~0 while
+// wall-time advances, and that CPU signal drives the idle slice (Gecko's category axis records no
+// Idle-category samples for a wait). Backs the Firefox-idle-on-the-CPU-axis section in
+// docs/dev/cpu-profiling.md.
 // Run: node dist/cli.js record examples/awaits-only.mjs --bench --iterations 1
 //      node dist/cli.js query cpu latest
 

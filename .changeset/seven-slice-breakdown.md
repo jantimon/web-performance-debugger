@@ -12,5 +12,5 @@ loading. Forced-layout count and blame need the `.stack` category this mode drop
 reported as **not measured** (never 0) -- run the default mode for forced-layout blame.
 
 **New: `record --headless-mode new|shell` (chrome).** `shell` launches chrome-headless-shell, which
-runs frames at ~120Hz and halves the one-frame floor on `wall`/`INP` (16.6 -> 8.3ms). Default stays
-`new` (current behavior).
+runs frames at ~120Hz and halves the one-frame floor on `wall`/`INP` (16.6 -> 8.3ms). `shell` is the
+default; pass `--headless-mode new` to run the full-Chrome new headless (~60Hz) instead.

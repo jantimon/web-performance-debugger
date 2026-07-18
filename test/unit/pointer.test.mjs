@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { writePointer, resolveTarget } from "../../dist/commands/resolve.js";
 
@@ -54,6 +55,35 @@ test("latest pointer: cwd-keyed under XDG_STATE_HOME, no recordings/ in cwd, leg
       await resolveTarget("latest", "recording"),
       legacyRecording,
       "legacy recordings/.wpd-last.json still resolves when no state entry exists",
+    );
+
+    // A corrupt state pointer (bad JSON) must THROW, never fall back to a legacy pointer that also
+    // exists: resolving a stale legacy recording to answer `latest` is a quiet wrong answer.
+    const corruptDir = mkdtempSync(path.join(tmpdir(), "wpd-corrupt-"));
+    process.chdir(corruptDir);
+    // Key by the canonical cwd the resolver sees (tmpdir may be a symlink, e.g. /var -> /private/var).
+    const corruptStateFile = path.join(
+      stateHome,
+      "wpd",
+      "pointers",
+      `${createHash("sha256").update(path.resolve(process.cwd())).digest("hex").slice(0, 16)}.json`,
+    );
+    mkdirSync(path.dirname(corruptStateFile), { recursive: true });
+    writeFileSync(corruptStateFile, "{ not valid json", "utf8");
+    // A legacy pointer that WOULD resolve if the corrupt state file were ignored.
+    mkdirSync(path.join(corruptDir, "recordings"), { recursive: true });
+    writeFileSync(
+      path.join(corruptDir, "recordings", ".wpd-last.json"),
+      JSON.stringify({
+        recording: path.join(corruptDir, "runs", "legacy.json"),
+        digest: path.join(corruptDir, "runs", "legacy.json"),
+      }),
+      "utf8",
+    );
+    await assert.rejects(
+      () => resolveTarget("latest", "recording"),
+      /Failed to read the 'latest' pointer/,
+      "a corrupt state pointer throws instead of falling back to the legacy pointer",
     );
   } finally {
     process.chdir(prevCwd);
