@@ -5,10 +5,11 @@
 > These files record empirically-verified facts that the code depends on but cannot state itself,
 > so that whoever touches that code next does not have to re-derive them from a browser.
 
-Everything here is **measured, not read off vendor docs**. Both engines' public docs are silent or
-wrong on most of this. Claims are marked **[measured]** (reproduced locally, usually against
-`examples/forces-layout.mjs` in both engines) or **[source]** (read out of mozilla-central /
-chromium at tip-of-tree, with a permalink).
+Everything here is **measured, not read off vendor docs** (with one flagged exception, the
+market-research row below). Both engines' public docs are silent or wrong on most of this. Claims
+are marked **[measured]** (reproduced locally, usually against `examples/forces-layout.mjs` in
+both engines) or **[source]** (read out of mozilla-central / chromium at tip-of-tree, with a
+permalink).
 
 | File | Read it before |
 | --- | --- |
@@ -19,6 +20,7 @@ chromium at tip-of-tree, with a permalink).
 | [frame-floor.md](./frame-floor.md) | changing the headless mode, adding a headless flag, or explaining why libraries with different cost report the same `wallMs` |
 | [rendering-counts.md](./rendering-counts.md) | adding a name to `trace/classify.ts`, gating a count in `diff.ts`/`assert.ts`, or calling a count "exact" |
 | [facts.md](./facts.md) | changing any load-bearing measured number (a ledger of them + the files that must agree, checked by a unit test) |
+| [core-features.md](./core-features.md) | writing user-facing copy, prioritizing features, or claiming a capability is unique. The one file here whose evidence is market research (competitor docs and issue threads, link-verified and dated) rather than engine probes |
 
 ## The four things most likely to bite you
 
