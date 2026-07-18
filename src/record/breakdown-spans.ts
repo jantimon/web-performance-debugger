@@ -37,8 +37,10 @@ function mainThread(
 /** Pair user `performance.measure` async begin/end trace events (blink.user_timing, ph b/e) into
  * named windows. wpd's own `wpd:*` measures are excluded -- the run/step spans come from marks, not
  * here. EVERY in-window occurrence is returned, including a label repeated across --iterations and
- * within one iteration: those repetitions are the label's samples, merged per label downstream (see
- * model/span-merge.ts). Order is by end event, so the first occurrence of each label comes first. */
+ * sequentially within one iteration: those repetitions are the label's samples, merged per label
+ * downstream (see model/span-merge.ts). Pairing is FIFO per label, so NESTED or overlapping
+ * same-label measures cross-pair into wrong windows; sequential repeats only. Order is by end
+ * event, so the first occurrence of each label comes first. */
 export function userMeasureSpans(
   events: NormalizedEvent[],
   runStart: number,
