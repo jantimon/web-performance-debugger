@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { writeFileSync, mkdtempSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
   buildCpuModel,
+  packagesByProfileNode,
   packageRollup,
   functionJoinKey,
   loadCpuModel,
@@ -186,10 +187,15 @@ test("remote sourcemaps resolve packages via comment AND SourceMap header; failu
     assert.equal(pkgOf("AppRoot"), "app");
 
     // Unmapped frames keep their minified names and must NOT be blamed on "app": their owner is
-    // genuinely unknown, so they bucket by origin.
-    const host = new URL(server.origin).host;
-    assert.equal(pkgOf("Qk"), `(${host})`);
-    assert.equal(pkgOf("Xy"), `(${host})`);
+    // genuinely unknown, so they bucket by origin. This is a real listen(0) server, so the OS picks
+    // its port; derive the expected bucket the way unmappedOriginBucket does (drop an ephemeral
+    // >=32768 port, keep any lower one) so the assertion is stable across every OS ephemeral range.
+    const parsedOrigin = new URL(server.origin);
+    const originPort = Number(parsedOrigin.port);
+    const expectedOrigin =
+      originPort >= 32768 && originPort <= 65535 ? parsedOrigin.hostname : parsedOrigin.host;
+    assert.equal(pkgOf("Qk"), `(${expectedOrigin})`);
+    assert.equal(pkgOf("Xy"), `(${expectedOrigin})`);
 
     // the minified name is kept as a secondary label when the map renamed the function
     assert.equal(model.functions.find((entry) => entry.fn === "lodashInner").minified, "Bh");
@@ -264,6 +270,146 @@ test("buildCpuModel: an unmapped third-party bundle is counted and bucketed by o
   assert.equal(model.unmappedFrames, 1, "the unattributed frame is counted");
   const hot = model.functions.find((fn) => fn.fn === "hot");
   assert.equal(hot.package, "(cdn.example.com)", "bucketed by origin, never blamed on `app`");
+});
+
+// A frame from wpd's OWN served origin whose sourcemap mapped it to an off-disk original source is
+// re-derived from the served pathname, not fs-walked up the missing path to a stray package.json.
+// Detection is an EXACT origin match against wpd's served origin, so a genuinely remote host is left
+// to the ordinary remote branch (see the ephemeral-port test below).
+test("served-origin frames with an off-disk source get the local package, or (served), not a stray walk", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wpd-served-"));
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "my-served-app" }));
+  mkdirSync(path.join(root, "dist"));
+  writeFileSync(path.join(root, "dist", "entry.js"), "export function run(){}\n");
+  const servedOrigin = "http://127.0.0.1:57999";
+  const build = (url) =>
+    buildCpuModel(remoteProfile(url), {
+      profilePath: "served.cpuprofile",
+      meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+      sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+      serverUrl: servedOrigin,
+      root,
+    });
+  const pkgFileOf = (model) => {
+    const hot = model.functions.find((fn) => fn.fn === "hot");
+    return { package: hot.package, file: hot.file };
+  };
+
+  // (a) a served frame whose pathname maps to an existing local file: the real package + relative
+  // file, exactly as any on-disk source resolves.
+  const existing = pkgFileOf(await build(`${servedOrigin}/dist/entry.js`));
+  assert.equal(existing.package, "my-served-app");
+  assert.equal(existing.file, "dist/entry.js");
+
+  // (b) a served frame whose pathname names no on-disk file: the stable literal (served) bucket,
+  // never a stray package.json walked up to from a missing path.
+  const missing = pkgFileOf(await build(`${servedOrigin}/ghost/gone.js`));
+  assert.equal(missing.package, "(served)");
+  assert.equal(missing.file, "(served)");
+});
+
+// The scenario attributeServedOrigin EXISTS for, and the case (a) above does NOT hit: the served
+// bundle IS on disk, but its sourcemap resolves frame.source to an OFF-DISK original (a bundle built
+// elsewhere, or a stale map). frame.source is then not on disk, so the local branch cannot answer;
+// the served pathname is re-derived to the real package via packageForFile. A regression that makes
+// the helper always return `(served)` would pass the fallback-only assertions above but fail here.
+test("served frame with an on-disk bundle but off-disk sourcemap source gets the real served package", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wpd-served-map-"));
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "my-served-app" }));
+  mkdirSync(path.join(root, "dist"));
+  // The served bundle exists; its sidecar map points sources at a file that is NOT on disk.
+  writeFileSync(path.join(root, "dist", "entry.js"), "function hot(){}\n//# sourceMappingURL=entry.js.map\n");
+  writeFileSync(path.join(root, "dist", "entry.js.map"), sourcemapFor("../src/off-disk-original.ts", "hot"));
+  const servedOrigin = "http://127.0.0.1:57999";
+  const model = await buildCpuModel(remoteProfile(`${servedOrigin}/dist/entry.js`), {
+    profilePath: "served.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+    serverUrl: servedOrigin,
+    root,
+  });
+  const hot = model.functions.find((fn) => fn.fn === "hot");
+  // Re-derived from the served pathname to the real package + relative on-disk file, NOT `(served)`.
+  assert.equal(hot.package, "my-served-app");
+  assert.equal(hot.file, "dist/entry.js");
+});
+
+// Guard: a served frame whose URL is the bare origin (pathname "/") joins "/" to root itself, which
+// exists; `packageForFile(root)` would then climb to an ancestor package.json (the stray walk the
+// fallback exists to avoid). Such a frame must go to the stable `(served)` bucket. Reached here via
+// an origin that MATCHES servedOrigin but string-mismatches serverUrl (rewriteToLocal is a string
+// prefix, attributeServedOrigin is origin equality), so the frame stays remote and unresolved.
+test("served frame with a bare `/` pathname falls back to (served), never a root-up walk", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wpd-served-root-"));
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "my-served-app" }));
+  const model = await buildCpuModel(remoteProfile("http://127.0.0.1:57999"), {
+    profilePath: "served.cpuprofile",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+    sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+    serverUrl: "http://127.0.0.1:57999/",
+    root,
+  });
+  assert.equal(model.functions.find((fn) => fn.fn === "hot").package, "(served)");
+});
+
+// The leak the bench sees: a `--bench --url http://127.0.0.1:<port>` run points the page at a host
+// server whose port `listen(0)` re-picks every run. An unmapped frame from that origin (its bundle's
+// map loaded but position-missed this line) is genuinely remote -- NOT wpd's own served origin -- so
+// it reaches unmappedOriginBucket. Keying it by host:port scatters one logical cost across a fresh
+// `(127.0.0.1:PORT)` bucket per run and splits every cross-run cpu-diff join. Drop the ephemeral
+// port; keep a registered one, which names a service the user runs on purpose.
+test("unmapped remote origins: an ephemeral (listen(0)) port is dropped, a registered port is kept", async () => {
+  const build = (url) =>
+    buildCpuModel(remoteProfile(url), {
+      profilePath: "remote.cpuprofile",
+      meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+      sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+      // wpd's own served origin, distinct from the --url host below.
+      serverUrl: "http://127.0.0.1:57999",
+      root: os.tmpdir(),
+    });
+  const pkgOf = async (url) => (await build(url)).functions.find((fn) => fn.fn === "hot").package;
+
+  // (a) two runs of the same bench land on different ephemeral --url ports; both bucket by host, so
+  // the join holds across runs.
+  assert.equal(await pkgOf("http://127.0.0.1:54927/entry.js"), "(127.0.0.1)");
+  assert.equal(await pkgOf("http://127.0.0.1:50380/entry.js"), "(127.0.0.1)");
+
+  // (b) a registered port names a stable service (a user's own dev server on --url localhost:3000);
+  // it is meaningful across runs, so it stays in the bucket.
+  assert.equal(await pkgOf("http://localhost:3000/app.js"), "(localhost:3000)");
+  assert.equal(await pkgOf("http://127.0.0.1:9/x.js"), "(127.0.0.1:9)");
+
+  // (c) the ephemeral boundary, pinned at both edges so moving EITHER constant fails: 32767 is the
+  // last kept port, 32768 the first ephemeral (dropped, Linux's default listen(0) floor), 65535 the
+  // last ephemeral.
+  assert.equal(await pkgOf("http://127.0.0.1:32767/x.js"), "(127.0.0.1:32767)");
+  assert.equal(await pkgOf("http://127.0.0.1:32768/x.js"), "(127.0.0.1)");
+  assert.equal(await pkgOf("http://127.0.0.1:65535/x.js"), "(127.0.0.1)");
+
+  // (d) a real remote host (a CDN) keeps its full authority: the host alone already identifies it.
+  assert.equal(await pkgOf("https://cdn.example.com/app.min.js"), "(cdn.example.com)");
+});
+
+// The `--breakdown` js-by-package split and the firefox breakdown bar both key on
+// `packagesByProfileNode` (per-cpuprofile-node package), so this is where the ephemeral port would
+// leak into a span's `jsByPackage`. It shares `resolveCallFrame`, so the same stable bucket applies:
+// an unmapped frame from the ephemeral --url host buckets by host across runs.
+test("packagesByProfileNode: an unmapped ephemeral --url node buckets by host, feeding a stable jsByPackage", async () => {
+  const nodeFor = (url) =>
+    packagesByProfileNode(remoteProfile(url), {
+      serverUrl: "http://127.0.0.1:57999",
+      root: os.tmpdir(),
+    });
+
+  const first = await nodeFor("http://127.0.0.1:54927/entry.js");
+  const second = await nodeFor("http://127.0.0.1:50380/entry.js");
+  // node id 2 is the "hot" frame in remoteProfile; both runs bucket it identically.
+  assert.equal(first.get(2), "(127.0.0.1)");
+  assert.equal(second.get(2), "(127.0.0.1)");
+
+  const registered = await nodeFor("http://localhost:3000/app.js");
+  assert.equal(registered.get(2), "(localhost:3000)");
 });
 
 test("buildCpuModel: node builtins are not counted as unmapped", async () => {

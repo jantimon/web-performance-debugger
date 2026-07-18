@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import type {
   CpuBreakdown,
@@ -113,15 +113,42 @@ function classifyPseudoUrl(url: string | undefined): { package: string; label: s
 export const DEFAULT_CPU_INTERVAL_US = 200;
 
 /**
+ * Ephemeral-port range: a `listen(0)` server (a dev or test server, e.g. the host page a
+ * `--bench --url` run points at) is assigned a port the OS re-picks every run, so it carries no
+ * cross-run identity. An unmapped frame served from `http://127.0.0.1:54927/...` must bucket by host
+ * alone or the same code splits across a new `(127.0.0.1:PORT)` bucket per run. A registered port
+ * (`:3000`, `:8080`, `:443`) names a service the user runs on purpose and stays in the bucket.
+ *
+ * OS ephemeral ranges vary and the floor is deliberately the widest common one, not the IANA
+ * dynamic/private start (49152): Linux `listen(0)` defaults to 32768-60999, so anchoring at 49152
+ * would keep the port for the low ~58% of Linux-assigned ports and leak exactly the bench frames
+ * this bucketing exists to stabilize. 32768 covers Linux's default as well as the 49152-65535 range
+ * macOS/BSD/Windows use. Trade: a deliberate service on a 32768-49151 port loses its port from an
+ * unmapped bucket, accepted for the same reason the range exists.
+ */
+const EPHEMERAL_PORT_MIN = 32768;
+const EPHEMERAL_PORT_MAX = 65535;
+
+/**
  * Bucket for a remote script whose sourcemap did not resolve: we know its origin and nothing
  * else. Blaming it on "app" would be a guess, and a wrong one for every third-party script
  * (analytics, CDN widgets), whose cost would land in the user's own bucket. Parenthesized to
  * match the other "not a real package" buckets ((blob)/(inline)/(wasm)/(node)/(native)).
+ *
+ * The port is dropped from the key when it is in the ephemeral range: an OS-assigned dev/test-server
+ * port is a per-run accident, and keeping it would give the same unmapped code a fresh bucket every
+ * run and split every cross-run cpu-diff / functionJoinKey join. The trade: two different
+ * ephemeral-port origins on one host merge into a single bucket, and an ephemeral-port remote host
+ * loses its port; accepted because unmapped-frame joins must survive a `listen(0)` re-pick.
  */
 function unmappedOriginBucket(url: string | undefined): string {
   if (!url) return "(unmapped)";
   try {
-    return `(${new URL(url).host})`;
+    const parsed = new URL(url);
+    const port = Number(parsed.port);
+    const ephemeral =
+      parsed.port !== "" && port >= EPHEMERAL_PORT_MIN && port <= EPHEMERAL_PORT_MAX;
+    return `(${ephemeral ? parsed.hostname : parsed.host})`;
   } catch {
     return "(unmapped)";
   }
@@ -180,6 +207,49 @@ async function packageForFile(
   }
 }
 
+/**
+ * Attribution for a frame still pointing at wpd's OWN served origin (bench mode serves the user's
+ * module tree over http) whose source did not land on disk. Returns null unless `url` is an EXACT
+ * origin match against the served origin, so a genuinely remote host is left to the branches below.
+ *
+ * The server roots at the project root, so map the served pathname back to the local file and let
+ * `packageForFile` attribute it like any on-disk source (the real npm/workspace package or the real
+ * relative file). Only when the pathname names no existing local file fall back to the stable
+ * literal `(served)` bucket, rather than fs-walking the missing path up to a stray package.json.
+ */
+async function attributeServedOrigin(
+  url: string | undefined,
+  servedOrigin: string,
+  root: string,
+  cache: Map<string, string | null>,
+): Promise<{ package: string; file?: string } | null> {
+  if (!url || !servedOrigin) return null;
+  let expectedOrigin: string;
+  try {
+    expectedOrigin = new URL(servedOrigin).origin;
+  } catch {
+    return null;
+  }
+  let pathname: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin !== expectedOrigin) return null;
+    pathname = decodeURIComponent(parsed.pathname);
+  } catch {
+    return null;
+  }
+  const localPath = path.join(root, pathname.replace(/^[\\/]+/, ""));
+  const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
+  // A pathname that resolves to root itself (bare `/` or empty), escapes root, or names no on-disk
+  // file cannot be honestly attributed to a local package; `(served)` is the stable answer rather
+  // than a guess. root is included on purpose: `packageForFile(root)` walks UPWARD to an ancestor
+  // package.json, the stray walk this fallback exists to avoid.
+  if (!localPath.startsWith(rootPrefix) || !existsSync(localPath)) {
+    return { package: "(served)" };
+  }
+  return { package: await packageForFile(localPath, cache), file: localPath };
+}
+
 interface ResolvedFrame {
   fn: string;
   /** the minified V8 name, when `fn` is the sourcemap-resolved original */
@@ -210,6 +280,7 @@ async function resolveCallFrame(
   maps: SourceMapResolver,
   packageCache: Map<string, string | null>,
   root: string,
+  servedOrigin: string,
 ): Promise<ResolvedFrame> {
   const minifiedName = callFrame.functionName || "(anonymous)";
   const frame: StackFrame = {
@@ -244,6 +315,40 @@ async function resolveCallFrame(
       file: pseudo.label,
       package: pseudo.package,
     };
+  }
+  // A frame from wpd's OWN served origin (bench mode serves the module tree over an ephemeral
+  // localhost port) whose source is not on disk: the sourcemap mapped the served bundle to an
+  // original source that is not on disk (a bundle built elsewhere, or a stale map). Left alone,
+  // `packageForFile` fs-walks that missing path up to whatever stray package.json it first hits and
+  // mis-blames the cost there. Instead attribute it to the local file the server actually served
+  // (the real npm/workspace package), or the stable literal `(served)` bucket when the served
+  // pathname names no on-disk file. A frame that DID resolve to an existing source (the common case:
+  // makeSourceResolver -> the served bundle on disk, or a mapped original source) is already the
+  // best, stablest answer and is left to the branches below.
+  const sourceExists =
+    frame.source != null && path.isAbsolute(frame.source) && existsSync(frame.source);
+  if (!sourceExists) {
+    const served = await attributeServedOrigin(frame.url, servedOrigin, root, packageCache);
+    if (served) {
+      const lineSuffix = frame.line != null ? `:${frame.line}` : "";
+      if (served.file) {
+        const relServed = relativizeSource(served.file, root) ?? served.file;
+        return {
+          fn,
+          minified,
+          source: `${relServed}${lineSuffix}`,
+          file: relServed,
+          package: served.package,
+        };
+      }
+      return {
+        fn,
+        minified,
+        source: `(served)${lineSuffix}`,
+        file: "(served)",
+        package: "(served)",
+      };
+    }
   }
   const source = `${file}${frame.line != null ? `:${frame.line}` : ""}`;
   // Remote frames aren't on disk, so derive the package from the path string. Three cases, and
@@ -454,7 +559,14 @@ export async function buildCpuModel(
   for (const [key, callFrame] of callFrameByKey)
     resolvedByKey.set(
       key,
-      await resolveCallFrame(callFrame, rewriteToLocal, maps, packageCache, context.root),
+      await resolveCallFrame(
+        callFrame,
+        rewriteToLocal,
+        maps,
+        packageCache,
+        context.root,
+        context.serverUrl ?? "",
+      ),
     );
   // Frames whose owner we could not determine, i.e. what a failed sourcemap actually costs you.
   // Surfaced on the model so `record` can warn about a broken package rollup only when it really
@@ -612,6 +724,7 @@ export async function packagesByProfileNode(
         maps,
         packageCache,
         context.root,
+        context.serverUrl ?? "",
       );
       packageByKey.set(key, resolved.package);
     }
