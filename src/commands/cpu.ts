@@ -244,8 +244,13 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
     return emit(overview, fmt);
   }
 
+  const iterations = model.meta.iterations;
+  const windowNote =
+    iterations > 1
+      ? `sampled, summed over the whole window across ${iterations} iterations (divide by ${iterations} for a per-iteration figure)`
+      : "sampled, summed over the whole window";
   console.log(
-    `CPU sampling: ${bold(`${num(model.scriptingMs, 1)} ms`)} JS self-time ${dim(`(sampled, summed over the whole window) · ${model.sampleCount} samples @ ${model.sampleIntervalUs}us · idle ${num(model.system.idleMs, 1)} ms · gc ${num(model.system.gcMs, 1)} ms`)}`,
+    `CPU sampling: ${bold(`${num(model.scriptingMs, 1)} ms`)} JS self-time ${dim(`(${windowNote}) · ${model.sampleCount} samples @ ${model.sampleIntervalUs}us · idle ${num(model.system.idleMs, 1)} ms · gc ${num(model.system.gcMs, 1)} ms`)}`,
   );
   if (model.breakdown)
     console.log(

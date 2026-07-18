@@ -17,6 +17,12 @@ Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use 
 - **Node 24+**
 - **Chrome** is downloaded automatically by Puppeteer on install. To skip the browser entirely, use
   the `--target node` lane (CPU profiling only, no DOM/layout/paint)
+- **pnpm users:** pnpm 10+ blocks Puppeteer's browser-download postinstall by default, and pnpm 11
+  hard-fails `pnpm exec wpd` on that gate. Pick one recipe in your `package.json`: allow the download
+  with `"pnpm": {"onlyBuiltDependencies": ["puppeteer"]}`, or suppress the build-script gate with
+  `"pnpm": {"ignoredBuiltDependencies": ["puppeteer"]}` — but the latter only silences the gate, it
+  does not download a browser, so you must supply one yourself (set `PUPPETEER_EXECUTABLE_PATH`, or
+  populate the puppeteer cache with `npx puppeteer browsers install chrome`)
 - **Firefox** is optional (`--target firefox`): install it once with
   `npx puppeteer browsers install firefox`. See
   [What each target gives you](#what-each-target-gives-you)
@@ -84,8 +90,14 @@ step, so a step reports the **median** of its samples instead of a single readin
 [Measuring an interaction more than once](#measuring-an-interaction-more-than-once)
 
 In `--bench` the module is imported *inside the page*, so it must live under the current working
-directory to be servable. Driver and `--target node` modules are imported in Node and can live
-anywhere
+directory to be servable. It also runs in the browser, so it has **no `process.env`**: route
+parameters in through the URL/query string (`--url`) or page globals, not env vars. Driver and
+`--target node` modules are imported in Node and can live anywhere
+
+Match `--iterations` to the phase you are measuring. A phase that can only happen once per page (a
+first mount) runs with `--iterations 1` — that is one sample; repeat it by running `record` again.
+A phase you can repeat in place (an INP-style re-render, a cache probe) iterates in-page, and each
+`--iterations` pass is a fresh sample of the same work
 
 ## Which problem do you have?
 

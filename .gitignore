@@ -5,6 +5,7 @@ recordings/
 *.png
 examples/demo-gif/demo.gif
 *.tsbuildinfo
+*.tgz
 .DS_Store
 
 # CLAUDE.md is checked in on purpose: it is this repo's architecture map, and it points at

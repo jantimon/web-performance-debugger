@@ -164,7 +164,7 @@ program
       // --no-trace/--no-invalidation-tracking are meaningless (the light trace is fixed).
       const conflicts = [
         firefox &&
-          "--target firefox (no DevTools trace; its reconciling breakdown comes from the Gecko profile automatically, no --breakdown needed)",
+          "--target firefox (no DevTools trace; its reconciling breakdown comes from the Gecko profile automatically, no --breakdown needed). Your own performance.measure() spans also surface automatically in `query digest` / recording.breakdowns on Firefox without the flag",
         node && "--target node (no DevTools trace)",
         cmdOpts.isolate === false && "--no-isolate (breakdown IS a single pass)",
         cmdOpts.cpuProfile === false &&
