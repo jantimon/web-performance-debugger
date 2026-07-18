@@ -218,12 +218,19 @@ export class SourceMapResolver {
       unmappedBundles,
     };
     if (Object.keys(failed).length) diagnostics.failed = failed;
-    // Scripts whose map resolved yet position-missed at least one frame. Sorted by miss count and
-    // capped like `failed`, so `scripts`/`resolved` stay the authoritative totals.
+    // Scripts whose map resolved yet position-missed at least one frame. Ranked by miss count and
+    // capped like `failed`, so `scripts`/`resolved` stay the authoritative totals. The script url
+    // breaks ties, so which scripts survive the cap (and their order) is stable across runs rather
+    // than riding Map insertion order. Each `{misses,hits}` is copied, so a caller mutating the
+    // returned diagnostics cannot reach back into the resolver's live counters.
     const missed = [...this.positionCounts.entries()]
       .filter(([, counts]) => counts.misses > 0)
-      .sort((left, right) => right[1].misses - left[1].misses)
-      .slice(0, MAX_URLS_PER_REASON);
+      .sort(
+        ([leftScript, left], [rightScript, right]) =>
+          right.misses - left.misses || leftScript.localeCompare(rightScript),
+      )
+      .slice(0, MAX_URLS_PER_REASON)
+      .map(([script, counts]) => [script, { misses: counts.misses, hits: counts.hits }] as const);
     if (missed.length) diagnostics.positionMisses = Object.fromEntries(missed);
     return diagnostics;
   }

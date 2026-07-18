@@ -518,6 +518,40 @@ test("SourceMapResolver: positionMisses keeps the 20 worst scripts, ranked by mi
   }
 });
 
+// Ties in miss count must not ride Map insertion order (frame-processing order across passes, which
+// is not stable), or the capped `positionMisses` would vary run to run. The script url breaks ties,
+// so the order is deterministic.
+test("SourceMapResolver: positionMisses breaks miss-count ties by script url, not insertion order", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-tie-"));
+  const maps = new SourceMapResolver();
+  // Insert out of sorted order (c, a, b), each with an identical two misses.
+  for (const name of ["c", "a", "b"]) {
+    const bundle = path.join(dir, `${name}.js`);
+    writeFileSync(bundle, "function a(){}\n");
+    writeFileSync(`${bundle}.map`, sourcemapFor("src/original.ts", "original"));
+    await maps.resolveFrame({ url: `http://x/${name}.js`, source: bundle, line: 2, column: 1 });
+    await maps.resolveFrame({ url: `http://x/${name}.js`, source: bundle, line: 3, column: 1 });
+  }
+  const keys = Object.keys(maps.diagnostics().positionMisses).map((script) => path.basename(script));
+  assert.deepEqual(keys, ["a.js", "b.js", "c.js"], "tied scripts are ordered by url, deterministically");
+});
+
+// The returned diagnostics must not alias the resolver's live counters: a consumer mutating the
+// serialized-out object cannot be allowed to corrupt the resolver's internal state.
+test("SourceMapResolver: diagnostics().positionMisses is a copy, not a view of the live counters", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-copy-"));
+  const bundle = path.join(dir, "entry.js");
+  writeFileSync(bundle, "function a(){}\n");
+  writeFileSync(`${bundle}.map`, sourcemapFor("src/original.ts", "original"));
+  const maps = new SourceMapResolver();
+  await maps.resolveFrame({ url: "http://x/entry.js", source: bundle, line: 2, column: 1 });
+
+  const first = maps.diagnostics();
+  first.positionMisses[bundle].misses = 999; // a caller mutating the returned object
+  // A fresh diagnostics() call still reflects the true internal count, unaffected by that mutation.
+  assert.equal(maps.diagnostics().positionMisses[bundle].misses, 1, "internal counter is untouched");
+});
+
 test("SourceMapResolver: plain local source with no map is not an unmapped bundle", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-map-"));
   const plain = path.join(dir, "probe.mjs");

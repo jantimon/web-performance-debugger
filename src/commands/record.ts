@@ -170,9 +170,10 @@ function sourcemapNote(diagnostics: SourceMapDiagnostics, unmappedFrames: number
  * One note when a script's map LOADED but had no mapping for some queried frames, or null. This is a
  * different failure from the load-failure reasons `sourcemapNote` reports: the map resolved, so
  * `resolved` counts it a success, yet those position-missed frames kept their minified/remote
- * identity and bucketed by origin. Names each offending script and its miss count so the leak has a
- * location. No milliseconds: the missed self-time already lands in the origin/file buckets, and
- * attaching a number to a count of missed positions would fabricate a cost.
+ * identity and bucketed by origin. Lists the scripts `diagnostics.positionMisses` carries (the worst
+ * by miss count, capped), not every one that missed, and says so, so a reader never reads the count
+ * as exhaustive. No milliseconds: the missed self-time already lands in the origin/file buckets, and
+ * attaching a number to a count of missed lookups would fabricate a cost.
  */
 export function positionMissNote(diagnostics: SourceMapDiagnostics): string | null {
   const positionMisses = diagnostics.positionMisses;
@@ -185,7 +186,7 @@ export function positionMissNote(diagnostics: SourceMapDiagnostics): string | nu
         `${script} (${counts.misses} of ${counts.misses + counts.hits} frame lookups unmapped)`,
     )
     .join("; ");
-  return `NOTE: ${scripts.length} script(s) had a resolved sourcemap that still returned no mapping for some frames, so those frames kept their minified/remote identity and bucketed by origin, not their real source: ${detail}. See meta.sourcemaps.positionMisses.`;
+  return `NOTE: ${scripts.length} script(s) in meta.sourcemaps.positionMisses (the worst by miss count, capped) had a resolved sourcemap that still returned no mapping for some frame lookups, so those frames kept their minified/remote identity and bucketed by origin, not their real source: ${detail}.`;
 }
 
 export async function record(opts: RecordOptions): Promise<{

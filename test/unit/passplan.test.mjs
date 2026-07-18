@@ -88,7 +88,7 @@ test("noteCountScope: describes the pass plan that ran, per lane", () => {
   );
 });
 
-test("positionMissNote: names each position-missed script and its miss count, else null", () => {
+test("positionMissNote: lists the capped, worst-first position-missing scripts and miss counts, else null", () => {
   // Nothing to say when no map position-missed: the field is absent on a clean run.
   assert.equal(positionMissNote({ scripts: 3, resolved: 3 }), null);
   assert.equal(positionMissNote({ scripts: 3, resolved: 3, positionMisses: {} }), null);
@@ -103,7 +103,9 @@ test("positionMissNote: names each position-missed script and its miss count, el
   assert.match(note, /4 of 16 frame lookups unmapped/, "states the honest miss count, no ms");
   assert.match(note, /bucketed by origin/);
   assert.match(note, /meta\.sourcemaps\.positionMisses/);
-  // Disclosure only: no fabricated milliseconds attached to the missed positions.
+  // The list is capped to the worst offenders, so the note must not read as an exhaustive count.
+  assert.match(note, /the worst by miss count, capped/, "discloses the list is capped");
+  // Disclosure only: no fabricated milliseconds attached to the missed lookups.
   assert.doesNotMatch(note, /\bms\b/);
 });
 
