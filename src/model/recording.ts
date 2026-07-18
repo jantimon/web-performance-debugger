@@ -221,6 +221,18 @@ export interface SourceMapDiagnostics {
    * unmapped third-party scripts), so `scripts`/`resolved` are the authoritative totals.
    */
   failed?: Partial<Record<SourceMapFailure, string[]>>;
+  /**
+   * Per script whose map RESOLVED but had no mapping for some frame lookups: how many lookups the
+   * map answered (`hits`) vs silently dropped (`misses`). Counts are per-lookup, not per distinct
+   * position -- the shared resolver queries each frame once per pass (attachStacks x2 +
+   * buildCpuModel), so one leaking position lands here once per pass it appears in; the miss share
+   * stays honest either way. A miss keeps the frame's minified/remote identity and buckets it by
+   * origin, so a map that LOADS fine can still leak attribution -- a different failure from the
+   * load-failure reasons in `failed`, and invisible to `resolved` (which counts this script a
+   * success). Only scripts with a nonzero miss appear, sorted by miss count and capped, so
+   * `scripts`/`resolved` stay authoritative. Optional: an older recording may not carry it.
+   */
+  positionMisses?: Record<string, { misses: number; hits: number }>;
 }
 
 /**

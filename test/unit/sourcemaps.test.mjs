@@ -439,6 +439,85 @@ test("SourceMapResolver: a minified local bundle with no map counts as an unmapp
   assert.equal(diagnostics.unmappedBundles, 1, "minified build output with no map is reported");
 });
 
+// A map that LOADS fine can still have no mapping entry for a queried line/col. That frame keeps its
+// minified/remote identity and buckets by origin -- invisible to the load-failure outcomes, which
+// only fire when the map itself cannot be fetched/parsed. The resolver counts hits vs misses per
+// script so the leak has a number and a location.
+test("SourceMapResolver: a resolved map with sparse mappings counts position hits and misses per script", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-miss-"));
+  const bundle = path.join(dir, "entry.js");
+  writeFileSync(bundle, "function a(){}\n//# sourceMappingURL=entry.js.map\n");
+  // The map maps only generated line 1 (segment "AAAAA"); any other line position-misses it.
+  writeFileSync(`${bundle}.map`, sourcemapFor("src/original.ts", "original"));
+
+  const maps = new SourceMapResolver();
+  // line 1 col 1 -> looks up line 1 col 0, the one mapped segment: a HIT.
+  await maps.resolveFrame({ url: "http://x/entry.js", source: bundle, line: 1, column: 1 });
+  // line 3 has no mapping in the map: a MISS on the same, resolved, script.
+  await maps.resolveFrame({ url: "http://x/entry.js", source: bundle, line: 3, column: 1 });
+  await maps.resolveFrame({ url: "http://x/entry.js", source: bundle, line: 7, column: 1 });
+
+  const diagnostics = maps.diagnostics();
+  // The map loaded, so the script is a resolved success, NOT a load failure.
+  assert.equal(diagnostics.resolved, 1, "the map resolved");
+  assert.equal(diagnostics.failed, undefined, "no load failure");
+  // ...yet two of its three queried positions were dropped, and the diagnostics say so.
+  assert.deepEqual(diagnostics.positionMisses, { [bundle]: { misses: 2, hits: 1 } });
+});
+
+// A map with a mapping for every queried position must NOT appear in positionMisses: only a nonzero
+// miss share is worth disclosing, so a fully-mapped run stays silent.
+test("SourceMapResolver: a fully-mapped script produces no positionMisses entry", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-hit-"));
+  const bundle = path.join(dir, "entry.js");
+  writeFileSync(bundle, "function a(){}\n//# sourceMappingURL=entry.js.map\n");
+  writeFileSync(`${bundle}.map`, sourcemapFor("src/original.ts", "original"));
+
+  const maps = new SourceMapResolver();
+  await maps.resolveFrame({ url: "http://x/entry.js", source: bundle, line: 1, column: 1 });
+
+  const diagnostics = maps.diagnostics();
+  assert.equal(diagnostics.resolved, 1);
+  assert.equal(diagnostics.positionMisses, undefined, "no miss, so no leak to disclose");
+});
+
+// positionMisses is capped and ranked like `failed`: a page can position-miss on hundreds of
+// scripts, so diagnostics keeps only the 20 worst, in descending miss order, and `scripts`/`resolved`
+// stay the authoritative totals. This drives every script's map to resolve (so the miss path, not a
+// load failure, is what fills positionMisses) and gives each a distinct miss count.
+test("SourceMapResolver: positionMisses keeps the 20 worst scripts, ranked by miss count", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-cap-"));
+  const maps = new SourceMapResolver();
+  const totalScripts = 25;
+  // Script index `n` (1..25) gets `n` misses: line 1 is the one mapped segment (a hit we avoid), so
+  // querying lines 2..n+1 misses n times. Higher index => more misses => higher rank.
+  for (let index = 1; index <= totalScripts; index++) {
+    const bundle = path.join(dir, `s${index}.js`);
+    writeFileSync(bundle, "function a(){}\n");
+    // The sidecar `.map` is read first, so each `s{n}.js` resolves its own map (one mapped segment on
+    // generated line 1); the resolver caches per script path, so the 25 are independent.
+    writeFileSync(`${bundle}.map`, sourcemapFor("src/original.ts", "original"));
+    for (let line = 2; line <= index + 1; line++) {
+      await maps.resolveFrame({ url: `http://x/s${index}.js`, source: bundle, line, column: 1 });
+    }
+  }
+
+  const diagnostics = maps.diagnostics();
+  // Every map loaded, so all 25 are resolved successes; the cap is on the REPORTED miss list only.
+  assert.equal(diagnostics.resolved, totalScripts, "every script's map resolved");
+  const entries = Object.entries(diagnostics.positionMisses);
+  assert.equal(entries.length, 20, "capped at the 20 worst");
+
+  // The survivors are the top-20 by miss count (scripts 6..25), in strictly descending order.
+  const missCounts = entries.map(([, counts]) => counts.misses);
+  assert.deepEqual(missCounts, [25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6]);
+  // Scripts 1..5 (the fewest misses) were dropped by the cap, not silently merged.
+  for (const [script] of entries) {
+    const index = Number(path.basename(script).match(/^s(\d+)\.js$/)[1]);
+    assert.ok(index >= 6, `script s${index} should have been below the cap`);
+  }
+});
+
 test("SourceMapResolver: plain local source with no map is not an unmapped bundle", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-map-"));
   const plain = path.join(dir, "probe.mjs");

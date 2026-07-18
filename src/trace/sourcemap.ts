@@ -118,6 +118,12 @@ export class SourceMapResolver {
    * did NOT resolve: those are the ones whose frames keep minified names and a bundle-shaped
    * package rollup. Keyed like `cache`. */
   private minified = new Set<string>();
+  /** per script whose map RESOLVED: how many frame lookups the map answered (hits) vs returned no
+   * mapping for (misses). Per-lookup, not per distinct position (each frame is queried once per
+   * pass). A miss keeps the frame's minified/remote identity and buckets it by origin, so a map that
+   * loads fine can still leak attribution -- invisible to `outcomes`, which only records LOAD
+   * failures. Keyed like `cache`. */
+  private positionCounts = new Map<string, { misses: number; hits: number }>();
 
   private async loadLocalMap(jsFile: string): Promise<RawMap> {
     try {
@@ -212,6 +218,13 @@ export class SourceMapResolver {
       unmappedBundles,
     };
     if (Object.keys(failed).length) diagnostics.failed = failed;
+    // Scripts whose map resolved yet position-missed at least one frame. Sorted by miss count and
+    // capped like `failed`, so `scripts`/`resolved` stay the authoritative totals.
+    const missed = [...this.positionCounts.entries()]
+      .filter(([, counts]) => counts.misses > 0)
+      .sort((left, right) => right[1].misses - left[1].misses)
+      .slice(0, MAX_URLS_PER_REASON);
+    if (missed.length) diagnostics.positionMisses = Object.fromEntries(missed);
     return diagnostics;
   }
 
@@ -228,7 +241,17 @@ export class SourceMapResolver {
       line: frame.line,
       column: Math.max(0, (frame.column ?? 1) - 1),
     });
-    if (pos.source == null || pos.line == null) return;
+    const positions = this.positionCounts.get(target) ?? { misses: 0, hits: 0 };
+    if (pos.source == null || pos.line == null) {
+      // The map loaded but has no mapping for this line/col: the frame keeps its minified/remote
+      // identity and buckets by origin. `outcomes` records only LOAD failures, so count the miss
+      // here or the leak stays invisible.
+      positions.misses++;
+      this.positionCounts.set(target, positions);
+      return;
+    }
+    positions.hits++;
+    this.positionCounts.set(target, positions);
     frame.bundled = `${target}:${frame.line}:${frame.column ?? 0}`;
     frame.source = frame.remote
       ? cleanRemoteSource(pos.source)

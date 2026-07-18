@@ -166,6 +166,28 @@ function sourcemapNote(diagnostics: SourceMapDiagnostics, unmappedFrames: number
   return `WARNING: ${scope}, so 'query cpu --by package' cannot be believed for them: ${damage}. Reason(s): ${why}. See meta.sourcemaps for the urls.`;
 }
 
+/**
+ * One note when a script's map LOADED but had no mapping for some queried frames, or null. This is a
+ * different failure from the load-failure reasons `sourcemapNote` reports: the map resolved, so
+ * `resolved` counts it a success, yet those position-missed frames kept their minified/remote
+ * identity and bucketed by origin. Names each offending script and its miss count so the leak has a
+ * location. No milliseconds: the missed self-time already lands in the origin/file buckets, and
+ * attaching a number to a count of missed positions would fabricate a cost.
+ */
+export function positionMissNote(diagnostics: SourceMapDiagnostics): string | null {
+  const positionMisses = diagnostics.positionMisses;
+  if (!positionMisses) return null;
+  const scripts = Object.entries(positionMisses);
+  if (scripts.length === 0) return null;
+  const detail = scripts
+    .map(
+      ([script, counts]) =>
+        `${script} (${counts.misses} of ${counts.misses + counts.hits} frame lookups unmapped)`,
+    )
+    .join("; ");
+  return `NOTE: ${scripts.length} script(s) had a resolved sourcemap that still returned no mapping for some frames, so those frames kept their minified/remote identity and bucketed by origin, not their real source: ${detail}. See meta.sourcemaps.positionMisses.`;
+}
+
 export async function record(opts: RecordOptions): Promise<{
   recording: Recording;
   outPath: string;
@@ -269,6 +291,10 @@ export async function record(opts: RecordOptions): Promise<{
         ? notesCatalog.firefoxRenderingCountsMeasured()
         : notesCatalog.firefoxRenderingCountsDisabled(),
     );
+    // forcedLayoutCount here derives from Gecko marker cause stacks (the write-site JS cause), which
+    // flags reflows Chrome's read-site rule reports 0 for. Disclose it so the count is never diffed
+    // cross-engine. Only when the gecko pass ran: without it every count is a hard 0 (note above).
+    if (opts.cpuProfile) notes.push(notesCatalog.firefoxForcedCountSemantics());
     // INP is deliberately NOT in the caps list above: it never came from CDP. It is the same
     // in-page Event Timing observer Chrome uses, so it works here; the honest caveat is that the
     // two engines' numbers are not interchangeable, not that Firefox cannot measure it.
@@ -531,6 +557,12 @@ export async function record(opts: RecordOptions): Promise<{
   if (sourcemaps.scripts > 0 && cpuModel) {
     const note = sourcemapNote(sourcemaps, cpuModel.unmappedFrames ?? 0);
     if (note) notes.push(note);
+  }
+  // Position misses need no CPU model: they leak on the trace-stack (blame) path too, and are honest
+  // counts, not CPU-worded. Push independently, whenever a resolved map dropped a queried frame.
+  if (sourcemaps.scripts > 0) {
+    const missNote = positionMissNote(sourcemaps);
+    if (missNote) notes.push(missNote);
   }
 
   // Artifact writes, kept together in one visual field and AFTER the meta mutation above: `meta` is
