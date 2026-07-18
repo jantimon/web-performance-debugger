@@ -241,6 +241,113 @@ export const geckoFixture = JSON.parse(
 
 export const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
+// A hand-built Gecko shutdown dump for the js,cpu mechanisms the trimmed real fixture predates: a
+// populated `threadCPUDelta` column (idle routing), Layout-category frames (style/layout slices), a
+// DOM accessor over a Reflow with a JS ancestor executing line (read-site blame), and a user
+// `performance.measure` interval marker (the mark bridge). Kept minimal and readable.
+export function syntheticGeckoDump() {
+  // Category names must match the ones parseGecko/sampleSlice look up by name.
+  const categories = [
+    { name: "Idle" },
+    { name: "Other" },
+    { name: "Layout" }, // 2
+    { name: "JavaScript" }, // 3
+    { name: "GC / CC" }, // 4
+    { name: "DOM" }, // 5
+  ];
+  const strings = [
+    "(root)", // 0
+    "run (http://h/app.mjs:10:5)", // 1 JS (cat 3)
+    "Reflow http://h/app.mjs", // 2 Layout (cat 2)
+    "get HTMLElement.offsetWidth", // 3 DOM accessor (cat 5)
+    "hashString (http://h/app.mjs:3:2)", // 4 JS (cat 3)
+    "0xdeadbeef", // 5 native leaf, no category
+    "Styles", // 6 style marker name
+    "UserTiming", // 7 user-timing marker name
+    "MinorGC", // 8 (unused name, kept for completeness)
+  ];
+  // frameTable {location, relevantForJS, innerWindowID, implementation, line, column, category,
+  // subcategory}; location holds a stringTable index.
+  const frameTable = {
+    schema: {
+      location: 0,
+      relevantForJS: 1,
+      innerWindowID: 2,
+      implementation: 3,
+      line: 4,
+      column: 5,
+      category: 6,
+      subcategory: 7,
+    },
+    data: [
+      [0, false, null, null, null, null, 1, 0], // 0 (root), Other
+      [1, false, null, null, 20, 5, 3, 0], // 1 run, JS, executing line 20
+      [2, true, null, null, null, null, 2, 0], // 2 Reflow, Layout
+      [3, true, null, null, null, null, 5, 0], // 3 get offsetWidth, DOM
+      [4, false, null, null, 3, 2, 3, 0], // 4 hashString, JS
+      [5, false, null, null, null, null, null, null], // 5 native leaf, no category
+    ],
+  };
+  // stackTable {prefix, frame}
+  const stackTable = {
+    schema: { prefix: 0, frame: 1 },
+    data: [
+      [null, 0], // 0 root
+      [0, 1], // 1 root->run
+      [1, 4], // 2 root->run->hashString  (busywork js sample)
+      [1, 3], // 3 root->run->getOffsetWidth
+      [3, 2], // 4 ...->getOffsetWidth->Reflow (forced reflow sample, leaf=Reflow)
+      [0, 5], // 5 root->native  (idle-ish leaf)
+    ],
+  };
+  // samples {stack, time, threadCPUDelta}; times in ms, cpu in µs.
+  const samples = {
+    schema: { stack: 0, time: 1, threadCPUDelta: 2 },
+    data: [
+      [2, 5, 1000], // pre-window (time < run:start 10): dropped
+      [2, 11, 1000], // js busywork
+      [4, 12, 1000], // forced reflow -> layout slice
+      [2, 13, 0], // cpu ~0 -> idle, despite a js stack (idle routing)
+      [5, 14, 0], // native idle leaf, cpu 0 -> idle
+      [2, 15, 1000], // js busywork
+    ],
+  };
+  const measureData = { name: "paint-phase", entryType: "measure", startMark: null, endMark: null };
+  const markCause = { samples: { data: [[1]] } }; // cause stack index 1 = root->run (JS cause)
+  // markers {name, startTime, endTime, phase, category, data}
+  const markers = {
+    schema: { name: 0, startTime: 1, endTime: 2, phase: 3, category: 4, data: 5 },
+    data: [
+      [7, 10, 10, 0, 5, { name: "wpd:run:start", entryType: "mark" }],
+      [7, 16, 16, 0, 5, { name: "wpd:run:end", entryType: "mark" }],
+      [7, 11, 13, 1, 5, measureData], // user performance.measure "paint-phase"
+      [6, 12, 12.5, 1, 2, { type: "Styles", stack: markCause }], // forced style flush (JS cause)
+    ],
+  };
+  return {
+    meta: {
+      categories,
+      interval: 1,
+      sampleUnits: { time: "ms", eventDelay: "ms", threadCPUDelta: "µs" },
+    },
+    libs: [],
+    threads: [
+      {
+        name: "GeckoMain",
+        processType: "tab",
+        pid: 1,
+        tid: 1,
+        stringTable: strings,
+        frameTable,
+        stackTable,
+        samples,
+        markers,
+      },
+    ],
+    processes: [],
+  };
+}
+
 // The fixture's frames carry this served origin (captured at record time); the resolver
 // rewrites it back to local source under repoRoot.
 export const FIXTURE_ORIGIN = "http://127.0.0.1:60832";

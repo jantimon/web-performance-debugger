@@ -12,14 +12,14 @@ test("blameSemanticFor: names the engine's question, and stays absent when there
   const gecko = { name: "gecko", categories: null, gecko: true };
 
   assert.equal(blameSemanticFor([timing, trace]), "flush-site", "chrome blames the read");
-  assert.equal(blameSemanticFor([timing, gecko]), "invalidation-site", "gecko blames the write");
+  // The gecko pass now surfaces read-site (flush-site) blame from the sampled DOM-accessor stacks,
+  // so it names the same question as Chrome (the write-cause markers stay reachable, but are not
+  // the blame answer).
+  assert.equal(blameSemanticFor([timing, gecko]), "flush-site", "gecko blames the read too");
   // The branch worth pinning: a plan with neither pass produces no blame at all, so claiming a
   // semantic would describe lines that do not exist. --no-trace and --target node land here.
   assert.equal(blameSemanticFor([timing]), undefined, "--no-trace produces no blame");
   assert.equal(blameSemanticFor([]), undefined, "no passes, no blame");
-  // Defensive only: record.ts never builds this plan (the chrome branch never pushes a gecko
-  // spec, the firefox branch never pushes a trace one). Pins the tie-break in case it ever can.
-  assert.equal(blameSemanticFor([gecko, trace]), "invalidation-site", "gecko takes precedence");
 });
 
 test("noteCountScope: describes the pass plan that ran, per lane", () => {

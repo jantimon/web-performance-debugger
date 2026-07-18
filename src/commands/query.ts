@@ -227,7 +227,14 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
 
   const groups = new Map<
     string,
-    { at: string; count: number; forced: number; durMs: number; kinds: Set<string> }
+    {
+      at: string;
+      count: number;
+      forced: number;
+      durMs: number;
+      kinds: Set<string>;
+      properties: Set<string>;
+    }
   >();
   for (const event of events) {
     const group = groups.get(event.at!) ?? {
@@ -236,11 +243,15 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       forced: 0,
       durMs: 0,
       kinds: new Set<string>(),
+      properties: new Set<string>(),
     };
     group.count++;
     if (event.forced) group.forced++;
     group.durMs += usToMs(event.dur);
     group.kinds.add(event.kind);
+    // The forcing DOM property (Firefox read-site blame), stashed on the sampled event's args.
+    const property = (event.args as { data?: { property?: string } } | undefined)?.data?.property;
+    if (typeof property === "string") group.properties.add(property);
     groups.set(event.at!, group);
   }
   let rows = [...groups.values()].sort(
@@ -257,6 +268,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       forced: row.forced,
       durMs: row.durMs,
       kinds: [...row.kinds] as EventKind[],
+      properties: row.properties.size ? [...row.properties] : undefined,
     }));
     return emit(entries, fmt);
   }
@@ -268,6 +280,9 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     );
     return;
   }
+  // The source cell carries the forcing DOM property when the lane names it (Firefox read-site).
+  const sourceCell = (row: { at: string; properties: Set<string> }): string =>
+    row.properties.size ? `${row.at} (${[...row.properties].join(", ")})` : row.at;
   // `--all` shows the forced column so "ran but forced 0" lines are first-class.
   console.log(
     query.all
@@ -278,12 +293,17 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
             row.forced,
             num(row.durMs, 3),
             [...row.kinds].join(","),
-            row.at,
+            sourceCell(row),
           ]),
         )
       : table(
           ["count", "ms", "kinds", "source"],
-          rows.map((row) => [row.count, num(row.durMs, 3), [...row.kinds].join(","), row.at]),
+          rows.map((row) => [
+            row.count,
+            num(row.durMs, 3),
+            [...row.kinds].join(","),
+            sourceCell(row),
+          ]),
         ),
   );
   // Only the forced rows have an engine-specific meaning worth naming, so the note is gated on
@@ -292,7 +312,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   // all. Saying so over such a table would print the exact read/write confusion the semantic
   // exists to prevent (Chrome's invalidation stacks name the WRITE: docs/dev/engine-mapping.md).
   if (rows.some((row) => row.forced > 0)) {
-    const semantic = blameSemanticLine(rec.meta.blameSemantic);
+    const semantic = blameSemanticLine(rec.meta.blameSemantic, rec.meta.browser);
     if (semantic) console.log(`\n${semantic}`);
   }
 }
@@ -306,7 +326,7 @@ function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
   if (semantic === "invalidation-site")
     return "Firefox captures cause stacks for layout/style via the Gecko profiler";
   if (semantic === "flush-site")
-    return "Chrome captures stacks for layout/style/invalidation/scripting";
+    return "the run captures the geometry read that forced the flush (Chrome via the trace's `.stack`, Firefox via the sampled DOM-accessor stacks)";
   return "this run recorded no blame pass: --no-trace and --target node collect none";
 }
 
@@ -317,16 +337,21 @@ function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
  * structured consumers read `meta.blameSemantic` off the recording or digest, which is durable and
  * does not depend on having run this verb.
  */
-function blameSemanticLine(semantic: BlameSemantic | undefined): string | null {
+function blameSemanticLine(
+  semantic: BlameSemantic | undefined,
+  browser: "chrome" | "firefox" | undefined,
+): string | null {
   if (semantic === "flush-site")
-    return (
-      "forced rows: source = the geometry read that forced the flush (Chrome). Firefox blames the " +
-      "write that dirtied the DOM instead, so these lines are not comparable across engines."
-    );
+    return browser === "firefox"
+      ? "forced rows: source = the geometry read that forced the flush, named from the sampled " +
+          "DOM-accessor stacks (with the property). Same read-site semantic as Chrome; it is a " +
+          "sampled estimate, so cheap reads can be missed and the line can lag one statement."
+      : "forced rows: source = the geometry read that forced the flush. Firefox now names the same " +
+          "read site (sampled), so the two engines' forced lines are comparable at line granularity.";
   if (semantic === "invalidation-site")
     return (
-      "forced rows: source = the write that dirtied the DOM (Firefox), not the read that forced " +
-      "the flush. Chrome blames the read instead, so these lines are not comparable across engines."
+      "forced rows: source = the write that dirtied the DOM (older Firefox recording), not the read " +
+      "that forced the flush. Newer runs and Chrome name the read instead."
     );
   return null;
 }

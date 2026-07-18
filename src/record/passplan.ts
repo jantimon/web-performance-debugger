@@ -165,14 +165,16 @@ export function noteCountScope(
 }
 
 /**
- * What this run's blame lines name, read off the pass plan that actually ran rather than the
- * browser name: the gecko pass is what produces Gecko's invalidation-site stacks, and the trace
- * pass is what produces Blink's flush-site ones, so a plan without either produces no blame and
- * gets no semantic (--target node, or Chrome with --no-trace). Deriving this from `opts` instead
- * would let a flag imply a pass that never ran.
+ * What this run's forced-layout blame lines name, read off the pass plan that actually ran rather
+ * than the browser name, so a flag cannot imply a pass that never ran. Both browser lanes now name
+ * the READ that forced the flush (flush-site): Chrome from Blink's `.stack` at the flush, Firefox
+ * from the sampled DOM-accessor stacks (the read line, not the marker's write cause). A plan with
+ * neither produces no blame and gets no semantic (--target node, or Chrome with --no-trace).
  */
 export function blameSemanticFor(specs: PassSpec[]): BlameSemantic | undefined {
-  if (specs.some((spec) => spec.gecko)) return "invalidation-site";
+  // The gecko pass surfaces read-site blame from the sampled stacks (the write-cause markers stay
+  // reachable via `query get`, but are not the blame answer), so this lane is flush-site too.
+  if (specs.some((spec) => spec.gecko)) return "flush-site";
   // Flush-site blame is Blink's stack at the forced flush, which needs the `.stack` category. The
   // --breakdown pass has categories but drops `.stack`, so it produces no blame; excluding it by
   // name keeps this from claiming a semantic for lines that were never captured.

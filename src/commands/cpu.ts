@@ -41,7 +41,8 @@ export function printCpuHeadline(model: CpuModel): void {
 /**
  * The reconciling `js · browser · gc · idle` bar, printed after the CPU headline. The slices tile
  * the sampled window exactly (js + browser + gc + idle == wallMs), so the row percentages sum to
- * 100. No-op when the model carries no breakdown (Firefox, or an older model).
+ * 100. No-op when the model carries no breakdown (a Firefox dump without the threadCPUDelta CPU
+ * signal, or an older model).
  */
 export function printCpuBreakdown(model: CpuModel): void {
   const breakdown = model.breakdown;
@@ -64,13 +65,14 @@ export function printCpuBreakdown(model: CpuModel): void {
     .join(" · ");
 
   console.log(`\nCPU time breakdown ${dim(`(sampled window, ${num(wallMs, 1)} ms)`)}\n`);
-  // Fixed order js -> gc -> browser -> idle, so the eye lands on real work first and idle last.
-  const rows: [string, number, string][] = [
-    ["js", slices.js.ms, topPackages],
-    ["gc", slices.gc.ms, ""],
-    [browserLabel, slices.browser.ms, dim("(engine work, unsplit)")],
-    ["idle", slices.idle.ms, dim("(waiting, not work)")],
-  ];
+  // Fixed order: real work first (js, then style/layout when the lane splits them), idle last.
+  // style/layout are present only on the Firefox lane (from the per-sample Layout-category frame).
+  const rows: [string, number, string][] = [["js", slices.js.ms, topPackages]];
+  if (slices.style) rows.push(["style", slices.style.ms, ""]);
+  if (slices.layout) rows.push(["layout", slices.layout.ms, ""]);
+  rows.push(["gc", slices.gc.ms, ""]);
+  rows.push([browserLabel, slices.browser.ms, dim("(engine work, unsplit)")]);
+  rows.push(["idle", slices.idle.ms, dim("(waiting, not work)")]);
   console.log(
     table(
       HEAD(["slice", "ms", "%", ""]),

@@ -104,12 +104,12 @@ e2e(
 );
 
 e2e(
-  "record --target firefox attributes forced layout to source (Reflow/Styles markers)",
+  "record --target firefox attributes forced layout to the READ site with the property (not the write)",
   { timeout: TIMEOUT_MS },
   () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
     const out = path.join(dir, "blame");
-    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "3", "--out", out]);
+    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "40", "--out", out]);
 
     const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
     assert.ok(Array.isArray(blame) && blame.length > 0, "at least one forced layout/style source group");
@@ -118,5 +118,69 @@ e2e(
     assert.ok(fromExample[0].forced > 0, "forced count is positive");
     const kinds = new Set(fromExample.flatMap((row) => row.kinds ?? []));
     assert.ok(kinds.has("layout") || kinds.has("style"), "kinds include layout or style");
+
+    // Read-site semantics: the geometry READ lines are named, never the bump()/style-write lines.
+    const blamedLines = new Set(
+      fromExample.map((row) => Number(row.at.match(/forces-layout\.mjs:(\d+)/)?.[1])),
+    );
+    for (const writeLine of [13, 15, 16, 17, 19, 21])
+      assert.ok(!blamedLines.has(writeLine), `write line ${writeLine} must never be blamed`);
+    // At least one line inside the reads block (46..145), where the geometry reads live.
+    assert.ok([...blamedLines].some((line) => line >= 46 && line <= 145), "a geometry-read line");
+    // The forcing DOM property is spelled out on the read-site rows.
+    const properties = fromExample.flatMap((row) => row.properties ?? []);
+    assert.ok(
+      properties.some((property) => /offset|scroll|client|Height|Width|Rect|getComputed/.test(property)),
+      "at least one forcing DOM property is named",
+    );
+
+    // The recording's blame semantic is now read-site (flush-site), matching Chrome.
+    const digest = JSON.parse(runCli(["query", "digest", out, "--json"]));
+    assert.equal(digest.meta.blameSemantic, "flush-site", "firefox now names the read site");
+  },
+);
+
+e2e(
+  "record --target firefox emits a reconciling breakdown with honest idle",
+  { timeout: TIMEOUT_MS },
+  () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+    const out = path.join(dir, "awaits");
+    runCli(["record", path.join(examples, "awaits-only.mjs"), "--bench", "--target", "firefox", "--iterations", "2", "--out", out]);
+
+    const model = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+    const breakdown = model.breakdown;
+    assert.ok(breakdown, "firefox CPU breakdown is emitted (idle from threadCPUDelta)");
+    assert.ok(breakdown.slices.style && breakdown.slices.layout, "style/layout slices present");
+    const sum =
+      breakdown.slices.js.ms +
+      breakdown.slices.style.ms +
+      breakdown.slices.layout.ms +
+      breakdown.slices.browser.ms +
+      breakdown.slices.gc.ms +
+      breakdown.slices.idle.ms;
+    assert.ok(Math.abs(sum - breakdown.wallMs) < 0.01, "slices tile the sampled window (reconciles)");
+    // A pure-wait run is dominated by idle.
+    assert.ok(breakdown.slices.idle.ms / breakdown.wallMs > 0.8, "idle > 80% on a pure-wait run");
+  },
+);
+
+e2e(
+  "record --target firefox surfaces a performance.measure span with its own breakdown",
+  { timeout: TIMEOUT_MS },
+  () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+    const out = path.join(dir, "measure");
+    runCli(["record", path.join(examples, "measure-span.mjs"), "--bench", "--target", "firefox", "--iterations", "5", "--out", out]);
+
+    const digest = JSON.parse(runCli(["query", "digest", out, "--json"]));
+    assert.ok(Array.isArray(digest.breakdowns), "breakdowns present");
+    const span = digest.breakdowns.find((entry) => entry.kind === "measure" && entry.label === "work");
+    assert.ok(span, "the user performance.measure 'work' appears as a span");
+    const slices = span.breakdown.slices;
+    const sum =
+      slices.js.ms + slices.style.ms + slices.layout.ms + slices.paint.ms + slices.gc.ms + slices.other.ms + slices.idle.ms;
+    assert.ok(Math.abs(sum - span.breakdown.wallMs) < 0.01, "the span breakdown tiles its own window");
+    assert.equal(slices.paint.ms, 0, "paint is 0 on firefox (off-main-thread)");
   },
 );

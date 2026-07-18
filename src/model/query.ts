@@ -52,6 +52,12 @@ export interface BlameEntry {
   forced: number;
   durMs: number;
   kinds: EventKind[];
+  /**
+   * The DOM properties read at this line (Firefox read-site forced blame), e.g.
+   * "HTMLElement.offsetWidth". Absent on lanes that do not name the forcing property (Chrome, which
+   * names the read line but not the accessor).
+   */
+  properties?: string[];
 }
 
 /** Per-package self-time delta in a CPU diff. */

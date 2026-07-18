@@ -143,9 +143,13 @@ Two things this rule is **not**, both documented in
 - **Not DevTools' rule.** DevTools ignores the stack entirely and requires nesting inside a JS
   invocation event *plus* a >=30ms per-task aggregate. Ours flags cheap forced layouts DevTools
   stays silent on — defensible for a CI gate, but do not describe it as "what DevTools does".
-- **Not what Firefox does.** Chrome's stack names the geometry **read** that forced the flush;
-  Gecko's cause stack names the **write** that dirtied the DOM. Measured on the same probe: **zero**
-  line overlap. `query blame --forced` therefore means a different thing per engine today.
+- **Firefox reaches the same read site by a different route.** Chrome's `.stack` names the geometry
+  **read** at the flush. Firefox has no such stack, so `query blame --forced` samples it: a
+  DOM-accessor label frame over a Layout-category flush, attributed to the nearest JS ancestor's
+  executing line + the property name. Same read-site semantic, comparable at line granularity, but a
+  sampled estimate (cheap reads can be missed, the line can lag one statement). Gecko's marker
+  **cause** stack names the **write** instead, so it is kept off `blame` (reachable via `query get`
+  under `args.data.invalidationStack`), never the `--forced` answer.
 
 ### Output & consumption
 
@@ -255,9 +259,15 @@ is converted to Gecko's ms and clamped up to `GECKO_MIN_INTERVAL_MS`; `sampleInt
 back from the dump's `meta.interval` (what the sampler *actually* ran at), never hardcoded.
 
 `profile/gecko.ts` converts the raw dump (v34) to a standard `RawCpuProfile` fed to `buildCpuModel`
-unchanged, plus `NormalizedEvent[]` from Reflow/Styles markers shaped as `args.data.stackTrace` so
-the existing `attachStacks`->`markForced`->blame pipeline works untouched. One gecko pass thus
-yields CPU + blame. `parseGecko` **throws** on a missing `JavaScript` category or an empty thread
+unchanged, plus `NormalizedEvent[]`: Reflow/Styles markers (kind layout/style, `forced` from a JS
+cause, driving the flush COUNTS) and **sampled read-site blame events** (`sampled:true`, the
+read line + property, driving `blame --forced`; `summarize` skips them so they never double-count a
+flush). One gecko pass thus yields CPU + blame. Launched with `MOZ_PROFILER_STARTUP_FEATURES=js,cpu`:
+the `cpu` feature populates the per-sample `threadCPUDelta` column, whose ~0 values are the honest
+`idle` signal `computeGeckoCpuBreakdown` (`profile/gecko-breakdown.ts`) tiles into a
+`js·style·layout·browser·gc·idle` bar (style/layout from the sampled Layout-category frame). Firefox
+`performance.measure` spans (from UserTiming interval markers) become per-span breakdowns on
+`Recording.breakdowns`. `parseGecko` **throws** on a missing `JavaScript` category or an empty thread
 list: both would otherwise yield an empty-but-valid model reporting ~0 scripting time, the fake zero
 this lane refuses to emit. `isToolFrameUrl` also drops `/__wpd_blank__` (BiDi attributes bench
 harness frames to the served host page). Fixture: a trimmed real dump at
@@ -265,9 +275,9 @@ harness frames to the served host page). Fixture: a trimmed real dump at
 `npm run test:e2e:firefox`), NOT wired into `WPD_E2E_REQUIRED`.
 
 **Before touching any of this, read [docs/dev/](docs/dev/README.md)** — the raw-format schemas, the
-INP measurements, the Gecko<->Blink name map, and the two known-wrong-today behaviours
-(Firefox blame names the write not the read; `forcedLayoutMs` under-reports ~7x) all live there with
-the probes that establish them.
+INP measurements, the Gecko<->Blink name map, and the honest caveats (Firefox `forcedLayoutMs`
+under-reports ~7x from the markers; read-site blame is a sampled estimate that can lag one statement)
+all live there with the probes that establish them.
 
 ## Conventions / gotchas
 

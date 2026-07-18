@@ -16,6 +16,8 @@ import {
   isToolFrameUrl,
 } from "../trace/stacks.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
+import type { GeckoSlice } from "./gecko.js";
+import { computeGeckoCpuBreakdown } from "./gecko-breakdown.js";
 import { usToMs, msToUs } from "../model/time.js";
 import { reconcileResidual } from "../model/reconcile.js";
 import { deserialize } from "../output/format.js";
@@ -28,6 +30,12 @@ export interface RawCpuProfile {
   endTime: number;
   samples: number[];
   timeDeltas: number[];
+  /**
+   * Firefox (js,cpu) only: per-sample breakdown data the Gecko converter attaches, parallel to
+   * `samples`/`timeDeltas`. Absent on chrome/node (their breakdown reads node classification) and on
+   * firefox dumps with an empty `threadCPUDelta` column (no honest idle signal, so no breakdown).
+   */
+  gecko?: { sampleSlices: GeckoSlice[] };
 }
 
 export interface RawProfileNode {
@@ -531,15 +539,22 @@ export async function buildCpuModel(
   }
 
   const totalMs = usToMs(raw.timeDeltas.reduce((sum, value) => sum + Math.max(0, value), 0));
-  // Omit the breakdown on Firefox: the Gecko profile does not represent idle honestly. [measured] a
-  // pure-wait window (run() only awaits ~400ms) records ZERO Idle-category and zero null-stack
-  // samples in the dump; the converter bills every sample to (program), so a firefox breakdown would
-  // report idle 0 for a fully-idle window that Chrome reports as ~99% idle. A fabricated idle is
-  // worse than none. Chrome and node profiles carry real (idle) samples. See docs/dev/cpu-profiling.md.
-  const breakdown =
-    context.meta.browser === "firefox"
-      ? undefined
-      : computeBreakdown(raw.nodes, selfUsByNode, resolvedByKey, totalMs);
+  // Firefox reconciles too, but off a different axis: idle is the per-sample CPU-usage signal
+  // (threadCPUDelta ~0 == descheduled/waiting) and style/layout come from the per-sample
+  // Layout-category frame, both carried on `raw.gecko` when the `cpu` profiler feature populated the
+  // column. Without that signal (js-only or an older dump) idle cannot be told from (program), so no
+  // breakdown is emitted rather than a fabricated one. Chrome/node classify V8's synthetic frames.
+  let breakdown: CpuBreakdown | undefined;
+  if (context.meta.browser === "firefox") {
+    if (raw.gecko) {
+      const packageByNode = new Map<number, string | null>();
+      for (const node of raw.nodes)
+        packageByNode.set(node.id, resolvedByKey.get(frameKey(node.callFrame))?.package ?? null);
+      breakdown = computeGeckoCpuBreakdown(raw, packageByNode, totalMs);
+    }
+  } else {
+    breakdown = computeBreakdown(raw.nodes, selfUsByNode, resolvedByKey, totalMs);
+  }
 
   return {
     profile: context.profilePath,

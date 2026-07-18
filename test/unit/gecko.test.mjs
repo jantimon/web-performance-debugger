@@ -5,12 +5,17 @@ import {
   parseGecko,
   geckoToRawCpuProfile,
   geckoToRenderingEvents,
+  geckoUserMeasures,
 } from "../../dist/profile/gecko.js";
-import { buildCpuModel } from "../../dist/profile/cpuprofile.js";
+import {
+  buildGeckoSpanBreakdowns,
+  computeGeckoCpuBreakdown,
+} from "../../dist/profile/gecko-breakdown.js";
+import { buildCpuModel, packagesByProfileNode } from "../../dist/profile/cpuprofile.js";
 import { attachStacks } from "../../dist/trace/stacks.js";
 import { findWindow } from "../../dist/trace/parse.js";
 import { markForced } from "../../dist/trace/analysis.js";
-import { geckoFixture, repoRoot, FIXTURE_ORIGIN } from "./helpers.mjs";
+import { geckoFixture, repoRoot, FIXTURE_ORIGIN, syntheticGeckoDump } from "./helpers.mjs";
 
 // --- Firefox Gecko profile converter (against a real trimmed shutdown dump) ---
 
@@ -101,4 +106,104 @@ test("geckoToRenderingEvents -> attachStacks/markForced yields windowed + forced
   assert.ok(
     (forced[0].kind === "style" || forced[0].kind === "layout") && forced[0].at.length > 0,
   );
+});
+
+// --- Firefox read-site forced blame (js,cpu mechanisms) ---
+
+test("read-site blame: names the read line + property, never the write line", async () => {
+  const context = parseGecko(geckoFixture);
+  const events = geckoToRenderingEvents(context);
+  await attachStacks(events, FIXTURE_ORIGIN, repoRoot);
+  markForced(events);
+
+  const sampled = events.filter((event) => event.sampled && event.at);
+  assert.ok(sampled.length > 0, "sampled read-site events produced");
+  const lines = new Set(
+    sampled.map((event) => Number(event.at.match(/forces-layout\.mjs:(\d+)/)?.[1])),
+  );
+  // The write sites (bump/bumpDoc definitions + style assignments) must never appear as read blame.
+  for (const writeLine of [13, 15, 16, 17, 19, 21])
+    assert.ok(!lines.has(writeLine), `write line ${writeLine} must not be a read-site blame line`);
+  // At least one exact geometry-read line from forces-layout.mjs's read set.
+  assert.ok([46, 64, 83, 87, 96, 103, 104].some((line) => lines.has(line)), "an exact read line");
+  const properties = new Set(
+    sampled.map((event) => event.args?.data?.property).filter(Boolean),
+  );
+  assert.ok(
+    [...properties].some((property) => /offsetWidth|scroll|client|Height|Width/.test(property)),
+    "the forcing DOM property is named",
+  );
+  // The marker events keep providing the forced COUNT (forced, but no `at`, so out of blame).
+  const markerForced = events.filter((event) => event.forced && !event.sampled);
+  assert.ok(markerForced.length > 0, "marker flushes still flagged forced for the count");
+  assert.ok(markerForced.every((event) => !event.at), "marker forced events carry no blame line");
+});
+
+// --- Firefox reconciling breakdown (threadCPUDelta idle + category rollup) ---
+
+test("geckoToRawCpuProfile: threadCPUDelta ~0 samples route to idle; the bar tiles exactly", async () => {
+  const context = parseGecko(syntheticGeckoDump());
+  const raw = geckoToRawCpuProfile(context);
+  assert.ok(raw.gecko, "a populated threadCPUDelta column attaches breakdown data");
+  // Window [10,16] keeps 5 samples (the pre-window one at t=5 is dropped).
+  assert.equal(raw.samples.length, 5);
+  // Two cpu~0 samples classify idle (one had a js stack, proving cpu overrides the stack).
+  const idleCount = raw.gecko.sampleSlices.filter((slice) => slice === "idle").length;
+  assert.equal(idleCount, 2, "both ~0-CPU samples are idle");
+  assert.ok(raw.gecko.sampleSlices.includes("layout"), "the forced-reflow sample is layout");
+  assert.ok(raw.gecko.sampleSlices.includes("js"), "the busywork sample is js");
+
+  const model = await buildCpuModel(raw, {
+    profilePath: "synthetic.geckoprofile.json",
+    meta: { tool: "wpd", version: "0", schemaVersion: "1", browser: "firefox" },
+    sampleIntervalUs: 1000,
+    serverUrl: FIXTURE_ORIGIN,
+    root: repoRoot,
+  });
+  const breakdown = model.breakdown;
+  assert.ok(breakdown, "firefox breakdown emitted (gate lifted)");
+  assert.ok(breakdown.slices.style && breakdown.slices.layout, "style/layout slices present");
+  assert.ok(breakdown.slices.idle.ms > 0, "idle slice is non-zero");
+  // The bar tiles the window EXACTLY: Σ slices === wallMs (no residual beyond float dust).
+  const sliceSum =
+    breakdown.slices.js.ms +
+    breakdown.slices.style.ms +
+    breakdown.slices.layout.ms +
+    breakdown.slices.browser.ms +
+    breakdown.slices.gc.ms +
+    breakdown.slices.idle.ms;
+  assert.ok(Math.abs(sliceSum - breakdown.wallMs) < 1e-6, "slices tile the wall");
+  assert.equal(breakdown.residualMs, undefined, "no residual");
+});
+
+test("null threadCPUDelta keeps old behavior: no breakdown data, never a fabricated idle", () => {
+  // The trimmed real fixture predates the CPU feature (no threadCPUDelta column).
+  const raw = geckoToRawCpuProfile(parseGecko(geckoFixture));
+  assert.equal(raw.gecko, undefined, "no CPU signal -> no breakdown data attached");
+});
+
+test("mark bridge: user performance.measure spans get their own tiling breakdown; wpd:* excluded", async () => {
+  const context = parseGecko(syntheticGeckoDump());
+  const measures = geckoUserMeasures(context);
+  assert.deepEqual(
+    measures.map((measure) => measure.label),
+    ["paint-phase"],
+    "only the user measure, not wpd:run",
+  );
+  const raw = geckoToRawCpuProfile(context);
+  const packageByNode = await packagesByProfileNode(raw, { serverUrl: FIXTURE_ORIGIN, root: repoRoot });
+  const spans = buildGeckoSpanBreakdowns(raw, packageByNode, measures, { startTs: null, endTs: null });
+  const measureSpan = spans.find((span) => span.kind === "measure" && span.label === "paint-phase");
+  assert.ok(measureSpan, "measure span produced");
+  const slices = measureSpan.breakdown.slices;
+  const sum =
+    slices.js.ms +
+    slices.style.ms +
+    slices.layout.ms +
+    slices.paint.ms +
+    slices.gc.ms +
+    slices.other.ms +
+    slices.idle.ms;
+  assert.ok(Math.abs(sum - measureSpan.breakdown.wallMs) < 1e-6, "span breakdown tiles its window");
+  assert.equal(slices.paint.ms, 0, "paint is 0 on firefox (off-main-thread)");
 });

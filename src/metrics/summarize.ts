@@ -77,6 +77,10 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
 
   for (const event of detailEvents) {
     if (!inWindow(event, detailWindowStart)) continue;
+    // Sampled blame annotations (Firefox read-site forced blame) are not measured flushes: they
+    // exist for `query blame --forced` only. Counting them would double-count the Reflow/Styles
+    // markers, which are the one-per-flush source of layout/style/forced counts and durations.
+    if (event.sampled) continue;
     total++;
     if (event.forced) {
       forcedLayoutCount++;

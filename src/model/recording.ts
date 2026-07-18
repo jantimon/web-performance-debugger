@@ -50,6 +50,13 @@ export interface NormalizedEvent {
   at?: string;
   /** layout/style synchronously forced by JS (layout thrashing) */
   forced?: boolean;
+  /**
+   * A sampled blame annotation, not a measured event (Firefox read-site forced blame). It carries a
+   * source line + property for `query blame --forced` but is NOT a countable flush, so the summary
+   * skips it: the counts come from the Gecko Reflow/Styles markers, one per real flush. Absent on
+   * every trace-derived event.
+   */
+  sampled?: boolean;
   args?: unknown;
 }
 
@@ -241,18 +248,19 @@ export interface InteractionTiming {
 }
 
 /**
- * What a forced-layout blame line names, which is NOT the same question in both engines:
+ * What a forced-layout blame line names:
  *
- * - "flush-site" (Chrome/Blink): the geometry READ that forced the pending layout to flush
- *   synchronously, e.g. the `offsetHeight` access. Blink captures the stack at the flush.
- * - "invalidation-site" (Firefox/Gecko): the WRITE that dirtied the DOM and made a flush
- *   necessary, e.g. the style assignment. Gecko captures the stack at invalidation, and only
- *   for the first invalidator since the last flush.
+ * - "flush-site": the geometry READ that forced the pending layout to flush synchronously, e.g.
+ *   the `offsetHeight` access, with the DOM property named. Produced on BOTH engines: Chrome/Blink
+ *   captures the stack at the flush (from the trace's `.stack` category), Firefox/Gecko samples it
+ *   from the DOM-accessor label frames on the stack. Comparable across engines at line granularity
+ *   (measured: 12/21 lines exact on the shared probe), with a one-statement line-lag caveat where a
+ *   sampled read lands on the adjacent statement.
+ * - "invalidation-site": the WRITE that dirtied the DOM and made a flush necessary, e.g. the style
+ *   assignment. The legacy Firefox semantic (Gecko cause stacks, first invalidator since the last
+ *   flush), present only on older recordings.
  *
- * Both are real, and neither is a worse answer; they are answers to different questions. Measured
- * on the same probe the two name ZERO lines in common, so diffing a Chrome blame list against a
- * Firefox one compares nothing. Compare each engine against itself, and use `query cpu` (self-time)
- * for the cross-engine view. See docs/dev/engine-mapping.md.
+ * See docs/dev/engine-mapping.md.
  */
 export type BlameSemantic = "flush-site" | "invalidation-site";
 
@@ -289,9 +297,10 @@ export interface RecordingMeta {
   /** browser backend: "chrome" (default, CDP) or "firefox" (BiDi + Gecko profiler). Absent => chrome. */
   browser?: "chrome" | "firefox";
   /**
-   * Which code this run's forced-layout blame names. The two engines answer different questions,
-   * so this is what a cross-engine consumer needs to refuse the comparison rather than make it
-   * wrongly. Absent => the run produced no blame (--target node, or Chrome with --no-trace).
+   * Which code this run's forced-layout blame names (see BlameSemantic). "flush-site" (the read) on
+   * both engines today, comparable at line granularity; "invalidation-site" (the write) only on
+   * older Firefox recordings. Absent => the run produced no blame (--target node, or Chrome with
+   * --no-trace).
    */
   blameSemantic?: BlameSemantic;
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
@@ -380,7 +389,11 @@ export interface Digest {
   summary: RecordingSummary;
   slowestEvents: { id: number; kind: EventKind; name: string; durMs: number; at?: string }[];
   topBlame: { at: string; count: number; durMs: number; kinds: EventKind[] }[];
-  /** forced (synchronous) layout/style grouped by source; prime optimization targets */
+  /**
+   * forced (synchronous) layout/style grouped by source; prime optimization targets. On Firefox
+   * these counts are sample-derived (one per read-site sample), while `summary.forcedLayoutCount`
+   * is marker-derived (one per real flush), so the two legitimately differ there.
+   */
   forced: { at: string; count: number; durMs: number }[];
   /** longest tasks (>= threshold) as drill-in entry points */
   longTasks: { id: number; ts: number; durMs: number; dominantKind?: string; at?: string }[];
@@ -497,15 +510,26 @@ export interface CpuJsSlice extends CpuSlice {
  *    the tool's own harness frames), left UNSPLIT: no invented style/layout/paint numbers, which
  *    would require fusing the trace onto this timeline.
  *
- * Absent on lanes whose profile does not honestly represent idle (Firefox/Gecko): a fabricated
- * idle is worse than none. Optional, so an older `.cpu.json` without it keeps working everywhere.
+ * On chrome/node this carries `js · browser · gc · idle`, all from V8's synthetic frames. On
+ * Firefox (js,cpu) it additionally splits `style` and `layout` out of the engine work, from the
+ * per-sample Layout-category frame, and idle is the per-sample CPU-usage signal (`threadCPUDelta`),
+ * not a category. Absent on a Firefox dump with no CPU signal (a fabricated idle is worse than
+ * none) and on older `.cpu.json` files. Optional throughout, so a reader that predates the field or
+ * the style/layout slices keeps working.
  */
 export interface CpuBreakdown {
   /** sum of the profile's time deltas, ms; equals CpuModel.totalMs */
   wallMs: number;
   slices: {
     js: CpuJsSlice;
-    /** (program)/(root) + tool harness frames; engine/runtime work, unsplit */
+    /** style recalc (Firefox: Layout-category style frames). Absent on chrome/node. */
+    style?: CpuSlice;
+    /** layout/reflow (Firefox: Layout-category reflow frames). Absent on chrome/node. */
+    layout?: CpuSlice;
+    /**
+     * (program)/(root) + tool harness frames on chrome/node; on Firefox also DOM-accessor time and
+     * Profiler self-overhead. Engine/runtime work with the profiled JS not on the stack, unsplit.
+     */
     browser: CpuSlice;
     gc: CpuSlice;
     idle: CpuSlice;
@@ -533,8 +557,9 @@ export interface CpuModel {
   scriptingMs: number;
   system: CpuSystem;
   /**
-   * Reconciling `js · browser · gc · idle` decomposition of the sampled window (they tile it
-   * exactly). Absent on lanes whose profile does not honestly represent idle (Firefox), and on
+   * Reconciling decomposition of the sampled window (the slices tile it exactly): `js · browser ·
+   * gc · idle` on chrome/node, `js · style · layout · browser · gc · idle` on Firefox (js,cpu).
+   * Absent on a Firefox dump with no `threadCPUDelta` signal (idle would be fabricated) and on
    * older models. Additive: readers that predate it are unaffected.
    */
   breakdown?: CpuBreakdown;

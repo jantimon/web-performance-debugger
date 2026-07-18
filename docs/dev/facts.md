@@ -21,4 +21,4 @@ listed here), and only list a file that genuinely contains the string.
 | Paint count exactness | exactly N+1 for N dirtied regions | N+1 | docs/dev/rendering-counts.md | src/trace/taxonomy.ts, src/model/recording.ts, src/commands/diff.ts, docs/dev/rendering-counts.md |
 | Default CPU sampler interval | 200 us | 200 | docs/dev/cpu-profiling.md (why 200) | src/profile/cpuprofile.ts, docs/dev/cpu-profiling.md |
 | Fused (--breakdown) pass wall cost | ~2-5% above a pristine timing pass | 2-5% | src/record/passplan.ts (breakdownSpec) | src/record/passplan.ts, src/record/notes.ts |
-| Gecko idle samples | 0 (fully-idle window reads 0 idle) | fully-idle | docs/dev/cpu-profiling.md | src/record/notes.ts, src/profile/cpuprofile.ts, docs/dev/cpu-profiling.md |
+| Firefox honest idle via threadCPUDelta | js,cpu populates the CPU column; a pure-wait window reads 95.7% idle (js-only leaves it 0% populated) | 95.7% | docs/dev/cpu-profiling.md | src/browser/launch.ts, src/profile/gecko.ts, src/record/notes.ts, docs/dev/cpu-profiling.md |

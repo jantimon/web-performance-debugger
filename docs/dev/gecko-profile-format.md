@@ -148,24 +148,24 @@ modes (both already emit those marks).
 - **Cause stacks are real and resolvable.** A marker's `data.stack` is an embedded thread-shaped
   object whose `samples.data[0][0]` is a **stack index into the SAME host thread's stackTable**
   (not a self-contained mini-profile). We resolve it through the identical frame path as samples.
-  We map `Styles -> style`, `Reflow* -> layout`, set `event.at` from the top JS cause frame, and set
-  `forced: true` when a JS frame is on the cause stack. Markers with a native-only cause get counts
-  + durations but no `at`/`forced`.
-- **WARNING — the cause stack is NOT Chrome's stack.** It is **not** the same "JS on the stack ==
-  synchronously forced" approximation as the Chrome trace path, and the cause chain above shows why:
-  `Node.appendChild -> ...` is the **write**, not the geometry read. Gecko captures the cause in
-  `SetNeedLayoutFlush`/`SetNeedStyleFlush` (the **invalidator**, and only the *first* one since the
-  last flush); Chrome captures it at the flush (the **forcer**). Measured on
-  `examples/forces-layout.mjs`, chrome blames every geometry read and firefox blames `bump()` — with
-  **zero overlap**. Read
+  We map `Styles -> style`, `Reflow* -> layout`, and set `forced: true` when a JS frame is on the
+  cause stack (this drives `forcedLayoutCount`). The cause names the **write**, so it is NOT set as
+  `event.at`; it is stashed in `args.data.invalidationStack` for `query get`. Markers with a
+  native-only cause get counts + durations but no `forced`.
+- **Blame comes from the samples, not the cause stack.** The marker cause is the **write** that
+  dirtied the DOM (`Node.appendChild -> ...`), captured in `SetNeedLayoutFlush`/`SetNeedStyleFlush`
+  (the invalidator, only the *first* since the last flush), whereas Chrome blames the flush-site
+  **read**. So `geckoReadSiteBlameEvents` samples the read site instead: a DOM-accessor over a
+  Layout-category flush, attributed to the JS ancestor's executing `frameTable.line` + property, as
+  `sampled` events the summary skips. Both engines then name the read. Read
   [engine-mapping.md](./engine-mapping.md#forced-layout-blame-differs-by-engine) before touching or
   trusting this path.
 - This lane runs inside the gecko pass (one browser launch yields both the CPU samples and the
   markers), which is **not opt-in**: without it a Firefox recording would report every rendering
   count as 0 — indistinguishable from a clean run — so the CLI refuses
-  `--target firefox --no-cpu-profile`. Note the CPU samples
-  *do* attribute forced layout to the forcing frame, so `query cpu` is currently more correct than
-  `query blame` on this lane; see [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
+  `--target firefox --no-cpu-profile`. Both `query cpu` (self-time on the forcing frame) and
+  `query blame --forced` (the read-site samples) now name the read on this lane; see
+  [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
 
 ## What is NOT measured on Firefox (reported honestly, never as fake zeros)
 

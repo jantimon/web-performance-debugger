@@ -4,7 +4,13 @@ import path from "node:path";
 import { launchBrowser, GECKO_MIN_INTERVAL_MS } from "../browser/launch.js";
 import { capsFor, type BrowserName } from "../browser/backend.js";
 import type { StaticServer } from "../browser/server.js";
-import { parseGecko, geckoToRawCpuProfile, geckoToRenderingEvents } from "../profile/gecko.js";
+import {
+  parseGecko,
+  geckoToRawCpuProfile,
+  geckoToRenderingEvents,
+  geckoUserMeasures,
+} from "../profile/gecko.js";
+import type { GeckoMeasureWindow } from "../profile/gecko-breakdown.js";
 import { runHarness } from "../browser/harness.js";
 import { runDriver, type DriverStep } from "../browser/driver.js";
 import { applyCpuThrottle, applyNetworkPreset } from "../browser/throttle.js";
@@ -51,6 +57,8 @@ export interface PassResult {
   geckoDumpPath?: string;
   /** interval the CPU sampler actually ran at, read back from the profile itself */
   cpuSampleIntervalUs?: number;
+  /** Firefox: user `performance.measure` windows (profiler µs clock) for the mark-bridge spans */
+  geckoMeasures?: GeckoMeasureWindow[];
   /** WARNING when chrome-headless-shell was missing and the launch fell back to new-headless */
   headlessFallback?: string;
 }
@@ -342,6 +350,8 @@ export async function runPass(
     result.cpuProfile = geckoToRawCpuProfile(geckoContext);
     // The interval the sampler actually ran at, not what we asked for.
     result.cpuSampleIntervalUs = msToUs(geckoContext.intervalMs);
+    // User performance.measure spans, for the mark-bridge per-span breakdowns (record.ts builds them).
+    result.geckoMeasures = geckoUserMeasures(geckoContext);
     const renderingEvents = geckoToRenderingEvents(geckoContext);
     await attachStacks(renderingEvents, server.url, root, maps);
     markForced(renderingEvents);

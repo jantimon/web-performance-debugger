@@ -36,8 +36,14 @@ function geckoEnv(base: NodeJS.ProcessEnv, gecko: GeckoLaunch): NodeJS.ProcessEn
     ...base,
     MOZ_PROFILER_STARTUP: "1",
     MOZ_PROFILER_SHUTDOWN: gecko.dumpPath,
-    // js: JS stacks + UserTiming markers (windowing) + Reflow/Styles cause stacks (blame).
-    MOZ_PROFILER_STARTUP_FEATURES: "js",
+    // js,cpu: js gives JS stacks + UserTiming markers (windowing) + Reflow/Styles cause stacks
+    // (blame) + the DOM/Layout label frames read-site blame keys on. cpu populates the per-sample
+    // `threadCPUDelta` column, which is the honest-idle signal the reconciling breakdown needs.
+    // [measured, Firefox 152, macOS] an explicit features string REPLACES the default set, so
+    // `js` alone leaves threadCPUDelta 0% populated; adding `cpu` populates it 100% and a pure-wait
+    // window reads 95.7% idle, at ~1% wall and +0.5MB dump. `cpuallthreads` is unnecessary (wpd
+    // reconciles the content main thread alone) and `stackwalk` adds zero signal, so neither is set.
+    MOZ_PROFILER_STARTUP_FEATURES: "js,cpu",
     MOZ_PROFILER_STARTUP_INTERVAL: String(intervalMs),
     MOZ_PROFILER_STARTUP_ENTRIES: String(GECKO_PROFILER_ENTRIES),
   };

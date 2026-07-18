@@ -165,25 +165,33 @@ The one data point that argues against a large effect: firefox `run()` = 8.79ms 
 uncontaminated 8.41ms, a 5% gap — but that is one probe and the two engines differ for other
 reasons too.
 
-### The Gecko profile has no idle, so the CPU breakdown is Chrome/node only
+### Firefox idle is on the CPU axis, not the category axis
 
-**[measured]** The `js · browser · gc · idle` breakdown (`CpuModel.breakdown`) is omitted on Firefox
-because the Gecko profile does not record idle time. Probe: `examples/awaits-only.mjs`, a `run()`
-that only awaits (`setTimeout` 20ms x 20 iterations, `--bench`), so the sampled window is ~pure
-waiting.
+**[measured]** Idle is NOT in Gecko's category axis: a fully-idle window records 0 Idle-category
+and 0 null-stack samples, because the leaf frame while waiting is a native frame categorized `Other`
+(so `geckoToRawCpuProfile` alone would bill the whole wait to `(program)`). The idle information
+lives on a different axis: the per-sample `threadCPUDelta` column (how much CPU the thread actually
+consumed since the previous sample). A descheduled thread reads ~0 there while wall-time advances, so
+`idleMs = Σ(wall-delta where threadCPUDelta ~= 0)`.
+
+That column is present only when the profiler runs with the `cpu` feature. An explicit
+`MOZ_PROFILER_STARTUP_FEATURES` string REPLACES the default set, so `js` alone leaves the column
+**0% populated**; `js,cpu` populates it **100%**. Probe:
+`examples/awaits-only.mjs`, a `run()` that only awaits (`setTimeout` 20ms x 20, `--bench`), a
+~pure-wait window:
 
 | lane | window | idle reported |
 | --- | --- | --- |
 | Chrome (CDP, 200us) | 614 ms | **610 ms (99%)** — `(idle)` samples fill the wait |
-| Firefox (Gecko, ~1ms) | 495 ms | **0 ms** — 0 Idle-category and 0 null-stack samples in the dump |
+| Firefox (Gecko js,cpu, ~1ms) | 470 ms | **95.7% idle** — samples with `threadCPUDelta ~= 0` |
 
-Gecko samples the content thread while it waits, but the leaf frame is a native waiting frame
-(categorized as `Other`, not `Idle`), so `geckoToRawCpuProfile` maps it to `(program)`: the
-converted profile reads **495 ms `program`, 0 idle**. A firefox bar would therefore report idle 0
-for a fully-idle window — the exact fabrication reconciliation exists to prevent, so the field is
-absent on this lane (gated on `meta.browser === "firefox"` in `buildCpuModel`). `scriptingMs`
-(all non-idle sampled time) is still emitted and is honest for JS-bound work, whose window carries
-no idle.
+So the reconciling bar IS emitted on Firefox: `geckoToRawCpuProfile` routes each ~0-CPU sample to
+`(idle)` (honest `scriptingMs`), and `computeGeckoCpuBreakdown` tiles the window
+`js · style · layout · browser · gc · idle`, with style/layout from each sample's nearest-to-leaf
+Layout-category frame. A dump without the CPU signal (an older recording, or js-only) carries no
+idle signal, so no bar is emitted rather than a fabricated one. `cpuallthreads` is unnecessary
+(`js,cpu` reproduces the idle result, sampling only registered threads) and `stackwalk` adds zero
+signal. Paint stays off the bar: it is off-main-thread compositor work (a side track), never summed.
 
 ### Sub-frame CPU work IS measurable on both engines, off the frame-floor axis
 

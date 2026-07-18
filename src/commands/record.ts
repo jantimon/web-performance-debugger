@@ -6,7 +6,12 @@ import { startStaticServer } from "../browser/server.js";
 import { mergeSteps, type MergedStep } from "../trace/steps.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { buildSummary } from "../metrics/summarize.js";
-import { buildCpuModel, DEFAULT_CPU_INTERVAL_US } from "../profile/cpuprofile.js";
+import {
+  buildCpuModel,
+  packagesByProfileNode,
+  DEFAULT_CPU_INTERVAL_US,
+} from "../profile/cpuprofile.js";
+import { buildGeckoSpanBreakdowns } from "../profile/gecko-breakdown.js";
 import { buildPassSpecs, blameSemanticFor, noteCountScope } from "../record/passplan.js";
 import { runPass, type PassResult } from "../record/runpass.js";
 import { buildBreakdowns, userMeasureSpans } from "../record/breakdown-spans.js";
@@ -268,9 +273,8 @@ export async function record(opts: RecordOptions): Promise<{
     // in-page Event Timing observer Chrome uses, so it works here; the honest caveat is that the
     // two engines' numbers are not interchangeable, not that Firefox cannot measure it.
     notes.push(notesCatalog.firefoxInp());
-    // The js/browser/gc/idle breakdown is not emitted on Firefox; the [measured] rationale lives at
-    // the omission site (buildCpuModel in profile/cpuprofile.ts). This is the user-facing note.
-    notes.push(notesCatalog.firefoxNoCpuBreakdown());
+    // The reconciling CPU breakdown note is pushed AFTER the CPU model is built (below), where its
+    // presence is known: it is produced when the Gecko dump carried the threadCPUDelta CPU signal.
   } else {
     // Describe the pass plan that was actually BUILT, never the flags that were asked for. Those
     // diverge: `--no-isolate --no-trace` leaves one clean timing pass, so branching on
@@ -464,6 +468,15 @@ export async function record(opts: RecordOptions): Promise<{
     });
   }
 
+  // Firefox CPU breakdown note: produced when the Gecko dump carried the threadCPUDelta CPU signal
+  // (js,cpu feature), absent otherwise (an older dump). Pushed here, after the model exists, so it
+  // describes the bar that was actually built.
+  if (browserName === "firefox") {
+    notes.push(
+      cpuModel?.breakdown ? notesCatalog.firefoxBreakdown() : notesCatalog.firefoxNoCpuBreakdown(),
+    );
+  }
+
   // --breakdown: one reconciling seven-slice breakdown per span (run, driver steps, user measures).
   // Built here because it needs both the trace events (with pid/tid) and the raw CPU samples, and
   // it shares the run's one resolver so a sample's package matches `query cpu --by package`.
@@ -474,6 +487,32 @@ export async function record(opts: RecordOptions): Promise<{
       { startTs: detail.windowStart, endTs: detail.windowEnd },
       mergedSteps,
       { serverUrl: server.url, root, maps, notes },
+    );
+  }
+
+  // Firefox mark bridge: a per-span breakdown for each user performance.measure inside the run
+  // window, built from the same Gecko sample slices as CpuModel.breakdown (run bar). Only when the
+  // CPU signal produced a reconciling breakdown (cpuPass.cpuProfile.gecko) and the flow made
+  // measures; otherwise Recording.breakdowns stays unset and the run bar shows via CpuModel.breakdown.
+  if (
+    browserName === "firefox" &&
+    cpuPass?.cpuProfile?.gecko &&
+    cpuPass.geckoMeasures?.length &&
+    cpuModel?.breakdown
+  ) {
+    const packageByNode = await packagesByProfileNode(cpuPass.cpuProfile, {
+      serverUrl: server.url,
+      root,
+      maps,
+    });
+    recording.breakdowns = buildGeckoSpanBreakdowns(
+      cpuPass.cpuProfile,
+      packageByNode,
+      cpuPass.geckoMeasures,
+      {
+        startTs: detail.windowStart,
+        endTs: detail.windowEnd,
+      },
     );
   }
 

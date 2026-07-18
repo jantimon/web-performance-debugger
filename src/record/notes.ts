@@ -51,8 +51,12 @@ export function firefoxInp(): string {
   return "INP IS measured on Firefox (in-page Event Timing, the same observer Chrome uses). The two engines' values are not interchangeable: both span the interaction through the next paint and round to 8 ms, but Firefox reports a systematically lower number for identical work because presentation delay differs by engine. Compare a browser against itself across a change, not one engine against the other.";
 }
 
+export function firefoxBreakdown(): string {
+  return "CPU time breakdown (js/style/layout/browser/gc/idle bar) on Firefox: idle comes from the per-sample CPU-usage signal (threadCPUDelta ~0 == the thread was descheduled/waiting; 95.7% on a pure-wait window), and style/layout from the sampled Layout-category frames. The slices reconcile (Σ slices = the sampled window). NOT in the bar: paint (off-main-thread compositor work, a side track shown separately, never summed), and on tiny workloads a ~1ms sampling floor. Layout/style/forced-layout counts come from the Reflow/Styles markers, not this bar.";
+}
+
 export function firefoxNoCpuBreakdown(): string {
-  return "No CPU time breakdown (js/browser/gc/idle bar) on Firefox: the Gecko profile does not record idle samples (a fully-idle window reads as 0 idle), so a bar here would fabricate the idle slice. CPU self-time (scriptingMs, query cpu) is still measured. Use --target chrome for the breakdown.";
+  return "No CPU time breakdown on Firefox: this Gecko dump carries no per-sample threadCPUDelta CPU signal (an older recording, or the profiler ran without the `cpu` feature), so idle cannot be told from engine work and a bar would fabricate it. CPU self-time (scriptingMs, query cpu) is still measured.";
 }
 
 // --- Chrome default lane ---

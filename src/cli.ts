@@ -163,7 +163,8 @@ program
       // firefox/node have no DevTools trace; --no-isolate/--no-cpu-profile contradict the fusion;
       // --no-trace/--no-invalidation-tracking are meaningless (the light trace is fixed).
       const conflicts = [
-        firefox && "--target firefox (no DevTools trace, and Gecko records no honest idle)",
+        firefox &&
+          "--target firefox (no DevTools trace; its reconciling breakdown comes from the Gecko profile automatically, no --breakdown needed)",
         node && "--target node (no DevTools trace)",
         cmdOpts.isolate === false && "--no-isolate (breakdown IS a single pass)",
         cmdOpts.cpuProfile === false &&

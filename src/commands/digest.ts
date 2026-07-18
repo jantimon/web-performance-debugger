@@ -8,8 +8,11 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
     (event) => start == null || event.ts >= start,
   );
 
+  // Sampled events are Firefox read-site blame annotations, not measured durations: they feed
+  // topBlame/forced below but must not rank among the slowest events, where their duration is not a
+  // real wall measurement.
   const slowestEvents = [...inWindow]
-    .filter((event) => event.dur > 0 && event.kind !== "task")
+    .filter((event) => event.dur > 0 && event.kind !== "task" && !event.sampled)
     .sort((firstEvent, secondEvent) => secondEvent.dur - firstEvent.dur)
     .slice(0, topN)
     .map((event) => ({
