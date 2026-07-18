@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import type {
   CpuBreakdown,
@@ -180,6 +180,50 @@ async function packageForFile(
   }
 }
 
+/**
+ * Attribution for a frame still pointing at wpd's OWN served origin (bench mode serves the user's
+ * module tree over http). Returns null unless `url` is an EXACT origin match against the served
+ * origin: a user profiling their own dev server (--url http://localhost:3000) has a stable host:port
+ * that must keep normal origin bucketing, so match the origin, not "any localhost".
+ *
+ * The server roots at the project root, so map the served pathname back to the local file and let
+ * `packageForFile` attribute it like any on-disk source (the real npm/workspace package or the real
+ * relative file). Only when the pathname names no existing local file fall back to the stable
+ * literal `(served)` bucket. Never a fabricated origin key: the ephemeral localhost port changes
+ * every run, which would split every cross-run cpu-diff join and scatter one logical cost across a
+ * new bucket per run.
+ */
+async function attributeServedOrigin(
+  url: string | undefined,
+  servedOrigin: string,
+  root: string,
+  cache: Map<string, string | null>,
+): Promise<{ package: string; file?: string } | null> {
+  if (!url || !servedOrigin) return null;
+  let expectedOrigin: string;
+  try {
+    expectedOrigin = new URL(servedOrigin).origin;
+  } catch {
+    return null;
+  }
+  let pathname: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin !== expectedOrigin) return null;
+    pathname = decodeURIComponent(parsed.pathname);
+  } catch {
+    return null;
+  }
+  const localPath = path.join(root, pathname.replace(/^[\\/]+/, ""));
+  const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
+  // A pathname that escapes root, or names no on-disk file, cannot be honestly attributed to a
+  // local package; `(served)` is the stable answer rather than a guess.
+  if ((localPath !== root && !localPath.startsWith(rootPrefix)) || !existsSync(localPath)) {
+    return { package: "(served)" };
+  }
+  return { package: await packageForFile(localPath, cache), file: localPath };
+}
+
 interface ResolvedFrame {
   fn: string;
   /** the minified V8 name, when `fn` is the sourcemap-resolved original */
@@ -210,6 +254,7 @@ async function resolveCallFrame(
   maps: SourceMapResolver,
   packageCache: Map<string, string | null>,
   root: string,
+  servedOrigin: string,
 ): Promise<ResolvedFrame> {
   const minifiedName = callFrame.functionName || "(anonymous)";
   const frame: StackFrame = {
@@ -244,6 +289,40 @@ async function resolveCallFrame(
       file: pseudo.label,
       package: pseudo.package,
     };
+  }
+  // A frame from wpd's OWN served origin (bench mode serves the module tree over an ephemeral
+  // localhost port) that did not land on an existing local source: `makeSourceResolver` rewrote it
+  // to a `root/pathname` that is not on disk, or the sourcemap mapped it to a source that is not on
+  // disk. Left alone it would either bucket by the ephemeral host:port (a key that changes every
+  // run and splits cross-run cpu-diff joins) or fs-walk the missing path to a stray package.json.
+  // Instead attribute it to the local file the server actually served, or the stable literal
+  // `(served)` bucket when the served pathname names no on-disk file. A frame that DID resolve to an
+  // existing source (the common case: makeSourceResolver -> the served bundle on disk, or a mapped
+  // original source) is already the best, stablest answer and is left to the branches below.
+  const sourceExists =
+    frame.source != null && path.isAbsolute(frame.source) && existsSync(frame.source);
+  if (!sourceExists) {
+    const served = await attributeServedOrigin(frame.url, servedOrigin, root, packageCache);
+    if (served) {
+      const lineSuffix = frame.line != null ? `:${frame.line}` : "";
+      if (served.file) {
+        const relServed = relativizeSource(served.file, root) ?? served.file;
+        return {
+          fn,
+          minified,
+          source: `${relServed}${lineSuffix}`,
+          file: relServed,
+          package: served.package,
+        };
+      }
+      return {
+        fn,
+        minified,
+        source: `(served)${lineSuffix}`,
+        file: "(served)",
+        package: "(served)",
+      };
+    }
   }
   const source = `${file}${frame.line != null ? `:${frame.line}` : ""}`;
   // Remote frames aren't on disk, so derive the package from the path string. Three cases, and
@@ -454,7 +533,14 @@ export async function buildCpuModel(
   for (const [key, callFrame] of callFrameByKey)
     resolvedByKey.set(
       key,
-      await resolveCallFrame(callFrame, rewriteToLocal, maps, packageCache, context.root),
+      await resolveCallFrame(
+        callFrame,
+        rewriteToLocal,
+        maps,
+        packageCache,
+        context.root,
+        context.serverUrl ?? "",
+      ),
     );
   // Frames whose owner we could not determine, i.e. what a failed sourcemap actually costs you.
   // Surfaced on the model so `record` can warn about a broken package rollup only when it really
@@ -612,6 +698,7 @@ export async function packagesByProfileNode(
         maps,
         packageCache,
         context.root,
+        context.serverUrl ?? "",
       );
       packageByKey.set(key, resolved.package);
     }

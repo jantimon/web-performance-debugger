@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { writeFileSync, mkdtempSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -264,6 +264,53 @@ test("buildCpuModel: an unmapped third-party bundle is counted and bucketed by o
   assert.equal(model.unmappedFrames, 1, "the unattributed frame is counted");
   const hot = model.functions.find((fn) => fn.fn === "hot");
   assert.equal(hot.package, "(cdn.example.com)", "bucketed by origin, never blamed on `app`");
+});
+
+// Bench mode serves the user's OWN module tree over an ephemeral localhost port, so a served frame
+// that does not land on an existing local source must NOT bucket by that host:port (a key that
+// changes every run and splits cross-run cpu-diff joins). Detection is an EXACT origin match against
+// wpd's served origin, so a genuinely remote host -- including the user's own dev server on a
+// different port -- keeps origin bucketing.
+test("served-origin frames get a stable local package, or (served), never the ephemeral host:port", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wpd-served-"));
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "my-served-app" }));
+  mkdirSync(path.join(root, "dist"));
+  writeFileSync(path.join(root, "dist", "entry.js"), "export function run(){}\n");
+  const servedOrigin = "http://127.0.0.1:57999";
+  const build = (url) =>
+    buildCpuModel(remoteProfile(url), {
+      profilePath: "served.cpuprofile",
+      meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+      sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
+      serverUrl: servedOrigin,
+      root,
+    });
+  const pkgFileOf = (model) => {
+    const hot = model.functions.find((fn) => fn.fn === "hot");
+    return { package: hot.package, file: hot.file };
+  };
+
+  // (a) a served frame whose pathname maps to an existing local file: the real package + relative
+  // file, exactly as any on-disk source resolves.
+  const existing = pkgFileOf(await build(`${servedOrigin}/dist/entry.js`));
+  assert.equal(existing.package, "my-served-app");
+  assert.equal(existing.file, "dist/entry.js");
+
+  // (b) a served frame whose pathname names no on-disk file: the stable literal (served) bucket,
+  // never a fabricated origin and never a stray package.json walked up to from a missing path.
+  const missing = pkgFileOf(await build(`${servedOrigin}/ghost/gone.js`));
+  assert.equal(missing.package, "(served)");
+  assert.equal(missing.file, "(served)");
+
+  // (c) a genuinely remote origin (here the SAME ip on a DIFFERENT port, i.e. NOT the served origin)
+  // keeps origin bucketing: detection is by exact origin, not "any localhost".
+  const remote = pkgFileOf(await build("http://127.0.0.1:9/x.js"));
+  assert.equal(remote.package, "(127.0.0.1:9)");
+
+  // (d) a user profiling their own dev server (--url http://localhost:3000) has a STABLE host:port
+  // that must keep origin bucketing -- it is not wpd's served origin.
+  const userServer = pkgFileOf(await build("http://localhost:3000/app.js"));
+  assert.equal(userServer.package, "(localhost:3000)");
 });
 
 test("buildCpuModel: node builtins are not counted as unmapped", async () => {
