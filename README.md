@@ -474,13 +474,16 @@ than Blink. Those counts are real and useful **against another Firefox run**; co
 Chrome's counts compares two different definitions. Everything marked `—` is reported as `0` on
 that target
 
-**Forced-layout blame currently answers a different question per engine.** Chrome names the
-geometry **read** that forced the flush (`el.offsetWidth`). Firefox names the **write** that dirtied
-the DOM (`el.style.width = ...`), because Gecko records who invalidated rather than who forced. Both
-are real lines in your thrashing loop, but they are not the same line, so **do not diff the two
-engines' `blame` tables against each other**. Firefox's forced-layout *milliseconds* also
-under-report. Until this is fixed, `query cpu` is the better cross-engine view of forced layout: it
-prices the forcing line on both engines and the two agree closely
+**Forced-layout blame names the same line on both engines.** Chrome and Firefox both name the
+geometry **read** that forced the flush (`el.offsetWidth`) — the same flush-site semantic — so the
+two engines' `blame --forced` tables are comparable at line granularity (on the thrashing probe, 12
+of 21 forced read lines matched exactly). Chrome reads that line from the trace's synchronous
+`.stack`; Firefox **samples** it from the DOM-accessor stacks and names the property alongside it.
+Two caveats the CLI prints under the table: Firefox's line is a *sampled estimate* at Gecko's ~1 ms
+granularity, so a cheap read can be missed, and the reported line can lag one statement behind the
+read. The **write** that dirtied the DOM stays reachable on Firefox via `query get` / `query events`
+under `args.data.invalidationStack`. Separately, Firefox's forced-layout *milliseconds* still
+under-report, so when you compare engines trust the forced *line*, not its ms
 
 INP comes from an in-page Event Timing observer, so **both engines measure it** (long tasks do not:
 they are counted from the DevTools trace, which Firefox has no equivalent of). Both span the
@@ -490,12 +493,14 @@ is genuinely engine-specific. Compare a browser against itself across your chang
 against the other
 
 ```bash
-# the same probe in both engines. Compare each engine against ITSELF across your change;
-# `query cpu` (not `blame`) is what lines up between the two — see the note above:
+# the same probe in both engines. Compare each engine against ITSELF across your change; the forced
+# blame line and `query cpu` both line up between the two now (see the note above):
 wpd record examples/forces-layout.mjs --bench
+wpd query blame latest --forced
 wpd query cpu latest
 
 wpd record examples/forces-layout.mjs --bench --target firefox
+wpd query blame latest --forced
 wpd query cpu latest
 ```
 
@@ -528,6 +533,15 @@ label-keyed join a matrix consumer performs: `spans[]` keyed by `label`, the sam
 every engine — no hand-parsing `digest.breakdowns` and no special-casing Firefox's differently
 shaped `cpu.breakdown`.
 
+Each entry also carries `aggregation` and `iterations`, which say **what a span's numbers represent**
+when `--iterations` repeats the flow. The `run` span is `"sum"` — its window covers the whole loop,
+so its slices are a total across every iteration; a `step` or `performance.measure` span is `"first"`
+— it describes the first timed iteration (a step is windowed to iteration 0; a measure keeps its first
+in-window occurrence). One recording therefore mixes both contracts, and `aggregation` is how a
+consumer tells them apart; `iterations` is the count they span. Per-iteration distributions are not
+yet produced. Human output appends the contract to each bar, e.g. `run (run, 42.0 ms, sum of 7
+iterations)`.
+
 Human output is colorized when stdout is a terminal. Control it with `--color auto|always|never`
 (default `auto`); `NO_COLOR` is honored, and piped, redirected, and `--json`/`--format` output is
 always plain, so CI and scripts are unaffected
@@ -540,6 +554,12 @@ always plain, so CI and scripts are unaffected
 | Counts (paint / forced layout / invalidation) | DevTools trace | exact: measured bit-identical across repeated runs |
 | Wall and INP times | `performance.now()`, browser-clamped | directional: good for "~2x worse?", not "1.3 ms" |
 | CPU self-time | the sampler's own clock (V8 microsecond; Gecko ~1 ms floor on Firefox) | real: trustworthy in aggregate (a few % noise) |
+
+**`forcedLayoutMs` / `forcedLayoutCount` are a subset, never an addend.** A synchronously forced
+flush is already inside `styleMs` / `layoutMs` (and the layout/style counts) — the forced fields just
+re-report the part of that work JS triggered on the spot, so **never sum forced onto style + layout**;
+that double-counts it. The field also covers forced *style* recalc as well as forced *layout*, not
+layout alone, despite the name.
 
 **In a browser, `self ms` is not only JavaScript.** It is your JS *plus the synchronous engine work
 that JS triggered*: force a layout by reading `offsetWidth`, and the reflow is billed to the line

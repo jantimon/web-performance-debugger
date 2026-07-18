@@ -652,7 +652,8 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     // Directly under the package table, because it says whether that table can be believed.
     printSourcemapLine(recording.meta.sourcemaps, cpuModel.unmappedFrames ?? 0);
     // In --breakdown mode the seven-slice per-span bars replace the single profile-only bar.
-    if (recording.breakdowns?.length) printSpanBreakdowns(recording.breakdowns);
+    if (recording.breakdowns?.length)
+      printSpanBreakdowns(recording.breakdowns, recording.meta.iterations);
     else printCpuBreakdown(cpuModel);
   }
   if (recording.meta.throttle) {

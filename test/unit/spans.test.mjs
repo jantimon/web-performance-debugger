@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import { buildSpans, recordingLane } from "../../dist/model/spans.js";
+import { buildSpans, recordingLane, spanAggregation } from "../../dist/model/spans.js";
 import { querySpans } from "../../dist/commands/query.js";
 import { tmpDir } from "./helpers.mjs";
 
@@ -117,6 +117,39 @@ test("buildSpans: chrome breakdowns yield the superset shape, all slices measure
   assert.ok(inp.frames, "the frame side track survives the adapter");
 });
 
+// The aggregation contract: a recording mixes span kinds with different iteration semantics, so
+// every entry must self-declare what its numbers represent. run = a total over the loop ("sum");
+// step/measure = one iteration ("first"). iterations is stamped from the recording meta.
+test("buildSpans: aggregation is per-kind (run=sum, step/measure=first) and iterations propagates", () => {
+  const bars = [
+    { label: "run", kind: "run", breakdown: chromeBreakdown(7) },
+    { label: "open", kind: "step", breakdown: chromeBreakdown(3) },
+    { label: "inp", kind: "measure", breakdown: chromeBreakdown(1.2) },
+  ];
+  const result = buildSpans(bars, undefined, "chrome", 7);
+  const byKind = Object.fromEntries(result.spans.map((span) => [span.kind, span]));
+  assert.equal(byKind.run.aggregation, "sum", "the run window spans every iteration => a total");
+  assert.equal(byKind.step.aggregation, "first", "a step is windowed to the first iteration");
+  assert.equal(byKind.measure.aggregation, "first", "a measure keeps its first in-window occurrence");
+  for (const span of result.spans)
+    assert.equal(span.iterations, 7, "iterations is stamped on every span from the recording meta");
+});
+
+test("spanAggregation: run is a sum, step and measure are first", () => {
+  assert.equal(spanAggregation("run"), "sum");
+  assert.equal(spanAggregation("step"), "first");
+  assert.equal(spanAggregation("measure"), "first");
+});
+
+test("buildSpans: the CpuModel-synthesized run span is a sum; iterations defaults to 1", () => {
+  const one = buildSpans(undefined, firefoxCpu, "firefox");
+  assert.equal(one.spans[0].aggregation, "sum", "a synthesized run bar brackets the whole timed loop");
+  assert.equal(one.spans[0].iterations, 1, "iterations defaults to 1 when the caller omits it");
+  const many = buildSpans(undefined, firefoxCpu, "firefox", 5);
+  assert.equal(many.spans[0].iterations, 5, "an explicit iteration count reaches the synthesized span");
+  assert.equal(many.spans[0].aggregation, "sum");
+});
+
 test("buildSpans: firefox CpuModel bar synthesizes the run span; paint is not-measured (null), never 0", () => {
   const result = buildSpans(undefined, firefoxCpu, "firefox");
   assert.equal(result.source, "cpu-model");
@@ -202,11 +235,17 @@ async function captureJson(runner) {
 }
 
 test("query spans --label keeps the exact match; a miss is an empty array, not an error", async () => {
-  const file = writeRec("spans-chrome.json", { meta: { target: "chrome" }, breakdowns: chromeBreakdowns });
+  const file = writeRec("spans-chrome.json", {
+    meta: { target: "chrome", iterations: 4 },
+    breakdowns: chromeBreakdowns,
+  });
 
   const hit = JSON.parse(await captureJson(() => querySpans(file, { json: true, label: "inp" })));
   assert.equal(hit.spans.length, 1);
   assert.equal(hit.spans[0].label, "inp");
+  // meta.iterations reaches the entry, and a measure span declares itself the first occurrence.
+  assert.equal(hit.spans[0].iterations, 4, "iterations comes from the recording meta");
+  assert.equal(hit.spans[0].aggregation, "first", "a measure span is the first in-window occurrence");
 
   const miss = JSON.parse(await captureJson(() => querySpans(file, { json: true, label: "nope" })));
   assert.equal(miss.spans.length, 0, "a label miss is an empty array (consumer decides), not a throw");

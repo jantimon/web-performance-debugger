@@ -375,7 +375,10 @@ What it shows: the `--target node` CPU lane attributing SSR `renderToString` sel
 `react-dom` vs a styling library vs your component, down to a source line, via `query cpu`. It runs
 **`examples/ssr-demo`** (in this repo, JSX-free so no build step): `react-dom` ~44% vs
 `tailwind-merge` ~22% vs `app` ~9%, with `tailwind-merge get (lib/lru-cache.ts:35)` the single
-hottest function (~21%) as the punchline.
+hottest function (~21%) as the punchline. Both the `record` and `query cpu` output carry the
+four-slice CPU breakdown bar (`js · native · gc · idle`, node's engine slice is `native`), and the
+`query cpu` headline names the per-iteration divisor (`sum of 250 iterations`), so the GIF shows the
+slice split and the divisor alongside the package rollup.
 
 **Keep this demo runnable from a clean checkout**; that property is the point, not the exact
 percentages. A demo that depends on a pre-compiled bundle from a private repo can only be
@@ -393,10 +396,11 @@ Tape gotchas, if you tweak `demo.tape`:
   that row before publishing.
 - **`NODE_ENV=production` is load-bearing** (hidden in the tape). Without it React resolves to its
   development build: `react` outranks `react-dom`, and the profile shows a cost nobody ships.
-- **`FontSize 18` + `Width 1580`** avoid clipping; the widest line is the `record` report's longest
-  dimmed file-path + annotation (`Digest: ... rendering metrics are not collected`), not the table.
-  Those paths print relative to cwd (`displayPath`), which is what keeps them on one line -- absolute
-  paths wrap, and put the recorder's home directory into the GIF.
+- **`FontSize 18` + `Width 1580`**: the widest line is the `query cpu` iteration-divisor headline
+  (~188 chars), which soft-wraps to two rows in the final frame at this width; the `record` report's
+  dimmed Digest path no longer sets the width bound. Report paths still print relative to cwd
+  (`displayPath`), which keeps the recorder's home directory out of the GIF (absolute paths wrap and
+  leak it).
 - The record output is wiped with a hidden `clear` before `query cpu` so the final frame focuses on
   the result alone.
 - **Color is automatic**: VHS records in a real PTY, so `process.stdout.isTTY` is true and the

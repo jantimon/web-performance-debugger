@@ -60,7 +60,7 @@ export async function queryDigest(file: string, opts: OutOpts): Promise<void> {
   printSummary(rec);
   // --breakdown recordings carry per-span seven-slice bars; print them here so `query digest`
   // matches the `record` report. Absent on every other mode, so this is a no-op there.
-  if (digest.breakdowns?.length) printSpanBreakdowns(digest.breakdowns);
+  if (digest.breakdowns?.length) printSpanBreakdowns(digest.breakdowns, digest.meta.iterations);
   if (digest.forced.length) {
     console.log(
       "\nLayout thrashing — forced layout/style by source (run `query blame --forced` for all):",
@@ -124,7 +124,8 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
       // No sibling CPU model: buildSpans returns null below and we report the empty case.
     }
   }
-  const result = buildSpans(rec.breakdowns, cpuBreakdown, recordingLane(rec.meta));
+  const iterations = rec.meta.iterations ?? 1;
+  const result = buildSpans(rec.breakdowns, cpuBreakdown, recordingLane(rec.meta), iterations);
   if (!result)
     throw new Error(
       `${file} carries no per-span breakdown. Record with \`--breakdown\` (chrome), \`--target ` +
@@ -144,14 +145,14 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   if (result.source === "breakdowns") {
     const bars = label ? rec.breakdowns!.filter((span) => span.label === label) : rec.breakdowns!;
     if (!bars.length) return void console.log(`No span labelled '${label}' in ${file}.`);
-    printSpanBreakdowns(bars);
+    printSpanBreakdowns(bars, iterations);
     return;
   }
   if (label && label !== "run")
     return void console.log(
       `No span labelled '${label}' in ${file} (this lane carries only the 'run' bar).`,
     );
-  printCpuBreakdown(model!);
+  printCpuBreakdown(model!, iterations);
 }
 
 export async function queryIndex(file: string, opts: OutOpts): Promise<void> {

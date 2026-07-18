@@ -3,6 +3,18 @@ import type { CpuOverview, FrameQueryResult } from "../model/query.js";
 import { num, table } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
 import { serialize, isFormat, type Format } from "../output/format.js";
+import { spanAggregation } from "../model/spans.js";
+
+/**
+ * The `(first|sum of N iterations)` suffix a bar prints when `--iterations` repeated the flow, so a
+ * reader knows a run bar is a TOTAL while a step/measure bar is one iteration. Empty at N<=1 (nothing
+ * to disambiguate) or when the caller passes no iteration count (the single profile-only
+ * `printCpuBreakdown` bar, called without one).
+ */
+function aggregationSuffix(kind: SpanBreakdown["kind"], iterations?: number): string {
+  if (iterations == null || iterations <= 1) return "";
+  return `, ${spanAggregation(kind)} of ${iterations} iterations`;
+}
 
 // Warm "heat" for a self-time share: the bigger the cost, the louder the color.
 const heat = (pct: number, text: string): string =>
@@ -44,7 +56,7 @@ export function printCpuHeadline(model: CpuModel): void {
  * 100. No-op when the model carries no breakdown (a Firefox dump without the threadCPUDelta CPU
  * signal, or an older model).
  */
-export function printCpuBreakdown(model: CpuModel): void {
+export function printCpuBreakdown(model: CpuModel, iterations?: number): void {
   const breakdown = model.breakdown;
   if (!breakdown) return;
   const { wallMs, slices } = breakdown;
@@ -64,7 +76,10 @@ export function printCpuBreakdown(model: CpuModel): void {
     .map(([owner, ms]) => `${owner} ${num(ms, 1)}`)
     .join(" · ");
 
-  console.log(`\nCPU time breakdown ${dim(`(sampled window, ${num(wallMs, 1)} ms)`)}\n`);
+  // A CpuModel-synthesized bar is always the run span, so its aggregation is `sum`.
+  console.log(
+    `\nCPU time breakdown ${dim(`(sampled window, ${num(wallMs, 1)} ms${aggregationSuffix("run", iterations)})`)}\n`,
+  );
   // Fixed order: real work first (js, then style/layout when the lane splits them), idle last.
   // style/layout are present only on the Firefox lane (from the per-sample Layout-category frame).
   const rows: [string, number, string][] = [["js", slices.js.ms, topPackages]];
@@ -100,12 +115,12 @@ export function printCpuBreakdown(model: CpuModel): void {
  * visible and `idle` is annotated; the js slice carries a compact by-package annotation. In
  * --breakdown mode this replaces the single js/browser/gc/idle profile bar (printCpuBreakdown).
  */
-export function printSpanBreakdowns(breakdowns: SpanBreakdown[]): void {
+export function printSpanBreakdowns(breakdowns: SpanBreakdown[], iterations?: number): void {
   if (!breakdowns.length) return;
   console.log(`\nCPU time breakdown ${dim("(per span: Σ slices + idle = wall)")}`);
   for (const span of breakdowns) {
     const { wallMs, slices, residualMs } = span.breakdown;
-    const label = `${span.label} ${dim(`(${span.kind}, ${num(wallMs, 1)} ms)`)}`;
+    const label = `${span.label} ${dim(`(${span.kind}, ${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations)})`)}`;
     console.log(`\n${bold(label)}`);
     if (wallMs <= 0) {
       console.log(dim("  (empty window; nothing to tile)"));

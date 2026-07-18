@@ -16,6 +16,17 @@ falls outside the measured window. Layout/style work is held constant; only pain
 - A count summed across raster worker threads swings 3->39 on identical work. It cannot gate,
   whatever it is named.
 
+## Forced counts are a subset of style + layout, not an addend
+
+`buildSummary` bills a forced event to `forcedLayoutCount`/`forcedLayoutMs` AND to the plain
+layout/style total in the same pass (`summarize.ts`: the `event.forced` branch increments the forced
+counters, then the `layout`/`style` case increments `traceLayoutCount`/`traceStyleCount`; CDP's
+`LayoutCount` likewise counts every layout, forced included). So `forcedLayout*` is a **strict subset
+of `styleMs + layoutMs`** and the layout/style counts: **never sum forced onto style + layout** — that
+double-counts the forced work. The field spans forced **style recalc and forced layout both**, not
+layout alone (`event.forced` is set on layout AND style events): the name says layout, the coverage
+is both.
+
 ## `Paint` is exact, and it is per-chunk
 
 | dirtied regions | 0 | 1 | 2 | 5 | 10 | 20 | 40 |

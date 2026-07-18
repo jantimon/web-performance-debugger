@@ -4,8 +4,27 @@
 // adapter only: it never mutates or re-stores a recording, so old artifacts keep loading and yield
 // spans from whatever they hold.
 
-import type { Breakdown, CpuBreakdown, RecordingMeta, SpanBreakdown } from "./recording.js";
+import type {
+  Breakdown,
+  CpuBreakdown,
+  RecordingMeta,
+  SpanBreakdown,
+  SpanKind,
+} from "./recording.js";
 import type { SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
+
+/**
+ * How a span of this kind combines the recording's timed iterations. `run` is a TOTAL across every
+ * iteration (its window spans the whole loop; the CpuModel-synthesized run brackets the whole timed
+ * loop), so `"sum"`. `step` is windowed to the FIRST timed iteration (`MergedStep` start/end come
+ * from iteration 0, so counts never scale with `--iterations`) and `measure` keeps its FIRST
+ * in-window occurrence, so both are `"first"`. At `iterations === 1` the labels coincide, but the
+ * per-kind label stays the truthful description of what the numbers are. Single source of truth for
+ * the adapter and the human printers.
+ */
+export function spanAggregation(kind: SpanKind): "first" | "sum" {
+  return kind === "run" ? "sum" : "first";
+}
 
 /**
  * The engine lane a recording was produced on -- the `--target` axis, "chrome" | "firefox" |
@@ -41,22 +60,26 @@ function slicesFromCpuBreakdown(cpu: CpuBreakdown): UnifiedSlices {
   };
 }
 
-function entryFromBreakdown(span: SpanBreakdown): SpanEntry {
+function entryFromBreakdown(span: SpanBreakdown, iterations: number): SpanEntry {
   return {
     label: span.label,
     kind: span.kind,
     wallMs: span.breakdown.wallMs,
+    aggregation: spanAggregation(span.kind),
+    iterations,
     slices: slicesFromBreakdown(span.breakdown),
     ...(span.frames ? { frames: span.frames } : {}),
     ...(span.breakdown.residualMs != null ? { residualMs: span.breakdown.residualMs } : {}),
   };
 }
 
-function runEntryFromCpuBreakdown(cpu: CpuBreakdown): SpanEntry {
+function runEntryFromCpuBreakdown(cpu: CpuBreakdown, iterations: number): SpanEntry {
   return {
     label: "run",
     kind: "run",
     wallMs: cpu.wallMs,
+    aggregation: spanAggregation("run"),
+    iterations,
     slices: slicesFromCpuBreakdown(cpu),
     ...(cpu.residualMs != null ? { residualMs: cpu.residualMs } : {}),
   };
@@ -67,16 +90,26 @@ function runEntryFromCpuBreakdown(cpu: CpuBreakdown): SpanEntry {
  * (`recording.breakdowns`); falls back to synthesizing a single `run` span from a
  * `CpuModel.breakdown` so the verb never comes back empty when any bar exists. Returns null when the
  * recording holds neither (an old recording, or `--target node` with `--no-cpu-profile`), which the
- * caller turns into a non-zero error.
+ * caller turns into a non-zero error. `iterations` (the recording's `meta.iterations`) is stamped on
+ * every entry alongside its `aggregation`, so a consumer can read what a span's numbers represent.
  */
 export function buildSpans(
   breakdowns: SpanBreakdown[] | undefined,
   cpuBreakdown: CpuBreakdown | undefined,
   target: string,
+  iterations = 1,
 ): SpansResult | null {
   if (breakdowns?.length)
-    return { target, source: "breakdowns", spans: breakdowns.map(entryFromBreakdown) };
+    return {
+      target,
+      source: "breakdowns",
+      spans: breakdowns.map((span) => entryFromBreakdown(span, iterations)),
+    };
   if (cpuBreakdown)
-    return { target, source: "cpu-model", spans: [runEntryFromCpuBreakdown(cpuBreakdown)] };
+    return {
+      target,
+      source: "cpu-model",
+      spans: [runEntryFromCpuBreakdown(cpuBreakdown, iterations)],
+    };
   return null;
 }

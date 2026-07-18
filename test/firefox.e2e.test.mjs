@@ -199,7 +199,8 @@ e2e(
     const spans = JSON.parse(runCli(["query", "spans", out, "--json"]));
     assert.equal(spans.target, "firefox", "spans records the firefox target");
     assert.ok(Array.isArray(spans.spans) && spans.spans.length > 0, "spans present");
-    assert.ok(spans.spans.some((span) => span.kind === "run"), "the run span is present");
+    const runSpan = spans.spans.find((span) => span.kind === "run");
+    assert.ok(runSpan, "the run span is present");
     const measure = spans.spans.find((span) => span.kind === "measure" && span.label === "work");
     assert.ok(measure, "the user performance.measure 'work' surfaces as a labeled span on firefox");
     // Same superset shape as chrome: every slice key present, style/layout measured on firefox.
@@ -207,6 +208,12 @@ e2e(
       assert.ok(key in measure.slices, `slice '${key}' present in the unified shape`);
     assert.notEqual(measure.slices.style, null, "firefox splits style");
     assert.notEqual(measure.slices.layout, null, "firefox splits layout");
+    // The aggregation contract crosses the engine unchanged: run = a total over the loop, measure =
+    // the first occurrence, both stamping the iteration count (recorded with --iterations 5).
+    assert.equal(runSpan.aggregation, "sum", "the run span is a total across iterations");
+    assert.equal(measure.aggregation, "first", "a measure span is its first in-window occurrence");
+    assert.equal(runSpan.iterations, 5, "the run span carries the recording's iteration count");
+    assert.equal(measure.iterations, 5, "the measure span carries the recording's iteration count");
 
     // The convergence hint: `query cpu --json` points firefox consumers at this surface.
     const cpu = JSON.parse(runCli(["query", "cpu", out, "--json"]));

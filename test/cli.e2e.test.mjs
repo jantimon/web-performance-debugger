@@ -325,13 +325,20 @@ e2e("query spans: unified per-span shape over a chrome --breakdown recording", {
   const spans = JSON.parse(runCli(["query", "spans", out, "--json"]));
   assert.equal(spans.source, "breakdowns", "chrome --breakdown sources the stored per-span bars");
   assert.ok(Array.isArray(spans.spans) && spans.spans.length > 0, "spans present");
-  assert.ok(spans.spans.some((span) => span.kind === "run"), "the run span is always present");
+  const runSpan = spans.spans.find((span) => span.kind === "run");
+  assert.ok(runSpan, "the run span is always present");
   const measure = spans.spans.find((span) => span.kind === "measure" && span.label === "user-span");
   assert.ok(measure, "the user performance.measure surfaces as a labeled span");
   // The unified superset shape: every slice key present; chrome measures them all.
   for (const key of ["js", "style", "layout", "paint", "gc", "other", "idle"])
     assert.ok(key in measure.slices, `slice '${key}' present in the unified shape`);
   assert.ok(measure.slices.js.byPackage, "js keeps its by-package split");
+  // The aggregation contract: the run window spans both iterations (a sum), the measure is the
+  // first occurrence; both stamp the recording's iteration count (recorded with --iterations 2).
+  assert.equal(runSpan.aggregation, "sum", "the run span is a total across iterations");
+  assert.equal(measure.aggregation, "first", "a measure span is its first in-window occurrence");
+  assert.equal(runSpan.iterations, 2, "the run span carries the recording's iteration count");
+  assert.equal(measure.iterations, 2, "the measure span carries the recording's iteration count");
 
   // --label narrows to the exact span.
   const filtered = JSON.parse(runCli(["query", "spans", out, "--json", "--label", "user-span"]));
