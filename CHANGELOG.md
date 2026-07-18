@@ -1,5 +1,115 @@
 # @jantimon/web-performance-debugger
 
+## 0.6.0
+
+### Minor Changes
+
+- 4ccdbfc: **New: `--target firefox` gains the reconciling CPU-time breakdown bar.** The Gecko profiler now
+  runs with `js,cpu`, so the per-sample CPU-usage signal drives an honest `idle` slice: the `record`
+  report and `query cpu` show a `js · style · layout · browser · gc · idle` bar that tiles the sampled
+  window exactly (style/layout from the sampled Layout-category frames). Paint stays a side track, not
+  summed. A Gecko dump without the CPU signal (older recordings) still gets no bar rather than a
+  fabricated idle.
+
+  **New: `performance.measure` spans on Firefox.** Each user measure inside the run window appears in
+  `recording.breakdowns` (kind `measure`) with its own reconciling breakdown.
+
+  **Changed: `query blame --forced` on Firefox now names the READ site + the DOM property** (e.g.
+  `offsetWidth`), sampled from the stacks, matching Chrome's flush-site semantics — the two engines'
+  forced lines are now comparable at line granularity. `meta.blameSemantic` is `flush-site` on
+  Firefox; the write/invalidation cause stays reachable via `query get`. Forced-layout counts still
+  come from the Reflow/Styles markers. Requires nothing from users.
+
+- 4ccdbfc: **New: a reconciling CPU-time breakdown bar, `js · browser · gc · idle`.** It tiles the sampled
+  window exactly (the slices sum to wall, with `js` split by package) and appears in the `record`
+  report, in `query cpu` (human and `--json`/`--format`), and as an additive optional `breakdown`
+  field on the `.cpu.json` model. Firefox reports its own six-slice bar (`js · style · layout ·
+browser · gc · idle`, see its changeset entry); `--target node` measures pure JS. Old `.cpu.json`
+  files without the field keep working.
+- 4ccdbfc: **New: `--breakdown` records a per-span off-thread frame side track (Chrome).** Each span now carries
+  `frames` with the compositor's PipelineReporter verdicts: `presented` / `partial` / `dropped` /
+  `no-update` counts, per-frame records, and the slowest presented (incl. partial) frame's top
+  pipeline-stage durations. The `record` report and `query digest` print a compact line under each bar
+  (`frames: N presented · N partial · N dropped`), and name any dropped or smoothness-affecting frame.
+
+  This comes from data already in every Chrome trace (the enabled
+  `disabled-by-default-devtools.timeline.frame` category); no trace-config change. It is DISPLAY-ONLY:
+  frame counts are scheduler/settle noise (see docs/dev/rendering-counts.md), so `assert` and `diff`
+  never gate on them; `Paint` stays the only exact rendering count. Nothing here is summed into a
+  breakdown bar. Additive: recordings without the field still load.
+
+- 4ccdbfc: **Changed: the `latest` pointer no longer writes a `recordings/` dir into your cwd.** It is now
+  cwd-keyed and stored under `$XDG_STATE_HOME/wpd/pointers/` (falling back to `~/.local/state/wpd/`),
+  so recording with `--out` elsewhere leaves the working tree untouched. `latest` still resolves from
+  the cwd you recorded in, and an in-flight `recordings/.wpd-last.json` left by an older run is still
+  read as a fallback.
+
+  **Docs: pnpm install recipe.** pnpm 10+ blocks Puppeteer's browser-download postinstall (pnpm 11
+  hard-fails `pnpm exec wpd`); the README now documents the `onlyBuiltDependencies` /
+  `ignoredBuiltDependencies` recipes.
+
+  **Changed: `query cpu` states the iteration divisor** in its header when `--iterations > 1` (the
+  JS self-time headline is a whole-window total; divide by N for a per-iteration figure).
+
+- a0e674b: **Breaking: `paintCount` counts main-thread paint only, so expect it to drop sharply.** It also
+  summed raster-worker events, which made it swing 3->39 on identical work while `assert --max-paints`
+  and `diff --fail-on-regression` gated CI on it. It is now exactly one per dirtied region (measured:
+  N+1 for N regions, zero variance over 40 runs), so those gates mean something. Re-baseline any
+  `--max-paints` threshold.
+
+  **Breaking: `compositeCount` and `compositeMs` are gone.** They counted committed frames, so they
+  tracked `--settle` duration (7x swing on unchanged work) rather than anything the page did. There is
+  no replacement; read `paintCount`.
+
+  **Breaking: a driver run reports no run-level `summary.wallMs` (it is `null`).** It was the trace
+  pass's window: a single instrumented sample spanning prepare + every step + settle, sitting beside
+  per-step medians from the clean pass and routinely ~2x from them. Per-step wall is unchanged in
+  `summary.perStep` / `query index`; `assert --max-wall` against a driver recording now fails and
+  points at the step index. `--bench` and `--target node` are unaffected.
+
+- 4ccdbfc: **New: `query spans <file> [--label <L>]`: one unified per-span breakdown across every target.**
+  Returns one entry per span (the run window, each driver step, and every user `performance.measure`)
+  in a single slice shape (`js` with `byPackage`, `style`, `layout`, `paint`, `gc`, `other`, `idle`)
+  whether the recording came from chrome `--breakdown`, `--target firefox`, or `--target node`. A
+  slice a lane could not measure is an explicit `null`, never a fabricated `0`. `--label` filters to
+  one span by exact label. It sources the recording's stored per-span bars when present, else
+  synthesizes the `run` span from the CPU model's bar, so a recording carrying any bar is never empty.
+  New public types `SpansResult` / `SpanEntry` / `UnifiedSlices`; `query cpu --json` on Firefox now
+  hints at this surface. Each span declares `aggregation` (`"sum"` for the run window, `"first"` for a
+  step or `performance.measure`) and `iterations`, so a consumer knows whether a span's numbers are a
+  per-loop total or one iteration.
+- 4ccdbfc: **New: `record --breakdown` (chrome), a reconciling seven-slice bar per span.** One fused pass (a
+  light trace + the CPU sampler) produces `js (by package) · style · layout · paint · gc · other ·
+idle` for the run window, each driver step, and every user `performance.measure` inside the run.
+  Each bar tiles its window exactly (`Σ slices + idle = wall`); slices come from the trace, and the
+  `js` split from the samples that land in its regions (proportions only). Stored additively as
+  `Recording.breakdowns` and shown in the `record` report and `query digest`; old recordings keep
+  loading. Forced-layout count and blame need the `.stack` category this mode drops, so they are
+  reported as **not measured** (never 0) -- run the default mode for forced-layout blame.
+
+  **New: `record --headless-mode new|shell` (chrome).** `shell` launches chrome-headless-shell, which
+  runs frames at ~120Hz and halves the one-frame floor on `wall`/`INP` (16.6 -> 8.3ms). `shell` is the
+  default; pass `--headless-mode new` to run the full-Chrome new headless (~60Hz) instead.
+
+- 4ccdbfc: **Chrome now defaults to chrome-headless-shell (~120 Hz frames).** `wall`/`INP` read ~half of what
+  they did on sub-frame work, so `assert --max-wall`/`--max-inp` thresholds tuned under the old default
+  need re-tuning (or pass `--headless-mode new` to restore the old full-Chrome ~60 Hz cadence). Counts,
+  forced-layout blame, and CPU self-time are unchanged. If chrome-headless-shell is not installed, the
+  run falls back to new-headless with a warning instead of failing.
+
+### Patch Changes
+
+- de12174: **Fixed: `--protocol-timeout` now works on `--target firefox`.** Under load Firefox can fail to
+  launch with `session.new timed out. Increase the 'protocolTimeout' setting` — advice you could not
+  take, because the CLI rejected that flag on Firefox as CDP-only. It is not one: raise it when
+  Firefox times out launching. That error no longer suggests measuring less work per step, which
+  cannot help when the browser never started.
+
+  **Fixed: `--bench`'s help said `run()` takes "no args", which reads as "no DOM".** It gets
+  `run(ctx)`, with live `document`/`window`, and pairs with `--html`/`--url` for a host page. The
+  README now says which mode to pick: `--bench` prices code the page runs, the driver measures a real
+  interaction.
+
 ## 0.5.0
 
 ### Minor Changes
