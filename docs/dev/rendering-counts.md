@@ -44,12 +44,13 @@ incrementing `RecalcStyleCount`. Inline `<style>`, `CSSStyleSheet.insertRule`, a
 mutations never emit it, so on the common interaction (mutate DOM -> recalc -> layout -> paint) trace
 and CDP are bit-identical.
 
-wpd does **not** filter this event: the reported `styleCount` is CDP `RecalcStyleCount` (the merge
-prefers it), which Blink increments without ever counting the parse, so the shipped count is already
-parse-free with no code doing the exclusion. `ParseAuthorStyleSheet`'s time is real main-thread style
-work, so `taxonomy.ts` keeps it mapped to the `style` slice. The exclusion is a property of a
-*trace-derived* count only: summing every `style` event gives recalc + parses, so the trace fallback
-(used when a CDP delta is absent) must sum `UpdateLayoutTree` alone to match `RecalcStyleCount`.
+The shipped `styleCount` is CDP `RecalcStyleCount` (the merge prefers it), which Blink increments
+without ever counting the parse, so it is already parse-free with no filtering needed.
+`ParseAuthorStyleSheet`'s time is real main-thread style work, so `taxonomy.ts` keeps it mapped to the
+`style` slice (the breakdown bar bills it). The exclusion matters for a *trace-derived* count only:
+summing every `style` event gives recalc + parses, so the trace fallback (used when a CDP delta is
+absent, e.g. per-step summaries and `--no-isolate`) sums `UpdateLayoutTree` alone — `summarize` skips
+`STYLE_PARSE_NAMES` — to match `RecalcStyleCount`.
 
 **No-op mutations** (a write that sets the same value) increment **neither** the counters nor the
 events — both correctly skip them.

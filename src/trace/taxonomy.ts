@@ -36,10 +36,10 @@ export const TAXONOMY: Record<EventKind, KindRow> = {
   // author CSS is parsed inside the window (an injected/loaded `<link rel=stylesheet>`), and Blink
   // logs it WITHOUT incrementing `RecalcStyleCount`. Inline `<style>`, `insertRule`, and DOM/class
   // mutations never emit it. Its time is real main-thread style work, so it stays on the `style`
-  // slice. The reported `styleCount` is CDP `RecalcStyleCount` (the merge prefers it), already
-  // parse-free because Blink never counts the parse, so no code filters this event out. Only a
-  // trace-DERIVED count would need to: summing every `style` event gives recalc + parses >
-  // `RecalcStyleCount`, so a trace-only style count must sum `UpdateLayoutTree` alone.
+  // slice (the breakdown bar bills it). The reported `styleCount` is CDP `RecalcStyleCount` (the
+  // merge prefers it), already parse-free because Blink never counts the parse. The trace-DERIVED
+  // fallback does exclude it: summing every `style` event gives recalc + parses > `RecalcStyleCount`,
+  // so `summarize` skips `STYLE_PARSE_NAMES` and sums `UpdateLayoutTree` alone.
   // See docs/dev/rendering-counts.md.
   style: {
     names: new Set(["UpdateLayoutTree", "ParseAuthorStyleSheet"]),
@@ -121,6 +121,15 @@ export const TAXONOMY: Record<EventKind, KindRow> = {
   // other). classify falls back to this when no row above matched, so it carries no name rule.
   other: { names: new Set<string>(), slice: "other" },
 };
+
+/**
+ * Style events that are a stylesheet PARSE, not a recalc. Real main-thread style work (kept on the
+ * `style` slice, so the breakdown bar bills it), but Blink never increments `RecalcStyleCount` for
+ * them. A trace-DERIVED style count/duration (the fallback used when a CDP delta is absent) must
+ * exclude these to match CDP `RecalcStyleCount`/`RecalcStyleDuration`. See
+ * docs/dev/rendering-counts.md.
+ */
+export const STYLE_PARSE_NAMES: ReadonlySet<string> = new Set(["ParseAuthorStyleSheet"]);
 
 /**
  * Which breakdown work slice an event kind lands in, read straight off the taxonomy table. There is

@@ -197,6 +197,27 @@ test("buildSummary prefers CDP counts, falls back to trace", () => {
   assert.equal(noCdp.layoutCount, 1); // trace fallback
 });
 
+// The trace-derived style fallback (used when no CDP RecalcStyleCount delta is present) must match
+// CDP, which counts recalcs only: ParseAuthorStyleSheet is a stylesheet parse, real style time but
+// not a recalc, so it is excluded from the fallback count/duration. See docs/dev/rendering-counts.md.
+test("buildSummary: trace style fallback excludes ParseAuthorStyleSheet, matching RecalcStyleCount", () => {
+  const events = [
+    { id: 0, name: "UpdateLayoutTree", ts: 1, dur: 2000, ph: "X", kind: "style" },
+    { id: 1, name: "UpdateLayoutTree", ts: 3, dur: 3000, ph: "X", kind: "style" },
+    { id: 2, name: "ParseAuthorStyleSheet", ts: 5, dur: 9000, ph: "X", kind: "style" },
+  ];
+  const noCdp = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
+  assert.equal(noCdp.styleCount, 2, "only the two recalcs count, not the parse");
+  assert.equal(noCdp.styleMs, 5, "duration sums the recalcs (2ms + 3ms), not the parse");
+  // CDP still wins when present.
+  const withCdp = buildSummary({
+    detailEvents: events,
+    detailWindowStart: null,
+    cdpDelta: { RecalcStyleCount: 2 },
+  });
+  assert.equal(withCdp.styleCount, 2);
+});
+
 // Driver steps are heterogeneous ("mount" vs "inp"), so the ONLY meaningful aggregation is each
 // step against itself. A median pooled across steps, or leaking into the bench-shaped top-level
 // stats, would render a meaningless number as a real one.
