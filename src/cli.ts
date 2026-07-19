@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import path from "node:path";
-import { Command, InvalidArgumentError } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 import { recordAndReport, type RecordOptions } from "./commands/record.js";
+import { resolvePageOption } from "./record/page-option.js";
 import { queryBlame, queryEvents, queryGet, querySpan, querySpans } from "./commands/query.js";
 import { queryCpu, queryFrame } from "./commands/cpu.js";
 import { assertCmd, type Thresholds } from "./commands/assert.js";
@@ -76,11 +77,11 @@ program
   .description(
     "Record where rendering work comes from. Default: run({ page, ctx, measureStep }) executes in Node and drives the page via Puppeteer. --bench: run(ctx) executes inside the page itself, with live document/window and no page handle, timed in-page.",
   )
-  // Optional: with no module, wpd runs a built-in load flow (navigate to --url/--html and settle),
-  // so a first run needs zero authoring. A module continues to work exactly as before.
+  // Optional: with no module, wpd runs a built-in load flow (navigate to --url and settle), so a
+  // first run needs zero authoring. A module continues to work exactly as before.
   .argument(
     "[module]",
-    "path to a JS/ESM module exporting `run` (and optional prepare/cleanup). Omit it with --url/--html to run the built-in load flow",
+    "path to a JS/ESM module exporting `run` (and optional prepare/cleanup). Omit it with --url to run the built-in load flow",
   )
   .option(
     "--target <name>",
@@ -88,16 +89,17 @@ program
     "chrome",
   )
   .option(
-    "--html <file>",
-    "host page: load this local HTML and run the module against it, or run it alone (no module) as the built-in load flow",
+    "--url <url-or-file>",
+    "the host page: a live URL (http://localhost:5173) or a local HTML file path. Run the module against it, or run it alone (no module) as the built-in load flow",
   )
-  .option(
-    "--url <url>",
-    "host page: load this live URL and run the module against it, or run it alone (no module) as the built-in load flow",
+  // --html is the pre-unification spelling, kept as a hidden alias that resolves onto the same host
+  // page as --url. Zero behavior change for existing invocations; absent from --help.
+  .addOption(
+    new Option("--html <file>", "host page: a local HTML file (alias of --url)").hideHelp(),
   )
   .option(
     "--bench",
-    "run(ctx) executes inside the page with live document/window (no page handle), timed in-page, so its wall excludes the driver's dispatch and settle. Pair with --html/--url for a host page; repeat with --iterations",
+    "run(ctx) executes inside the page with live document/window (no page handle), timed in-page, so its wall excludes the driver's dispatch and settle. Pair with --url for a host page; repeat with --iterations",
   )
   .option(
     "--iterations <n>",
@@ -147,7 +149,31 @@ program
     const bench = !!cmdOpts.bench;
     const node = cmdOpts.target === "node";
     const firefox = cmdOpts.target === "firefox";
-    // Zero-authoring on-ramp: no module runs the built-in driver flow (navigate to --url/--html and
+    // --url is the one documented way to name the host page, and it accepts a live URL OR a local
+    // HTML file path; --html is a hidden alias that resolves onto the same host page. Whichever is
+    // given feeds the same detection (URL vs file), so exactly one may be present. node has no page,
+    // so its own guard (below) rejects either flag with a lane-specific message; skip the detection
+    // there so a bad value does not preempt it.
+    let urlSchemeAssumed = false;
+    if (cmdOpts.url != null && cmdOpts.html != null)
+      program.error("--url and --html name the same host page two ways: pass just one.");
+    const rawHostPage = cmdOpts.url ?? cmdOpts.html;
+    if (rawHostPage != null && !node) {
+      try {
+        const resolved = resolvePageOption(rawHostPage);
+        if (resolved.kind === "url") {
+          cmdOpts.url = resolved.url;
+          cmdOpts.html = undefined;
+          urlSchemeAssumed = resolved.schemeAssumed;
+        } else {
+          cmdOpts.html = resolved.html;
+          cmdOpts.url = undefined;
+        }
+      } catch (error) {
+        program.error((error as Error).message);
+      }
+    }
+    // Zero-authoring on-ramp: no module runs the built-in driver flow (navigate to --url and
     // settle). It needs a page to load and a driver to load it, so --bench (imports run() in-page)
     // and --target node (no page) have nothing to run, and a bare `record` has no target at all.
     if (!module) {
@@ -157,11 +183,11 @@ program
         );
       if (bench)
         program.error(
-          "record --bench needs a module: it import()s run() inside the page. Pass a module path, or drop --bench to run the built-in load flow against --url/--html.",
+          "record --bench needs a module: it import()s run() inside the page. Pass a module path, or drop --bench to run the built-in load flow against --url.",
         );
       if (!cmdOpts.url && !cmdOpts.html)
         program.error(
-          "record needs a module path, or --url/--html to run the built-in load flow. Try: wpd record --url https://example.com",
+          "record needs a module path, or --url to run the built-in load flow. Try: wpd record --url https://example.com",
         );
       if (cmdOpts.preciseWall)
         program.error(
@@ -210,8 +236,8 @@ program
     }
     if (node) {
       const browserOnly = [
-        cmdOpts.url && "--url",
-        cmdOpts.html && "--html",
+        // Detection is skipped on node (above), so these hold the raw flag the user passed.
+        (cmdOpts.url || cmdOpts.html) && (cmdOpts.url ? "--url" : "--html"),
         cmdOpts.cpuThrottle && "--cpu-throttle",
         cmdOpts.userDataDir && "--user-data-dir",
         cmdOpts.breakdown && "--breakdown",
@@ -242,6 +268,7 @@ program
       browser: firefox ? "firefox" : "chrome",
       html: cmdOpts.html,
       url: cmdOpts.url,
+      urlSchemeAssumed,
       iterations: cmdOpts.iterations,
       warmup: cmdOpts.warmup,
       out: cmdOpts.out,

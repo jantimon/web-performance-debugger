@@ -114,6 +114,11 @@ export function onrampBuiltinFlow(): string {
   return "Built-in load flow (no module): one step labeled 'load' navigates to the target (meta.target) inside the run window and settles, so the measured window is the page's own boot. INP is null — a page load has no interaction; pass a module that drives one (measureStep) to measure interactions.";
 }
 
+/** --url named a host with no scheme (localhost:5173); http:// was assumed to reach it. */
+export function pageSchemeAssumed(url: string): string {
+  return `--url named a host with no scheme, so http:// was assumed: the target is ${url}. Pass an explicit https:// URL if the server is TLS.`;
+}
+
 /** Repeated on-ramp: only iteration 1 boots cold, the rest reuse the one browser's caches. */
 export function onrampWarmVsCold(iterations: number): string {
   const laterIterations =

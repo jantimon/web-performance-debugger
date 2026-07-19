@@ -56,6 +56,8 @@ export interface RecordOptions {
   browser?: BrowserName;
   html?: string;
   url?: string;
+  /** --url named a host with no scheme, so http:// was assumed for `url`; a note discloses it. */
+  urlSchemeAssumed?: boolean;
   iterations: number;
   warmup: number;
   out?: string;
@@ -326,6 +328,9 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(notesCatalog.onrampBuiltinFlow());
     if (opts.iterations > 1) notes.push(notesCatalog.onrampWarmVsCold(opts.iterations));
   }
+  // --url named a host with no scheme (localhost:5173): http:// was assumed to reach it. Disclose
+  // the target the run actually navigated to, whether or not a module drove it.
+  if (opts.urlSchemeAssumed && opts.url) notes.push(notesCatalog.pageSchemeAssumed(opts.url));
   // Which clock priced the driver step walls (§17.3.1): the trace clock under --breakdown/--deep, the
   // page's own performance.now on the no-trace rung, never the node-side page.click bound. "none"
   // means every step navigated on a no-trace rung, so no wall could be priced.
