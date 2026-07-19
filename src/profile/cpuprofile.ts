@@ -82,6 +82,23 @@ function isRankableFrame(callFrame: RawCallFrame): boolean {
   return !isToolFrameUrl(callFrame.url);
 }
 
+/**
+ * The one ranking both CpuModel.functions[] and the per-span hot refs share: rankable frames by
+ * self-time descending, key as the tie-break. Function ids ARE positions in this order, so any
+ * consumer deriving ids must call this rather than re-sorting.
+ */
+function rankedFrameKeys(
+  callFrameByKey: Map<string, RawCallFrame>,
+  selfUsByKey: Map<string, number>,
+): string[] {
+  return [...callFrameByKey.keys()]
+    .filter((key) => isRankableFrame(callFrameByKey.get(key)!))
+    .sort(
+      (left, right) =>
+        (selfUsByKey.get(right) ?? 0) - (selfUsByKey.get(left) ?? 0) || left.localeCompare(right),
+    );
+}
+
 /** Trim a pseudo-URL for display: inline data:/blob: payloads can be tens of KB, so keep
  * only a short head. (A base64 ESM module URL would otherwise blow out table widths.) */
 function shortPseudoLabel(url: string): string {
@@ -618,22 +635,19 @@ export async function buildCpuModel(
   const idleUs = msToUs(system.idleMs);
   const scriptingMs = Math.max(0, usToMs(sampledUs - idleUs));
 
-  const ranked = [...callFrameByKey.keys()]
-    .filter((key) => isRankableFrame(callFrameByKey.get(key)!))
-    .map((key) => {
-      const resolved = resolvedByKey.get(key)!;
-      return {
-        key,
-        fn: resolved.fn,
-        minified: resolved.minified,
-        source: resolved.source,
-        file: resolved.file,
-        package: resolved.package,
-        selfMs: usToMs(selfUsByKey.get(key) ?? 0),
-        totalMs: usToMs(totalUsByKey.get(key) ?? 0),
-      };
-    })
-    .sort((left, right) => right.selfMs - left.selfMs || left.key.localeCompare(right.key));
+  const ranked = rankedFrameKeys(callFrameByKey, selfUsByKey).map((key) => {
+    const resolved = resolvedByKey.get(key)!;
+    return {
+      key,
+      fn: resolved.fn,
+      minified: resolved.minified,
+      source: resolved.source,
+      file: resolved.file,
+      package: resolved.package,
+      selfMs: usToMs(selfUsByKey.get(key) ?? 0),
+      totalMs: usToMs(totalUsByKey.get(key) ?? 0),
+    };
+  });
 
   const idByKey = new Map<string, number>();
   const functions: CpuFunction[] = ranked.map((entry, index) => {
@@ -782,13 +796,7 @@ export function functionIdByNode(raw: RawCpuProfile): Map<number, number> {
     selfUsByKey.set(key, (selfUsByKey.get(key) ?? 0) + (selfUsByNode.get(node.id) ?? 0));
   }
   const idByKey = new Map<string, number>();
-  [...callFrameByKey.keys()]
-    .filter((key) => isRankableFrame(callFrameByKey.get(key)!))
-    .sort(
-      (left, right) =>
-        (selfUsByKey.get(right) ?? 0) - (selfUsByKey.get(left) ?? 0) || left.localeCompare(right),
-    )
-    .forEach((key, index) => idByKey.set(key, index));
+  rankedFrameKeys(callFrameByKey, selfUsByKey).forEach((key, index) => idByKey.set(key, index));
   const byNode = new Map<number, number>();
   for (const node of raw.nodes) {
     const id = idByKey.get(frameKey(node.callFrame));

@@ -212,8 +212,10 @@ export interface SpanHotFunctions {
   occurrences: number;
   /** true when below the pooled-sample floor: `functions` omitted, raise --iterations */
   suppressed?: boolean;
-  /** top functions by self time, length bounded by `--top`; absent when suppressed */
-  functions?: CpuFunction[];
+  /** top functions by self time, length bounded by `--top`; absent when suppressed. Stored
+   * per-span rows carry span-local selfMs/selfPct and no totalMs (a run-wide total beside a
+   * span-local self would read as the span's own); the run-window list keeps CpuFunction whole. */
+  functions?: (Omit<CpuFunction, "totalMs"> & { totalMs?: number })[];
 }
 
 /**

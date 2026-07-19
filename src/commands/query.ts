@@ -298,22 +298,26 @@ function resolveStoredHot(stored: SpanHot, model: CpuModel, topN: number): SpanH
     occurrences: stored.occurrences,
   };
   if (stored.suppressed || !stored.functions) return { ...base, suppressed: true };
-  const functions: CpuFunction[] = stored.functions.slice(0, topN).map((ref) => {
-    const selfPct = stored.pooledSamples > 0 ? (ref.samples / stored.pooledSamples) * 100 : 0;
-    const resolved = model.functions[ref.id];
-    // The id is the run's frame rank, computed from the same profile, so this lookup hits; the
-    // fallback only guards a truncated/foreign model rather than inventing an owner.
-    if (!resolved)
-      return {
-        id: ref.id,
-        fn: "(unresolved)",
-        package: "(native)",
-        selfMs: ref.selfMs,
-        selfPct,
-        totalMs: ref.selfMs,
-      };
-    return { ...resolved, selfMs: ref.selfMs, selfPct, totalMs: resolved.totalMs };
-  });
+  const functions: (Omit<CpuFunction, "totalMs"> & { totalMs?: number })[] = stored.functions
+    .slice(0, topN)
+    .map((ref) => {
+      const selfPct = stored.pooledSamples > 0 ? (ref.samples / stored.pooledSamples) * 100 : 0;
+      const resolved = model.functions[ref.id];
+      // The id is the run's frame rank, computed from the same profile, so this lookup hits; the
+      // fallback only guards a truncated/foreign model rather than inventing an owner.
+      if (!resolved)
+        return {
+          id: ref.id,
+          fn: "(unresolved)",
+          package: "(native)",
+          selfMs: ref.selfMs,
+          selfPct,
+        };
+      // resolved.totalMs is run-wide; beside a span-local selfMs it would read as the span's own
+      // total, so stored-hot rows omit it.
+      const { totalMs: _runWideTotal, ...spanLocal } = resolved;
+      return { ...spanLocal, selfMs: ref.selfMs, selfPct };
+    });
   return { ...base, functions };
 }
 
@@ -449,11 +453,13 @@ function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | un
     }
   } else if (span.kind !== "run") {
     const pointer = model ? " Use `query cpu` for the run-window hot list." : "";
-    console.log(
-      dim(
-        `\nHot functions: not available at this rung (record with --breakdown for per-span hot functions).${pointer}`,
-      ),
-    );
+    // Firefox drives steps through the one gecko pass, which windows hot samples for measures
+    // only; pointing at --breakdown there would name a flag the lane refuses.
+    const remedy =
+      anatomy.target === "firefox"
+        ? "step spans carry no hot list on firefox; wrap the work in a performance.measure"
+        : "record with --breakdown for per-span hot functions";
+    console.log(dim(`\nHot functions: not available at this rung (${remedy}).${pointer}`));
   }
 
   if (anatomy.hints.length) {

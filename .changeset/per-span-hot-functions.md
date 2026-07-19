@@ -12,4 +12,5 @@ span's pooled JS samples (the panel discloses the pooled sample and occurrence c
 reconciled against the bar's `js` slice. A measure pools samples across all its occurrences; a span
 with too few samples reports the ranking as suppressed with a raise-`--iterations` hint rather than a
 noisy top-N. The `hot.scope` / `hot.pooledSamples` / `hot.occurrences` / `hot.suppressed` fields are
-new in the `query span --json` output.
+new in the `query span --json` output; `hot.sampleCount` is replaced by `hot.pooledSamples`, and
+stored per-span hot rows carry no `totalMs` (it was run-wide, not span-local).
