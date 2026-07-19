@@ -29,6 +29,8 @@ export type {
   Breakdown,
   BreakdownSlices,
   SpanBreakdown,
+  SpanHot,
+  SpanHotRef,
   FrameSideTrack,
   FrameRecord,
   FrameState,

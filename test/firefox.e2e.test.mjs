@@ -327,6 +327,44 @@ e2e(
   },
 );
 
+// Per-span hot functions on the firefox (gecko) lane: a measure pools its occurrences' samples and
+// ranks them off the same CpuModel the run-wide `query cpu` reads, so the ids/names cohere. A trivial
+// measure stays below the pooled floor and is suppressed. Gecko clamps the sampler to ~1ms, so this
+// gathers fewer samples than chrome; the heavy measure still clears the 10-sample floor.
+e2e(
+  "query span <measure>: firefox surfaces pooled per-span hot functions coherent with query cpu",
+  { timeout: TIMEOUT_MS },
+  () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+    const out = path.join(dir, "measure-hot");
+    const iterations = 8;
+    runCli([
+      "record", path.join(repoRoot, "test", "fixtures", "measure-hot.mjs"),
+      "--bench", "--target", "firefox", "--iterations", String(iterations), "--out", out,
+    ]);
+
+    const heavy = JSON.parse(runCli(["query", "span", out, "measure:heavy", "--json"]));
+    assert.ok(heavy.hot, "the heavy measure carries a per-span hot list on firefox");
+    assert.equal(heavy.hot.scope, "measure-pooled");
+    assert.equal(heavy.hot.occurrences, iterations, "every occurrence is pooled");
+    assert.ok(heavy.hot.pooledSamples >= 10, `pooled samples clear the floor: ${heavy.hot.pooledSamples}`);
+    assert.ok(heavy.hot.functions?.length > 0, "the ranked hot list is present");
+    const topFn = heavy.hot.functions[0];
+    assert.ok(topFn.fn === "heavyWork" || topFn.source?.includes("measure-hot"), "the dominant work resolves to source");
+
+    // Coherence with the run-wide model: the pooled hot list's top id/name is the same function the
+    // run-wide `query cpu` ranks (the ids index the one CpuModel), never a diverging join.
+    const cpu = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+    const modelTop = cpu.hot.find((fn) => fn.id === topFn.id);
+    assert.ok(modelTop, "the pooled ref's id indexes the run-wide model");
+    assert.equal(modelTop.fn, topFn.fn, "the pooled hot function is the same function query cpu names");
+
+    const trivial = JSON.parse(runCli(["query", "span", out, "measure:trivial", "--json"]));
+    assert.equal(trivial.hot.suppressed, true, "the trivial measure is suppressed below the floor");
+    assert.equal(trivial.hot.functions, undefined, "no functions when suppressed");
+  },
+);
+
 // `query spans` reads the SAME unified shape on firefox as on chrome: the run span plus the user
 // performance.measure, keyed by label. This is the cross-engine join the dogfooding report asked
 // for -- a firefox consumer no longer special-cases CpuModel.breakdown or misses per-measure spans.

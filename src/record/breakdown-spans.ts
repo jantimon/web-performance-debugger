@@ -1,5 +1,10 @@
-import { packagesByProfileNode, type RawCpuProfile } from "../profile/cpuprofile.js";
+import {
+  packagesByProfileNode,
+  functionIdByNode,
+  type RawCpuProfile,
+} from "../profile/cpuprofile.js";
 import { computeSpanBreakdown, type BreakdownSample } from "../trace/breakdown.js";
+import { tallySpanHot, type SpanHotSample, type SpanHotWindow } from "../profile/span-hot.js";
 import { parseFrames, windowFrames, summarizeFrames } from "../trace/frames.js";
 import type { MergedStep } from "../trace/steps.js";
 import type { SourceMapResolver } from "../trace/sourcemap.js";
@@ -7,7 +12,7 @@ import { WPD_MARK_PREFIX } from "../model/marks.js";
 import { breakdownHeuristicMainThread } from "./notes.js";
 import { mainThread } from "../trace/main-thread.js";
 import { mergeSpanOccurrences } from "../model/span-merge.js";
-import type { NormalizedEvent, SpanBreakdown } from "../model/recording.js";
+import type { NormalizedEvent, SpanBreakdown, SpanHot } from "../model/recording.js";
 
 /** Pair user `performance.measure` async begin/end trace events (blink.user_timing, ph b/e) into
  * named windows. wpd's own `wpd:*` measures are excluded -- the run/step spans come from marks, not
@@ -51,7 +56,14 @@ export async function buildBreakdowns(
   raw: RawCpuProfile,
   runWindow: { startTs: number | null; endTs: number | null },
   mergedSteps: MergedStep[] | undefined,
-  context: { serverUrl: string; root: string; maps: SourceMapResolver; notes: string[] },
+  context: {
+    serverUrl: string;
+    root: string;
+    maps: SourceMapResolver;
+    notes: string[];
+    /** sampler interval (us), so a per-span hot ref's selfMs = samples * interval */
+    sampleIntervalUs: number;
+  },
 ): Promise<SpanBreakdown[]> {
   if (runWindow.startTs == null || runWindow.endTs == null) return [];
   const main = mainThread(events);
@@ -63,13 +75,19 @@ export async function buildBreakdowns(
     (event) => event.pid === main.pid && event.tid === main.tid && event.dur > 0,
   );
 
-  // Project every sample onto the trace clock: absolute ts = startTime + cumulative timeDeltas.
+  // Project every sample onto the trace clock: absolute ts = startTime + cumulative timeDeltas. The
+  // same projection feeds the bar's js-by-package split (packagesByNode) and the per-span hot tally
+  // (functionByNode -> the ranked CpuModel function id), so both read the identical sample clock.
   const packagesByNode = await packagesByProfileNode(raw, context);
+  const functionByNode = functionIdByNode(raw);
   const samples: BreakdownSample[] = [];
+  const hotSamples: SpanHotSample[] = [];
   let clock = raw.startTime;
   for (let index = 0; index < raw.samples.length; index++) {
     clock += raw.timeDeltas[index] ?? 0;
-    samples.push({ traceTs: clock, package: packagesByNode.get(raw.samples[index]) ?? null });
+    const nodeId = raw.samples[index];
+    samples.push({ traceTs: clock, package: packagesByNode.get(nodeId) ?? null });
+    hotSamples.push({ ts: clock, functionId: functionByNode.get(nodeId) ?? null });
   }
 
   const spans: { label: string; kind: SpanBreakdown["kind"]; startTs: number; endTs: number }[] = [
@@ -121,8 +139,43 @@ export async function buildBreakdowns(
       ...(frames ? { frames } : {}),
     });
   }
+  // Per-span hot functions on the CPU-sampler scripting axis (a SEPARATE panel from the bar's js
+  // slice; see SpanHot). A step tallies its single iteration-0 window; a measure label POOLS across
+  // every occurrence's window (the merge below keeps only the lower-median occurrence's bar, but the
+  // hot list wants all the samples). The run span is skipped: its hot list is the CpuModel at query
+  // time. Keyed `${kind}:${label}` so it re-attaches after the merge collapses measure occurrences.
+  const hotByKey = new Map<string, SpanHot>();
+  const measureWindowsByLabel = new Map<string, SpanHotWindow[]>();
+  for (const span of spans) {
+    if (span.kind === "step") {
+      hotByKey.set(
+        `step:${span.label}`,
+        tallySpanHot(
+          hotSamples,
+          [{ startTs: span.startTs, endTs: span.endTs }],
+          "step-window",
+          context.sampleIntervalUs,
+        ),
+      );
+    } else if (span.kind === "measure") {
+      const windows = measureWindowsByLabel.get(span.label) ?? [];
+      windows.push({ startTs: span.startTs, endTs: span.endTs });
+      measureWindowsByLabel.set(span.label, windows);
+    }
+  }
+  for (const [label, windows] of measureWindowsByLabel)
+    hotByKey.set(
+      `measure:${label}`,
+      tallySpanHot(hotSamples, windows, "measure-pooled", context.sampleIntervalUs),
+    );
+
   // A `performance.measure` label repeated across --iterations produced one bar per occurrence above;
   // collapse each label to its lower-median-by-wall real sample. run/steps have unique labels and
   // pass through unchanged.
-  return mergeSpanOccurrences(breakdowns);
+  const merged = mergeSpanOccurrences(breakdowns);
+  for (const bar of merged) {
+    const hot = hotByKey.get(`${bar.kind}:${bar.label}`);
+    if (hot) bar.hot = hot;
+  }
+  return merged;
 }

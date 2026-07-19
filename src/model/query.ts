@@ -187,19 +187,33 @@ export interface SpanForced {
 }
 
 /**
- * Hot functions within a span's window, from the CPU sampling model. `scope: "run-window"` is the
- * only sound scope reconstructable at read time: the resolved CPU model IS the run window (the
- * sampler brackets the whole timed loop), so a run span reports its own hot list exactly. Per-step
- * and per-measure windowing would need the raw per-sample timestamps aligned to the span's trace
- * window, which the resolved model does not retain, so those spans report `hot: null` rather than an
- * approximation.
+ * Hot functions within a span's window, on the CPU-sampler SCRIPTING axis (never the bar's `js`
+ * slice; see model/recording.ts SpanHot). Three scopes:
+ *  - `run-window`: the resolved CpuModel IS the run window (the sampler brackets the whole timed
+ *    loop), so a run span reports its own hot list exactly. `pooledSamples` is the model's total
+ *    sample count.
+ *  - `step-window` / `measure-pooled`: read from the span's stored `SpanHot` refs, resolved to names
+ *    via the sibling CpuModel `functions[]`. A step tallies its single iteration-0 window; a measure
+ *    pools across `occurrences`. `functions` carry SPAN-LOCAL self time (`selfMs` = samples *
+ *    interval, `selfPct` = share of `pooledSamples`); the `id` still indexes the model, so
+ *    `query frame <id>` works.
+ *
+ * `suppressed` is true when the span had fewer than the pooled-sample floor: `functions` is omitted
+ * (raise --iterations) rather than a fabricated top-N. A span whose CPU windowing is not
+ * reconstructable at its rung/kind reports `hot: null` instead of this shape.
  */
 export interface SpanHotFunctions {
-  scope: "run-window";
+  scope: "run-window" | "step-window" | "measure-pooled";
+  /** JS self-time the shares denominate on: `run-window` the model's scriptingMs; else pooledSamples * interval */
   scriptingMs: number;
-  sampleCount: number;
-  /** top functions by self time, length bounded by `--top` */
-  functions: CpuFunction[];
+  /** ranked-JS samples the ranking is built from (`run-window`: the model's total sample count) */
+  pooledSamples: number;
+  /** occurrences pooled: N for a repeated measure, 1 for run/step */
+  occurrences: number;
+  /** true when below the pooled-sample floor: `functions` omitted, raise --iterations */
+  suppressed?: boolean;
+  /** top functions by self time, length bounded by `--top`; absent when suppressed */
+  functions?: CpuFunction[];
 }
 
 /**

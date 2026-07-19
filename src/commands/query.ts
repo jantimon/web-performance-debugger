@@ -3,13 +3,16 @@ import path from "node:path";
 import type {
   BlameSemantic,
   CpuBreakdown,
+  CpuFunction,
   CpuModel,
   EventKind,
   NormalizedEvent,
   Recording,
   Span,
+  SpanHot,
 } from "../model/recording.js";
 import type { BlameEntry, SpanAnatomy, SpanForced, SpanHotFunctions } from "../model/query.js";
+import { MIN_POOLED_HOT_SAMPLES } from "../profile/span-hot.js";
 import { buildSpans, recordingLane, parseSpanKindLabel } from "../model/spans.js";
 import { isFirefoxDeep, isGeckoRung } from "../model/rung.js";
 import { bold, cyan, dim } from "../output/color.js";
@@ -227,24 +230,26 @@ function buildSpanAnatomy(
       firefoxDirtied = firefoxDirtiedBy(windowed, window.startTs) ?? undefined;
   }
 
-  // Hot functions within the span window. The resolved CpuModel IS the run window, so a run span
-  // reports its hot list exactly; per-step/measure windowing would need raw per-sample timestamps the
-  // model does not retain, so those spans report null rather than an approximation.
+  // Hot functions within the span window, on the CPU-sampler scripting axis. The run span reads them
+  // from the resolved CpuModel (which IS the run window); a step/measure span reads its stored
+  // `SpanHot` refs and resolves names via the sibling model. A rung/kind with neither reports null.
   let hot: SpanHotFunctions | null = null;
   if (span.kind === "run" && model)
     hot = {
       scope: "run-window",
       scriptingMs: model.scriptingMs,
-      sampleCount: model.sampleCount,
+      pooledSamples: model.sampleCount,
+      occurrences: 1,
       functions: model.functions.slice(0, topN),
     };
+  else if (span.hot && model) hot = resolveStoredHot(span.hot, model, topN);
 
   const hints: string[] = [];
   if (hasEventLog) {
     hints.push(`Forced-layout source lines: wpd query blame "${recordingPath}" --forced`);
     hints.push(`Drill an event by id: wpd query get "${recordingPath}" <id>`);
   }
-  if (model && span.kind !== "run")
+  if (model && span.kind !== "run" && !span.hot)
     hints.push(`Run-window hot functions: wpd query cpu "${recordingPath}"`);
   // Only suggest `query spans` when this rung actually has a bar/CpuModel for it to fold; on the
   // default/--deep rungs it would error, so a not-available hint would send the reader in a circle.
@@ -274,6 +279,42 @@ function buildSpanAnatomy(
     hot,
     hints,
   };
+}
+
+/**
+ * Resolve a span's stored hot refs (`SpanHot`, step/measure) to displayable functions via the sibling
+ * CpuModel. Each ref's `id` indexes `model.functions[]` for the name/source/package; the self time is
+ * SPAN-LOCAL (`selfMs` = ref samples * interval, `selfPct` = share of the span's pooled samples), so
+ * the panel denominates on the span's own scripting samples, never the run-wide model. `scriptingMs`
+ * is the span's pooled scripting self-time (pooledSamples * interval). A suppressed tally yields no
+ * `functions`; the reader raises --iterations.
+ */
+function resolveStoredHot(stored: SpanHot, model: CpuModel, topN: number): SpanHotFunctions {
+  const scriptingMs = usToMs(stored.pooledSamples * model.sampleIntervalUs);
+  const base: SpanHotFunctions = {
+    scope: stored.scope,
+    scriptingMs,
+    pooledSamples: stored.pooledSamples,
+    occurrences: stored.occurrences,
+  };
+  if (stored.suppressed || !stored.functions) return { ...base, suppressed: true };
+  const functions: CpuFunction[] = stored.functions.slice(0, topN).map((ref) => {
+    const selfPct = stored.pooledSamples > 0 ? (ref.samples / stored.pooledSamples) * 100 : 0;
+    const resolved = model.functions[ref.id];
+    // The id is the run's frame rank, computed from the same profile, so this lookup hits; the
+    // fallback only guards a truncated/foreign model rather than inventing an owner.
+    if (!resolved)
+      return {
+        id: ref.id,
+        fn: "(unresolved)",
+        package: "(native)",
+        selfMs: ref.selfMs,
+        selfPct,
+        totalMs: ref.selfMs,
+      };
+    return { ...resolved, selfMs: ref.selfMs, selfPct, totalMs: resolved.totalMs };
+  });
+  return { ...base, functions };
 }
 
 /** Human report for `query span`: the bar, wall/counts/interaction, forced attribution, hot list. */
@@ -370,26 +411,47 @@ function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | un
   }
 
   if (anatomy.hot) {
-    console.log(
-      `\nHot functions in this span ${dim(`(${anatomy.hot.scope}, ${num(anatomy.hot.scriptingMs, 1)} ms JS self, ${anatomy.hot.sampleCount} samples)`)}. Drill with ${cyan("`query frame <id>`")}:\n`,
-    );
-    console.log(
-      table(
-        ["id", "self ms", "self %", "package", "function (source)"],
-        anatomy.hot.functions.map((fn) => [
-          dim(String(fn.id)),
-          num(fn.selfMs, 1),
-          `${num(fn.selfPct, 1)}%`,
-          cyan(fn.package),
-          `${fn.fn}${fn.file ? ` ${dim(`(${shortSource(fn.file, fn.source)})`)}` : ""}`,
-        ]),
-      ),
-    );
+    const hot = anatomy.hot;
+    const where =
+      hot.scope === "measure-pooled"
+        ? `across ${hot.occurrences} occurrence(s)`
+        : hot.scope === "step-window"
+          ? "in the iteration-0 window"
+          : "in the run window";
+    if (hot.suppressed) {
+      console.log(
+        dim(
+          `\nHot functions: suppressed — only ${hot.pooledSamples} pooled JS sample(s) ${where} (below the ${MIN_POOLED_HOT_SAMPLES}-sample floor). Raise --iterations for a stable ranking.`,
+        ),
+      );
+    } else if (!hot.functions?.length) {
+      console.log(
+        dim(
+          `\nHot functions: ${hot.pooledSamples} pooled JS sample(s) ${where}, none above the per-function floor.`,
+        ),
+      );
+    } else {
+      console.log(
+        `\nHot functions in this span ${dim(`(${hot.scope}, ${where}, ${num(hot.scriptingMs, 1)} ms JS self over ${hot.pooledSamples} sample(s))`)}. self % is the share of the span's pooled JS samples. Drill with ${cyan("`query frame <id>`")}:\n`,
+      );
+      console.log(
+        table(
+          ["id", "self ms", "self %", "package", "function (source)"],
+          hot.functions.map((fn) => [
+            dim(String(fn.id)),
+            num(fn.selfMs, 1),
+            `${num(fn.selfPct, 1)}%`,
+            cyan(fn.package),
+            `${fn.fn}${fn.file ? ` ${dim(`(${shortSource(fn.file, fn.source)})`)}` : ""}`,
+          ]),
+        ),
+      );
+    }
   } else if (span.kind !== "run") {
     const pointer = model ? " Use `query cpu` for the run-window hot list." : "";
     console.log(
       dim(
-        `\nHot functions: not available for a step/measure span (per-span CPU windowing is not reconstructed post-hoc).${pointer}`,
+        `\nHot functions: not available at this rung (record with --breakdown for per-span hot functions).${pointer}`,
       ),
     );
   }

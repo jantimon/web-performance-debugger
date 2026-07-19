@@ -446,6 +446,41 @@ e2e("query span run: --breakdown recording shows the bar and the run-window hot 
   assert.equal(anatomy.counts.forcedLayoutCount, null, "forced count is not-measured on --breakdown");
 });
 
+// Per-span hot functions (--breakdown chrome). A heavy user measure pools its per-occurrence samples
+// and surfaces a ranked hot list on the CPU-sampler scripting axis (shares of the span's pooled JS
+// samples, with the pooled + occurrence counts disclosed); a trivial measure stays below the
+// pooled-sample floor and is suppressed rather than fabricating a top-N.
+e2e("query span <measure>: --breakdown surfaces per-span hot functions, suppressing a trivial span", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "measure-hot");
+  const iterations = 6;
+  runCli([
+    "record", path.join(repoRoot, "test", "fixtures", "measure-hot.mjs"),
+    "--bench", "--breakdown", "--iterations", String(iterations), "--out", out,
+  ]);
+
+  const heavy = JSON.parse(runCli(["query", "span", out, "measure:heavy", "--json"]));
+  assert.ok(heavy.hot, "the heavy measure carries a per-span hot list");
+  assert.equal(heavy.hot.scope, "measure-pooled", "a measure span pools its occurrences");
+  assert.equal(heavy.hot.occurrences, iterations, "every occurrence is pooled and disclosed");
+  assert.ok(heavy.hot.pooledSamples >= 10, `pooled samples clear the floor: ${heavy.hot.pooledSamples}`);
+  assert.ok(heavy.hot.functions?.length > 0, "the ranked hot list is present");
+  // Shares are of the span's pooled JS samples; the ranked subset cannot exceed the pooled scripting.
+  const sumSelf = heavy.hot.functions.reduce((total, fn) => total + fn.selfMs, 0);
+  assert.ok(sumSelf <= heavy.hot.scriptingMs + 1e-6, "Σ per-function selfMs <= the span's pooled scripting");
+  assert.ok(heavy.hot.functions.every((fn) => fn.selfPct > 0 && fn.selfPct <= 100), "each function reports a valid share");
+  assert.ok(
+    heavy.hot.functions.some((fn) => fn.fn === "heavyWork" || fn.source?.includes("measure-hot")),
+    "the dominant work resolves to a named source function",
+  );
+
+  const trivial = JSON.parse(runCli(["query", "span", out, "measure:trivial", "--json"]));
+  assert.ok(trivial.hot, "the trivial measure still reports a hot object");
+  assert.equal(trivial.hot.suppressed, true, "below the pooled floor: suppressed, never a fabricated top-N");
+  assert.equal(trivial.hot.functions, undefined, "no functions when suppressed");
+  assert.ok(trivial.hot.pooledSamples < 10, "the trivial window gathered too few samples to rank");
+});
+
 // `query span <step-label>` on a --deep driver recording: the step's exact windowed counts plus the
 // forced read-sites (dual-annotated with the dirtied-by write) from the deep event log, scoped to the
 // step. A step span carries no run-window hot list (per-span CPU windowing is not reconstructed, and

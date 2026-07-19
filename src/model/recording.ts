@@ -405,6 +405,44 @@ export interface Breakdown {
   residualMs?: number;
 }
 
+/** A per-span hot-function reference: joins to the sibling `CpuModel.functions[]` by `id` (the run's
+ * frame rank by self time), so a reader resolves the name/source/package from the model rather than
+ * duplicating them per span (~35B/entry keeps the artifact digest-sized). */
+export interface SpanHotRef {
+  /** index into the sibling CpuModel.functions[] */
+  id: number;
+  /** pooled ranked-JS samples attributed to this function in the span's window(s) */
+  samples: number;
+  /** samples * sampler interval, ms. Informational: the SHARE of `pooledSamples` is the primary unit. */
+  selfMs: number;
+}
+
+/**
+ * Per-span hot functions, top-K by pooled ranked-JS sample count, on the CPU-sampler SCRIPTING axis.
+ *
+ * This is NOT the bar's `js` slice and never reconciles against it: the two are different axes (the
+ * sampler bills a forced layout to the JS frame that forced it, so this list's ms can exceed the
+ * bar's `js.ms` many-fold). The invariant is `Σ selfMs <= the span's window wall`, not `<= js.ms`.
+ *
+ * Stored on --breakdown (chrome) step/measure spans and firefox measure spans. The run span carries
+ * none -- its hot list is read from the CpuModel at query time (the sampler brackets the whole loop,
+ * so the model IS the run window). Pooling is MEASURE-only: a `measure` label pools samples across
+ * all its occurrences (`occurrences` > 1), a step tallies its single iteration-0 window. Below
+ * ~10 pooled samples the ranking is suppressed (`suppressed: true`, no `functions`) rather than
+ * fabricating a top-N from noise; the reader raises --iterations. Per-function >= 3-sample floor.
+ */
+export interface SpanHot {
+  scope: "step-window" | "measure-pooled";
+  /** pooled ranked-JS samples the ranking is built from -- the share denominator */
+  pooledSamples: number;
+  /** occurrences pooled: N for a repeated measure, 1 for a step or a once-seen measure */
+  occurrences: number;
+  /** true when `pooledSamples` was below the floor: no `functions`, raise --iterations */
+  suppressed?: boolean;
+  /** top-K refs by pooled samples (each >= the per-function floor); absent when suppressed */
+  functions?: SpanHotRef[];
+}
+
 /** Which kind of span a breakdown describes. */
 export type SpanKind = "run" | "step" | "measure";
 
@@ -559,6 +597,12 @@ export interface Span {
    * never summed into `breakdown`, never gated (its counts are scheduler noise). See FrameSideTrack.
    */
   frames?: FrameSideTrack;
+  /**
+   * Per-span hot functions on the CPU-sampler scripting axis (--breakdown chrome step/measure, firefox
+   * measure). Absent on the run span (read from the CpuModel at query time), on rungs with no sampler,
+   * and on older recordings. Refs join to the sibling CpuModel.functions[]. See SpanHot.
+   */
+  hot?: SpanHot;
 }
 
 /** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure). */
@@ -585,6 +629,13 @@ export interface SpanBreakdown {
   wallMinMs?: number;
   /** wall (ms) of the longest merged occurrence; disclosed with `samples`. */
   wallMaxMs?: number;
+  /**
+   * Per-span hot functions on the CPU-sampler scripting axis (--breakdown chrome step/measure, firefox
+   * measure); absent on the run span and rungs with no sampler. Copied onto the stored `Span.hot`. See
+   * SpanHot. When a measure merged occurrences, this is POOLED across all of them (not the kept bar's
+   * single occurrence), so the list has a firmer sample footing than the bar's lower-median sample.
+   */
+  hot?: SpanHot;
 }
 
 /**

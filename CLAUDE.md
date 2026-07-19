@@ -219,8 +219,11 @@ Two things this rule is **not**, both documented in
   new stored type — surfacing each span's `aggregation` (`first`/`sum`/`median`) and, for a merged
   measure, its `samples`/wall spread. **`query span <label>`** is the drill-in: one span's full
   anatomy (bar, wall/aggregation/spread, Measured counts, INP/interaction, the forced read-sites +
-  dirtied-by writes + thrash rollup an event-log rung carries, and the run-window hot functions from
-  the sibling CPU model). `<label>` is a bare label or a `kind:label` qualifier — span identity is
+  dirtied-by writes + thrash rollup an event-log rung carries, and per-span hot functions on the
+  CPU-sampler scripting axis — the run span from the sibling CpuModel, a `--breakdown` chrome
+  step/measure or firefox measure span from stored top-K `SpanHot` refs joined to the model by id
+  (`profile/span-hot.ts`; MEASURE-pooled, share-denominated, floor-suppressed, never the bar's `js`
+  slice — docs/dev/cpu-profiling.md)). `<label>` is a bare label or a `kind:label` qualifier — span identity is
   kind+label, so a bare label matching more than one kind is a collision the caller resolves.
   **Agents/users should read `query spans` then drill with `query span`/`query get <id>`, not the
   multi-MB recording.** `assert.ts` gates the exact count thresholds (recording *or* per-step via the
