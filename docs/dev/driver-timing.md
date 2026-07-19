@@ -143,6 +143,20 @@ to round the parts to whole ms where Chrome does not.
   which Event Timing does not observe: measured **0 entries**. A programmatic step therefore has no
   INP and no breakdown, and that is not a bug to fix. Time programmatic work with `--bench --url`
   instead, which runs in-page with full DOM.
+- **The settle heuristic can fire mid-stream on a soft navigation.** The default `until` is two
+  rAF+idle cycles (`SETTLE_SOURCE` in `settle.ts`), which resolves the moment the page goes briefly
+  idle. On a streamed / soft-navigating SPA (a Next.js route transition whose markup arrives in
+  chunks) that idle gap opens *before* the content lands: **[measured]** ~57 ms of settle against
+  ~171 ms until the route actually painted, on a production Next.js site. The step wall then prices an
+  empty frame, not the transition. Pass an explicit `until:` (a selector matching the landed content,
+  or an async predicate) for any soft-nav step; the heuristic is only safe when the whole update lands
+  in one rAF.
+- **On a re-rendering SPA, drive the action with a plain `page.click('#stable-id')`.** Locator-style
+  waits (`page.locator(sel).click()`, or `waitForSelector` then a click) re-resolve the element and
+  hit **detached-node timeouts** when the framework replaces the node between the wait and the click.
+  A direct `page.click` on a stable selector hit-tests and dispatches in one step, and is the trusted
+  input Event Timing observes (unlike `page.evaluate(() => el.click())` above). It is the reliable
+  form for the `action` a `measureStep` drives.
 - **The 16 ms floor is the spec's.** `durationThreshold` below 16 is clamped, so an interaction
   faster than a frame produces no entry at all. A `null` INP means "nothing crossed 16 ms", not
   "the engine cannot measure it".

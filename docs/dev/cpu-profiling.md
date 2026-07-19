@@ -282,6 +282,47 @@ what the one-frame `wall`/`INP` floor hides.
   ENTRIES: undersizing silently overwrites (drops) the window's *earliest* samples. `stackwalk`
   stays off (zero signal on shallow JIT stacks, +0.7 MB).
 
+## Which spans get CPU attribution
+
+CPU attribution (the sampler's scripting axis: the run bar's `js` slice and the per-span hot list)
+reaches a span only where a sampler rung ran AND that span kind carries a window the samples can be
+tallied over. The run span reads the sibling `CpuModel` at query time; a step or measure span carries
+stored top-K `SpanHot` refs, which exist only where the fused `--breakdown` trace (or the gecko pass)
+gave that span its own window.
+
+| lane / rung | run span | step span | measure span |
+| --- | --- | --- | --- |
+| chrome default | yes (CpuModel) | no | no (no trace = no measure spans) |
+| chrome `--breakdown` | yes (CpuModel) | yes (`SpanHot`) | yes (`SpanHot`) |
+| chrome `--deep` | no (sampler OFF) | no | no |
+| chrome `--precise-wall` | no (sampler OFF) | no | no |
+| firefox (`gecko`/`gecko-deep`) | yes (CpuModel) | no | yes (`SpanHot`) |
+| node | yes (CpuModel) | n/a (no steps) | n/a (no measures) |
+
+So the run span is the only span with CPU attribution on the default and node lanes; steps get it only
+under chrome `--breakdown`; measures get it under chrome `--breakdown` and firefox. `--deep` and
+`--precise-wall` run the sampler OFF, so no span carries a CPU number on them.
+
+### The sampler's window resets on a cross-process navigation
+
+**[measured]** The V8 sampling profiler restarts in the new renderer process on a cross-process
+navigation: `Profiler.stop` returns only the post-navigation process's samples. So the `CpuModel`, the
+run bar's `js` slice, the per-span hot list, and the "sampled window" cover **only the run after its
+last cross-process navigation**; page CPU work done in a prior renderer is absent from `selfMs` and the
+bar. **wpd does not detect or flag this under-coverage** on main: the sampled window is the profiler's
+own `endTime − startTime` and is never compared against the run wall.
+
+Probe: a driver module that burns ~150 ms of page CPU on the blank host page, then
+`page.goto()` to a different origin (a true renderer swap), reports **10.4 ms** total JS self-time and
+a **229 ms** sampled window that is entirely the post-navigation settle -- **zero** samples for the
+150 ms loop. A same-origin control (no process swap) loses nothing: `Σ timeDeltas` equals the window to
+0.1 ms. This bites only a driver flow that does page work *before* it navigates; the built-in on-ramp
+load flow navigates as its first action, so there is no pre-navigation window to lose. It is distinct
+from the trace-count re-anchor (`trace/main-thread.ts`, which follows the navigation for counts) and
+from the step-wall page-clock reset (`driver.ts`, which is about `performance.now()`, not samples).
+Firefox does not have this gap: its Gecko profiler runs for the whole browser lifetime and does not
+restart on navigation.
+
 ## Per-span hot functions
 
 `query span <label>` shows a per-span hot list on the sampler rungs: the run span reads it from the

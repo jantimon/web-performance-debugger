@@ -7,7 +7,7 @@
 
 **Scope.** This file is the **raw dump format**: schemas, encodings, bases. For what the names
 *mean* against Chrome's vocabulary — and where the two engines look equivalent but are not — read
-[engine-mapping.md](./engine-mapping.md). For the pass plan and sampler behaviour, read
+[engine-mapping.md](./engine-mapping.md). For the rung ladder and sampler behaviour, read
 [cpu-profiling.md](./cpu-profiling.md).
 
 Everything below was verified against a
@@ -24,8 +24,9 @@ regenerate a full one, launch Firefox via Puppeteer with the `MOZ_PROFILER_*` en
   `page.screenshot`, reading `performance.getEntriesByType("mark")`.
 - `page.createCDPSession()` **throws** (empty message). `page.tracing.start/stop` **throws**
   `"CDP support is required for this feature. The current browser does not support CDP."`
-  So: no CDP counters, no DevTools trace, no CPU/network throttling, no invalidationTracking.
-  Every CDP touchpoint is capability-gated behind `capsFor(browser).cdpCounts/trace/throttle`.
+  So: no DevTools trace (hence no exact rendering counts), no CPU/network throttling, no
+  invalidationTracking. Every CDP touchpoint is capability-gated behind
+  `capsFor(browser).cdpCounts/trace/throttle`.
 - **"We reach it through CDP" is not the same claim as "Gecko cannot do it", and a reject
   list conflates the two.** Two [measured] counter-examples worth knowing before adding a CDP-gated
   feature:
@@ -145,7 +146,7 @@ the JS label in `data.name` (e.g. `data.name === "wpd:run:start"`). NOT a marker
 samples (and rendering markers) to `[wpd:run:start, wpd:run:end]`. Works in both bench and driver
 modes (both already emit those marks).
 
-## Reflow/Styles markers -> layout/style blame (landed, but see the semantics warning)
+## Reflow/Styles markers -> layout/style blame (see the semantics warning)
 
 - Marker names: `"Styles"` (style recalc, phase 1 interval) and `"Reflow (sync)"` /
   `"Reflow (interruptible)"` (phase 2/3 start/end pairs). Category 3 = Layout. These are the
@@ -171,12 +172,13 @@ modes (both already emit those marks).
   count as 0 — indistinguishable from a clean run — so there is no flag to turn the gecko pass off on
   this lane (the CLI keeps the profiler on for every firefox rung). Both `query cpu` (self-time on the
   forcing frame) and
-  `query blame --forced` (the read-site samples) now name the read on this lane; see
+  `query blame --forced` (the read-site samples) name the read on this lane; see
   [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
 
 ## What is NOT measured on Firefox (reported honestly, never as fake zeros)
 
-CDP counters (exact layout/style/script counts), paint counts, invalidation tracking + rollup,
+Exact rendering counts (layout/style/script; trace-derived on Chrome, unreachable here without a
+DevTools trace), paint counts, invalidation tracking + rollup,
 long-task attribution from a DevTools trace, and CPU/network throttling. `meta.notes` and the
 terminal report say so; `assert` on those metrics fails rather than passing on a fake 0.
 

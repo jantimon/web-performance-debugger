@@ -12,7 +12,7 @@ tip-of-tree in 2026-07, marked **[source]** with a permalink. Nothing here is fr
 alone: both engines' user-facing docs are silent or wrong on most of this.
 
 Related: [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas),
-[cpu-profiling.md](./cpu-profiling.md) (passes, sampler contamination, what self-time includes).
+[cpu-profiling.md](./cpu-profiling.md) (the rung ladder, sampler contamination, what self-time includes).
 
 ## The naming map
 
@@ -181,7 +181,7 @@ Because:
 The cause chain [gecko-profile-format.md](./gecko-profile-format.md) records for a Gecko flush
 marker (`Node.appendChild -> ...`) is the tell: `appendChild` is the **write**, not a geometry read.
 
-**So `query blame --forced` no longer uses that marker cause.** The read site is instead **sampled
+**So `query blame --forced` does not use that marker cause.** The read site is instead **sampled
 from the stacks**: a DOM-accessor label frame (`get HTMLElement.offsetWidth`) sitting over a
 Layout-category flush, attributed to the nearest JS ancestor's per-sample **executing line**
 (`frameTable.line`), with the property named. Measured [GL-1]: 12/21 of Chrome's read lines matched
