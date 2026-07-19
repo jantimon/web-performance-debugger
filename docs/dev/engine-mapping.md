@@ -183,6 +183,36 @@ cost to the **forcing** frame on both engines (`run()` at **8.41ms** chrome / **
 agreeing within 5%). See
 [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
 
+## Chrome's write side: dirtied-by + the thrash detector (`--deep`)
+
+Chrome's `.stack` names the **read** that forced a flush; Chrome's `invalidationTracking` records name
+the **write** that dirtied the DOM. `--deep` captures both, so on Chrome (and only Chrome) a forced
+flush carries both causal ends: `forced-by` (the read) and `dirtied-by` (the write). Firefox has no
+`invalidationTracking`, so its `--deep` write side would come from the marker cause stack instead
+(reachable under `args.data.invalidationStack`), never surfaced as this dual annotation.
+
+**[measured]** on `examples/forces-layout.mjs` under the full trace, main thread, `ts`-ordered:
+
+- **Dirtied-by comes from the STYLE-kind invalidation record, never `LayoutInvalidationTracking`.**
+  On this style-driven workload the layout dirty bit is set *during* the forced style recalc, so
+  `LayoutInvalidationTracking`'s stack names the forcing **read** (`52:14`, ...), not the write. The
+  genuine write line is on the style-kind record: `StyleRecalcInvalidationTracking reason="Inline CSS
+  style declaration was mutated"` -> `bump` (line 16), and `reason="Node was inserted into tree"` ->
+  the `appendChild` (line 38). So the detector reads dirtied-by off the style-kind mutation record and
+  ignores the layout record's stack. A workload that dirties layout *directly* (`appendChild`,
+  `textContent`, `.className` affecting geometry) would put a real write stack on
+  `LayoutInvalidationTracking`; this probe never does, so that path is **[unprobed]** and layout-kind
+  stacks are not trusted as dirtied-by.
+
+- **The thrash rule matches by kind.** A forced flush is a thrash step iff a write of *its own* kind
+  (a layout write for a `Layout` flush, a style write for an `UpdateLayoutTree`) sat in the gap since
+  the previous flush in the same top-level `RunTask`. All 43 forced flushes on the probe sit in ONE
+  `RunTask` (the whole `run()`), and the interleave is stable across runs with zero `ts`-inversions.
+  Matching by kind counts **42 of 43** flushes; the one it drops is the `focus()` Layout re-read,
+  whose gap holds only a `:focus`-recalc style write and no layout write -- a genuine non-thrash (it
+  re-read clean geometry). Relaxing to "any layout|style write in the gap" reaches 43/43 but counts
+  that clean re-read, so wpd keeps the matching-kind rule and accepts the one-step under-count.
+
 ## What is actually comparable across engines
 
 **[measured]**, same probe, and it inverts the hierarchy the README currently implies:

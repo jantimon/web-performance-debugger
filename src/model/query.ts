@@ -9,6 +9,7 @@ import type {
   CpuJsSlice,
   CpuSlice,
   CpuSystem,
+  DirtiedByWrite,
   EventKind,
   FrameSideTrack,
   SpanAggregation,
@@ -70,6 +71,12 @@ export interface BlameEntry {
    * names the read line but not the accessor).
    */
   properties?: string[];
+  /**
+   * The WRITE end of the forced-flush dual annotation: the mutation(s) that dirtied the DOM so this read forced
+   * a synchronous flush. Chrome `--deep` only (its invalidation records name the write); absent on
+   * every other lane. `at` is the read (who paid), `dirtiedBy` the write (who caused).
+   */
+  dirtiedBy?: DirtiedByWrite[];
 }
 
 /**

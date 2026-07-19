@@ -1,7 +1,8 @@
 import type { Recording } from "../model/recording.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
 import { kv, num, sparkline, table } from "../output/ascii.js";
-import { dim } from "../output/color.js";
+import { bold, dim } from "../output/color.js";
+import { analyzeThrash, renderThrashStep, THRASH_HEADLINE_MIN } from "../trace/thrash.js";
 
 /**
  * Where the count column came from, which differs by rung/lane and must not be asserted blindly.
@@ -53,6 +54,37 @@ function wallRow(rec: Recording): [string, string][] {
       ? `wall (sum of ${samples} timed iterations)`
       : "wall";
   return [[label, `${num(summary.wallMs)} ms`]];
+}
+
+/**
+ * The Chrome `--deep` forced-layout section: the dual annotation (forced-by read + dirtied-by
+ * write) and the thrash-interleave detector, led by identities since a --deep recording
+ * suppresses slice ms. Prints nothing when no forced flush was observed. Chrome --deep only -- the
+ * caller gates on the rung, so Firefox (no invalidation records) never reaches here and reads
+ * "not available" (no thrash section at all), never a fabricated 0.
+ */
+function printForcedAttribution(rec: Recording): void {
+  // The full event log, NOT a window-filtered slice: the enclosing RunTask can begin a hair before
+  // the run:start mark, and analyzeThrash needs it to walk the interleave. It windows internally,
+  // reporting only in-window flushes.
+  const { report } = analyzeThrash(rec.events, rec.window.startTs);
+  if (report.count === 0) {
+    // The rung measured forced flushes but none re-dirtied since the last flush: no thrashing.
+    if (rec.summary.forcedLayoutCount != null && rec.summary.forcedLayoutCount > 0)
+      console.log(
+        `\nForced layout/style: ${rec.summary.forcedLayoutCount} flush(es), none thrashing (no write re-dirtied a cleaned read). ${dim("query blame --forced for the read + dirtied-by lines")}`,
+      );
+    return;
+  }
+  const headline =
+    report.count >= THRASH_HEADLINE_MIN
+      ? `⚠ ${bold(`layout thrashed ${report.count}x during this run`)}`
+      : `layout thrashed ${report.count}x during this run`;
+  console.log(`\n${headline}  ${dim("(a write re-dirtied a just-read layout; forced re-flush)")}`);
+  console.log(dim("  interleave (write → read), the thrashing signature:"));
+  for (const step of report.steps) console.log(`    ${renderThrashStep(step)}`);
+  if (report.omitted > 0) console.log(dim(`    … +${report.omitted} more thrash step(s)`));
+  console.log(dim("  full read + dirtied-by lines: query blame --forced"));
 }
 
 export function printSummary(rec: Recording): void {
@@ -136,7 +168,12 @@ export function printSummary(rec: Recording): void {
       ]),
     );
   }
-  if (summary.forcedLayoutCount != null && summary.forcedLayoutCount > 0) {
+  // The identity-led forced-layout section: on --deep the write side is available (dirtied-by) and
+  // the interleave detector runs, so lead with them; every other lane that measured forced counts
+  // (firefox markers) can only point at the read-site blame verb.
+  if (rec.meta.passes.includes("deep")) {
+    printForcedAttribution(rec);
+  } else if (summary.forcedLayoutCount != null && summary.forcedLayoutCount > 0) {
     console.log("  ⚠ layout thrashing — run `query blame --forced` to see the source lines");
   }
 

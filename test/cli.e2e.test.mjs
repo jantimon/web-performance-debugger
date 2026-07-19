@@ -64,6 +64,41 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
   assert.ok(top.kinds.includes("layout"), "kinds include layout");
 });
 
+// The signature move: --deep detects layout thrashing (write->read->write->read) over the trace's
+// invalidation records, reports the count + interleave, and annotates each forced read with the
+// WRITE that dirtied it. examples/forces-layout.mjs is a known thrash: bump() writes inline style
+// (line 16), then each geometry property is read on its own line, so every read re-flushes.
+e2e("record --deep detects layout thrashing and dual-annotates read + dirtied-by write", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "thrash");
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", "1", "--out", out]);
+
+  // The thrash rollup rides the digest. N = 3 is the headline threshold; this workload thrashes far
+  // over it (measured ~42 steps over ~21 geometry reads).
+  const digest = JSON.parse(runCli(["query", "digest", out, "--json"]));
+  assert.ok(digest.thrash, "the digest carries a thrash rollup on --deep");
+  assert.ok(digest.thrash.count >= 3, `thrashCount >= N=3, got ${digest.thrash.count}`);
+  assert.ok(Array.isArray(digest.thrash.steps) && digest.thrash.steps.length > 0, "the interleave has steps");
+
+  // The interleave names BOTH ends: a read line and the bump() write line (16).
+  const namesRead = digest.thrash.steps.some((step) => step.read?.includes("forces-layout.mjs"));
+  assert.ok(namesRead, "a thrash step names a geometry read line in forces-layout.mjs");
+  const writeLines = digest.thrash.steps.flatMap((step) => step.dirtiedBy.map((w) => w.at));
+  assert.ok(
+    writeLines.some((at) => /forces-layout\.mjs:16\b/.test(at)),
+    `a thrash step's dirtied-by names the bump() write line 16, got ${JSON.stringify([...new Set(writeLines)])}`,
+  );
+
+  // The dual annotation also hangs on `query blame --forced`: the read stays the headline, the write
+  // is attached as dirtiedBy with its Chrome invalidation reason.
+  const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
+  const annotated = blame.find((row) => row.dirtiedBy?.some((w) => /forces-layout\.mjs:16\b/.test(w.at)));
+  assert.ok(annotated, "a forced read-site carries a dirtied-by write");
+  const bumpWrite = annotated.dirtiedBy.find((w) => /forces-layout\.mjs:16\b/.test(w.at));
+  assert.equal(bumpWrite.reason, "Inline CSS style declaration was mutated", "the write names its mutation reason");
+  assert.ok(annotated.at.includes("forces-layout.mjs"), "the read (headline) is a forces-layout.mjs line");
+});
+
 // --target node profiles in-process via node's V8 inspector, so it needs no browser and
 // runs everywhere (not gated on Chrome).
 test("record --target node resolves hot functions to source without a browser", () => {

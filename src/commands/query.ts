@@ -12,6 +12,8 @@ import type { BlameEntry } from "../model/query.js";
 import { buildSpans, recordingLane } from "../model/spans.js";
 import { isSteppedRecording, stepIndexView } from "../model/step-view.js";
 import { num, table } from "../output/ascii.js";
+import { dim } from "../output/color.js";
+import { analyzeThrash } from "../trace/thrash.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
 import { assertRecordingArtifact } from "../model/artifact.js";
 import { buildDigest } from "./digest.js";
@@ -342,6 +344,15 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   );
   if (query.top != null) rows = rows.slice(0, query.top);
 
+  // dirtied-by: the WRITE that dirtied each forced read-site, from the invalidation records only
+  // a --deep trace carries. Absent on every other lane (empty map), so the read stays the headline
+  // and no second line prints there.
+  // Pass the full event log: the enclosing RunTask can begin just before the run:start mark, and the
+  // interleave walk needs it. analyzeThrash windows internally to the in-window flushes.
+  const dirtiedByReadSite = rec.meta.passes.includes("deep")
+    ? analyzeThrash(rec.events, rec.window.startTs).dirtiedByReadSite
+    : {};
+
   const fmt = structuredFormat(query);
   if (fmt) {
     const entries: BlameEntry[] = rows.map((row) => ({
@@ -351,6 +362,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       durMs: row.durMs,
       kinds: [...row.kinds] as EventKind[],
       properties: row.properties.size ? [...row.properties] : undefined,
+      dirtiedBy: dirtiedByReadSite[row.at]?.length ? dirtiedByReadSite[row.at] : undefined,
     }));
     return emit(entries, fmt);
   }
@@ -388,6 +400,20 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
           ]),
         ),
   );
+  // dual annotation: under each forced read-site, the WRITE that dirtied it (Chrome --deep). The
+  // read stays the headline (the table above); dirtied-by is the second line, so a reader sees both
+  // "who paid" (the read) and "who caused" (the write). Only rows with a resolved write print.
+  const dirtiedRows = rows.filter((row) => dirtiedByReadSite[row.at]?.length);
+  if (dirtiedRows.length) {
+    console.log("\ndirtied-by (the write that forced each read):");
+    for (const row of dirtiedRows) {
+      console.log(`  ${row.at}`);
+      for (const write of dirtiedByReadSite[row.at])
+        console.log(
+          `    ${dim("↳ dirtied by")} ${write.at}${write.reason ? dim(` (${write.reason})`) : ""}`,
+        );
+    }
+  }
   // Only the forced rows have an engine-specific meaning worth naming, so the note is gated on
   // one being present rather than on the --forced flag: plain `blame` and `--all` show forced and
   // unforced rows together, and an unforced scripting/invalidation row is not a geometry read at

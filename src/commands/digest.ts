@@ -1,6 +1,7 @@
 import type { Digest, NormalizedEvent, Recording } from "../model/recording.js";
 import { usToMs } from "../model/time.js";
 import { forcedLayouts, longTasks, extractInvalidations } from "../trace/analysis.js";
+import { analyzeThrash } from "../trace/thrash.js";
 
 export function buildDigest(rec: Recording, recordingPath: string, topN = 20): Digest {
   const start = rec.window.startTs;
@@ -68,7 +69,19 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
     .sort((left, right) => right.count - left.count)
     .slice(0, topN);
 
-  const forced = forcedLayouts(inWindow, start).slice(0, topN);
+  // The layout-thrashing detector + dirtied-by write annotation, Chrome `--deep` only: it walks
+  // the invalidation records the full trace carries, which no other lane has (Firefox/--breakdown
+  // drop them). Absent (undefined thrash, no dirtiedBy) elsewhere -- not a fabricated 0. Fed the FULL
+  // event log (rec.events), not the windowed `inWindow`: the enclosing RunTask can begin just before
+  // the run:start mark, so windowing first would drop it; analyzeThrash windows the flushes itself.
+  const isDeep = rec.meta.passes.includes("deep");
+  const thrashAnalysis = isDeep ? analyzeThrash(rec.events, start) : null;
+  const forced = forcedLayouts(inWindow, start)
+    .slice(0, topN)
+    .map((forcedEntry) => {
+      const dirtiedBy = thrashAnalysis?.dirtiedByReadSite[forcedEntry.at];
+      return dirtiedBy?.length ? { ...forcedEntry, dirtiedBy } : forcedEntry;
+    });
   const tasks = longTasks(inWindow, start)
     .slice(0, topN)
     .map((task) => ({
@@ -90,7 +103,11 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
       at: forcedEntry.at,
       count: forcedEntry.count,
       durMs: forcedEntry.durMs,
+      ...("dirtiedBy" in forcedEntry ? { dirtiedBy: forcedEntry.dirtiedBy } : {}),
     })),
+    // The thrash rollup rides only a --deep recording (thrashAnalysis is null otherwise), so this is
+    // absent on every other lane -- "not available", never a fabricated count: 0.
+    ...(thrashAnalysis ? { thrash: thrashAnalysis.report } : {}),
     longTasks: tasks,
     invalidationsByReason,
     // The recording's spans (run + steps + measures), carried through so `query digest` exposes them

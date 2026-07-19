@@ -577,6 +577,48 @@ export interface Recording {
 }
 
 /**
+ * The WRITE end of the forced-flush dual annotation: a DOM mutation that dirtied layout/style
+ * so a later geometry read had to flush it synchronously. `at` is the mutation's source line, `reason`
+ * the Chrome invalidation reason (e.g. "Inline CSS style declaration was mutated"). Sourced from the
+ * STYLE-kind invalidation records only; the layout-kind `LayoutInvalidationTracking` stack names the
+ * forcing READ on style-driven invalidations, not the write, so it is never a dirtied-by (measured;
+ * docs/dev/engine-mapping.md). Chrome `--deep` only -- Gecko has no invalidationTracking.
+ */
+export interface DirtiedByWrite {
+  /** source line of the mutation (the write), relative to root */
+  at: string;
+  /** the Chrome invalidation reason string, when the record carried one */
+  reason?: string;
+}
+
+/**
+ * One step of the layout-thrashing interleave: a forced flush that re-read geometry an intervening
+ * write had re-dirtied since the previous flush in the same task. `read` is the geometry read that
+ * paid (the flush-site), `dirtiedBy` the mutation(s) that caused the re-dirty (the write end). A
+ * layout-flush step can carry an empty `dirtiedBy`: it is a thrash step because a layout-kind write
+ * sat in its gap, but that write's stack names the read, not a surfaceable write (see DirtiedByWrite).
+ */
+export interface ThrashStep {
+  kind: "layout" | "style";
+  read?: string;
+  dirtiedBy: DirtiedByWrite[];
+}
+
+/**
+ * The layout-thrashing detector's rollup over a window (Chrome `--deep` only). `count` is Σ thrash
+ * steps -- forced flushes re-dirtied since the previous flush in the same top-level task, matched by
+ * kind (a layout flush needs a layout write in its gap, a style flush a style write). `steps` is the
+ * write->read interleave, capped for size; `omitted` counts thrash steps past the cap. Absent, never
+ * a fabricated `count: 0`, on any lane that cannot observe it (the default/--breakdown rungs drop the
+ * invalidation records, Firefox has none).
+ */
+export interface ThrashReport {
+  count: number;
+  steps: ThrashStep[];
+  omitted: number;
+}
+
+/**
  * Small, context-friendly entry point into a (possibly huge) recording. Read this
  * first, then drill by event `id` (`query get`) or bounded `query` calls.
  */
@@ -590,12 +632,20 @@ export interface Digest {
   /**
    * forced (synchronous) layout/style grouped by source; prime optimization targets. On Firefox
    * these counts are sample-derived (one per read-site sample), while `summary.forcedLayoutCount`
-   * is marker-derived (one per real flush), so the two legitimately differ there.
+   * is marker-derived (one per real flush), so the two legitimately differ there. `dirtiedBy` (the
+   * write end of the dual annotation) is present only on a Chrome `--deep` recording, whose
+   * invalidation records name the mutation that dirtied this read-site.
    */
-  forced: { at: string; count: number; durMs: number }[];
+  forced: { at: string; count: number; durMs: number; dirtiedBy?: DirtiedByWrite[] }[];
   /** longest tasks (>= threshold) as drill-in entry points */
   longTasks: { id: number; ts: number; durMs: number; dominantKind?: string; at?: string }[];
   invalidationsByReason: { kind: string; reason: string; count: number; sampleAt?: string }[];
+  /**
+   * The layout-thrashing rollup (Chrome `--deep` only). Absent on every other lane -- the default and
+   * --breakdown rungs drop the invalidation records the detector walks, and Firefox has none -- so a
+   * reader sees "not available", never a fabricated `count: 0`.
+   */
+  thrash?: ThrashReport;
   /** the recording's spans (run + steps + measures), carried through so `query digest` exposes them */
   spans: Span[];
   hints: string[];
