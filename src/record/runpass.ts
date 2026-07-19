@@ -213,7 +213,14 @@ export async function runPass(
 
     if (opts.driver) {
       if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
-      if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
+      // The CPU sampler opens right before the run mark, from inside runDriver (after prepare and
+      // warmup), NOT here: it is not windowed after the fact, so starting it before prepare bills
+      // setup's page-side JS to the run. The trace, which IS windowed to the run marks, may start
+      // earlier. See runDriver's beforeRunWindow.
+      const startProfiler =
+        spec.cpu && client && caps.cpuProfile
+          ? () => startCpuProfile(client, cpuIntervalUs)
+          : undefined;
       // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
       // just won't resolve through makeSourceResolver (which keys off the served-url prefix),
       // so its own frames stay unresolved; the page's frames are unaffected.
@@ -223,6 +230,7 @@ export async function runPass(
         opts.fn,
         { iterations: opts.iterations, warmup: opts.warmup },
         onramp ? { navigateUrl: onrampNavigateUrl! } : undefined,
+        startProfiler,
       );
       driverSteps = driverResult.steps;
       lifecycle = driverResult.lifecycle;

@@ -172,6 +172,7 @@ export async function runDriver(
   fnName: string,
   options: DriverOptions = { iterations: 1, warmup: 0 },
   onramp?: OnrampFlow,
+  beforeRunWindow?: () => Promise<void>,
 ): Promise<DriverResult> {
   let run: (arg: any) => unknown;
   let prepare: ((arg: any) => unknown) | undefined;
@@ -370,6 +371,16 @@ export async function runDriver(
   recording = false;
   for (let warm = 0; warm < options.warmup; warm++) await run({ page, ctx, measureStep });
   recording = true;
+
+  // prepare() and warmup have run; open the CPU sampler HERE, right before the run mark, not before
+  // prepare. The V8 sampler is not windowed after the fact (there is no trace clock on the default
+  // rung to slice it by), so anything it samples lands in the model. Started before prepare it bills
+  // prepare's and every warmup's page-side JS to the run: on a probe whose run() does ~5ms and
+  // prepare() does ~80ms, scriptingMs reads ~88ms with prepare as the top hot function. Starting it
+  // after warmup makes the profile's lifetime the run window (the settle tail aside, which is idle),
+  // symmetric with bench, where setup already runs before the sampler. The trace counts are windowed
+  // from the mark regardless, so the trace may start earlier; only the sampler must not.
+  if (beforeRunWindow) await beforeRunWindow();
 
   // prepare() and warmup have run; mark the run window so setup DOM work stays outside it (the
   // trace counts, when a trace is captured, are windowed start-onward from this mark).

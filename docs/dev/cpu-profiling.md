@@ -89,6 +89,30 @@ node) and costs no extra pass. The sampler-free rungs are chrome's `--precise-wa
 node and firefox have none, because node would measure nothing without the sampler and firefox
 without the gecko pass reports every rendering count as 0.
 
+### The sampler opens at the run mark, not before prepare
+
+**[measured]** The V8 CPU model is built from the WHOLE returned profile, never sliced to the run
+window: there is no trace clock on the default rung to slice it by, so whatever the sampler recorded
+lands in `scriptingMs`, the package rollup, the hot list, and `cpu-diff`. So the sampler's lifetime
+IS the measured window, and it opens **right before the `wpd:run:start` mark**, after `prepare()` and
+after every warmup iteration (`browser/driver.ts` `beforeRunWindow`, `record/runpass.ts`). `cleanup()`
+already runs after the sampler stops.
+
+Opened before `prepare()` instead, it bills every page-side JS that setup ran to the run. On a driver
+probe whose `run()` does ~5 ms of page JS and whose `prepare()` does ~80 ms, the whole-profile model
+reads **scriptingMs ~88 ms with the setup loop as the top hot function (~84 ms, 95%)** and a ~310 ms
+sampled window; a second `--warmup 2` adds the warmup repetitions on top (~99 ms). Opening it at the
+run mark reads **scriptingMs ~9 ms**, the run's own cost. The trace COUNTS are windowed to the run
+marks regardless (`findWindow`), so on `--breakdown` the trace may start before the sampler; only the
+sampler must not. This matches bench, where `prepare()`+warmup already run in a separate `page.evaluate`
+before the sampler starts (`runpass.ts` setup phase).
+
+Starting late is safe across navigation: the page CDP session outlives a cross-document navigation
+(the on-ramp `--url` load step navigates inside the run window with the sampler already open), so a
+`prepare()` that navigates is simply excluded, and a `run()` that navigates behaves as before -- V8
+still resets the profile on that navigation, and the `--breakdown` per-span coverage-gap note
+(buildBreakdowns) still fires for any pre-navigation step/measure window.
+
 ### Why the sampler never rides a `.stack` trace
 
 **[measured]** Sampling is cheap; that is not why the sampler needs a trace it can avoid.
