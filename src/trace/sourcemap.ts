@@ -210,6 +210,11 @@ export async function boundedFetch(
         currentUrl = new URL(location, currentUrl).href;
         continue;
       }
+      // 401/403 is a distinct, actionable outcome: the resource exists but is auth-walled, and
+      // wpd's node-side fetch sends no cookies/credentials, so the generic "could not be fetched"
+      // remedy (which mentions CORS, a browser-only concept) would misdirect.
+      if (response.status === 401 || response.status === 403)
+        return { ok: false, failure: "auth-required" };
       if (!response.ok) return { ok: false, failure: genericFailure(kind) };
       return await readCapped(response, cap, kind, () => controller.abort());
     } catch {
