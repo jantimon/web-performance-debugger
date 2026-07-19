@@ -148,14 +148,20 @@ test("windowing: a pre-window write counts, a pre-window flush does not", () => 
   );
 });
 
-test("sequence rendering: write(reasoned) -> read, and read-only for an empty write", () => {
+test("sequence rendering caps distinct writes per step at 4 with +N more", () => {
+  const dirtiedBy = ["w1", "w2", "w3", "w4", "w5", "w6"].map((at) => ({ at, reason: null }));
+  const rendered = renderThrashStep({ kind: "style", read: "r", dirtiedBy });
+  assert.equal(rendered, "write w1, w2, w3, w4, +2 more → read r (style)");
+});
+
+test("sequence rendering: write(reasoned) → read, and read-only for an empty write", () => {
   assert.equal(
     renderThrashStep({
       kind: "style",
       read: "app.js:20",
       dirtiedBy: [{ at: "app.js:10", reason: "Inline CSS style declaration was mutated" }],
     }),
-    "write app.js:10 (Inline CSS style declaration was mutated) -> read app.js:20 (style)",
+    "write app.js:10 (Inline CSS style declaration was mutated) → read app.js:20 (style)",
   );
   assert.equal(
     renderThrashStep({ kind: "layout", read: "app.js:20", dirtiedBy: [] }),
@@ -163,7 +169,7 @@ test("sequence rendering: write(reasoned) -> read, and read-only for an empty wr
   );
   assert.equal(
     renderThrashStep({ kind: "style", read: "r", dirtiedBy: [{ at: "w1" }, { at: "w2", reason: "z" }] }),
-    "write w1, w2 (z) -> read r (style)",
+    "write w1, w2 (z) → read r (style)",
   );
 });
 

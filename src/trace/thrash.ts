@@ -13,7 +13,7 @@ import { mainThread } from "./main-thread.js";
  *
  * The signature of thrashing is write->read->write->read on one frame: each geometry read re-flushes
  * a layout an intervening write dirtied. The rule, per top-level `RunTask` window, main thread, in
- * `ts` order (measured against `examples/forces-layout.mjs`, docs/dev/engine-mapping.md, probe G):
+ * `ts` order (measured against `examples/forces-layout.mjs`; docs/dev/engine-mapping.md):
  *
  *   - A forced flush is a `layout`/`style` event with a resolved read-site stack (`event.forced`).
  *   - A write is an `invalidation`-kind event of layout or style kind (`invalidationKind`).
@@ -94,7 +94,9 @@ function dedupeWrites(writes: DirtiedByWrite[]): DirtiedByWrite[] {
 /**
  * Walk each top-level task and annotate every in-window forced flush with the writes in its gap. The
  * gap resets at EVERY flush (in-window or not: a flush still cleans the geometry), while only
- * in-window flushes are reported, since the run window is what scopes the span.
+ * in-window flushes are reported, since the run window is what scopes the span. A forced flush
+ * outside any top-level task is not walked and so never counts as a thrash step; on the renderer
+ * main thread every layout/style flush nests under a task, so nothing real is dropped.
  */
 function annotateForcedFlushes(events: NormalizedEvent[], start: number | null): FlushAnnotation[] {
   const picked = mainThread(events);
@@ -172,12 +174,18 @@ export function analyzeThrash(
   };
 }
 
-/** Render one thrash step as `write(at) -> read(at)`, the interleave the thrash report surfaces. */
+/** Distinct writes named per rendered step; a gap dirtying more lines says "+N more". */
+const WRITES_PER_STEP_CAP = 4;
+
+/** Render one thrash step as `write(at) → read(at)`, the interleave the thrash report surfaces. */
 export function renderThrashStep(step: ThrashStep): string {
   const read = `read ${step.read ?? "?"} (${step.kind})`;
   if (!step.dirtiedBy.length) return read;
-  const write = step.dirtiedBy
+  const named = step.dirtiedBy.slice(0, WRITES_PER_STEP_CAP);
+  const omitted = step.dirtiedBy.length - named.length;
+  const write = named
     .map((entry) => (entry.reason ? `${entry.at} (${entry.reason})` : entry.at))
     .join(", ");
-  return `write ${write} -> ${read}`;
+  const suffix = omitted > 0 ? `, +${omitted} more` : "";
+  return `write ${write}${suffix} → ${read}`;
 }
