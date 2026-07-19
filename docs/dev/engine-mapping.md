@@ -225,9 +225,14 @@ gap is what lets the thrash detector run.
   emits no style-kind write at all, making it that case's only write signal); `reason="Added to
   layout"` and `"Style changed"` stamp at the forced recalc and name the **read**. So the detector
   reads dirtied-by off the style-kind mutation records plus layout-kind `"Removed from layout"`
-  records, and trusts no other layout-kind stack. **[unprobed]**: `display:none`-via-class removal
-  may emit `"Removed from layout"` at recalc time; a leak there would mislabel one dirtied-by line,
-  never a count.
+  records, and trusts no other layout-kind stack. **[measured]** `display:none` removal (class-toggled
+  and inline, 3 runs each, byte-stable) also emits `"Removed from layout"`, but stamped at **recalc**
+  time with the geometry read on the stack, so its `at` is byte-equal (line AND column) to the flush's
+  own read-site. The detector drops a `"Removed from layout"` dirtied-by entry whose `at` equals the
+  flush read: a synchronous detach names a distinct write line, so a position-equal entry is the
+  recalc-time stamp naming the read, not a write. The genuine mutation survives on the co-emitted
+  style-kind record (`"Related style rule"` / `"Inline CSS ... mutated"`) at the real toggle line, and
+  the thrash count (read from `gapLayoutWrites` before the filter) is untouched.
 
 - **The thrash rule matches by kind.** A forced flush is a thrash step iff a write of *its own* kind
   (a layout write for a `Layout` flush, a style write for an `UpdateLayoutTree`) sat in the gap since
