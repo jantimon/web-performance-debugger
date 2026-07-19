@@ -31,6 +31,10 @@ export interface MergedStep {
   /** the median of `perIteration`; identical to the single sample when there is only one. Null when
    * no iteration could be priced (a navigating step on the no-trace rung; see DriverStep.wallMs). */
   wallMs: number | null;
+  /** the clock every walled sample shares: "trace" only when ALL are trace-priced; a single
+   * page-clock sample (a lost step-end mark in one iteration) degrades the label to "page", since a
+   * median over mixed clocks reconciles with nothing. Absent when wallMs is null. */
+  wallClock?: "trace" | "page";
   inpMs: number | null;
   /** each part medianed across the iterations that measured an interaction; null if none did */
   interaction: InteractionTiming | null;
@@ -249,11 +253,18 @@ export function mergeSteps(
           presentationDelayMs: median(measured.map((entry) => entry.presentationDelayMs)),
         }
       : null;
+    const walled = ordered.filter((step) => step.wallMs != null);
+    const wallClock = walled.length
+      ? walled.every((step) => step.wallClock === "trace")
+        ? ("trace" as const)
+        : ("page" as const)
+      : undefined;
     merged.push({
       index: first.index,
       label,
       perIteration,
       wallMs: perIteration.length ? median(perIteration) : null,
+      ...(wallClock ? { wallClock } : {}),
       inpMs: inpSamples.length ? median(inpSamples) : null,
       interaction,
       startTs: window?.startTs ?? null,

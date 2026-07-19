@@ -500,6 +500,13 @@ export interface Span {
    */
   wallMs: number | null;
   /**
+   * Which clock priced a STEP span's wall: "trace" (the window between its marks; reconciles with
+   * the bar) or "page" (the page's performance.now delta; beside a trace-clock `breakdown` it does
+   * NOT reconcile with the bar, e.g. a step whose end mark was lost). Absent on run/measure spans,
+   * whose clock is fixed by kind (see wallMs), and when wallMs is null.
+   */
+  wallClock?: "trace" | "page";
+  /**
    * The reconciling seven-slice bar (`Σ slices + idle = wallMs`), when the rung built one
    * (--breakdown / firefox / node). Absent on the default and --deep rungs, which report identities
    * and counts but no bar. When `aggregation` is `"median"` this is the lower-median-by-wall

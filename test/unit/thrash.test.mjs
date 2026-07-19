@@ -88,6 +88,18 @@ test("a layout write thrashes a layout flush, with an empty dirtied-by", () => {
   assert.deepEqual(report.steps[0].dirtiedBy, []);
 });
 
+test('a removeChild detach ("Removed from layout") names the write from the layout record', () => {
+  nextId = 0;
+  const events = [
+    task(0, 1000),
+    layoutWrite(10, "app.js:7", "Removed from layout"),
+    layoutFlush(20, "app.js:20"),
+  ];
+  const { report } = analyzeThrash(events, 0);
+  assert.equal(report.count, 1);
+  assert.deepEqual(report.steps[0].dirtiedBy, [{ at: "app.js:7", reason: "Removed from layout" }]);
+});
+
 // The classic style->layout thrash the probe produces: one write, then BOTH a forced style recalc
 // and a forced layout, both read at the same line. Both count; the read-site's dirtied-by rolls up
 // to the one genuine write, ignoring the layout record that names the read.

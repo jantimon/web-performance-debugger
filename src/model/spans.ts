@@ -81,8 +81,9 @@ export function recordingLane(meta: Pick<RecordingMeta, "browser" | "runtime">):
   return "chrome";
 }
 
-/** Superset slices from a stored seven-slice `Breakdown` (chrome, or firefox measure spans). Every
- * slice is measured there, so none are null. */
+/** Superset slices from a stored seven-slice `Breakdown` (chrome, or firefox measure spans). On
+ * firefox `paint` is not-measured (off-main-thread) and stays null; read slices through `sliceMs`,
+ * never bare `.ms`. */
 function slicesFromBreakdown(breakdown: Breakdown): UnifiedSlices {
   const { js, style, layout, paint, gc, other, idle } = breakdown.slices;
   return { js, style, layout, paint, gc, other, idle };

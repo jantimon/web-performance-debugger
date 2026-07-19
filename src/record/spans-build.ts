@@ -90,6 +90,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       aggregation: spanAggregation("step"),
       index: step.index,
       wallMs: step.wallMs,
+      ...(step.wallClock ? { wallClock: step.wallClock } : {}),
       ...(stepBar?.breakdown ? { breakdown: stepBar.breakdown } : {}),
       counts: countsFromSummary(stepSummary),
       inpMs: step.inpMs,

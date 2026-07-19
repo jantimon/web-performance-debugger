@@ -126,7 +126,12 @@ function applyTraceWall(driverSteps: DriverStep[], stepTraceWindows: StepWindow[
   const windowByMark = new Map(stepTraceWindows.map((window) => [window.index, window]));
   for (const step of driverSteps) {
     const window = windowByMark.get(step.markIndex ?? step.index);
-    if (window && window.endTs != null) step.wallMs = usToMs(window.endTs - window.startTs);
+    if (window && window.endTs != null) {
+      step.wallMs = usToMs(window.endTs - window.startTs);
+      step.wallClock = "trace";
+    } else if (step.wallMs != null) {
+      step.wallClock = "page";
+    }
   }
 }
 

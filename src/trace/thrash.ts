@@ -25,9 +25,12 @@ import { mainThread } from "./main-thread.js";
  *     (relaxing to "any layout|style write" would count it, 43/43, but over-report that re-read).
  *
  * The dirtied-by write comes from the STYLE-kind invalidation records in the gap, which carry the
- * genuine mutation stack (`Inline CSS ... mutated`, `Node was inserted...`). The layout-kind
- * `LayoutInvalidationTracking` stack is deliberately NOT used: on a style-driven invalidation its
- * stack names the forcing READ, not the write, so trusting it would mis-label the write as the read.
+ * genuine mutation stack (`Inline CSS ... mutated`, `Node was inserted...`), plus exactly one
+ * layout-kind case: `LayoutInvalidationTracking` with reason "Removed from layout" names the WRITE
+ * (a synchronous DOM detach stamps the record at mutation time; [measured] byte-stable, and pure
+ * removeChild emits no style-kind write at all, so this is its only write signal). Every other
+ * layout-kind reason ("Added to layout", "Style changed") stamps at the forced recalc and names the
+ * READ, so trusting those would mis-label the write as the read. docs/dev/engine-mapping.md.
  */
 
 /** N: a run at/over this many thrash steps earns the "layout thrashed Nx" headline. A named constant. */
@@ -49,6 +52,10 @@ function writeKindOf(event: NormalizedEvent): "layout" | "style" | null {
   const kind = invalidationKind(event.name);
   return kind === "layout" || kind === "style" ? kind : null;
 }
+
+/** The one layout-kind invalidation reason whose stack names the write (a synchronous DOM detach);
+ * all other layout-kind reasons stamp at the forced recalc and name the read. */
+const LAYOUT_WRITE_REASON = "Removed from layout";
 
 /** The invalidation reason string a record carried, if any. */
 function reasonOf(event: NormalizedEvent): string | undefined {
@@ -114,8 +121,11 @@ function annotateForcedFlushes(events: NormalizedEvent[], start: number | null):
       if (event === task || event.ts < task.ts || event.ts > taskEnd) continue;
       const writeKind = writeKindOf(event);
       if (writeKind) {
-        if (writeKind === "layout") gapLayoutWrites++;
-        else {
+        if (writeKind === "layout") {
+          gapLayoutWrites++;
+          if (event.at && reasonOf(event) === LAYOUT_WRITE_REASON)
+            gapDirtiedBy.push({ at: event.at, reason: reasonOf(event) });
+        } else {
           gapStyleWrites++;
           if (event.at) gapDirtiedBy.push({ at: event.at, reason: reasonOf(event) });
         }

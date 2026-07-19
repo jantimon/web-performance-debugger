@@ -254,3 +254,20 @@ test("interactionBreakdown: picks the worst interaction when a step has several"
   nonNegative(split, "two interactions");
   assert.ok(Math.abs(split.processingMs - 79.5) < 0.05, "the worst interaction's handler, not the first");
 });
+
+test("mergeSteps: wallClock is trace only when every walled sample is trace-priced", () => {
+  const allTrace = mergeSteps([
+    { index: 0, label: "click", iteration: 0, wallMs: 10, wallClock: "trace", inpMs: null, interaction: null },
+    { index: 0, label: "click", iteration: 1, wallMs: 12, wallClock: "trace", inpMs: null, interaction: null },
+  ]);
+  assert.equal(allTrace[0].wallClock, "trace");
+  const mixed = mergeSteps([
+    { index: 0, label: "click", iteration: 0, wallMs: 10, wallClock: "trace", inpMs: null, interaction: null },
+    { index: 0, label: "click", iteration: 1, wallMs: 12, wallClock: "page", inpMs: null, interaction: null },
+  ]);
+  assert.equal(mixed[0].wallClock, "page", "one page-clock sample degrades the label");
+  const unwalled = mergeSteps([
+    { index: 0, label: "nav", iteration: 0, wallMs: null, inpMs: null, interaction: null },
+  ]);
+  assert.equal(unwalled[0].wallClock, undefined, "no walled sample, no clock claim");
+});

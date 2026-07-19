@@ -8,6 +8,12 @@ export interface DriverStep {
   /** this step's position WITHIN its iteration; the same label gets the same index every time */
   index: number;
   /**
+   * Which clock priced `wallMs`: "trace" when the trace window between the step's marks priced it,
+   * "page" when it is the page's own performance.now delta. Absent when wallMs is null. A "page"
+   * wall beside a trace-clock breakdown does not reconcile with the bar.
+   */
+  wallClock?: "trace" | "page";
+  /**
    * Which timed iteration produced this step (0-based). Optional so a programmatic caller may
    * hand-build single-iteration steps; absent is read as 0 (see mergeSteps).
    */
@@ -306,6 +312,7 @@ export async function runDriver(
       markIndex: stepMark,
       label,
       wallMs: pageWallMs,
+      ...(pageWallMs != null ? { wallClock: "page" as const } : {}),
       pageWallMs,
       inpMs: inp,
       interaction,

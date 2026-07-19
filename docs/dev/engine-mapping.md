@@ -192,16 +192,21 @@ gap is what lets the thrash detector run.
 
 **[measured]** on `examples/forces-layout.mjs` under the full trace, main thread, `ts`-ordered:
 
-- **Dirtied-by comes from the STYLE-kind invalidation record, never `LayoutInvalidationTracking`.**
-  On this style-driven workload the layout dirty bit is set *during* the forced style recalc, so
+- **Dirtied-by comes from the STYLE-kind invalidation record, plus one reason-keyed layout case.**
+  On a style-driven workload the layout dirty bit is set *during* the forced style recalc, so
   `LayoutInvalidationTracking`'s stack names the forcing **read** (`52:14`, ...), not the write. The
   genuine write line is on the style-kind record: `StyleRecalcInvalidationTracking reason="Inline CSS
   style declaration was mutated"` -> `bump` (line 16), and `reason="Node was inserted into tree"` ->
-  the `appendChild` (line 38). So the detector reads dirtied-by off the style-kind mutation record and
-  ignores the layout record's stack. A workload that dirties layout *directly* (`appendChild`,
-  `textContent`, `.className` affecting geometry) would put a real write stack on
-  `LayoutInvalidationTracking`; this probe never does, so that path is **[unprobed]** and layout-kind
-  stacks are not trusted as dirtied-by.
+  the `appendChild` (line 38). **[measured]** across direct-layout-dirtying workloads
+  (append/remove, `textContent`, geometry `classList`, `input.value`, 3 runs each, byte-stable): the
+  layout record's stack semantics are a clean binary on its reason string. `reason="Removed from
+  layout"` stamps at the synchronous DOM detach and names the **write** (and pure `removeChild`
+  emits no style-kind write at all, making it that case's only write signal); `reason="Added to
+  layout"` and `"Style changed"` stamp at the forced recalc and name the **read**. So the detector
+  reads dirtied-by off the style-kind mutation records plus layout-kind `"Removed from layout"`
+  records, and trusts no other layout-kind stack. **[unprobed]**: `display:none`-via-class removal
+  may emit `"Removed from layout"` at recalc time; a leak there would mislabel one dirtied-by line,
+  never a count.
 
 - **The thrash rule matches by kind.** A forced flush is a thrash step iff a write of *its own* kind
   (a layout write for a `Layout` flush, a style write for an `UpdateLayoutTree`) sat in the gap since
