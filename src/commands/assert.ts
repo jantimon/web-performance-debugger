@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { deserialize } from "../output/format.js";
-import { assertSchemaVersion } from "../model/artifact.js";
+import { assertRecordingArtifact } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget } from "./resolve.js";
 import { gateMeasured, type Measured } from "../model/measured.js";
@@ -89,7 +89,7 @@ export async function assertCmd(
 ): Promise<void> {
   const abs = await resolveTarget(file, "auto");
   const obj = deserialize(await fs.readFile(abs, "utf8"), path.extname(abs).toLowerCase()) as any;
-  assertSchemaVersion(obj?.meta?.schemaVersion, abs);
+  assertRecordingArtifact(obj, abs);
 
   // A stepped (driver) recording gates PER STEP, from its step spans: each step has its own wall,
   // INP and windowed counts, which is the per-interaction granularity a CI gate wants. A bench/node

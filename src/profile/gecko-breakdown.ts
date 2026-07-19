@@ -190,10 +190,10 @@ function spanBreakdown(
 }
 
 /**
- * One `SpanBreakdown` per user `performance.measure` inside the run window (the §14 mark bridge on
+ * One `SpanBreakdown` per user `performance.measure` inside the run window (the mark bridge on
  * Firefox). The run span is emitted first so the report keeps a whole-window bar alongside the
- * measures. Returns [] when there are no user measures, so a plain run leaves `Recording.breakdowns`
- * unset and the run bar is shown via `CpuModel.breakdown` instead.
+ * measures. Returns [] when there are no user measures; the run bar is then shown via
+ * `CpuModel.breakdown` instead.
  *
  * The run span covers every sample `[0, length)`: the profile is already restricted to the run
  * window at conversion, so this IS the run window, and its slice sum equals `CpuModel.totalMs` by

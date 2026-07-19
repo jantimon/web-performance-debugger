@@ -82,12 +82,6 @@ export interface TimingEntry {
   duration?: number;
 }
 
-export interface MetricsBlock {
-  before: Record<string, number>;
-  after: Record<string, number>;
-  delta: Record<string, number>;
-}
-
 /** Timing is coarse (Chrome clamps performance.now); these are directional, not precise. */
 export interface BenchStats {
   samples: number;

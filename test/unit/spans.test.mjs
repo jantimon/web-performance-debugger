@@ -292,6 +292,7 @@ test("query spans --label keeps the exact match; a miss is an empty array, not a
 test("query spans synthesizes the run span from a sibling cpu model (never empty when a bar exists)", async () => {
   const file = writeRec("spans-ff.json", {
     meta: { schemaVersion: "3", target: "firefox", browser: "firefox" },
+    spans: [],
   });
   // loadCpuModel finds `<base>.cpu.json` beside the recording; it must carry a functions array.
   writeFileSync(
@@ -309,6 +310,7 @@ test("query spans synthesizes the run span from a sibling cpu model (never empty
 test("query spans errors (non-zero) on a recording that holds no bar at all", async () => {
   const file = writeRec("spans-no-bar.json", {
     meta: { schemaVersion: "3", target: "chrome" },
+    spans: [],
   });
   await assert.rejects(() => querySpans(file, { json: true }), /no per-span breakdown/);
 });

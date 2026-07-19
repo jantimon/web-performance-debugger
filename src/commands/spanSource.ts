@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { deserialize } from "../output/format.js";
-import { assertSchemaVersion } from "../model/artifact.js";
+import { assertRecordingArtifact } from "../model/artifact.js";
 import { resolveTarget } from "./resolve.js";
 import { loadCpuModel } from "../profile/cpuprofile.js";
 import { buildSpans, recordingLane } from "../model/spans.js";
@@ -22,7 +22,7 @@ export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null>
     await fs.readFile(abs, "utf8"),
     path.extname(abs).toLowerCase(),
   ) as Recording;
-  assertSchemaVersion(rec.meta?.schemaVersion, abs);
+  assertRecordingArtifact(rec, abs);
   const hasBar = rec.spans?.some((span) => span.breakdown);
   let cpuBreakdown: CpuBreakdown | undefined;
   if (!hasBar) {

@@ -358,7 +358,9 @@ program
   .description("compare two recordings field-by-field (counts/INP/wall)")
   .option("--fail-on-regression", "exit 1 if any count/INP increased")
   .action((baseline, current, opts) =>
-    diffCmd(baseline, current, { failOnRegression: !!opts.failOnRegression }),
+    diffCmd(baseline, current, { failOnRegression: !!opts.failOnRegression }).catch((error) =>
+      program.error(error.message),
+    ),
   );
 
 program

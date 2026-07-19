@@ -13,7 +13,7 @@ import { buildSpans, recordingLane } from "../model/spans.js";
 import { isSteppedRecording, stepIndexView } from "../model/step-view.js";
 import { num, table } from "../output/ascii.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
-import { assertSchemaVersion } from "../model/artifact.js";
+import { assertRecordingArtifact } from "../model/artifact.js";
 import { buildDigest } from "./digest.js";
 import { printSpanBreakdowns, printCpuBreakdown } from "./cpu.js";
 import { loadCpuModel } from "../profile/cpuprofile.js";
@@ -32,7 +32,7 @@ async function load(file: string): Promise<Recording> {
   const abs = await resolveTarget(file, "recording");
   const raw = await fs.readFile(abs, "utf8");
   const rec = deserialize(raw, path.extname(abs).toLowerCase()) as Recording;
-  assertSchemaVersion(rec.meta?.schemaVersion, abs);
+  assertRecordingArtifact(rec, abs);
   return rec;
 }
 

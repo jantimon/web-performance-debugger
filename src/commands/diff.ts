@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { deserialize } from "../output/format.js";
-import { assertSchemaVersion } from "../model/artifact.js";
+import { assertRecordingArtifact } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget } from "./resolve.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
@@ -53,7 +53,7 @@ async function loadSummary(file: string): Promise<RecordingSummary> {
     await fs.readFile(abs, "utf8"),
     path.extname(abs).toLowerCase(),
   ) as Recording;
-  assertSchemaVersion(rec.meta?.schemaVersion, abs);
+  assertRecordingArtifact(rec, abs);
   return rec.summary;
 }
 

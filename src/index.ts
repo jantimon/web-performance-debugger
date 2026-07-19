@@ -14,7 +14,6 @@ export type {
   NormalizedEvent,
   InvalidationRecord,
   TimingEntry,
-  MetricsBlock,
   BenchStats,
   InteractionTiming,
   StepTiming,
