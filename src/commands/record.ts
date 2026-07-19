@@ -5,6 +5,7 @@ import type { BrowserName } from "../browser/backend.js";
 import { startStaticServer } from "../browser/server.js";
 import { mergeSteps, type MergedStep } from "../trace/steps.js";
 import { mainThread } from "../trace/main-thread.js";
+import { retryTransientNav } from "../browser/launch.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { buildSummary } from "../metrics/summarize.js";
 import {
@@ -102,6 +103,9 @@ export interface RecordOptions {
   /** Rung 1 minus the sampler: a pristine benchmark wall, no profiler, no counts. */
   preciseWall?: boolean;
 }
+
+/** Bounded retries for a transient cross-process navigation failure (fresh browser each attempt). */
+const NAV_RETRY_LIMIT = 2;
 
 /** Persistent-profile path for meta: shorter of relative-to-root vs absolute, or null if unused. */
 function shorterPath(root: string, absPath: string | undefined): string | null {
@@ -261,8 +265,19 @@ export async function record(opts: RecordOptions): Promise<{
   // may not make wpd fetch a private/internal host for a sourcemap.
   const maps = new SourceMapResolver({ pageUrl: opts.url });
   let pass: PassResult;
+  // A cross-process --url boot can fail the top-level navigation with a transient error
+  // (net::ERR_INVALID_HANDLE and friends; the renderer process swaps mid-navigation). Retry it a
+  // bounded number of times on a fresh browser (runPass launches its own) before giving up, and
+  // disclose it in a note when it fired -- never a silent infinite retry, never a swallowed permanent
+  // failure (a bad host still fails immediately). See browser/launch.ts isTransientNavError.
+  let navRetries = 0;
   try {
-    pass = await runPass(server, root, capture, opts, mode, absModule, maps);
+    const outcome = await retryTransientNav(
+      () => runPass(server, root, capture, opts, mode, absModule, maps),
+      NAV_RETRY_LIMIT,
+    );
+    pass = outcome.value;
+    navRetries = outcome.retries;
   } finally {
     await server.close();
   }
@@ -358,6 +373,8 @@ export async function record(opts: RecordOptions): Promise<{
     if (clock === "none") notes.push(notesCatalog.driverStepWallUnmeasured());
     else notes.push(notesCatalog.driverStepWallClock(clock));
   }
+  // The navigation hit a transient cross-process error and a fresh-browser retry recovered it.
+  if (navRetries > 0) notes.push(notesCatalog.navRetried(navRetries));
   // chrome-headless-shell was missing, so the launch fell back to new-headless.
   if (pass.headlessFallback) notes.push(pass.headlessFallback);
   // A trace ran but its run-window markers are absent (truncated/overflowed trace buffer, or the

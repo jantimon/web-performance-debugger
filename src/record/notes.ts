@@ -121,6 +121,13 @@ export function onrampBuiltinFlow(): string {
   return "Built-in load flow (no module): one step labeled 'load' navigates to the target (meta.target) inside the run window and settles, so the measured window is the page's own boot. INP is null — a page load has no interaction; pass a module that drives one (measureStep) to measure interactions.";
 }
 
+/** The initial navigation failed with a transient cross-process error and was retried on a fresh
+ * browser; disclose it so a reader knows the numbers are from a later attempt. */
+export function navRetried(retries: number): string {
+  const attempts = retries === 1 ? "1 retry" : `${retries} retries`;
+  return `NOTE: the navigation failed with a transient cross-process error (e.g. net::ERR_INVALID_HANDLE, common on a heavy cross-origin --url boot) and was retried on a fresh browser (succeeded after ${attempts}). The recorded numbers are from the successful attempt. If this recurs, the target may be rate-limiting or blocking automated loads.`;
+}
+
 /** --url named a host with no scheme (localhost:5173); http:// was assumed to reach it. */
 export function pageSchemeAssumed(url: string): string {
   return `--url named a host with no scheme, so http:// was assumed: the target is ${url}. Pass an explicit https:// URL if the server is TLS.`;

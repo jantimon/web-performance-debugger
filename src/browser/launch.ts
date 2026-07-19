@@ -30,6 +30,41 @@ export function isSandboxLaunchError(error: Error): boolean {
   );
 }
 
+/**
+ * A top-level navigation failure worth ONE bounded retry (on a fresh browser), vs a permanent one.
+ *
+ * A cross-process boot (a --url navigation that swaps the renderer process) can reject with a
+ * Chromium network-stack `net::ERR_INVALID_HANDLE`, a `net::ERR_ABORTED`, or a target/frame swapped
+ * out from under puppeteer mid-navigation ("detached Frame", "Target closed"). These are transient:
+ * the same URL loads on a retry. They are NOT the same as a permanent failure -- a bad host
+ * (`ERR_NAME_NOT_RESOLVED`), a refused connection, or a TLS error -- which a retry only makes fail
+ * slower, so those are left to surface immediately.
+ */
+export function isTransientNavError(error: Error): boolean {
+  return /net::ERR_INVALID_HANDLE|net::ERR_ABORTED|net::ERR_NETWORK_CHANGED|detached\s?Frame|frame was detached|Target closed|Session closed/i.test(
+    error.message,
+  );
+}
+
+/**
+ * Run `attempt` and, on a transient navigation failure (isTransientNavError), retry up to `limit`
+ * times, returning how many retries it took. A permanent error, or a non-Error throw, or exhausting
+ * the limit re-throws immediately -- never an infinite loop, never a swallowed permanent failure.
+ * `attempt` is expected to be self-contained (a fresh browser per call), so a retry starts clean.
+ */
+export async function retryTransientNav<T>(
+  attempt: () => Promise<T>,
+  limit: number,
+): Promise<{ value: T; retries: number }> {
+  for (let tries = 0; ; tries++) {
+    try {
+      return { value: await attempt(), retries: tries };
+    } catch (error) {
+      if (tries >= limit || !(error instanceof Error) || !isTransientNavError(error)) throw error;
+    }
+  }
+}
+
 /** A sandbox launch failure re-thrown as guidance: name the opt-in flag, do NOT silently retry
  * unsandboxed. Constrained environments (containers, some CI) cannot start Chrome's sandbox; the
  * user decides whether to trade containment for a run. */

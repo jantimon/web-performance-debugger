@@ -284,11 +284,16 @@ async function resolveCallFrame(
   servedOrigin: string,
 ): Promise<ResolvedFrame> {
   const minifiedName = callFrame.functionName || "(anonymous)";
+  // CDP callFrame line/column are 0-based; +1 makes them 1-based (the trace-stack convention). V8
+  // reports a positionless frame (a native/builtin call that still carries a script url) as
+  // lineNumber/columnNumber -1, which would shift to 0 -- an invalid line that makes the sourcemap
+  // lookup throw. Treat a negative source position as "no position" (undefined) instead.
+  const hasPosition = callFrame.url != null && callFrame.url !== "" && callFrame.lineNumber >= 0;
   const frame: StackFrame = {
     functionName: callFrame.functionName || undefined,
     url: callFrame.url || undefined,
-    line: callFrame.url ? callFrame.lineNumber + 1 : undefined,
-    column: callFrame.url ? callFrame.columnNumber + 1 : undefined,
+    line: hasPosition ? callFrame.lineNumber + 1 : undefined,
+    column: hasPosition ? callFrame.columnNumber + 1 : undefined,
   };
   rewriteToLocal(frame);
   await maps.resolveFrame(frame);

@@ -221,6 +221,71 @@ test("remote sourcemaps resolve packages via comment AND SourceMap header; failu
   }
 });
 
+// F3: a positionless V8 frame (native/builtin call that still carries a script url) reports
+// lineNumber -1. The 0-based -> 1-based shift made it line 0, which trace-mapping rejects by THROWING
+// ("`line` must be greater than 0"), crashing the whole run. It must be treated as "no position", not
+// mapped, so buildCpuModel resolves the profile without throwing.
+test("buildCpuModel: a lineNumber -1 frame with a resolvable map does not crash the run (F3)", async () => {
+  const server = await startBundleServer();
+  try {
+    const maps = new SourceMapResolver();
+    // comment.js has a real sourcemap, so the OLD code loaded it and threw on the line-0 lookup.
+    const profile = {
+      startTime: 0,
+      endTime: 2000,
+      nodes: [
+        {
+          id: 1,
+          callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+          children: [2],
+        },
+        {
+          id: 2,
+          callFrame: {
+            functionName: "native",
+            scriptId: "1",
+            url: `${server.origin}/comment.js`,
+            lineNumber: -1,
+            columnNumber: -1,
+          },
+          children: [],
+        },
+      ],
+      samples: [2, 2],
+      timeDeltas: [1000, 1000],
+    };
+    const model = await buildCpuModel(profile, {
+      profilePath: "line0.cpuprofile",
+      meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+      sampleIntervalUs: 50,
+      serverUrl: "http://127.0.0.1:1",
+      root: os.tmpdir(),
+      maps,
+    });
+    // No throw: the positionless frame kept its identity and bucketed by origin rather than mapping.
+    const fn = model.functions.find((entry) => entry.fn === "native");
+    assert.ok(fn, "the positionless frame is still present in the model");
+    assert.ok(fn.package.startsWith("("), `bucketed by origin, not app (got ${fn.package})`);
+  } finally {
+    await server.close();
+  }
+});
+
+// The defensive guard in SourceMapResolver.resolveFrame: even when the map DID load, a frame whose
+// line is < 1 must be skipped (and recorded as a miss), never passed to originalPositionFor.
+test("SourceMapResolver.resolveFrame skips a line-0 frame instead of throwing (F3 guard)", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-line0-"));
+  const jsPath = path.join(dir, "bundle.js");
+  writeFileSync(jsPath, "function a(){}\n//# sourceMappingURL=bundle.js.map");
+  writeFileSync(path.join(dir, "bundle.js.map"), sourcemapFor("src/App.tsx", "AppRoot"));
+  const maps = new SourceMapResolver();
+  const frame = { source: jsPath, line: 0, column: 1 };
+  await maps.resolveFrame(frame); // must not throw
+  assert.equal(frame.line, 0, "the unmappable frame is left untouched");
+  const misses = maps.diagnostics().positionMisses?.[jsPath]?.misses;
+  assert.equal(misses, 1, "the skipped line-0 frame is recorded as a position miss");
+});
+
 test("one shared resolver fetches each script once across passes", async () => {
   const server = await startBundleServer();
   try {
