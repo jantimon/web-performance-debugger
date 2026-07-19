@@ -5,6 +5,20 @@ import type { RecordingMeta } from "./recording.js";
  * gate (`diff --fail-on-regression`, `cpu-diff --fail-on-regression`) meaningless: the delta reflects
  * the capture config, not a code change, so gating across one would fabricate a pass/fail.
  */
+import path from "node:path";
+
+/**
+ * A workload path stabilized for cross-run identity: resolved against the recording root, then
+ * relative to it when it lives underneath (the same module recorded from a different cwd or via a
+ * different spelling joins instead of spuriously refusing a gate). Paths outside the root stay
+ * absolute; URLs never come through here.
+ */
+export function stableWorkloadPath(root: string, rawPath: string): string {
+  const resolved = path.resolve(root, rawPath);
+  const relative = path.relative(root, resolved);
+  return relative && !relative.startsWith("..") ? relative : resolved;
+}
+
 export interface CompatMismatch {
   axis: string;
   base: string;

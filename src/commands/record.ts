@@ -33,6 +33,7 @@ import { writePointer } from "./resolve.js";
 import { extFor, type Format } from "../output/format.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
+import { stableWorkloadPath } from "../model/compat.js";
 import type {
   CpuModel,
   Recording,
@@ -382,7 +383,10 @@ export async function record(opts: RecordOptions): Promise<{
     schemaVersion: SCHEMA_VERSION,
     createdAt: new Date().toISOString(),
     mode,
-    target: mode === "url" ? opts.url! : mode === "html" ? opts.html! : opts.module,
+    target:
+      mode === "url"
+        ? opts.url!
+        : stableWorkloadPath(root, mode === "html" ? opts.html! : opts.module),
     fn: opts.fn,
     iterations: opts.iterations,
     warmup: opts.warmup,

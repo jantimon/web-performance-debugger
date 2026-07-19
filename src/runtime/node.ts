@@ -18,6 +18,7 @@ import { nodeRuntime } from "../record/notes.js";
 import type { RecordOptions } from "../commands/record.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
+import { stableWorkloadPath } from "../model/compat.js";
 
 /** Promise wrapper around an inspector Session's callback-style post(). */
 function profilerSession() {
@@ -120,7 +121,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     schemaVersion: SCHEMA_VERSION,
     createdAt: new Date().toISOString(),
     mode: "module",
-    target: opts.module,
+    target: stableWorkloadPath(root, opts.module),
     fn: opts.fn,
     iterations: opts.iterations,
     warmup: opts.warmup,

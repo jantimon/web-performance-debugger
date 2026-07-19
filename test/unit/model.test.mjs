@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serialize, deserialize } from "../../dist/output/format.js";
+import { stableWorkloadPath } from "../../dist/model/compat.js";
 import { diffCmd } from "../../dist/commands/diff.js";
 import { cpuDiffCmd } from "../../dist/commands/cpudiff.js";
 import { assertCmd } from "../../dist/commands/assert.js";
@@ -363,4 +364,16 @@ test("resolveHeadless: defaults to chrome-headless-shell, new-headless is opt-in
   assert.equal(resolveHeadless(false, undefined), false);
   assert.equal(resolveHeadless(false, "shell"), false);
   assert.equal(resolveHeadless(false, "new"), false);
+});
+
+test("stableWorkloadPath: spelling and cwd variants of one module join as one workload", () => {
+  const root = "/repo";
+  assert.equal(stableWorkloadPath(root, "examples/foo.mjs"), "examples/foo.mjs");
+  assert.equal(stableWorkloadPath(root, "./examples/foo.mjs"), "examples/foo.mjs");
+  assert.equal(stableWorkloadPath(root, "/repo/examples/foo.mjs"), "examples/foo.mjs");
+  assert.equal(
+    stableWorkloadPath(root, "/elsewhere/foo.mjs"),
+    "/elsewhere/foo.mjs",
+    "outside the root stays absolute",
+  );
 });
