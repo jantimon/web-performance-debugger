@@ -579,8 +579,8 @@ export interface Recording {
   summary: RecordingSummary;
   /**
    * Every labelled unit of measured work: the run window, each driver step, and every user
-   * `performance.measure`. Always present (at least the run span). Replaces the separate Recording /
-   * Digest / StepIndex artifacts -- steps are spans of `kind: "step"`.
+   * `performance.measure`. Always present (at least the run span). The one artifact carries them all;
+   * steps are spans of `kind: "step"`, read as an anatomy by `query span <label>`.
    */
   spans: Span[];
 }
@@ -656,50 +656,9 @@ export interface FirefoxDirtiedByReport {
 }
 
 /**
- * Small, context-friendly entry point into a (possibly huge) recording. Read this
- * first, then drill by event `id` (`query get`) or bounded `query` calls.
- */
-export interface Digest {
-  recording: string;
-  meta: RecordingMeta;
-  window: RecordingWindow;
-  summary: RecordingSummary;
-  slowestEvents: { id: number; kind: EventKind; name: string; durMs: number; at?: string }[];
-  topBlame: { at: string; count: number; durMs: number; kinds: EventKind[] }[];
-  /**
-   * forced (synchronous) layout/style grouped by source; prime optimization targets. On Firefox
-   * these counts are sample-derived (one per read-site sample), while `summary.forcedLayoutCount`
-   * is marker-derived (one per real flush), so the two legitimately differ there. `dirtiedBy` (the
-   * write end of the dual annotation) is present only on a Chrome `--deep` recording, whose
-   * invalidation records name the mutation that dirtied this read-site.
-   */
-  forced: { at: string; count: number; durMs: number; dirtiedBy?: DirtiedByWrite[] }[];
-  /** longest tasks (>= threshold) as drill-in entry points */
-  longTasks: { id: number; ts: number; durMs: number; dominantKind?: string; at?: string }[];
-  invalidationsByReason: { kind: string; reason: string; count: number; sampleAt?: string }[];
-  /**
-   * The layout-thrashing rollup (Chrome `--deep` only). Absent on every other lane -- the default and
-   * --breakdown rungs drop the invalidation records the detector walks, and Firefox has none -- so a
-   * reader sees "not available", never a fabricated `count: 0`.
-   */
-  thrash?: ThrashReport;
-  /**
-   * The firefox `--deep` dirtied-by report: Gecko's native cause-stack write identity, rolled up by
-   * write line and marked `semantic: "first-invalidation"`. Present ONLY on a `--deep --target
-   * firefox` recording; absent on chrome (which surfaces its full write set through `forced[].dirtiedBy`
-   * and `thrash` instead) and on every non-deep firefox run -- so a reader never mistakes this
-   * first-invalidation-only write for chrome's exact set, and never sees a fabricated one.
-   */
-  firefoxDirtiedBy?: FirefoxDirtiedByReport;
-  /** the recording's spans (run + steps + measures), carried through so `query digest` exposes them */
-  spans: Span[];
-  hints: string[];
-}
-
-/**
- * One row of the `query index` VIEW of a stepped run. Derived from the recording's step spans at read
- * time (there is no stored index artifact after the collapse), so it carries no per-step file
- * pointers -- the whole run is one recording.
+ * One step of a stepped (driver) run, projected from its `kind: "step"` span. Feeds the per-step
+ * `assert` targets and the `query span <step-label>` anatomy; carries no per-step file pointers,
+ * since the whole run is one recording.
  */
 export interface StepIndexEntry {
   index: number;
@@ -721,14 +680,6 @@ export interface StepIndexEntry {
     styleInvalidations: Measured<number>;
     longTaskCount: Measured<number>;
   };
-}
-
-export interface StepIndex {
-  meta: RecordingMeta;
-  /** the one recording this view was derived from */
-  recording: string;
-  steps: StepIndexEntry[];
-  hints: string[];
 }
 
 /** One function aggregated across a CPU sampling profile (self/total time). */

@@ -7,7 +7,7 @@
  * artifact as `meta.schemaVersion`. */
 export { SCHEMA_VERSION } from "./schema.js";
 
-// On-disk artifact shapes (recording / digest / step index / cpu model).
+// On-disk artifact shapes (recording / spans / cpu model).
 export type {
   EventKind,
   StackFrame,
@@ -32,9 +32,7 @@ export type {
   FrameSideTrack,
   FrameRecord,
   FrameState,
-  Digest,
   StepIndexEntry,
-  StepIndex,
   CpuFunction,
   CpuGroupStat,
   CpuEdge,
@@ -52,6 +50,9 @@ export type {
   UnifiedSlices,
   SpanEntry,
   SpansResult,
+  SpanForced,
+  SpanHotFunctions,
+  SpanAnatomy,
   CpuPackageDelta,
   CpuFunctionDelta,
   CpuDiffResult,

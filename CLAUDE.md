@@ -37,23 +37,25 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 
 CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
 unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). The **85** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
-`dist/` (classify/summarize/analysis/format, plus the breakdown engine, `query spans` adapter,
-gecko converter, the XDG pointer, frame side track, and the `facts.md` ledger drift check). The
-**12** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the built CLI against real headless Chrome:
-forced-layout `blame`, CPU source resolution, the `--breakdown` reconciling spans (incl. an idle-
-dominated span and a user `performance.measure`), `query spans`, and the frame side track. They
-**self-skip when Chrome is not installed** (so `npm test` and the `ci` job stay green and fast);
-`WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a missing browser into a hard failure so the e2e job
-can't silently pass. **7** firefox e2e tests (`test/firefox.e2e.test.mjs`, self-skipping) cover the
-gecko lane end-to-end.
+`test:e2e`). The **173** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+`dist/` (classify/summarize/analysis/format, plus the breakdown engine, `query spans` adapter, the
+`query span` anatomy + removed-verb stubs, gecko converter, the XDG pointer, frame side track, and
+the `facts.md` ledger drift check). The **21** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
+built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
+`--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`),
+`query spans`, `query span` (a run span's bar + hot functions, a --deep step's counts + forced), the
+digest/index removal, and the frame side track. They **self-skip when Chrome is not installed** (so
+`npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a
+missing browser into a hard failure so the e2e job can't silently pass. **9** firefox e2e tests
+(`test/firefox.e2e.test.mjs`, self-skipping) cover the gecko lane end-to-end.
 The broader smoke tests below stay manual (always `npm run build` first — the CLI runs `dist/`):
 
 ```bash
 node dist/cli.js record examples/forces-layout.mjs --bench --iterations 5  # in-page; forced-layout detection
 node dist/cli.js query blame latest --forced                        # source-attributed thrashing
 node dist/cli.js record examples/counter-steps.mjs --html examples/react-counter/dist/index.html  # driver (default)
-node dist/cli.js query index latest                                 # per-step output
+node dist/cli.js query spans latest                                 # per-span overview (run + steps)
+node dist/cli.js query span latest "add rows"                       # one span's full anatomy
 # examples/react-counter is a Vite app: cd examples/react-counter && npm install && npm run build (needed once for --html)
 ```
 
@@ -77,8 +79,8 @@ contracts** — keep them straight:
 
 - **Driver mode** (default): the module runs *in Node* and `run({ page, ctx, measureStep })`
   drives the page via Puppeteer. Implemented by `browser/driver.ts`. Steps are defined by
-  `measureStep(label, action, { until })`; each becomes its own per-step recording + a
-  `StepIndex`. Per-step INP is captured via an injected Event Timing `PerformanceObserver`. A
+  `measureStep(label, action, { until })`; each becomes a `kind: "step"` span on the one recording.
+  Per-step INP is captured via an injected Event Timing `PerformanceObserver`. A
   `page.goto` inside a `measureStep` is traced, so a navigation step measures a cold boot.
 - **Bench mode** (`--bench`): the module is served over http and `import()`'d *inside the
   browser*; `run(ctx)` gets no `page` handle (there is nothing to drive from inside) but has live
@@ -184,16 +186,19 @@ Two things this rule is **not**, both documented in
 ### Output & consumption
 
 - `metrics/summarize.ts` builds `RecordingSummary` from trace events + CDP deltas.
-- `commands/digest.ts` builds the small `Digest` (the context-friendly entry point): slowest
-  events with `id`s, blame, forced layouts, long tasks, invalidation rollup. **Agents/users
-  should read the digest, not the multi-MB recording**, then drill via `query get <id>`.
-- `commands/query.ts` = 6 verbs: `digest`, `index`, `spans`, `events`, `blame`, `get` (plus `cpu`/
-  `frame` in `commands/cpu.ts`). `query spans` (via `model/spans.ts`) is a read-only OUTPUT ADAPTER
-  that folds whatever bar a recording already holds (seven-slice `SpanBreakdown` or four/six-slice
-  `CpuBreakdown`) onto one `UnifiedSlices` shape — no new stored type — surfacing each span's
-  `aggregation` (`first`/`sum`/`median`) and, for a merged measure, its `samples`/wall spread.
-  `assert.ts` gates against
-  thresholds (recording *or* StepIndex), `diff.ts` compares two recordings.
+- `commands/query.ts` = 6 verbs: `spans`, `span`, `events`, `blame`, `get`, and the `--dirtied` mode
+  of `blame` (plus `cpu`/`frame` in `commands/cpu.ts`). `query spans` (via `model/spans.ts`) is the
+  compact **overview**: a read-only OUTPUT ADAPTER that folds whatever bar a recording already holds
+  (seven-slice `SpanBreakdown` or four/six-slice `CpuBreakdown`) onto one `UnifiedSlices` shape — no
+  new stored type — surfacing each span's `aggregation` (`first`/`sum`/`median`) and, for a merged
+  measure, its `samples`/wall spread. **`query span <label>`** is the drill-in: one span's full
+  anatomy (bar, wall/aggregation/spread, Measured counts, INP/interaction, the forced read-sites +
+  dirtied-by writes + thrash rollup an event-log rung carries, and the run-window hot functions from
+  the sibling CPU model). `<label>` is a bare label or a `kind:label` qualifier — span identity is
+  kind+label, so a bare label matching more than one kind is a collision the caller resolves.
+  **Agents/users should read `query spans` then drill with `query span`/`query get <id>`, not the
+  multi-MB recording.** `assert.ts` gates against thresholds (recording *or* per-step, via the step
+  spans in `model/step-view.ts`), `diff.ts` compares two recordings.
 - `commands/resolve.ts`: the `latest` keyword resolves via a **cwd-keyed** pointer file under the XDG
   state dir (`$XDG_STATE_HOME/wpd/pointers/<hash>.json`, else `~/.local/state/wpd/pointers/`) that
   `record` writes — so no `recordings/` dir is dropped into a consumer's cwd. A legacy in-cwd
@@ -252,7 +257,7 @@ string-based package attribution (no fs). Resolved local source paths (`event.at
 `source`/`file`) are stored **relative to root** via `relativizeSource` *after* fs-dependent
 resolution: smaller files, portable recordings, and stable `cpu-diff`/`functionJoinKey` joins across
 machines (the `/private` mismatch stops breaking joins). `node:` builtins, remote urls, and paths
-outside root stay absolute; artifact back-pointers (`recording`/`digest`/`profile`, the `latest`
+outside root stay absolute; artifact back-pointers (`recording`/`profile`, the `latest`
 pointer) stay absolute for cwd-independent re-opening -- but the terminal report prints them through
 `displayPath` (relative to cwd when shorter). Display and storage answer different questions: stored
 absolute so any cwd can reopen them, shown relative because an absolute path is noise to read and

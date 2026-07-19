@@ -73,17 +73,19 @@ e2e("record --deep detects layout thrashing and dual-annotates read + dirtied-by
   const out = path.join(dir, "thrash");
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", "1", "--out", out]);
 
-  // The thrash rollup rides the digest. N = 3 is the headline threshold; this workload thrashes far
-  // over it (measured ~42 steps over ~21 geometry reads).
-  const digest = JSON.parse(runCli(["query", "digest", out, "--json"]));
-  assert.ok(digest.thrash, "the digest carries a thrash rollup on --deep");
-  assert.ok(digest.thrash.count >= 3, `thrashCount >= N=3, got ${digest.thrash.count}`);
-  assert.ok(Array.isArray(digest.thrash.steps) && digest.thrash.steps.length > 0, "the interleave has steps");
+  // The thrash rollup rides the run span's anatomy. N = 3 is the headline threshold; this workload
+  // thrashes far over it (measured ~42 steps over ~21 geometry reads).
+  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
+  assert.ok(anatomy.thrash, "the run span carries a thrash rollup on --deep");
+  assert.ok(anatomy.thrash.count >= 3, `thrashCount >= N=3, got ${anatomy.thrash.count}`);
+  assert.ok(Array.isArray(anatomy.thrash.steps) && anatomy.thrash.steps.length > 0, "the interleave has steps");
+  // The anatomy also carries the forced read-sites, dual-annotated with the dirtied-by write.
+  assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length > 0, "forced read-sites present");
 
   // The interleave names BOTH ends: a read line and the bump() write line (16).
-  const namesRead = digest.thrash.steps.some((step) => step.read?.includes("forces-layout.mjs"));
+  const namesRead = anatomy.thrash.steps.some((step) => step.read?.includes("forces-layout.mjs"));
   assert.ok(namesRead, "a thrash step names a geometry read line in forces-layout.mjs");
-  const writeLines = digest.thrash.steps.flatMap((step) => step.dirtiedBy.map((w) => w.at));
+  const writeLines = anatomy.thrash.steps.flatMap((step) => step.dirtiedBy.map((w) => w.at));
   assert.ok(
     writeLines.some((at) => /forces-layout\.mjs:16\b/.test(at)),
     `a thrash step's dirtied-by names the bump() write line 16, got ${JSON.stringify([...new Set(writeLines)])}`,
@@ -386,6 +388,80 @@ e2e("query spans: unified per-span shape over a chrome --breakdown recording", {
   assert.equal(filtered.spans.length, 1);
   assert.equal(filtered.spans[0].label, "user-span");
 });
+
+// `query span <label>`: one span's full anatomy. On a --breakdown run span it carries the reconciling
+// bar AND the run-window hot functions (the resolved CPU model IS the run window). A bare label
+// resolves the single matching span.
+e2e("query span run: --breakdown recording shows the bar and the run-window hot functions", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "span-bd");
+  runCli([
+    "record", path.join(examples, "forces-layout.mjs"),
+    "--bench", "--breakdown", "--iterations", "5", "--out", out,
+  ]);
+  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
+  assert.equal(anatomy.kind, "run");
+  assert.equal(anatomy.aggregation, "sum", "the run window is a total across iterations");
+  assert.ok(anatomy.slices, "the reconciling bar's unified slices are present");
+  for (const key of SLICE_NAMES)
+    assert.ok(key in anatomy.slices, `slice '${key}' present in the anatomy`);
+  // The run span's hot list comes from the sibling CPU model (the sampler brackets the whole loop).
+  assert.ok(anatomy.hot, "hot functions are present for the run span");
+  assert.equal(anatomy.hot.scope, "run-window");
+  assert.ok(anatomy.hot.functions.length > 0, "at least one hot function in the run window");
+  // A --breakdown run drops the .stack forced count: not-measured, never a fake 0.
+  assert.equal(anatomy.counts.forcedLayoutCount, null, "forced count is not-measured on --breakdown");
+});
+
+// `query span <step-label>` on a --deep driver recording: the step's exact windowed counts plus the
+// forced read-sites (dual-annotated with the dirtied-by write) from the deep event log, scoped to the
+// step. A step span carries no run-window hot list (per-span CPU windowing is not reconstructed, and
+// --deep has no CPU model anyway).
+e2e("query span <step>: --deep driver recording shows the step's counts and forced/dirtied annotations", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const html = path.join(repoRoot, "test", "fixtures", "driver-probe.html");
+  assert.ok(existsSync(html), "driver-probe.html is committed, so this test cannot silently skip");
+  const flow = path.join(dir, "flow.mjs");
+  writeFileSync(
+    flow,
+    `export async function prepare({ page }) { await page.waitForSelector("#inc"); }
+     export async function run({ page, measureStep }) {
+       await measureStep("add rows", () => page.click("#inc"));
+     }`,
+  );
+  const out = path.join(dir, "span-step");
+  runCli(["record", flow, "--html", html, "--deep", "--iterations", "1", "--out", out]);
+
+  const anatomy = JSON.parse(runCli(["query", "span", out, "add rows", "--json"]));
+  assert.equal(anatomy.kind, "step", "a bare label resolves the single matching step span");
+  // Exact windowed counts (--deep).
+  assert.ok(anatomy.counts.layoutCount > 0, "the step's layout count is present");
+  assert.ok(anatomy.counts.forcedLayoutCount > 0, "and it forced layout synchronously");
+  // Forced read-sites from the event log, each naming a resolved source line.
+  assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length > 0, "forced read-sites present");
+  assert.ok(anatomy.forced.every((entry) => typeof entry.at === "string"), "each forced entry names a source line");
+  const dirtied = anatomy.forced.some((entry) => entry.dirtiedBy?.length > 0);
+  assert.ok(dirtied, "a forced read-site is dual-annotated with the dirtied-by write");
+  // A step span carries no run-window hot list.
+  assert.equal(anatomy.hot, null, "hot is not-available for a step span");
+});
+
+// The removed `query digest` / `query index` verbs exit 1 with a message naming the replacement, not
+// commander's bare "unknown command" and not a stack trace. Browser-free, so a plain test (never
+// skipped): the stub errors before any recording is read.
+for (const removed of ["digest", "index"]) {
+  test(`query ${removed} was removed and points at the replacement`, () => {
+    const result = spawnSync(process.execPath, [cli, "query", removed, "latest", "--json"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 1, `query ${removed} exits non-zero`);
+    const output = `${result.stdout}${result.stderr}`;
+    assert.match(output, new RegExp(`\`query ${removed}\` was removed`), "names the removed verb");
+    assert.match(output, /query span[s]?/, "names the replacement verb");
+    assert.doesNotMatch(output, /at Object\.|node:internal/, "no stack trace");
+  });
+}
 
 // The off-thread frame side track (Chrome --breakdown). It is DISPLAY-ONLY -- the frame count is
 // scheduler/settle noise that swings 1->28 on unchanged code (FP-1), so this asserts PRESENCE and

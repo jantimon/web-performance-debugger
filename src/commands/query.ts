@@ -7,23 +7,24 @@ import type {
   EventKind,
   NormalizedEvent,
   Recording,
+  Span,
+  SpanKind,
 } from "../model/recording.js";
-import type { BlameEntry } from "../model/query.js";
+import type { BlameEntry, SpanAnatomy, SpanForced, SpanHotFunctions } from "../model/query.js";
 import { buildSpans, recordingLane } from "../model/spans.js";
 import { isFirefoxDeep, isGeckoRung } from "../model/rung.js";
-import { isSteppedRecording, stepIndexView } from "../model/step-view.js";
+import { bold, cyan, dim } from "../output/color.js";
 import { num, table } from "../output/ascii.js";
-import { dim } from "../output/color.js";
 import { analyzeThrash } from "../trace/thrash.js";
 import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
+import { forcedLayouts } from "../trace/analysis.js";
+import { findSteps } from "../trace/parse.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
 import { assertRecordingArtifact } from "../model/artifact.js";
-import { buildDigest } from "./digest.js";
 import { printSpanBreakdowns, printCpuBreakdown } from "./cpu.js";
-import { loadCpuModel } from "../profile/cpuprofile.js";
-import { printSummary } from "./summaryView.js";
+import { loadCpuModel, shortSource } from "../profile/cpuprofile.js";
 import { resolveTarget } from "./resolve.js";
-import { formatMeasured } from "../model/measured.js";
+import { formatMeasured, type Measured } from "../model/measured.js";
 import { usToMs } from "../model/time.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
 
@@ -73,69 +74,340 @@ function requireEventLog(rec: Recording, file: string): void {
   );
 }
 
-export async function queryDigest(file: string, opts: OutOpts): Promise<void> {
+/** How many hot functions a span anatomy lists before a `--top` override. */
+const DEFAULT_SPAN_HOT = 15;
+/** How many forced read-sites / thrash writes the human anatomy prints before eliding the rest. */
+const ANATOMY_FORCED_CAP = 12;
+
+export interface SpanQuery extends OutOpts {
+  /** how many hot functions to include in the span's window (default DEFAULT_SPAN_HOT) */
+  top?: number;
+}
+
+/**
+ * Split a `kind:label` qualifier (`run:`, `step:`, `measure:`) off a span argument, or null for a
+ * bare label. Only the three span kinds qualify; a label that itself begins `foo:` is not one and
+ * stays a bare label. Span identity is kind+label, so this is how a caller disambiguates a bare label
+ * that collides across kinds.
+ */
+function parseKindLabel(raw: string): { kind: SpanKind; label: string } | null {
+  const colon = raw.indexOf(":");
+  if (colon <= 0) return null;
+  const prefix = raw.slice(0, colon);
+  if (prefix === "run" || prefix === "step" || prefix === "measure")
+    return { kind: prefix, label: raw.slice(colon + 1) };
+  return null;
+}
+
+/**
+ * The trace-clock window of one span, recovered from the stored event log so forced read-sites can be
+ * scoped to the span. The run window is `rec.window`; a step's edges are its `wpd:step:N:start|end`
+ * marks; a user measure's are its first in-window `performance.measure` begin/end. Falls back to the
+ * run window when the span's own marks are not in this log (a rung with no event log never reaches
+ * here). endTs null leaves the window open-ended, which the start-onward `forcedLayouts` handles.
+ */
+function spanWindow(rec: Recording, span: Span): { startTs: number | null; endTs: number | null } {
+  if (span.kind === "step" && span.index != null) {
+    const match = findSteps(rec.events).find((step) => step.index === span.index);
+    if (match) return { startTs: match.startTs, endTs: match.endTs };
+  }
+  if (span.kind === "measure") {
+    const win = measureWindow(rec.events, span.label, rec.window.startTs, rec.window.endTs);
+    if (win) return win;
+  }
+  return { startTs: rec.window.startTs, endTs: rec.window.endTs };
+}
+
+/** First in-window occurrence of a user `performance.measure` label as a trace-clock window. */
+function measureWindow(
+  events: NormalizedEvent[],
+  label: string,
+  runStart: number | null,
+  runEnd: number | null,
+): { startTs: number; endTs: number } | null {
+  const begins: number[] = [];
+  for (const event of events) {
+    if (event.kind !== "usertiming" || event.name !== label) continue;
+    if (event.ph === "b") begins.push(event.ts);
+    else if (event.ph === "e") {
+      const startTs = begins.shift();
+      if (startTs == null) continue;
+      if (runStart != null && startTs < runStart) continue;
+      if (runEnd != null && event.ts > runEnd) continue;
+      return { startTs, endTs: event.ts };
+    }
+  }
+  return null;
+}
+
+/**
+ * `query span <label>`: one span's full anatomy. `<label>` is a bare label (matched across kinds) or a
+ * `kind:label` qualifier, since span identity is kind+label; a bare label that matches more than one
+ * kind is a collision the caller resolves rather than a silent join. The anatomy carries the bar (when
+ * the rung built one, else rung-honest null), the wall/aggregation/samples/spread, the Measured
+ * counts, INP/interaction when the span had one, the forced-layout read-sites + dirtied-by writes +
+ * thrash rollup an event-log rung (chrome --deep, firefox) captured, and the hot functions within the
+ * span's window (run span only; per-step/measure windowing is not reconstructable at read time).
+ */
+export async function querySpan(file: string, label: string, query: SpanQuery): Promise<void> {
   const abs = await resolveTarget(file, "recording");
   const rec = await load(abs);
-  const digest = buildDigest(rec, abs, 20);
-  const fmt = structuredFormat(opts);
-  if (fmt) return emit(digest, fmt);
 
-  printSummary(rec);
-  // Spans carrying a reconciling bar (--breakdown / firefox measures) print here so `query digest`
-  // matches the `record` report; a no-op when no span has a bar.
-  printSpanBreakdowns(digest.spans, digest.meta.iterations);
-  if (digest.forced.length) {
-    console.log(
-      "\nLayout thrashing — forced layout/style by source (run `query blame --forced` for all):",
+  const qualifier = parseKindLabel(label);
+  const wantedLabel = qualifier?.label ?? label;
+  const wantedKind = qualifier?.kind;
+  const matches = rec.spans.filter(
+    (span) => span.label === wantedLabel && (wantedKind == null || span.kind === wantedKind),
+  );
+  if (!matches.length) {
+    const available = rec.spans.map((span) => `${span.kind}:${span.label}`).join(", ");
+    throw new Error(
+      `No span '${label}' in ${file}. Available: ${available || "(none)"}. List them with ` +
+        `\`query spans ${file}\`.`,
     );
+  }
+  if (matches.length > 1) {
+    // Span identity is kind+label; a bare label matching more than one kind is a collision the caller
+    // resolves by qualifying `kind:label`, never a silent join on the label alone.
+    const forms = matches.map((span) => `${span.kind}:${span.label}`).join(", ");
+    throw new Error(
+      `'${label}' matches ${matches.length} spans of different kinds in ${file}: ${forms}. Re-run ` +
+        `with the qualified form, e.g. \`query span ${file} ${matches[0].kind}:${wantedLabel}\`.`,
+    );
+  }
+
+  const span = matches[0];
+  const model = await tryLoadCpuModel(abs);
+  const anatomy = buildSpanAnatomy(rec, abs, span, model, query.top ?? DEFAULT_SPAN_HOT);
+
+  const fmt = structuredFormat(query);
+  if (fmt) return emit(anatomy, fmt);
+  printSpanAnatomy(anatomy, span, model);
+}
+
+/** Load the sibling CPU model if one exists; a missing/absent model is not an error for the anatomy. */
+async function tryLoadCpuModel(recordingPath: string): Promise<CpuModel | undefined> {
+  try {
+    return await loadCpuModel(recordingPath);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Assemble one span's anatomy from the recording, its sibling CPU model, and the event-log records. */
+function buildSpanAnatomy(
+  rec: Recording,
+  recordingPath: string,
+  span: Span,
+  model: CpuModel | undefined,
+  topN: number,
+): SpanAnatomy {
+  const iterations = rec.meta.iterations ?? 1;
+  const target = recordingLane(rec.meta);
+
+  // Unified slices: prefer the stored bar; a run span with no stored bar falls back to the sibling
+  // CpuModel run bar (the same source rule as `query spans`). null when this rung built no bar.
+  const spansResult = buildSpans(rec.spans, model?.breakdown, target, iterations);
+  const entry = spansResult?.spans.find(
+    (candidate) => candidate.label === span.label && candidate.kind === span.kind,
+  );
+
+  // Forced read-sites, thrash, and the firefox write report come from the deep event log, scoped to
+  // this span's window. Absent on every rung that captured no log (the empty array is that lane's
+  // "not captured", so the rung gates it, not the array length).
+  const hasEventLog = rec.meta.passes.includes("deep") || isGeckoRung(rec.meta.passes);
+  let forced: SpanForced[] | undefined;
+  let thrash: SpanAnatomy["thrash"];
+  let firefoxDirtied: SpanAnatomy["firefoxDirtiedBy"];
+  if (hasEventLog) {
+    const window = spanWindow(rec, span);
+    const windowed = rec.events.filter((event) => window.endTs == null || event.ts <= window.endTs);
+    // The dirtied-by write map (chrome --deep) is run-level and keyed by the read-site `at`, so it
+    // annotates whichever windowed read-sites resolved a write; thrash is a run-window interleave, so
+    // it rides only the run span.
+    const thrashAnalysis = rec.meta.passes.includes("deep")
+      ? analyzeThrash(rec.events, rec.window.startTs)
+      : null;
+    const dirtiedByReadSite = thrashAnalysis?.dirtiedByReadSite ?? {};
+    forced = forcedLayouts(windowed, window.startTs).map((group) => {
+      const dirtiedBy = dirtiedByReadSite[group.at];
+      return dirtiedBy?.length
+        ? { at: group.at, count: group.count, durMs: group.durMs, dirtiedBy }
+        : { at: group.at, count: group.count, durMs: group.durMs };
+    });
+    if (span.kind === "run" && thrashAnalysis) thrash = thrashAnalysis.report;
+    if (isFirefoxDeep(rec.meta.passes))
+      firefoxDirtied = firefoxDirtiedBy(windowed, window.startTs) ?? undefined;
+  }
+
+  // Hot functions within the span window. The resolved CpuModel IS the run window, so a run span
+  // reports its hot list exactly; per-step/measure windowing would need raw per-sample timestamps the
+  // model does not retain, so those spans report null rather than an approximation.
+  let hot: SpanHotFunctions | null = null;
+  if (span.kind === "run" && model)
+    hot = {
+      scope: "run-window",
+      scriptingMs: model.scriptingMs,
+      sampleCount: model.sampleCount,
+      functions: model.functions.slice(0, topN),
+    };
+
+  const hints: string[] = [];
+  if (hasEventLog) {
+    hints.push(`Forced-layout source lines: wpd query blame "${recordingPath}" --forced`);
+    hints.push(`Drill an event by id: wpd query get "${recordingPath}" <id>`);
+  }
+  if (model && span.kind !== "run")
+    hints.push(`Run-window hot functions: wpd query cpu "${recordingPath}"`);
+  hints.push(`All spans at a glance: wpd query spans "${recordingPath}"`);
+
+  const residualMs = entry?.residualMs ?? span.breakdown?.residualMs;
+  return {
+    recording: recordingPath,
+    target,
+    label: span.label,
+    kind: span.kind,
+    aggregation: entry?.aggregation ?? span.aggregation,
+    iterations,
+    wallMs: entry?.wallMs ?? span.wallMs,
+    ...(span.samples != null ? { samples: span.samples } : {}),
+    ...(span.wallMinMs != null ? { wallMinMs: span.wallMinMs } : {}),
+    ...(span.wallMaxMs != null ? { wallMaxMs: span.wallMaxMs } : {}),
+    slices: entry?.slices ?? null,
+    ...(residualMs != null ? { residualMs } : {}),
+    ...(span.frames ? { frames: span.frames } : {}),
+    counts: span.counts,
+    ...(span.inpMs != null ? { inpMs: span.inpMs } : {}),
+    ...(span.interaction ? { interaction: span.interaction } : {}),
+    ...(forced ? { forced } : {}),
+    ...(thrash ? { thrash } : {}),
+    ...(firefoxDirtied ? { firefoxDirtiedBy: firefoxDirtied } : {}),
+    hot,
+    hints,
+  };
+}
+
+/** Human report for `query span`: the bar, wall/counts/interaction, forced attribution, hot list. */
+function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | undefined): void {
+  const count = (value: Measured<number>): string =>
+    formatMeasured(value, (measured) => String(measured));
+  console.log(
+    `\nspan ${bold(anatomy.label)} ${dim(`(${anatomy.kind} · ${anatomy.target} · ${anatomy.aggregation} of ${anatomy.iterations} iteration(s))`)}`,
+  );
+  const wall = anatomy.wallMs == null ? "—" : `${num(anatomy.wallMs)} ms`;
+  const spread =
+    anatomy.samples != null && anatomy.wallMinMs != null && anatomy.wallMaxMs != null
+      ? dim(
+          ` · ${anatomy.samples} samples, wall ${num(anatomy.wallMinMs, 1)}..${num(anatomy.wallMaxMs, 1)} ms`,
+        )
+      : "";
+  console.log(`wall: ${bold(wall)}${spread}`);
+
+  // The reconciling bar, when the rung built one. A stored bar prints the seven-slice per-span table;
+  // a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled).
+  if (span.breakdown) printSpanBreakdowns([span], anatomy.iterations);
+  else if (span.kind === "run" && model?.breakdown) printCpuBreakdown(model, anatomy.iterations);
+  else console.log(dim("\n(no reconciling bar at this rung; record with --breakdown for one)"));
+
+  console.log("\nRendering counts (Measured: — = not measured on this rung, never 0)\n");
+  console.log(
+    table(
+      ["metric", "count"],
+      [
+        ["layout", count(anatomy.counts.layoutCount)],
+        ["style recalc", count(anatomy.counts.styleCount)],
+        ["paint", count(anatomy.counts.paintCount)],
+        ["forced layout/style", count(anatomy.counts.forcedLayoutCount)],
+        ["layout invalidations", count(anatomy.counts.layoutInvalidations)],
+        ["style invalidations", count(anatomy.counts.styleInvalidations)],
+        ["long tasks ≥50ms", count(anatomy.counts.longTaskCount)],
+      ],
+    ),
+  );
+
+  if (anatomy.inpMs != null || anatomy.interaction) {
+    const inp = anatomy.inpMs == null ? "—" : `${num(anatomy.inpMs)} ms`;
+    console.log(`\nINP (worst interaction): ${bold(inp)}`);
+    if (anatomy.interaction) {
+      const { inputDelayMs, processingMs, presentationDelayMs } = anatomy.interaction;
+      console.log(
+        dim(
+          `  input delay ${num(inputDelayMs, 2)} ms · processing ${num(processingMs, 2)} ms · presentation ${num(presentationDelayMs, 2)} ms`,
+        ),
+      );
+    }
+  }
+
+  if (anatomy.forced?.length) {
+    console.log("\nForced layout/style by source (read that forced the flush):\n");
+    const shown = anatomy.forced.slice(0, ANATOMY_FORCED_CAP);
     console.log(
       table(
         ["count", "ms", "source"],
-        digest.forced
-          .slice(0, 8)
-          .map((forcedEntry) => [forcedEntry.count, num(forcedEntry.durMs, 2), forcedEntry.at]),
+        shown.map((entry) => [entry.count, num(entry.durMs, 2), entry.at]),
       ),
     );
+    const withWrites = shown.filter((entry) => entry.dirtiedBy?.length);
+    if (withWrites.length) {
+      console.log(dim("\n  dirtied-by (the write that forced each read):"));
+      for (const entry of withWrites) {
+        console.log(`  ${entry.at}`);
+        for (const write of entry.dirtiedBy!)
+          console.log(
+            `    ${dim("↳ dirtied by")} ${write.at}${write.reason ? dim(` (${write.reason})`) : ""}`,
+          );
+      }
+    }
+    if (anatomy.forced.length > shown.length)
+      console.log(dim(`  … +${anatomy.forced.length - shown.length} more source(s)`));
   }
-  if (digest.firefoxDirtiedBy) {
+
+  if (anatomy.thrash && anatomy.thrash.count > 0)
+    console.log(
+      `\n⚠ layout thrashed ${bold(`${anatomy.thrash.count}x`)} during the run ${dim("(query blame --forced for the full interleave)")}`,
+    );
+
+  if (anatomy.firefoxDirtiedBy) {
     console.log(
       "\ndirtied-by (first invalidation only) — the write Gecko blames for each forced flush:",
     );
     console.log(
       dim(
-        "  forced-by: n/a (firefox --deep); Gecko records only the FIRST invalidation since the last " +
-          "flush, so this is not Chrome's full write set. Read side: query blame --forced.",
+        "  not Chrome's full write set. Read side: query blame --forced; full report: query blame --dirtied.",
       ),
+    );
+    for (const write of anatomy.firefoxDirtiedBy.writes.slice(0, ANATOMY_FORCED_CAP))
+      console.log(`    ${write.at}  ${dim(`(${write.kinds.join(",")} ×${write.count})`)}`);
+  }
+
+  if (anatomy.hot) {
+    console.log(
+      `\nHot functions in this span ${dim(`(${anatomy.hot.scope}, ${num(anatomy.hot.scriptingMs, 1)} ms JS self, ${anatomy.hot.sampleCount} samples)`)}. Drill with ${cyan("`query frame <id>`")}:\n`,
     );
     console.log(
       table(
-        ["count", "kinds", "write"],
-        digest.firefoxDirtiedBy.writes
-          .slice(0, 8)
-          .map((write) => [write.count, write.kinds.join(","), write.at]),
+        ["id", "self ms", "self %", "package", "function (source)"],
+        anatomy.hot.functions.map((fn) => [
+          dim(String(fn.id)),
+          num(fn.selfMs, 1),
+          `${num(fn.selfPct, 1)}%`,
+          cyan(fn.package),
+          `${fn.fn}${fn.file ? ` ${dim(`(${shortSource(fn.file, fn.source)})`)}` : ""}`,
+        ]),
       ),
     );
-  }
-  if (digest.longTasks.length) {
-    console.log("\nLong tasks (drill in with `query get <file> <id>`):");
+  } else if (span.kind !== "run") {
     console.log(
-      table(
-        ["id", "ms", "dominant", "source"],
-        digest.longTasks
-          .slice(0, 8)
-          .map((task) => [task.id, num(task.durMs, 1), task.dominantKind ?? "?", task.at ?? ""]),
+      dim(
+        "\nHot functions: not available for a step/measure span (per-span CPU windowing is not reconstructed post-hoc). Use `query cpu` for the run-window hot list.",
       ),
     );
   }
-  console.log("\nSlowest events:");
-  console.log(
-    table(
-      ["id", "kind", "name", "ms", "source"],
-      digest.slowestEvents
-        .slice(0, 10)
-        .map((event) => [event.id, event.kind, event.name, num(event.durMs, 3), event.at ?? ""]),
-    ),
-  );
+
+  if (anatomy.hints.length) {
+    console.log("");
+    for (const hint of anatomy.hints) console.log(dim(`  • ${hint}`));
+  }
 }
 
 export interface SpansQuery extends OutOpts {
@@ -190,78 +462,22 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     const bars = label ? barSpans.filter((span) => span.label === label) : barSpans;
     if (!bars.length) return void console.log(`No span labelled '${label}' in ${file}.`);
     printSpanBreakdowns(bars, iterations);
-    return;
-  }
-  if (label && label !== "run")
+  } else if (label && label !== "run") {
     return void console.log(
       `No span labelled '${label}' in ${file} (this lane carries only the 'run' bar).`,
     );
-  printCpuBreakdown(model!, iterations);
-}
-
-export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
-  const abs = await resolveTarget(file, "index");
-  const rec = await load(abs);
-  // The step index is a VIEW over the recording's step spans now, not a stored file. A run with no
-  // step spans (a --bench or --target node run) is not stepped: say so, and name the fix.
-  if (!isSteppedRecording(rec)) {
-    throw new Error(
-      `${abs} is not a stepped run: it has no step spans. Only a driver run (measureStep) has ` +
-        `steps; a --bench or --target node run has none. Use \`query digest\`/\`query spans\` instead.`,
-    );
+  } else {
+    printCpuBreakdown(model!, iterations);
   }
-  const idx = stepIndexView(rec, abs);
-  const fmt = structuredFormat(opts);
-  if (fmt) return emit(idx, fmt);
-
-  console.log(`Stepped run — ${idx.steps.length} step(s). Full recording: ${idx.recording}`);
-  if (idx.meta.throttle?.cpuRate) {
-    console.log(`slowdown: cpu ${idx.meta.throttle.cpuRate}x`);
-  }
-  // `inp` and `handler` come first because they describe the PAGE. `wall` is last and labelled with
-  // a `*`: it is the page's own window between the step marks (the trace clock under --breakdown/--deep,
-  // else the page's performance.now), not the node-side page.click bound (~20ms of which is input
-  // dispatch in the tool process, in no renderer timeline). It still spans the settle the step waits
-  // for (~31ms floor new-headless), so it bounds the interaction's window rather than pricing the JS.
-  // A '—' means the wall was not measured (a step that navigated on a no-trace rung). See docs/dev/driver-timing.md.
+  // Point drill-down at one span's full anatomy (bar + counts + forced/dirtied + hot functions) and
+  // at the event log, where one exists.
   console.log(
-    table(
-      [
-        "#",
-        "label",
-        "inp ms",
-        "processing ms",
-        "layout",
-        "forced",
-        "paint",
-        "layoutInval",
-        "longTasks",
-        "wall ms*",
-      ],
-      idx.steps.map((step) => [
-        step.index,
-        step.label,
-        step.inpMs == null ? "—" : num(step.inpMs, 1),
-        step.interaction == null ? "—" : num(step.interaction.processingMs, 2),
-        // null = not measured (the default rung captures no counts, a --breakdown step drops
-        // forced); show a placeholder, never a fake 0.
-        formatMeasured(step.headline.layoutCount, (count) => String(count)),
-        formatMeasured(step.headline.forcedLayoutCount, (count) => String(count)),
-        formatMeasured(step.headline.paintCount, (count) => String(count)),
-        formatMeasured(step.headline.layoutInvalidations, (count) => String(count)),
-        formatMeasured(step.headline.longTaskCount, (count) => String(count)),
-        step.wallMs == null ? "—" : num(step.wallMs, 1),
-      ]),
+    dim(
+      `\n  • One span's anatomy (counts, forced, hot functions): wpd query span "${abs}" <label>`,
     ),
   );
-  console.log(
-    "\n* wall is the page's own window between the step marks (trace clock under --breakdown/--deep, " +
-      "else the page's performance.now),\n  not the node-side page.click bound. It still spans the " +
-      "step's settle (~31ms floor new-headless), so it bounds the interaction rather than pricing the " +
-      "JS.\n  inp/processing are measured in-page; 'processing ms' is first handler start to last " +
-      "handler end. A '—' in inp/processing means no interaction crossed the 16 ms Event Timing floor.",
-  );
-  console.log(`\nInspect a step's bar:  wpd query spans "${idx.recording}" --label <label>`);
+  if (rec.meta.passes.includes("deep") || isGeckoRung(rec.meta.passes))
+    console.log(dim(`  • The classified event log: wpd query events "${abs}" (drill: query get)`));
 }
 
 export async function queryGet(file: string, id: number, opts: OutOpts): Promise<void> {
@@ -477,7 +693,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
 /**
  * `query blame --dirtied`: the firefox --deep dirtied-by write report alone. Refused off the firefox
  * --deep lane -- the write identity comes from Gecko's cause stacks, so there is nothing to show
- * elsewhere (chrome's write set is `query blame` dirtied-by rows + `query digest` thrash instead).
+ * elsewhere (chrome's write set is `query blame` dirtied-by rows + the `query span run` thrash instead).
  */
 async function queryDirtied(rec: Recording, file: string, query: BlameQuery): Promise<void> {
   if (query.forced)
@@ -489,7 +705,7 @@ async function queryDirtied(rec: Recording, file: string, query: BlameQuery): Pr
       `${file}: --dirtied is the firefox --deep write report (Gecko cause stacks, first-invalidation-only). ` +
         `This recording is not one (passes: ${rec.meta.passes.join("+")}). On firefox, re-record with ` +
         `--deep; on chrome, the write side is the dirtied-by rows under \`query blame\` and the thrash ` +
-        `rollup in \`query digest\`.`,
+        `rollup in \`query span run\`.`,
     );
   const report = firefoxDirtiedBy(eventsInWindow(rec), rec.window.startTs);
   const fmt = structuredFormat(query);

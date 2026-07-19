@@ -56,7 +56,7 @@ export function firefoxForcedCountSemantics(): string {
 }
 
 export function firefoxDeepReport(): string {
-  return "Deep report on Firefox (--deep): the SAME gecko pass, plus a dirtied-by (first-invalidation-only) write report from Gecko's Reflow/Styles cause stacks — the write that dirtied each forced flush. Gecko records only the FIRST invalidation since the last flush, so this is NOT Chrome's full write set: no exact-count parity, no forced-by read side (the read that forced each flush stays the sampled read-site blame: query blame --forced), and no layout-thrashing detector. See query blame --dirtied and query digest.";
+  return "Deep report on Firefox (--deep): the SAME gecko pass, plus a dirtied-by (first-invalidation-only) write report from Gecko's Reflow/Styles cause stacks — the write that dirtied each forced flush. Gecko records only the FIRST invalidation since the last flush, so this is NOT Chrome's full write set: no exact-count parity, no forced-by read side (the read that forced each flush stays the sampled read-site blame: query blame --forced), and no layout-thrashing detector. See query blame --dirtied and query span run.";
 }
 
 export function firefoxBreakdown(): string {

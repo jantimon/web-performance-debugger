@@ -563,16 +563,16 @@ export async function record(opts: RecordOptions): Promise<{
 
   // Artifact writes, kept together and AFTER the meta mutation above: `meta` is shared by reference
   // with every file below, so its sourcemap verdict has to be final before the first serialize. The
-  // collapse leaves at most three files: the one default artifact (Span[] + summary + meta, plus the
-  // deep event log under --deep/firefox), the raw profile, and the resolved CPU model. There is no
-  // separate digest or step-index file -- `query digest`/`index` derive those views from the spans.
+  // At most three files: the one default artifact (Span[] + summary + meta, plus the deep event log
+  // under --deep/firefox), the raw profile, and the resolved CPU model. There is no separate
+  // step-index file -- `query spans`/`query span <label>` derive their views from the spans.
   await writeRecording(outPath, recording, opts.format);
   if (cpuModel && cpuProfilePath) {
     cpuModelPath = path.join(outDir, `${base}.cpu${extFor(opts.format)}`);
     await writeCpuModel(cpuModelPath, cpuModel, opts.format);
   }
-  // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime). One artifact kind now,
-  // so digest/index resolve to the same recording, from which their views are built.
+  // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime). One artifact kind, so
+  // every verb resolves to the same recording, from which its view is built.
   await writePointer({
     recording: outPath,
     cpuProfile: cpuProfilePath,
@@ -668,7 +668,7 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     console.log(`\nslowdown: cpu ${recording.meta.throttle.cpuRate}x`);
   }
   console.log(
-    `\nRecording:  ${dim(`${displayPath(outPath)}  ← the run's spans + summary; 'query digest'/'spans'/'index' read it`)}`,
+    `\nRecording:  ${dim(`${displayPath(outPath)}  ← the run's spans + summary; 'query spans' / 'query span <label>' read it`)}`,
   );
   // Both are written together (record() only sets cpuModelPath when it wrote a profile), but say so
   // rather than guarding on one and interpolating the other: that form prints the string

@@ -11,9 +11,13 @@ import type {
   CpuSystem,
   DirtiedByWrite,
   EventKind,
+  FirefoxDirtiedByReport,
   FrameSideTrack,
+  InteractionTiming,
   SpanAggregation,
+  SpanCounts,
   SpanKind,
+  ThrashReport,
 } from "./recording.js";
 import type { Measured } from "./measured.js";
 
@@ -165,6 +169,80 @@ export interface SpansResult {
   target: string;
   source: "breakdowns" | "cpu-model";
   spans: SpanEntry[];
+}
+
+/** One forced (synchronous) layout/style read-site within a span, with the write(s) that dirtied it. */
+export interface SpanForced {
+  /** source location "file:line:col" of the geometry read that forced the flush (relative to root) */
+  at: string;
+  count: number;
+  durMs: number;
+  /** the mutation(s) that dirtied the DOM so this read forced a flush (chrome --deep only) */
+  dirtiedBy?: DirtiedByWrite[];
+}
+
+/**
+ * Hot functions within a span's window, from the CPU sampling model. `scope: "run-window"` is the
+ * only sound scope reconstructable at read time: the resolved CPU model IS the run window (the
+ * sampler brackets the whole timed loop), so a run span reports its own hot list exactly. Per-step
+ * and per-measure windowing would need the raw per-sample timestamps aligned to the span's trace
+ * window, which the resolved model does not retain, so those spans report `hot: null` rather than an
+ * approximation.
+ */
+export interface SpanHotFunctions {
+  scope: "run-window";
+  scriptingMs: number;
+  sampleCount: number;
+  /** top functions by self time, length bounded by `--top` */
+  functions: CpuFunction[];
+}
+
+/**
+ * `query span <label>` output: one span's full anatomy. `slices` is the reconciling bar's unified
+ * shape when the rung built one, else null (rung-honest, never fabricated). `counts` are Measured
+ * throughout. `forced`/`thrash`/`firefoxDirtiedBy` are present only when an event-log rung (chrome
+ * --deep, firefox) carried the records they read; `thrash` is the run window's layout-thrashing
+ * rollup, chrome --deep only. `hot` is the span-windowed hot functions, or null when the CPU
+ * windowing is not reconstructable at this rung/kind (see SpanHotFunctions). Span identity is
+ * kind+label; a bare label matching more than one kind is a collision the caller resolves, never a
+ * silent join.
+ */
+export interface SpanAnatomy {
+  /** absolute back-pointer to the recording this anatomy was read from */
+  recording: string;
+  /** the --target axis: chrome | firefox | node */
+  target: string;
+  label: string;
+  kind: SpanKind;
+  aggregation: SpanAggregation;
+  /** timed iterations behind this recording (`meta.iterations`) */
+  iterations: number;
+  wallMs: number | null;
+  /** real occurrences merged into this span when `aggregation` is `"median"` (a repeated measure) */
+  samples?: number;
+  wallMinMs?: number;
+  wallMaxMs?: number;
+  /** the reconciling bar's unified slices; null when this rung built no bar for the span */
+  slices: UnifiedSlices | null;
+  /** carried through when the source breakdown did not fully close (lost events/clock skew) */
+  residualMs?: number;
+  /** off-thread compositor frame side track (chrome --breakdown only). Display-only. */
+  frames?: FrameSideTrack;
+  /** exact rendering counts windowed to this span's representative occurrence; Measured throughout */
+  counts: SpanCounts;
+  /** worst-interaction INP (ms) for a driver step; null when no interaction crossed the 16ms floor */
+  inpMs?: number | null;
+  /** in-page CWV split of `inpMs` (a driver step); absent when no interaction was observed */
+  interaction?: InteractionTiming | null;
+  /** forced read-sites in this span's window; present only on an event-log rung (chrome/firefox --deep) */
+  forced?: SpanForced[];
+  /** the layout-thrashing rollup for the run window (chrome --deep only, run span) */
+  thrash?: ThrashReport;
+  /** firefox --deep dirtied-by write report for this window (Gecko cause stacks, first-invalidation-only) */
+  firefoxDirtiedBy?: FirefoxDirtiedByReport;
+  /** hot functions within this span's window; null when not reconstructable at this rung/kind */
+  hot: SpanHotFunctions | null;
+  hints: string[];
 }
 
 /** Per-package self-time delta in a CPU diff. */

@@ -2,14 +2,7 @@
 import path from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import { recordAndReport, type RecordOptions } from "./commands/record.js";
-import {
-  queryBlame,
-  queryDigest,
-  queryEvents,
-  queryGet,
-  queryIndex,
-  querySpans,
-} from "./commands/query.js";
+import { queryBlame, queryEvents, queryGet, querySpan, querySpans } from "./commands/query.js";
 import { queryCpu, queryFrame } from "./commands/cpu.js";
 import { assertCmd, type Thresholds } from "./commands/assert.js";
 import { diffCmd } from "./commands/diff.js";
@@ -246,7 +239,7 @@ program
 
 const query = program
   .command("query")
-  .description("Browse/search a recording (start with `digest`). Any <file> may be 'latest'.");
+  .description("Browse/search a recording (start with `spans`). Any <file> may be 'latest'.");
 const fmtOpts = (command: Command) =>
   command
     .option("--json", "emit raw JSON")
@@ -258,20 +251,36 @@ const run = (promise: Promise<void>) =>
 
 fmtOpts(
   query
-    .command("digest <file>")
-    .description("entry point: summary + thrashing + long tasks + slowest"),
-).action((file, opts) => run(queryDigest(file, opts)));
-fmtOpts(
-  query.command("index <file>").description("stepped run: per-step headline numbers + file paths"),
-).action((file, opts) => run(queryIndex(file, opts)));
-fmtOpts(
-  query
     .command("spans <file>")
     .description(
-      "per-span time breakdown (run + steps + performance.measure), one shape across targets",
+      "compact overview: per-span time breakdown (run + steps + performance.measure), one shape across targets",
     )
     .option("--label <label>", "keep only the span with this exact label (case-sensitive)"),
 ).action((file, opts) => run(querySpans(file, opts)));
+fmtOpts(
+  query
+    .command("span <file> <label>")
+    .description(
+      "one span's full anatomy: bar, counts, INP, forced/dirtied-by, hot functions. <label> is a bare label or a kind:label qualifier",
+    )
+    .option("--top <n>", "hot functions to show within the span (run span only)", toInt),
+).action((file, label, opts) => run(querySpan(file, label, opts)));
+// The removed `digest`/`index` verbs: a run is already digest-sized and steps are spans, so both
+// folded into `spans` (overview) + `span <label>` (one span's anatomy). Kept as hidden stubs so an
+// old invocation gets a message naming the replacement, not commander's bare "unknown command".
+for (const [removed, replacement] of [
+  [
+    "digest",
+    "`query spans <file>` for the overview, then `query span <file> <label>` for one span",
+  ],
+  ["index", "`query spans <file>` for the per-span overview, then `query span <file> <label>`"],
+] as const) {
+  query
+    .command(removed, { hidden: true })
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(() => program.error(`\`query ${removed}\` was removed. Use ${replacement}.`));
+}
 fmtOpts(
   query
     .command("events <file>")

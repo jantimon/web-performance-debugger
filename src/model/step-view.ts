@@ -1,9 +1,9 @@
-// The `query index` / `assert`-per-step VIEW, derived from a recording's step spans. After the
-// collapse a stepped run is one recording whose `kind: "step"` spans carry the per-step wall, INP,
-// and windowed counts; there is no stored step-index artifact. This module reads those spans into the
-// StepIndexEntry shape the index printer and the step asserts consume.
+// The per-step VIEW over a recording's step spans, shared by `assert` (per-step gating) and
+// `query span <step-label>` (a step's anatomy). A stepped run is one recording whose `kind: "step"`
+// spans carry the per-step wall, INP, and windowed counts; this module reads those spans into the
+// StepIndexEntry shape those consumers gate/render against.
 
-import type { Recording, Span, StepIndex, StepIndexEntry } from "./recording.js";
+import type { Recording, Span, StepIndexEntry } from "./recording.js";
 
 /** Every `kind: "step"` span, in index order (the position within an iteration). */
 export function stepSpans(recording: Recording): Span[] {
@@ -34,20 +34,5 @@ export function stepEntry(span: Span): StepIndexEntry {
       styleInvalidations: span.counts.styleInvalidations,
       longTaskCount: span.counts.longTaskCount,
     },
-  };
-}
-
-/** Build the `query index` view from a recording (the derived StepIndex, no stored artifact). */
-export function stepIndexView(recording: Recording, recordingPath: string): StepIndex {
-  const steps = stepSpans(recording).map(stepEntry);
-  return {
-    meta: recording.meta,
-    recording: recordingPath,
-    steps,
-    hints: [
-      "Stepped run, derived from the recording's step spans (one artifact; no separate index file).",
-      `Per-span bars: wpd query spans "${recordingPath}"`,
-      `Gate a step in CI: wpd assert "${recordingPath}" --max-forced 0`,
-    ],
   };
 }

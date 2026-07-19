@@ -27,7 +27,7 @@ function pointerFileFor(cwd: string): string {
 const LEGACY_POINTER = "recordings/.wpd-last.json";
 
 export interface LastPointer {
-  /** the one default artifact (Span[] + summary + meta); digest/index/spans views derive from it */
+  /** the one default artifact (Span[] + summary + meta); the `query span`/`spans` views derive from it */
   recording: string;
   /** raw .cpuprofile, when CPU profiling ran */
   cpuProfile?: string;
@@ -73,11 +73,11 @@ async function readPointer(): Promise<LastPointer> {
 
 /**
  * Resolve a file argument. The literal `latest` resolves to the most recent
- * recording (or its index) via the pointer file, never by mtime.
+ * recording via the pointer file, never by mtime.
  */
 export async function resolveTarget(
   file: string,
-  kind: "recording" | "index" | "auto" | "cpu-model" | "cpu-profile",
+  kind: "recording" | "auto" | "cpu-model" | "cpu-profile",
 ): Promise<string> {
   if (file !== "latest") return path.resolve(file);
   const pointer = await readPointer();
@@ -89,7 +89,7 @@ export async function resolveTarget(
       );
     return path.resolve(target);
   }
-  // One artifact kind now: the recording carries the spans, so the digest, step-index, and `auto`
-  // targets all resolve to it and their views are derived by the verb.
+  // One artifact kind: the recording carries the spans, so the `recording` and `auto` targets both
+  // resolve to it and every span/count view is derived by the verb.
   return path.resolve(pointer.recording);
 }

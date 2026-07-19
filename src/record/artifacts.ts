@@ -5,8 +5,8 @@ import type { CpuModel, Recording } from "../model/recording.js";
 // Pure artifact writers: they take already-built model objects and put them on disk. No browser
 // handles, no meta mutation, so a fixture test can drive them directly. The collapse leaves two
 // writers: the one default artifact (Span[] + summary + meta, with the deep event log under --deep)
-// and the resolved CPU model. The `query digest`/`index` views are derived from the recording at
-// read time, so there is no separate digest or step-index file to write.
+// and the resolved CPU model. The `query spans`/`query span <label>` views are derived from the
+// recording at read time, so there is no separate step-index file to write.
 
 /** Serialize a recording to `outPath`. */
 export async function writeRecording(

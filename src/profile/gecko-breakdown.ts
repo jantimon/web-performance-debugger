@@ -90,7 +90,7 @@ function byPackageMs(byPackageUs: Map<string, number>): Record<string, number> {
  * The run-level `js · style · layout · browser · gc · idle` bar (`CpuModel.breakdown` on Firefox).
  * `wallMs` is the profile's own summed deltas (= `CpuModel.totalMs`), so the bar reconciles by
  * construction. It sums every sample `[0, length)`, the same bounds `buildGeckoSpanBreakdowns` gives
- * the run span, so the run-bar wall matches across `query cpu` and `query digest`. Requires
+ * the run span, so the run-bar wall matches across `query cpu` and `query spans`. Requires
  * `raw.gecko` (present only when the CPU signal populated the idle slice).
  */
 export function computeGeckoCpuBreakdown(
@@ -198,7 +198,7 @@ function spanBreakdown(
  * The run span covers every sample `[0, length)`: the profile is already restricted to the run
  * window at conversion, so this IS the run window, and its slice sum equals `CpuModel.totalMs` by
  * construction, the same wall `CpuModel.breakdown` reports. So the run-bar wall reconciles across
- * `query digest` and `query cpu`. Re-deriving the bounds with `windowBounds` would rebuild the
+ * `query spans` and `query cpu`. Re-deriving the bounds with `windowBounds` would rebuild the
  * sample clock delta-by-delta and could trim the boundary sample, opening a one-sample-gap wall
  * difference between the two views; measure spans, which ARE sub-windows, still use `windowBounds`.
  */
