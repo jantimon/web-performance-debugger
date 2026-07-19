@@ -1,5 +1,52 @@
 # @jantimon/web-performance-debugger
 
+## 0.9.0
+
+### Minor Changes
+
+- 39326d1: `--deep` (chrome) is the attribution report: exact forced-by read-sites plus the **dirtied-by** write
+  that made each flush necessary, and a **layout-thrashing detector**.
+
+  The thrash detector walks each top-level task in order and counts the write→read→write→read signature
+  where a geometry read re-flushes a layout an intervening write just dirtied, matching invalidation
+  kind to flush kind. `record --deep` prints `⚠ layout thrashed Nx` with the interleave; `query blame
+--forced` shows the dirtied-by write under each read; `query span run` carries the thrash rollup.
+  Slice durations stay suppressed on `--deep` (the `.stack` trace distorts them); run `--breakdown` for
+  the reconciling bar.
+
+- 39326d1: `diff` matches spans by `kind:label` and warns when a metric is comparable on one side only, rather
+  than inventing a delta: a slice or count measured on one recording but not the other reports `n/a`,
+  never a fabricated regression. The qualified `kind:label` join keeps a user `performance.measure`
+  named `run` from colliding with the run span.
+- 39326d1: `--deep --target firefox` surfaces Gecko's native cause-stack write identity as a first-class
+  dirtied-by report. `query blame --dirtied` lists the write each forced flush blames, labelled
+  `first-invalidation-only` (Gecko records only the first invalidation since the last flush, not
+  Chrome's full write set), so it never fabricates a forced-by read side or count parity Chrome has and
+  Firefox does not. The read side stays the sampled read-site blame (`query blame --forced`).
+- 39326d1: New `query span <file> <label>` drills into one span's full anatomy: its reconciling bar, wall and
+  aggregation with the sample spread, the Measured counts, INP and its CWV split, the forced read-sites
+  with their dirtied-by writes and the thrash rollup (on an event-log rung), and the run-window hot
+  functions. `<label>` is a bare label or a `kind:label` qualifier (`run:`, `step:`, `measure:`), so a
+  label that collides across kinds is resolved rather than silently joined.
+- 39326d1: **Breaking: one capture pass per `record`, selected by a rung flag.** The two-pass isolation and its
+  negative-flag family are gone; every invocation is exactly one pass.
+
+  - Rungs replace the flags: default is the four-slice CPU bar (no rendering counts); `--breakdown` is
+    the reconciling seven-slice bar plus exact layout/style/paint counts; `--deep` is the attribution
+    report (forced-by, dirtied-by, thrash, invalidation rollup, exact counts, no slice ms); `--precise-wall`
+    is a sampler-off benchmark wall. Removed: `--no-isolate`, `--no-trace`, `--no-cpu-profile`,
+    `--no-invalidation-tracking`, `--fn`, `--cpu-interval`, `--settle`, `--screenshot`, `--network`. Want
+    the bar and the blame in one shot? Run `wpd` twice.
+  - Counts are now trace-derived and windowed to the renderer main thread (the CDP `getMetrics` counters
+    are gone). `layoutMs`/`styleMs`/`paintMs` are wall-tier (~1%, directional), measured only on the
+    `--breakdown` light trace and reported `null` on `--deep`.
+  - Driver step walls are re-priced on the page's own clock (the trace-clock window between a step's
+    marks, or the page's `performance.now` delta), never the node-side `page.click` bound.
+  - One artifact file per run (schema `3`): the recording carries the run summary and every span, with
+    the classified event log inlined only under `--deep`/firefox. `query digest` and `query index` are
+    removed — use `query spans` for the overview, then `query span <label>` for one span's anatomy.
+    Recordings written by an older wpd are rejected on read: re-record.
+
 ## 0.8.0
 
 ### Minor Changes
