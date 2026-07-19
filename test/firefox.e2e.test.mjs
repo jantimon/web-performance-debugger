@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +46,37 @@ function runCli(args) {
   if (result.status !== 0)
     throw new Error(`cli ${args.join(" ")} exited ${result.status}\n${result.stderr}`);
   return result.stdout;
+}
+
+// A local HTTP origin for the --url on-ramp, served from a SEPARATE process (spawnSync pins this
+// process's event loop, so an in-process server could not answer). Port is written to a file once
+// listening; poll it with a synchronous Atomics.wait sleep. No external network.
+function startOnrampServer(html) {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-srv-"));
+  const portFile = path.join(dir, "port");
+  const script = `import http from "node:http";
+import { writeFileSync } from "node:fs";
+const body = ${JSON.stringify(html)};
+const server = http.createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+  res.end(body);
+});
+server.listen(0, "127.0.0.1", () => writeFileSync(${JSON.stringify(portFile)}, String(server.address().port)));
+`;
+  const scriptFile = path.join(dir, "server.mjs");
+  writeFileSync(scriptFile, script);
+  const child = spawn(process.execPath, [scriptFile], { stdio: "ignore" });
+  const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  let port;
+  for (let attempt = 0; attempt < 100 && !port; attempt++) {
+    if (existsSync(portFile)) port = readFileSync(portFile, "utf8").trim() || undefined;
+    if (!port) sleep(50);
+  }
+  if (!port) {
+    child.kill();
+    throw new Error("on-ramp test server did not start within 5s");
+  }
+  return { url: `http://127.0.0.1:${port}/`, close: () => child.kill() };
 }
 
 // Regression: a plain `--target firefox` run used to need --cpu-profile to measure anything, and
@@ -134,6 +165,40 @@ e2e(
     const dirtied = JSON.parse(runCli(["query", "blame", out, "--dirtied", "--json"]));
     assert.equal(dirtied.semantic, "first-invalidation", "the --dirtied JSON marks its scope");
     assert.ok(dirtied.writes.length > 0, "--dirtied lists the write rows");
+  },
+);
+
+// The zero-authoring on-ramp crosses the engine: `--url` with no module runs the SAME built-in driver
+// flow on firefox (the gecko pass drives the same driver), so the boot's layout/style counts and CPU
+// come from the one gecko pass. Served from a local origin (no external network).
+e2e(
+  "record --url with no module runs the built-in load flow on firefox",
+  { timeout: TIMEOUT_MS },
+  () => {
+    const html = "<!doctype html><meta charset=utf-8><title>onramp</title><body><h1>hello</h1><p>on-ramp</p></body>";
+    const server = startOnrampServer(html);
+    const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+    try {
+      const out = path.join(dir, "onramp");
+      runCli(["record", "--url", server.url, "--target", "firefox", "--out", out]);
+      const recording = JSON.parse(readFileSync(out, "utf8"));
+      assert.equal(recording.meta.browser, "firefox", "the firefox backend");
+      assert.equal(recording.meta.mode, "url", "the on-ramp records the url mode");
+      assert.equal(recording.meta.driver, true, "the built-in flow is a driver flow");
+      const loadStep = recording.spans.find((span) => span.kind === "step" && span.label === "load");
+      assert.ok(loadStep, "a 'load' step span is recorded");
+      // The gecko pass windows layout/style counts to the boot, so the load step carries real counts.
+      assert.ok(loadStep.counts.layoutCount >= 1, "the boot's layout is counted from the gecko markers");
+      assert.equal(recording.summary.inpMs, null, "a page load has no interaction, so INP is null");
+      assert.ok(
+        recording.meta.notes.some((note) => /Built-in load flow/.test(note)),
+        "the built-in flow is disclosed in the notes",
+      );
+      // The one gecko pass still produced a CPU model for the boot.
+      assert.ok(existsSync(`${out}.cpu.json`), "the boot's CPU model is written");
+    } finally {
+      server.close();
+    }
   },
 );
 

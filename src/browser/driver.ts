@@ -148,6 +148,14 @@ interface StepOpts {
 }
 
 /**
+ * The built-in on-ramp flow (no user module): navigate to `navigateUrl` inside one measured step so
+ * the page's own boot lands in the run window (goto-inside-a-step tracing). See docs/dev/driver-timing.md.
+ */
+export interface OnrampFlow {
+  navigateUrl: string;
+}
+
+/**
  * Driver (puppeteer) mode: the user's module runs in Node and `run` receives
  * `{ page, ctx, measureStep }`. Define each step with:
  *
@@ -160,19 +168,40 @@ interface StepOpts {
  */
 export async function runDriver(
   page: Page,
-  absModule: string,
+  absModule: string | undefined,
   fnName: string,
   options: DriverOptions = { iterations: 1, warmup: 0 },
+  onramp?: OnrampFlow,
 ): Promise<DriverResult> {
-  const mod: any = await import(pathToFileURL(absModule).href);
-  const pick = (...names: string[]) => {
-    for (const name of names) if (typeof mod[name] === "function") return mod[name];
-    return undefined;
-  };
-  const run = pick(fnName, "run") ?? (typeof mod.default === "function" ? mod.default : undefined);
-  if (!run) throw new Error(`Driver module has no '${fnName}' / 'run' / default export.`);
-  const prepare = pick("prepare", "setup", "beforeAll");
-  const cleanup = pick("cleanup", "teardown", "afterAll");
+  let run: (arg: any) => unknown;
+  let prepare: ((arg: any) => unknown) | undefined;
+  let cleanup: ((arg: any) => unknown) | undefined;
+  if (onramp) {
+    // Built-in flow: one "load" step that navigates to the target. No prepare/cleanup. The default
+    // settle (rAF+idle, twice) flushes the boot's paints after the load event, so the window is the
+    // page's own load-to-settle. A navigating step has a null page-clock wall (the two marks sit on
+    // documents with different timeOrigins); a trace rung prices it off the trace window instead.
+    run = ({
+      measureStep,
+    }: {
+      measureStep: (label: string, action: () => unknown) => Promise<void>;
+    }) =>
+      measureStep("load", () =>
+        page.goto(onramp.navigateUrl, { waitUntil: "load", timeout: 30000 }),
+      );
+  } else {
+    if (!absModule)
+      throw new Error("runDriver needs a module path unless a built-in flow is provided.");
+    const mod: any = await import(pathToFileURL(absModule).href);
+    const pick = (...names: string[]) => {
+      for (const name of names) if (typeof mod[name] === "function") return mod[name];
+      return undefined;
+    };
+    run = pick(fnName, "run") ?? (typeof mod.default === "function" ? mod.default : undefined);
+    if (!run) throw new Error(`Driver module has no '${fnName}' / 'run' / default export.`);
+    prepare = pick("prepare", "setup", "beforeAll");
+    cleanup = pick("cleanup", "teardown", "afterAll");
+  }
 
   const lifecycle: string[] = [];
   if (prepare) lifecycle.push("prepare");

@@ -76,14 +76,25 @@ program
   .description(
     "Record where rendering work comes from. Default: run({ page, ctx, measureStep }) executes in Node and drives the page via Puppeteer. --bench: run(ctx) executes inside the page itself, with live document/window and no page handle, timed in-page.",
   )
-  .argument("<module>", "path to a JS/ESM module exporting `run` (and optional prepare/cleanup)")
+  // Optional: with no module, wpd runs a built-in load flow (navigate to --url/--html and settle),
+  // so a first run needs zero authoring. A module continues to work exactly as before.
+  .argument(
+    "[module]",
+    "path to a JS/ESM module exporting `run` (and optional prepare/cleanup). Omit it with --url/--html to run the built-in load flow",
+  )
   .option(
     "--target <name>",
     "where to run: chrome (default) | firefox (WebDriver BiDi + Gecko profiler) | node (in-process, CPU only, no DOM)",
     "chrome",
   )
-  .option("--html <file>", "host page: load this local HTML, then run the module against it")
-  .option("--url <url>", "host page: load this live URL, then run the module against it")
+  .option(
+    "--html <file>",
+    "host page: load this local HTML and run the module against it, or run it alone (no module) as the built-in load flow",
+  )
+  .option(
+    "--url <url>",
+    "host page: load this live URL and run the module against it, or run it alone (no module) as the built-in load flow",
+  )
   .option(
     "--bench",
     "run(ctx) executes inside the page with live document/window (no page handle), timed in-page, so its wall excludes the driver's dispatch and settle. Pair with --html/--url for a host page; repeat with --iterations",
@@ -127,7 +138,7 @@ program
     "chrome headless flavour: shell (default, chrome-headless-shell, ~120Hz frames) | new (full Chrome, ~60Hz frames). See docs/dev/frame-floor.md",
   )
   .option("--format <fmt>", "on-disk format: json | toon", "json")
-  .action(async (module: string, cmdOpts: any) => {
+  .action(async (module: string | undefined, cmdOpts: any) => {
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
     // One axis: chrome | firefox | node, so a conflicting browser/runtime combination is
     // unrepresentable rather than something to guard against.
@@ -136,6 +147,23 @@ program
     const bench = !!cmdOpts.bench;
     const node = cmdOpts.target === "node";
     const firefox = cmdOpts.target === "firefox";
+    // Zero-authoring on-ramp: no module runs the built-in driver flow (navigate to --url/--html and
+    // settle). It needs a page to load and a driver to load it, so --bench (imports run() in-page)
+    // and --target node (no page) have nothing to run, and a bare `record` has no target at all.
+    if (!module) {
+      if (node)
+        program.error(
+          "record --target node needs a module: it imports and profiles run() in this process, and the built-in flow (which loads a page) has no page here. Pass a module path.",
+        );
+      if (bench)
+        program.error(
+          "record --bench needs a module: it import()s run() inside the page. Pass a module path, or drop --bench to run the built-in load flow against --url/--html.",
+        );
+      if (!cmdOpts.url && !cmdOpts.html)
+        program.error(
+          "record needs a module path, or --url/--html to run the built-in load flow. Try: wpd record --url https://example.com",
+        );
+    }
     // undefined = flag not passed; the flavour then defaults to shell in launchBrowser. The two
     // guards below fire only on an EXPLICIT --headless-mode, so plain --no-headless stays headed
     // and a firefox/node run is not rejected for a default it never asked for.

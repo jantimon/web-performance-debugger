@@ -46,8 +46,20 @@ Each section below is one of these: reproduce it, read the result, fix the line.
 
 ## 30-second quickstart
 
-Every run starts from a small JS file you write that exports a `run` function (the contract:
-[Your `run` module](#your-run-module)). Pick the lane by what you are measuring:
+The fastest start needs no file at all: point `wpd` at a URL your dev/preview server is already
+serving, and it profiles the page's own boot (navigate, then settle) as one `load` step.
+
+```bash
+# zero authoring: the built-in load flow, then read the boot's breakdown
+npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown
+npx @jantimon/web-performance-debugger query spans latest
+```
+
+Default gives the boot's four-slice CPU bar; `--breakdown` adds the reconciling
+js/style/layout/paint bar and exact counts; `--deep` adds forced-layout blame. A page load has no
+interaction, so `INP` stays null there — to measure a click, a re-render, or SSR, you write a small
+`run` function (the contract: [Your `run` module](#your-run-module)) and pick the lane by what you
+are measuring:
 
 - **A real user flow in a real app** → the default **driver** lane: `run` gets a Puppeteer `page`
   and drives your `--url`.
