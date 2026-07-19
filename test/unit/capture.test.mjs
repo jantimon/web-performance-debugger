@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   captureFor,
   capabilitiesFor,
+  capabilitiesAfterParse,
   blameSemanticFor,
   countScopeNote,
 } from "../../dist/record/capture.js";
@@ -115,4 +116,13 @@ test("countScopeNote: null at one iteration or with no counts; a TOTAL disclosur
   // Driver per-step counts window to iteration 0, so the note says they are unaffected.
   const driverNote = countScopeNote(light, opts({ breakdown: true, iterations: 8, driver: true }));
   assert.match(driverNote, /Per-step counts are unaffected/);
+});
+
+test("capabilitiesAfterParse: a lost run window degrades every rendering capability to not-measured", () => {
+  const deep = capabilitiesFor(captureFor({ deep: true }), "chrome");
+  assert.equal(deep.counts, true, "precondition: --deep observes counts");
+  const degraded = capabilitiesAfterParse(deep, false);
+  for (const [capability, enabled] of Object.entries(degraded))
+    assert.equal(enabled, false, `${capability} must be not-measured when the window is lost`);
+  assert.deepEqual(capabilitiesAfterParse(deep, true), deep, "a found window changes nothing");
 });

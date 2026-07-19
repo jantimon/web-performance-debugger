@@ -14,6 +14,7 @@ import {
 import { buildGeckoSpanBreakdowns } from "../profile/gecko-breakdown.js";
 import {
   captureFor,
+  capabilitiesAfterParse,
   capabilitiesFor,
   blameSemanticFor,
   countScopeNote,
@@ -309,18 +310,19 @@ export async function record(opts: RecordOptions): Promise<{
   }
   // chrome-headless-shell was missing, so the launch fell back to new-headless.
   if (pass.headlessFallback) notes.push(pass.headlessFallback);
-  const countScope = countScopeNote(capabilities, opts);
+  // A trace ran but its run-window markers are absent (truncated/overflowed trace buffer, or the
+  // user_timing category got dropped). Without a window, inWindow() would count the ENTIRE trace
+  // (page load, nav, prepare, teardown) as the measured region, silently inflating every
+  // trace-derived count. The rendering capture degrades to not-measured and the note says so.
+  // Firefox has its own honest notes (above); the default/precise-wall rung has no trace, so a
+  // missing window there is the rung working, not a buffer overflow.
+  const traceWindowMissing = detail.windowStart == null && browserName !== "firefox" && wantTrace;
+  const effectiveCapabilities = capabilitiesAfterParse(capabilities, !traceWindowMissing);
+  const countScope = countScopeNote(effectiveCapabilities, opts);
   if (countScope) notes.push(countScope);
   if (opts.cpuThrottle) {
     notes.push(notesCatalog.artificialSlowdown(opts.cpuThrottle));
   }
-  // A trace ran but its run-window markers are absent (truncated/overflowed trace buffer, or the
-  // user_timing category got dropped). Without a window, inWindow() would count the ENTIRE trace
-  // (page load, nav, prepare, teardown) as the measured region, silently inflating every
-  // trace-derived count. Treat those counts as not-measured and say so loudly. Firefox has its own
-  // honest notes (above); the default/precise-wall rung has no trace, so a missing window there is
-  // the rung working, not a buffer overflow.
-  const traceWindowMissing = detail.windowStart == null && browserName !== "firefox" && wantTrace;
   if (traceWindowMissing) notes.push(notesCatalog.traceWindowMissing());
 
   const throttle = opts.cpuThrottle ? { cpuRate: opts.cpuThrottle } : undefined;
@@ -422,7 +424,7 @@ export async function record(opts: RecordOptions): Promise<{
       detailWindowStart: detail.windowStart,
       // What this rung could observe (per capture): gates each count/duration to Measured null vs a
       // number, so the default rung reports no counts and --deep reports counts but null durations.
-      capabilities,
+      capabilities: effectiveCapabilities,
       // scriptingMs is patched in after the CPU model is built below (it is the model's JS
       // self-time); null here, and stays null on --deep, which has no sampler and no model.
       scriptingMs: null,
@@ -560,7 +562,7 @@ export async function record(opts: RecordOptions): Promise<{
       recordingPath: outPath,
       detailEvents: detail.events,
       mergedSteps,
-      capabilities,
+      capabilities: effectiveCapabilities,
     });
   }
   // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime).

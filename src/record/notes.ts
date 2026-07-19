@@ -36,7 +36,7 @@ export function breakdownHeuristicMainThread(): string {
 // --- Firefox lane ---
 
 export function firefoxBackend(): string {
-  return "Firefox backend (WebDriver BiDi): no CDP, so no exact counters and no CPU/network throttling. Wall timing rides performance.now (directional).";
+  return "Firefox backend (WebDriver BiDi): no CDP, so no exact counters and no CPU/network throttling. Wall timing rides performance.now (directional) and is measured under the Gecko profiler (~1% systematic cost; cancels in a diff of two Firefox runs).";
 }
 
 export function firefoxRenderingCountsMeasured(): string {
@@ -87,7 +87,7 @@ export function preciseWall(): string {
 // --- Cross-lane ---
 
 export function traceWindowMissing(): string {
-  return "WARNING: trace run-window markers (wpd:run:start/end) were not found, so paint/forced-layout/invalidation/long-task counts are NOT measured for this run and are reported as 0. CDP counters (layout/style/scripting) are unaffected. This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce work or raise --settle if it persists.";
+  return "WARNING: trace run-window markers (wpd:run:start/end) were not found, so layout/style/paint/forced-layout/invalidation/long-task counts are NOT measured for this run (reported as not measured, never 0). This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce the measured work if it persists.";
 }
 
 /** The one templated note: names the slowdown that was applied. */

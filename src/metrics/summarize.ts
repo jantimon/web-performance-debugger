@@ -223,7 +223,7 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     styleCount: measuredIf(capabilities.counts, renderingWork.styleCount),
     styleMs: measuredIf(capabilities.durations, usToMs(renderingWork.styleUs)),
     // Main-thread paint chunks only; see PAINT in trace/classify.ts. There is deliberately no
-    // composite count: [measured] it tracks --settle duration (7x swing on a constant workload),
+    // composite count: [measured] it tracks the settle-window duration (7x swing on a constant workload),
     // i.e. frames elapsed, never the page's work. docs/dev/rendering-counts.md.
     paintCount: measuredIf(capabilities.paintCount, paintCount),
     paintMs: measuredIf(capabilities.paintCount && capabilities.durations, usToMs(paintUs)),

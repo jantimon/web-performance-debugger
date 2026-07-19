@@ -41,7 +41,7 @@ const program = new Command();
 program
   .name(TOOL)
   .description(
-    "Drive Chrome (Puppeteer) to attribute layout/paint/invalidation work to source, with isolated timing.",
+    "Drive Chrome (Puppeteer) to attribute layout/paint/invalidation work to source, one capture rung per run.",
   )
   .version(VERSION)
   .option("--color <when>", "colorize human output: auto | always | never", "auto");

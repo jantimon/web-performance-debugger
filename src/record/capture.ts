@@ -101,6 +101,29 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
  * dividing line for durations: an exact `.stack`/`--deep` trace reports counts but suppresses its
  * distorted durations.
  */
+/** No rendering work observed: every count/duration field reports Measured null, never 0. */
+export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
+  counts: false,
+  paintCount: false,
+  longTasks: false,
+  invalidations: false,
+  durations: false,
+  forced: false,
+};
+
+/**
+ * The capabilities a recording may actually claim once the trace is parsed. A trace whose
+ * wpd:run window markers are missing observed rendering work but cannot window it; counting the
+ * whole trace (page load, prepare, teardown) would inflate every count, so the rendering capture
+ * degrades to not-measured rather than to a wrong number.
+ */
+export function capabilitiesAfterParse(
+  capabilities: CaptureCapabilities,
+  windowFound: boolean,
+): CaptureCapabilities {
+  return windowFound ? capabilities : { ...NO_RENDERING_CAPTURE };
+}
+
 export function capabilitiesFor(
   config: CaptureConfig,
   browserName: BrowserName,
@@ -120,14 +143,7 @@ export function capabilitiesFor(
   }
   if (config.categories == null) {
     // Default rung / precise-wall: no trace, so no rendering work is observed at all.
-    return {
-      counts: false,
-      paintCount: false,
-      longTasks: false,
-      invalidations: false,
-      durations: false,
-      forced: false,
-    };
+    return { ...NO_RENDERING_CAPTURE };
   }
   const hasStack = config.categories.includes(STACK_CATEGORY);
   return {

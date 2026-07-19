@@ -335,8 +335,8 @@ export interface RecordingMeta {
   /**
    * Which code this run's forced-layout blame names (see BlameSemantic). "flush-site" (the read) on
    * both engines today, comparable at line granularity; "invalidation-site" (the write) only on
-   * older Firefox recordings. Absent => the run produced no blame (--target node, or Chrome with
-   * --no-trace).
+   * older Firefox recordings. Absent => the run produced no blame (--target node, or a chrome
+   * rung without a .stack trace).
    */
   blameSemantic?: BlameSemantic;
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */

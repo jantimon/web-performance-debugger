@@ -388,7 +388,7 @@ function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
     return "Firefox captures cause stacks for layout/style via the Gecko profiler";
   if (semantic === "flush-site")
     return "the run captures the geometry read that forced the flush (Chrome via the trace's `.stack`, Firefox via the sampled DOM-accessor stacks)";
-  return "this run recorded no blame pass: --no-trace and --target node collect none";
+  return "this run captured no blame: the default and --precise-wall rungs run no trace, and --target node has no DOM; record with --deep (chrome) or --target firefox";
 }
 
 /**
