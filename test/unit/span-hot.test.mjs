@@ -95,6 +95,34 @@ test("tallySpanHot caps the stored list at topK", () => {
   assert.equal(hot.pooledSamples, 48, "pooledSamples counts every sample, not just the stored top-K");
 });
 
+test("tallySpanHot merges out-of-order and overlapping windows so an overlap never double-counts", () => {
+  // Windows given out of order and overlapping: [200,300] and [0,150] and [100,250]. Merged they
+  // cover [0,300] as one disjoint span. A sample at ts 120 sits in the [0,150]/[100,250] overlap and
+  // must count exactly ONCE, exactly as a membership `some()` over the raw windows counts it once.
+  const samples = [
+    sample(10, 0), sample(120, 0), sample(140, 0), sample(160, 0), sample(180, 0),
+    sample(210, 0), sample(230, 1), sample(250, 1), sample(270, 1), sample(290, 1),
+    sample(400, 0), // past the merged span: excluded by the early break
+  ];
+  const outOfOrderOverlapping = [
+    { startTs: 200, endTs: 300 },
+    { startTs: 0, endTs: 150 },
+    { startTs: 100, endTs: 250 },
+  ];
+  const hot = tallySpanHot(samples, outOfOrderOverlapping, "measure-pooled", INTERVAL_US);
+
+  // Cross-check against the pre-optimization semantics: a membership test over the RAW windows.
+  const bySome = samples.filter(
+    (candidate) =>
+      candidate.functionId != null &&
+      outOfOrderOverlapping.some((window) => candidate.ts >= window.startTs && candidate.ts <= window.endTs),
+  );
+  assert.equal(hot.pooledSamples, bySome.length, "moving-pointer pool matches the raw some() membership");
+  assert.equal(hot.pooledSamples, 10, "the overlap sample (ts 120) counts once, the ts-400 sample is excluded");
+  assert.equal(hot.occurrences, 3, "occurrences discloses the raw window count, not the merged count");
+  assert.deepEqual(hot.functions.map((ref) => ref.id), [0, 1], "fn0 (6) before fn1 (4), no double-count");
+});
+
 // The join is the feature's correctness hinge: a stored ref's id must index the EXACT function the
 // resolved CpuModel ranks, or the panel names the wrong code. functionIdByNode reproduces
 // buildCpuModel's rank (pure over raw), so this asserts the two agree, including under recursion
