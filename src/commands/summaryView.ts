@@ -108,6 +108,13 @@ function printFirefoxDirtiedBy(rec: Recording): void {
   if (!report) return;
   const total = report.writes.reduce((sum, write) => sum + write.count, 0);
   console.log(`\ndirtied-by (first invalidation only) ${dim(`— ${total} forced flush(es)`)}`);
+  const forcedTotal = rec.summary.forcedLayoutCount;
+  if (forcedTotal != null && forcedTotal > total)
+    console.log(
+      dim(
+        `  ${forcedTotal - total} further forced flush(es) carried no resolvable write and are not listed.`,
+      ),
+    );
   console.log(
     dim(
       "  the write Gecko blames for each forced flush. Gecko records only the FIRST invalidation since",

@@ -480,11 +480,16 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
  * elsewhere (chrome's write set is `query blame` dirtied-by rows + `query digest` thrash instead).
  */
 async function queryDirtied(rec: Recording, file: string, query: BlameQuery): Promise<void> {
+  if (query.forced)
+    throw new Error(
+      "--forced (read-site rows) and --dirtied (the write report) are separate answers; pass one.",
+    );
   if (!isFirefoxDeep(rec.meta.passes))
     throw new Error(
       `${file}: --dirtied is the firefox --deep write report (Gecko cause stacks, first-invalidation-only). ` +
-        `This recording is not one (passes: ${rec.meta.passes.join("+")}). On chrome, the write side is the ` +
-        `dirtied-by rows under \`query blame\` and the thrash rollup in \`query digest\`.`,
+        `This recording is not one (passes: ${rec.meta.passes.join("+")}). On firefox, re-record with ` +
+        `--deep; on chrome, the write side is the dirtied-by rows under \`query blame\` and the thrash ` +
+        `rollup in \`query digest\`.`,
     );
   const report = firefoxDirtiedBy(eventsInWindow(rec), rec.window.startTs);
   const fmt = structuredFormat(query);
