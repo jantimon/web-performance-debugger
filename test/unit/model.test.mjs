@@ -190,6 +190,84 @@ test("diff: a workload (target) mismatch REFUSES the gate (R05)", async () => {
   assert.equal(code, 1, "diffing two different flows must not gate silently");
 });
 
+// T02: `target` collapses host and module (a host page overwrites the module), so a structured
+// workload identity {lane,host,module} is the axis the gate compares. Different flow = different
+// workload, even against the same host page.
+const workload = (lane, host, module) => ({ workload: { lane, host, module } });
+
+test("diff: the built-in load flow and a driver module on ONE host REFUSE the gate (T02)", async () => {
+  const base = writeRecMeta("t02-onramp.json", { target: "host.html", driver: true, ...workload("builtin-load", "host.html", null) }, { layoutCount: 1 });
+  const current = writeRecMeta("t02-driver.json", { target: "host.html", driver: true, ...workload("driver", "host.html", "flow.mjs") }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /workload: builtin-load .* module=null → driver .* module="flow\.mjs"/.test(line)), "the lane+module mismatch is disclosed, not hidden behind a shared target");
+  assert.ok(logs.some((line) => /Refusing to gate/.test(line)));
+  assert.equal(code, 1, "two different programs against one host must not gate silently");
+});
+
+test("diff: a host-only difference (same lane+module) REFUSES the gate (T02)", async () => {
+  const base = writeRecMeta("t02-host-a.json", { target: "one.html", driver: true, ...workload("driver", "one.html", "flow.mjs") }, { layoutCount: 1 });
+  const current = writeRecMeta("t02-host-b.json", { target: "two.html", driver: true, ...workload("driver", "two.html", "flow.mjs") }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /host="one\.html" .* → .*host="two\.html"/.test(line)), "the host page is a gated axis in its own right");
+  assert.equal(code, 1, "the same module against a different host is a different workload");
+});
+
+test("diff: the node lane (blank host) gates two different modules (T02)", async () => {
+  const base = writeRecMeta("t02-node-a.json", { target: "a.mjs", runtime: "node", passes: ["node-cpu"], ...workload("node", null, "a.mjs") }, { layoutCount: 1 });
+  const current = writeRecMeta("t02-node-b.json", { target: "b.mjs", runtime: "node", passes: ["node-cpu"], ...workload("node", null, "b.mjs") }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /workload: node host=null module="a\.mjs" → node host=null module="b\.mjs"/.test(line)), "a null host prints as bare null, distinct from a file named 'null'");
+  assert.equal(code, 1);
+});
+
+test("diff: two DIFFERENT driver modules on ONE host REFUSE the gate (T02)", async () => {
+  const base = writeRecMeta("t02-modA.json", { target: "host.html", driver: true, ...workload("driver", "host.html", "a.mjs") }, { layoutCount: 1 });
+  const current = writeRecMeta("t02-modB.json", { target: "host.html", driver: true, ...workload("driver", "host.html", "b.mjs") }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /module="a\.mjs" → .*module="b\.mjs"/.test(line)));
+  assert.equal(code, 1, "a different module against the same host is a different workload");
+});
+
+test("diff: driver vs --bench of ONE module+host REFUSE the gate (T02, different lane)", async () => {
+  const base = writeRecMeta("t02-drv.json", { target: "host.html", driver: true, ...workload("driver", "host.html", "flow.mjs") }, { layoutCount: 1 });
+  const current = writeRecMeta("t02-bench.json", { target: "host.html", driver: false, ...workload("bench", "host.html", "flow.mjs") }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /workload: driver .* → bench /.test(line)), "the lane change is disclosed");
+  assert.equal(code, 1, "the same module driven vs import()'d in-page measures different work");
+});
+
+test("diff: the SAME structured workload gates a real regression, not the workload (T02)", async () => {
+  const base = writeRecMeta("t02-same-base.json", { target: "host.html", driver: true, ...workload("driver", "host.html", "flow.mjs") }, { layoutCount: 1 });
+  const regressed = writeRecMeta("t02-same-cur.json", { target: "host.html", driver: true, ...workload("driver", "host.html", "flow.mjs") }, { layoutCount: 9 });
+  const regression = await runDiffCapture(base, regressed, { failOnRegression: true });
+  assert.ok(!regression.logs.some((line) => /workload/.test(line)), "no workload warning when lane+host+module match");
+  assert.equal(regression.code, 1, "a real count regression on the same workload still gates");
+
+  const clean = writeRecMeta("t02-same-clean.json", { target: "host.html", driver: true, ...workload("driver", "host.html", "flow.mjs") }, { layoutCount: 1 });
+  const pass = await runDiffCapture(base, clean, { failOnRegression: true });
+  assert.equal(pass.code, undefined, "an identical workload with no count change passes the gate");
+});
+
+// T02 backward compat: two pre-identity recordings (no `workload`) still compare on `target`; a
+// structured-vs-absent pair cannot verify the flow, so it WARNS under "workload-identity" rather than
+// blocking (refusing every gate against a pre-upgrade baseline would be heavier than the risk).
+test("diff: two pre-identity recordings fall back to the target comparison (T02)", async () => {
+  const base = writeRecMeta("t02-old-a.json", { target: "a.mjs" }, { layoutCount: 1 });
+  const current = writeRecMeta("t02-old-b.json", { target: "b.mjs" }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /workload: a\.mjs → b\.mjs/.test(line)), "old artifacts still compare on target");
+  assert.equal(code, 1, "a target mismatch on old artifacts still refuses");
+});
+
+test("diff: a structured-vs-absent pair WARNS but does not block (T02)", async () => {
+  const structured = writeRecMeta("t02-mixed-new.json", { target: "host.html", driver: true, ...workload("driver", "host.html", "flow.mjs") }, { layoutCount: 1 });
+  const old = writeRecMeta("t02-mixed-old.json", { target: "host.html" }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(structured, old, { failOnRegression: true });
+  assert.ok(logs.some((line) => /workload-identity: .* → pre-identity\(host\.html\)/.test(line)), "the unverifiable identity is disclosed honestly");
+  assert.ok(!logs.some((line) => /Refusing to gate/.test(line)), "a pre-upgrade baseline is not blocked on a provenance technicality");
+  assert.equal(code, undefined, "the mixed pair warns but still compares");
+});
+
 test("diff: headless-flavour and cpu-throttle mismatches REFUSE the gate (R05)", async () => {
   const headlessBase = writeRecMeta("r05-hl-base.json", { headless: true, headlessMode: "shell" }, { layoutCount: 1 });
   const headlessCur = writeRecMeta("r05-hl-cur.json", { headless: true, headlessMode: "new" }, { layoutCount: 1 });
@@ -271,6 +349,23 @@ test("cpu-diff: --fail-on-regression REFUSES across a workload/browser/runtime m
   assert.equal(code, 1, "gating two different workloads refuses");
   assert.ok(errs.some((line) => /Refusing to gate/.test(line)));
   assert.ok(errs.some((line) => /workload: a\.mjs → b\.mjs/.test(line)));
+});
+
+test("cpu-diff: two different structured workloads on one host REFUSE the gate (T02)", async () => {
+  const base = writeCpuModel("cpudiff-t02-base.cpu.json", { target: "host.html", ...workload("driver", "host.html", "a.mjs") }, 10);
+  const current = writeCpuModel("cpudiff-t02-cur.cpu.json", { target: "host.html", ...workload("driver", "host.html", "b.mjs") }, 10);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(errs.some((line) => /module="a\.mjs" → .*module="b\.mjs"/.test(line)));
+  assert.equal(code, 1, "self-time joined across two different modules is a fabricated delta");
+});
+
+test("cpu-diff: a structured-vs-absent pair WARNS but does not block (T02)", async () => {
+  const structured = writeCpuModel("cpudiff-t02-mixed-new.cpu.json", { target: "host.html", ...workload("driver", "host.html", "a.mjs") }, 10);
+  const old = writeCpuModel("cpudiff-t02-mixed-old.cpu.json", { target: "host.html" }, 10);
+  const { code, errs } = await runCpuDiffCapture(structured, old, { failOnRegression: true });
+  assert.ok(errs.some((line) => /workload-identity/.test(line)), "the unverifiable identity is disclosed");
+  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "a pre-upgrade baseline is not blocked");
+  assert.equal(code, undefined, "the mixed pair warns but still compares");
 });
 
 test("cpu-diff: a rung mismatch WARNS but still compares (not a cpu-diff blocker) (R05)", async () => {

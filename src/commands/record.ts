@@ -453,6 +453,14 @@ export async function record(opts: RecordOptions): Promise<{
       mode === "url"
         ? opts.url!
         : stableWorkloadPath(root, mode === "html" ? opts.html! : opts.module!),
+    // Host and module are separate axes: `target` collapses them (a host page overwrites the module),
+    // so the executed flow's identity lives here for the diff/cpu-diff workload check.
+    workload: {
+      lane: opts.driver ? (opts.module ? "driver" : "builtin-load") : "bench",
+      host:
+        mode === "url" ? opts.url! : mode === "html" ? stableWorkloadPath(root, opts.html!) : null,
+      module: opts.module ? stableWorkloadPath(root, opts.module) : null,
+    },
     fn: opts.fn,
     iterations: opts.iterations,
     warmup: opts.warmup,

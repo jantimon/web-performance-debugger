@@ -602,6 +602,10 @@ build. And a gate **refuses** across an incompatible capture rather than fabrica
 `diff` across a different browser/runtime/rung/workload/`--iterations`/headless flavour/
 `--cpu-throttle`, or a `cpu-diff` across a different
 browser/runtime/workload/`--iterations`/`--cpu-throttle`, names the mismatch and declines to gate.
+The **workload** axis is the executed flow (lane + host page + module), not just the target string, so
+a different module — or the built-in load flow — against the *same* host page is a different workload
+and refuses; two recordings written before this identity fall back to comparing the target, and a
+new-vs-old pair warns that it cannot verify the flow.
 
 ## Reference
 
