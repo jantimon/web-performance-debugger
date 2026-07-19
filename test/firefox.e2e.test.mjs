@@ -63,7 +63,7 @@ e2e(
 
     const recording = JSON.parse(runCli(["query", "digest", out, "--json"]));
     assert.equal(recording.meta.browser, "firefox", "meta records the firefox backend");
-    assert.deepEqual(recording.meta.passes, ["timing", "gecko"], "gecko pass runs by default");
+    assert.deepEqual(recording.meta.passes, ["gecko"], "the one gecko pass is the whole plan");
     assert.ok(
       recording.meta.notes.some((note) => /Firefox backend/.test(note)),
       "notes disclose the Firefox capability limits",
