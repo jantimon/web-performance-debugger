@@ -129,8 +129,8 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   if (!result)
     throw new Error(
       `${file} carries no per-span breakdown. Record with \`--breakdown\` (chrome), \`--target ` +
-        `firefox\`, or \`--target node\` to produce span bars; an older recording or a ` +
-        `--no-cpu-profile run has none.`,
+        `firefox\`, or \`--target node\` to produce span bars; the default/--deep/--precise-wall ` +
+        `rungs and older recordings have none.`,
     );
 
   const label = query.label;
@@ -173,11 +173,8 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
   if (fmt) return emit(idx, fmt);
 
   console.log(`Stepped run — ${idx.steps.length} step(s). Full recording: ${idx.recording}`);
-  if (idx.meta.throttle) {
-    const throttle = idx.meta.throttle;
-    console.log(
-      `slowdown: ${[throttle.cpuRate ? `cpu ${throttle.cpuRate}x` : null, throttle.network].filter(Boolean).join(", ")}`,
-    );
+  if (idx.meta.throttle?.cpuRate) {
+    console.log(`slowdown: cpu ${idx.meta.throttle.cpuRate}x`);
   }
   // `inp` and `handler` come first because they describe the PAGE. `wall` is last and labelled as
   // a bound: it is measured node-side around the action plus its settle, so it carries the driver's
@@ -204,12 +201,13 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
         step.label,
         step.inpMs == null ? "—" : num(step.inpMs, 1),
         step.interaction == null ? "—" : num(step.interaction.processingMs, 2),
-        step.headline.layoutCount,
-        // null = not measured (e.g. a --breakdown step); show a placeholder, never a fake 0.
+        // null = not measured (the default rung captures no counts, a --breakdown step drops
+        // forced); show a placeholder, never a fake 0.
+        formatMeasured(step.headline.layoutCount, (count) => String(count)),
         formatMeasured(step.headline.forcedLayoutCount, (count) => String(count)),
-        step.headline.paintCount,
-        step.headline.layoutInvalidations,
-        step.headline.longTaskCount,
+        formatMeasured(step.headline.paintCount, (count) => String(count)),
+        formatMeasured(step.headline.layoutInvalidations, (count) => String(count)),
+        formatMeasured(step.headline.longTaskCount, (count) => String(count)),
         num(step.wallMs ?? 0, 1),
         path.basename(step.recording),
       ]),

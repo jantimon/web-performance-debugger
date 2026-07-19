@@ -108,21 +108,36 @@ export interface RecordingSummary {
    */
   interaction?: InteractionTiming | null;
 
-  layoutCount: number;
-  layoutMs: number;
-  styleCount: number;
-  styleMs: number;
+  /**
+   * Rendering counts and durations are `Measured` (model/measured.ts): a number is the exact count
+   * (0 = measured clean), null = NOT measured on this rung. The default rung (sampler only, no
+   * trace) observes no rendering work at all, so every count/duration here is null there, never a
+   * fake 0. Counts come from the trace, windowed on the bar's main thread; a `--breakdown`/`--deep`
+   * capture supplies them.
+   */
+  layoutCount: Measured<number>;
+  /**
+   * Wall-tier trace duration (`base::TimeTicks`, ~1% directional), valid only on the light
+   * (no-`.stack`) trace. Null on the default rung (no trace) AND on `--deep`, whose `.stack` trace
+   * inflates style dur up to +38% (a distorted number is worse than none). Run `--breakdown` for it.
+   */
+  layoutMs: Measured<number>;
+  styleCount: Measured<number>;
+  /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
+  styleMs: Measured<number>;
   /**
    * Main-thread paint chunks: one per dirtied region, [measured] exactly N+1 for N regions with
    * zero run-to-run variance. Raster (off-main-thread) is deliberately not in here; it counts
-   * scheduler behaviour, not the page. See docs/dev/rendering-counts.md.
+   * scheduler behaviour, not the page. See docs/dev/rendering-counts.md. `Measured`: null on the
+   * default rung (no trace) and on Firefox (paint is off-main-thread there), never a fake 0.
    */
-  paintCount: number;
-  paintMs: number;
+  paintCount: Measured<number>;
+  /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
+  paintMs: Measured<number>;
 
-  layoutInvalidations: number;
-  paintInvalidations: number;
-  styleInvalidations: number;
+  layoutInvalidations: Measured<number>;
+  paintInvalidations: Measured<number>;
+  styleInvalidations: Measured<number>;
 
   /**
    * layout/style synchronously forced by JS (thrashing), as a `Measured` value (see
@@ -133,11 +148,13 @@ export interface RecordingSummary {
   forcedLayoutCount: Measured<number>;
   forcedLayoutMs: Measured<number>;
 
-  /** tasks >= 50ms ("long tasks") in the window */
-  longTaskCount: number;
-  longestTaskMs: number;
+  /** tasks >= 50ms ("long tasks") in the window; `Measured`, null on the default rung (no trace). */
+  longTaskCount: Measured<number>;
+  /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
+  longestTaskMs: Measured<number>;
 
-  scriptingMs: number;
+  /** JS self-time from the CPU model; `Measured`, null on `--deep` (sampler off, no CPU model). */
+  scriptingMs: Measured<number>;
   totalEvents: number;
 
   /**
@@ -181,11 +198,6 @@ export interface RecordingWindow {
   startTs: number | null;
   endTs: number | null;
   wallMs: number | null;
-}
-
-export interface ScreenshotRefs {
-  before?: string;
-  after?: string;
 }
 
 /** Why a script's sourcemap could not be applied. */
@@ -300,7 +312,12 @@ export interface RecordingMeta {
   userDataDir: string | null;
   /** lifecycle hooks found and called */
   lifecycle: string[];
-  /** measurement passes run in isolation, e.g. ["timing","trace"] (>1 => isolated) */
+  /**
+   * The one capture that ran, by rung name: "default" (sampler only) | "breakdown" | "deep" |
+   * "precise-wall" | "gecko" (firefox) | "node-cpu". Every invocation is exactly one pass (one
+   * browser launch, one run of the flow), so this is a single-element array naming the rung, not a
+   * multi-pass plan.
+   */
   passes: string[];
   notes: string[];
   /**
@@ -325,10 +342,9 @@ export interface RecordingMeta {
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
   runtime?: "chrome" | "node";
   /** artificial slowdown applied during the run */
-  throttle?: { cpuRate?: number; network?: string };
+  throttle?: { cpuRate?: number };
   /** when this recording is one step of a stepped run */
   step?: { index: number; label: string };
-  screenshots?: ScreenshotRefs;
 }
 
 /**
@@ -510,13 +526,14 @@ export interface StepIndexEntry {
   /** this step's own min/median/mean/max; null below 2 samples, same contract as elsewhere */
   stats?: BenchStats | null;
   headline: {
-    layoutCount: number;
+    /** Measured (see model/measured.ts): null when the rung captured no trace to count from */
+    layoutCount: Measured<number>;
     /** Measured (see model/measured.ts): null when forced detection was not run for this step */
     forcedLayoutCount: Measured<number>;
-    paintCount: number;
-    layoutInvalidations: number;
-    styleInvalidations: number;
-    longTaskCount: number;
+    paintCount: Measured<number>;
+    layoutInvalidations: Measured<number>;
+    styleInvalidations: Measured<number>;
+    longTaskCount: Measured<number>;
   };
   recording: string;
   digest: string;

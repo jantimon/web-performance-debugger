@@ -1,8 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
-import type { CDPSession, Page } from "puppeteer";
+import type { Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
-import { snapshotMetricsIfAvailable, metricsDelta } from "../metrics/cdp.js";
 import { duplicateLabelError } from "../trace/steps.js";
 import type { InteractionTiming } from "../model/recording.js";
 
@@ -41,7 +40,6 @@ export interface DriverStep {
   inpMs: number | null;
   /** in-page CWV split of `inpMs`; null when no interaction crossed the 16ms Event Timing floor */
   interaction: InteractionTiming | null;
-  cdpDelta: Record<string, number>;
 }
 
 /** One Event Timing entry, as read back out of the page. */
@@ -118,15 +116,6 @@ export function interactionBreakdown(entries: RawEventTiming[]): InteractionTimi
 export interface DriverResult {
   steps: DriverStep[];
   lifecycle: string[];
-  /** CDP counters snapshotted at run:start, i.e. AFTER prepare() and warmup, so the overall
-   * recording's authoritative counts exclude setup DOM work (consistent with bench mode). */
-  cdpBefore: Record<string, number>;
-  /**
-   * Counters right after the FIRST timed iteration. The overall counts are read against this
-   * rather than the post-run snapshot so they describe one iteration's work instead of scaling
-   * with --iterations. Absent when only one iteration ran (nothing to bracket).
-   */
-  cdpAfterFirstIteration?: Record<string, number>;
   /** teardown to run AFTER tracing stops, so it's kept out of the measured window */
   cleanup?: () => unknown | Promise<unknown>;
 }
@@ -153,18 +142,15 @@ interface StepOpts {
  *   await measureStep({ label, action, until })
  *
  * Each step is wrapped in wpd:step:N marks, settled (or awaited via
- * `until`), bracketed by CDP metric snapshots, and assigned a per-step INP.
+ * `until`), and assigned a per-step INP. Per-step rendering counts come from the trace window this
+ * pass captures (--breakdown/--deep), not from CDP: there is one pass, and the counters are gone.
  */
 export async function runDriver(
   page: Page,
-  client: CDPSession | null,
   absModule: string,
   fnName: string,
   options: DriverOptions = { iterations: 1, warmup: 0 },
 ): Promise<DriverResult> {
-  // Firefox (BiDi) has no CDP session: per-step CDP counter deltas are unavailable, so they
-  // read as {}. Everything else (marks, settle, INP observer) works over BiDi.
-  const snapshot = () => snapshotMetricsIfAvailable(client);
   const mod: any = await import(pathToFileURL(absModule).href);
   const pick = (...names: string[]) => {
     for (const name of names) if (typeof mod[name] === "function") return mod[name];
@@ -271,12 +257,10 @@ export async function runDriver(
     const stepMark = markIndex++;
     await page.evaluate(() => ((window as any).__cpInp = []));
     await mark(`wpd:step:${stepMark}:start`);
-    const before = await snapshot();
     const t0 = performance.now();
     await action();
     await waitDone(until);
     const wallMs = performance.now() - t0;
-    const after = await snapshot();
     await mark(`wpd:step:${stepMark}:end`);
     // Event-Timing entries reach the observer on a later task, after the frame is
     // presented. Flush a frame + a macrotask so a slow interaction's entry lands before
@@ -307,7 +291,6 @@ export async function runDriver(
       wallMs,
       inpMs: inp,
       interaction,
-      cdpDelta: metricsDelta(before, after),
     });
   }
 
@@ -334,9 +317,8 @@ export async function runDriver(
   for (let warm = 0; warm < options.warmup; warm++) await run({ page, ctx, measureStep });
   recording = true;
 
-  // Snapshot CDP counters at run:start, after prepare() and warmup, so setup DOM work isn't
-  // folded into the overall recording's authoritative counts (matches bench mode).
-  const cdpBefore = await snapshot();
+  // prepare() and warmup have run; mark the run window so setup DOM work stays outside it (the
+  // trace counts, when a trace is captured, are windowed start-onward from this mark).
   await mark("wpd:run:start");
 
   // The loop that turns a single sample into a distribution. run() is called once per iteration
@@ -346,14 +328,10 @@ export async function runDriver(
   // it as a bare page.goto() inside run() outside any measureStep, which is strictly more
   // expressive than a boolean (it makes the fresh/in-place choice per step, not per run) and
   // needs no API at all.
-  let cdpAfterFirstIteration: Record<string, number> | undefined;
   for (iteration = 0; iteration < options.iterations; iteration++) {
     usedLabels = new Set<string>();
     indexInIteration = timedIndexBase;
     await run({ page, ctx, measureStep });
-    // Close the counts bracket: the overall counts describe ONE iteration, so they mean the same
-    // at any --iterations, while wall keeps every sample. Only meaningful past the first.
-    if (iteration === 0 && options.iterations > 1) cdpAfterFirstIteration = await snapshot();
   }
   await mark("wpd:run:end");
 
@@ -362,8 +340,6 @@ export async function runDriver(
   return {
     steps,
     lifecycle,
-    cdpBefore,
-    cdpAfterFirstIteration,
     cleanup: cleanup
       ? () => {
           inCleanup = true;

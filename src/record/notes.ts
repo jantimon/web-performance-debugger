@@ -4,7 +4,7 @@
  * browser/launch.ts; only the WORDING lives here, so a reader auditing what the tool can say reads
  * one file, and an e2e test matching a note substring has one place the text can change.
  *
- * The two algorithmic notes -- count scope (passplan.ts `noteCountScope`) and sourcemap resolution
+ * The two algorithmic notes -- count scope (capture.ts `countScopeNote`) and sourcemap resolution
  * (record.ts `sourcemapNote`) -- are not here: their text is assembled from the pass plan and the
  * diagnostics, so wording and logic are inseparable and already live in their own generators.
  */
@@ -40,11 +40,11 @@ export function firefoxBackend(): string {
 }
 
 export function firefoxRenderingCountsMeasured(): string {
-  return "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's CDP counts: read them against another Firefox run. NOT measured at all and reported as 0: paintCount, invalidation counts, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and scriptingMs. A 0 in those means unmeasured, not clean.";
+  return "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's counts: read them against another Firefox run. NOT measured and reported as not-measured (—), never a fake 0: paintCount (off-main-thread), invalidation counts and long tasks (from the DevTools trace, which Gecko has no equivalent of). scriptingMs comes from the CPU model.";
 }
 
 export function firefoxRenderingCountsDisabled(): string {
-  return "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.";
+  return "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as not-measured (—) because nothing counted them, not because the page did no work: layout/style/paint, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.";
 }
 
 export function firefoxInp(): string {
@@ -63,30 +63,25 @@ export function firefoxNoCpuBreakdown(): string {
   return "No CPU time breakdown on Firefox: this Gecko dump carries no per-sample threadCPUDelta CPU signal (an older recording, or the profiler ran without the `cpu` feature), so idle cannot be told from engine work and a bar would fabricate it. CPU self-time (scriptingMs, query cpu) is still measured.";
 }
 
-// --- Chrome default lane ---
+// --- Chrome rung ladder ---
 
-export function timingInstrumented(): string {
-  return "Single-pass mode (--no-isolate): instrumentation was active during timing, so per-iteration timings are inflated. Drop --no-isolate for trustworthy timing.";
+/** Default rung (rung 1): sampler only, no trace, so no rendering counts. */
+export function defaultRung(): string {
+  return "Default mode (rung 1): CPU sampler only, no DevTools trace, for the cleanest wall. Rendering counts (layout/style/paint/forced) and their durations are NOT measured here and are reported as not-measured (—), never 0. Add --breakdown for the reconciling js/style/layout/paint/gc/other/idle bar, or --deep for exact counts and forced-layout blame.";
 }
 
-export function timingClean(): string {
-  return "Timing/stats come from a low-overhead pass with tracing OFF.";
+export function cpuSamplerOnDefaultRung(): string {
+  return "The CPU sampler perturbs per-iteration wall by ~1% on this rung: it is systematic, so it cancels in `diff`. Use --precise-wall for a sampler-off benchmark wall (no CPU model).";
 }
 
-export function paintCountsSeparatePass(): string {
-  return "Paint & invalidation counts come from a separate heavy-instrumentation pass; do not compare durations across the two.";
+/** Rung 3 (--deep): full trace, sampler off; exact counts + blame, durations suppressed. */
+export function deepRung(): string {
+  return "Deep mode (rung 3): full trace (.stack + invalidationTracking) with the CPU sampler OFF. Exact counts (layout/style/paint/forced), forced-layout blame, the invalidation rollup and long tasks are the product. Slice DURATIONS (layoutMs/styleMs/paintMs) are suppressed (—): the .stack trace inflates them (style up to +38%), and a distorted number is worse than none. Run --breakdown for the reconciling bar and a CPU model; span wall (the window width) is still honest here.";
 }
 
-export function noTracePass(): string {
-  return "No trace pass ran (--no-trace): counts come from CDP only. Paint, forced-layout, invalidation and long-task detail is NOT collected and is reported as 0 — that means unmeasured, not clean.";
-}
-
-export function cpuSamplerOnTimingPass(): string {
-  return "The CPU sampler ran during the timing pass, which inflates per-iteration wall by roughly 10%: it is systematic, so it cancels in `diff`, but use --no-cpu-profile for absolute wall numbers.";
-}
-
-export function noCpuModelNoIsolate(): string {
-  return "No CPU model in this run: --no-isolate collapses to the single trace pass, and CPU sampling during tracing would inflate self-time by ~21% (trace instrumentation is billed to the JS frame that triggered it). Drop --no-isolate to get a CPU model, or add --no-trace to sample without tracing.";
+/** --precise-wall: rung 1 minus the sampler. */
+export function preciseWall(): string {
+  return "Precise-wall mode: the CPU sampler is OFF for a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts — the wall is the only product. Drop --precise-wall for the four-slice CPU bar.";
 }
 
 // --- Cross-lane ---
@@ -96,12 +91,8 @@ export function traceWindowMissing(): string {
 }
 
 /** The one templated note: names the slowdown that was applied. */
-export function artificialSlowdown(
-  cpuThrottle: number | undefined,
-  network: string | undefined,
-): string {
-  const parts = [cpuThrottle ? `cpu ${cpuThrottle}x` : null, network].filter(Boolean).join(", ");
-  return `Artificial slowdown applied (${parts}); timings are not comparable to an unthrottled run.`;
+export function artificialSlowdown(cpuThrottle: number | undefined): string {
+  return `Artificial slowdown applied (cpu ${cpuThrottle}x); timings are not comparable to an unthrottled run.`;
 }
 
 /** --target node lane (runtime/node.ts). */

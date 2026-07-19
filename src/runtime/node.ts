@@ -158,7 +158,9 @@ export async function recordNode(opts: RecordOptions): Promise<{
       inpMs: null,
       detailEvents: [],
       detailWindowStart: null,
-      cdpDelta: {},
+      // No DOM: every rendering count is not-measured (NO_RENDERING_CAPTURE default). scriptingMs is
+      // the in-process V8 profile's JS self-time.
+      scriptingMs: cpuModel.scriptingMs,
     }),
   };
   await fs.writeFile(outPath, serialize(recording, opts.format), "utf8");

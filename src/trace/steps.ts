@@ -3,10 +3,10 @@ import type { StepWindow } from "./parse.js";
 import type { InteractionTiming } from "../model/recording.js";
 
 /**
- * A step's trace window keyed by label instead of index. Step indices are only meaningful
- * WITHIN the pass that produced them: every pass replays the flow in a fresh browser with its
- * own counter starting at 0, so index N in the trace pass and index N in the timing pass are
- * the same step only by coincidence. Re-key to the label before matching across passes.
+ * A step's trace window keyed by label instead of index. The one pass produces both the step
+ * timings (wall/INP) and, when it captures a trace, the step windows; re-keying to the label is what
+ * lets `mergeSteps` group a label's per-iteration samples (a repeated "mount" is samples, not a
+ * collision), since a label recurs every iteration while its index does not.
  */
 export interface LabelledWindow {
   label: string;
@@ -33,8 +33,6 @@ export interface MergedStep {
   inpMs: number | null;
   /** each part medianed across the iterations that measured an interaction; null if none did */
   interaction: InteractionTiming | null;
-  /** from the FIRST timed iteration, so counts never scale with --iterations */
-  cdpDelta: Record<string, number>;
   startTs: number | null;
   endTs: number | null;
 }
@@ -161,19 +159,17 @@ function describeDivergence(timingLabels: string[], tracedLabels: string[]): str
 }
 
 /**
- * Merge the timing pass's steps (label, wall, INP, clean CDP delta) with the trace pass's
- * windows, BY LABEL.
+ * Merge the pass's steps (label, wall, INP) with its own trace windows, BY LABEL.
  *
  * Divergence throws rather than degrading. An unmatched step would get a null window, which the
  * caller's event filter turns into an empty event slice, which buildSummary reports as zero
  * layouts/paints/forced-layouts. Those zeros are indistinguishable from a genuinely clean step,
- * so `assert --max-forced 0` would pass on a step that was never measured. The two-pass merge
- * assumes an idempotent flow; this is where that assumption is checked instead of assumed.
+ * so `assert --max-forced 0` would pass on a step that was never measured. It can only mean the
+ * trace lost some wpd:step markers (a buffer overflow), so it is a hard error, not a silent degrade.
  *
- * `tracedWindows` of undefined is NOT divergence: it means the detail pass collected no windows
- * at all (a lane without tracing, or a trace that lost its markers), so there is nothing to pair
- * with and every step legitimately has no window. That case is the caller's to detect and is
- * reported as a note, not an error.
+ * `tracedWindows` of undefined is NOT divergence: it means the pass captured no trace at all (the
+ * default/precise-wall rung, or firefox), so there is nothing to pair with and every step
+ * legitimately has no window. That case is the caller's to detect and is reported as a note.
  */
 export function mergeSteps(
   timingSteps: DriverStep[],
@@ -181,10 +177,9 @@ export function mergeSteps(
 ): MergedStep[] {
   assertUniqueLabels(timingSteps);
   assertSameLabelsEachIteration(timingSteps);
-  // Counts and blame describe the FIRST timed iteration (see MergedStep.cdpDelta), so only its
-  // windows are paired. Later iterations' windows exist under --no-isolate, where the single pass
-  // runs every iteration; they are dropped rather than merged, because a step's events must come
-  // from the same iteration its counters did.
+  // Per-step counts and blame describe the FIRST timed iteration, so only its windows are paired.
+  // Later iterations' windows exist (the one pass runs every iteration for wall) but are dropped:
+  // a step's trace-derived counts window to a single iteration so they never scale.
   // Iteration 0 covers both the first timed iteration and anything prepare() measured (it runs
   // once, before the loop, so its steps are iteration 0 as well). A prepare step's window is the
   // only one it has: dropping it would leave the step unwindowed and report its counts as 0,
@@ -204,11 +199,10 @@ export function mergeSteps(
       timingLabels.some((label) => !windowByLabel.has(label));
     if (diverged) {
       throw new Error(
-        `The timing and trace passes recorded different steps (${describeDivergence(timingLabels, tracedLabels)}). ` +
-          `Each pass replays the flow in a fresh browser, so run() must take the same path every time: ` +
-          `make the flow idempotent (no conditional or randomised measureStep calls), or record a single ` +
-          `pass with --no-isolate. If the flow IS idempotent, the trace lost some wpd:step markers ` +
-          `(an overflowing trace buffer drops events) -- reduce the work in the run or raise --settle.`,
+        `The step timings and trace windows recorded different steps (${describeDivergence(timingLabels, tracedLabels)}). ` +
+          `With --iterations, run() must take the same path every time: make the flow idempotent (no ` +
+          `conditional or randomised measureStep calls). Otherwise the trace lost some wpd:step markers ` +
+          `(an overflowing trace buffer drops events) -- reduce the work in the run.`,
       );
     }
   }
@@ -257,9 +251,6 @@ export function mergeSteps(
       wallMs: median(perIteration),
       inpMs: inpSamples.length ? median(inpSamples) : null,
       interaction,
-      // From the first timed iteration, matching the window above: counts and events must
-      // describe the same iteration, and neither may scale with --iterations.
-      cdpDelta: first.cdpDelta,
       startTs: window?.startTs ?? null,
       endTs: window?.endTs ?? null,
     });

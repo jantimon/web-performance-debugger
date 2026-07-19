@@ -39,26 +39,26 @@ test("labelWindows keys by markIndex, so a repeated label stays distinct per ite
   ]);
 });
 
-test("mergeSteps: a repeated label becomes one step with its samples, counts from iteration 0", () => {
-  const step = (iteration, markIndex, label, wallMs, layouts) => ({
+test("mergeSteps: a repeated label becomes one step with its samples, window from iteration 0", () => {
+  const step = (iteration, markIndex, label, wallMs) => ({
     index: label === "mount" ? 0 : 1,
     iteration,
     markIndex,
     label,
     wallMs,
     inpMs: null,
-    cdpDelta: { LayoutCount: layouts },
   });
   const timing = [
-    step(0, 0, "mount", 40, 7),
-    step(0, 1, "inp", 5, 2),
-    // later iterations are warm: faster, and (crucially) their counts must be ignored, not summed
-    step(1, 2, "mount", 30, 7),
-    step(1, 3, "inp", 9, 2),
-    step(2, 4, "mount", 32, 7),
-    step(2, 5, "inp", 7, 2),
+    step(0, 0, "mount", 40),
+    step(0, 1, "inp", 5),
+    // later iterations are warm: faster, and their windows are dropped (only iteration 0 is paired,
+    // so per-step counts window to one iteration and never scale)
+    step(1, 2, "mount", 30),
+    step(1, 3, "inp", 9),
+    step(2, 4, "mount", 32),
+    step(2, 5, "inp", 7),
   ];
-  // The trace pass runs ONE iteration, so it contributes one window per label.
+  // Only iteration 0's windows are paired, so a step's trace-derived counts describe one iteration.
   const traced = [
     { label: "mount", iteration: 0, startTs: 100, endTs: 200 },
     { label: "inp", iteration: 0, startTs: 300, endTs: 400 },
@@ -69,8 +69,7 @@ test("mergeSteps: a repeated label becomes one step with its samples, counts fro
   const mount = merged.find((entry) => entry.label === "mount");
   assert.deepEqual(mount.perIteration, [40, 30, 32], "samples in iteration order, all kept");
   assert.equal(mount.wallMs, 32, "headline is the median (32), not the cold first sample (40)");
-  assert.deepEqual(mount.cdpDelta, { LayoutCount: 7 }, "counts come from one iteration, not 21");
-  assert.equal(mount.startTs, 100, "window from the trace pass's single iteration");
+  assert.equal(mount.startTs, 100, "window from the first timed iteration, so counts never scale");
   assert.equal(merged.find((entry) => entry.label === "inp").wallMs, 7);
 });
 
@@ -116,8 +115,8 @@ test("mergeSteps throws when an iteration measured different steps", () => {
 });
 
 test("mergeSteps pairs by label, not by position", () => {
-  // The trace pass is a separate browser run: its windows arrive in a different order than the
-  // timing pass's steps. A positional/index-keyed merge would attach "inp"'s window to "mount".
+  // The trace's step windows can arrive in a different order than the step timings (findSteps sorts
+  // by index). A positional/index-keyed merge would attach "inp"'s window to "mount".
   const timing = [driverStep(0, "mount"), driverStep(1, "hydrate"), driverStep(2, "inp")];
   const traced = [
     { label: "inp", startTs: 500, endTs: 600 },
@@ -133,9 +132,8 @@ test("mergeSteps pairs by label, not by position", () => {
       ["inp", 500, 600],
     ],
   );
-  // the timing pass still owns wall/CDP; only the window comes from the trace pass
+  // the step timing owns wall; only the window comes from the trace
   assert.equal(merged[0].wallMs, 10);
-  assert.deepEqual(merged[0].cdpDelta, { LayoutCount: 0 });
 });
 
 test("mergeSteps throws when the passes recorded different steps (never emits a null window)", () => {

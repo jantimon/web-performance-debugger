@@ -12,7 +12,7 @@ listed here), and only list a file that genuinely contains the string.
 
 | Fact | Value | Test string | Canonical anchor | Cited in |
 | --- | --- | --- | --- | --- |
-| Sampler contamination during tracing | +21% self-time inflation | 21% | docs/dev/cpu-profiling.md (why the CPU pass is separate) | src/record/passplan.ts, src/trace/categories.ts, docs/dev/cpu-profiling.md, CLAUDE.md |
+| Sampler contamination during tracing | +21% self-time inflation | 21% | docs/dev/cpu-profiling.md (why the CPU pass is separate) | src/record/capture.ts, src/trace/categories.ts, docs/dev/cpu-profiling.md, CLAUDE.md |
 | Folded reflow in browser-lane self-time | ~85% of the layout probe's "JS" is reflow | 85% | docs/dev/cpu-profiling.md (what self-time includes) | src/model/recording.ts, docs/dev/cpu-profiling.md, docs/dev/README.md, CLAUDE.md |
 | Frame cadence, new-headless (~60 Hz) | 16.6 ms one-frame floor | 16.6 | docs/dev/frame-floor.md | src/record/notes.ts, src/browser/launch.ts, docs/dev/frame-floor.md |
 | Frame cadence, shell-headless (~120 Hz) | 8.3 ms one-frame floor | 8.3 | docs/dev/frame-floor.md | src/record/notes.ts, src/browser/launch.ts, docs/dev/frame-floor.md, docs/dev/cpu-profiling.md |
@@ -20,8 +20,8 @@ listed here), and only list a file that genuinely contains the string.
 | Firefox forced-layout ms under-report | ~7x low vs Chrome | 7x | docs/dev/engine-mapping.md (forced-layout blame) | docs/dev/engine-mapping.md, CLAUDE.md |
 | Paint count exactness | exactly N+1 for N dirtied regions | N+1 | docs/dev/rendering-counts.md | src/trace/taxonomy.ts, src/model/recording.ts, src/commands/diff.ts, docs/dev/rendering-counts.md |
 | Default CPU sampler interval | 200 us | 200 | docs/dev/cpu-profiling.md (why 200) | src/profile/cpuprofile.ts, docs/dev/cpu-profiling.md |
-| Fused (--breakdown) pass wall cost | ~2-5% above a pristine timing pass | 2-5% | src/record/passplan.ts (breakdownSpec) | src/record/passplan.ts, src/record/notes.ts |
-| Fused (--breakdown) pass CPU cleanliness | light trace leaves sampled self-time clean vs sampler-only | +0-1% | docs/dev/cpu-profiling.md (the pass plan, breakdown bullet) | src/record/passplan.ts, docs/dev/cpu-profiling.md |
+| Fused (--breakdown) pass wall cost | ~2-5% above a pristine timing pass | 2-5% | src/record/capture.ts (the breakdown rung) | src/record/capture.ts, src/record/notes.ts |
+| Fused (--breakdown) pass CPU cleanliness | light trace leaves sampled self-time clean vs sampler-only | +0-1% | docs/dev/cpu-profiling.md (the pass plan, breakdown bullet) | src/record/capture.ts, docs/dev/cpu-profiling.md |
 | Firefox read-site blame line overlap with Chrome | 12 of Chrome's 21 forced read lines matched exactly | 12/21 | docs/dev/engine-mapping.md (forced-layout blame) | docs/dev/engine-mapping.md, src/model/recording.ts |
 | Firefox sub-ms sampling declined (keep the 1ms floor) | 0.5ms is delivered on macOS but worsens reconciliation/size | 0.499 | docs/dev/cpu-profiling.md (the Firefox sampler config) | docs/dev/cpu-profiling.md |
 | Firefox honest idle via threadCPUDelta | js,cpu populates the CPU column; a pure-wait window reads 95.7% idle (js-only leaves it 0% populated) | 95.7% | docs/dev/cpu-profiling.md | src/browser/launch.ts, src/profile/gecko.ts, src/record/notes.ts, docs/dev/cpu-profiling.md |

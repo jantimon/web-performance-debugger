@@ -8,8 +8,8 @@ import type {
 import { invalidationKind } from "../trace/classify.js";
 import { STYLE_PARSE_NAMES } from "../trace/taxonomy.js";
 import { mainThread } from "../trace/main-thread.js";
-import { measuredIf } from "../model/measured.js";
-import { usToMs, msToUs, cdpSecondsToMs } from "../model/time.js";
+import { measuredIf, type Measured } from "../model/measured.js";
+import { usToMs, msToUs } from "../model/time.js";
 import { LONG_TASK_MS, inWindow } from "../trace/analysis.js";
 // inWindow is start-onward by design; see the note in analysis.ts.
 
@@ -87,11 +87,41 @@ export function computeStats(perIteration: number[]): BenchStats | null {
   };
 }
 
+/**
+ * What the one capture that ran could observe, per rung/lane. Every count/duration below is gated
+ * to `Measured` null vs a number by one of these flags, so a rung that saw no trace reports null
+ * (not a fake 0), and a `.stack`/`--deep` trace reports exact counts but suppresses its distorted
+ * durations. Computed once in `capabilitiesFor` (record/capture.ts) and threaded to every
+ * `buildSummary` call (run, step, node) so one rung's honesty is stated in one place.
+ */
+export interface CaptureCapabilities {
+  /** a trace was captured, so layout/style COUNTS are exact (windowed on the bar's main thread) */
+  counts: boolean;
+  /** paint COUNT is exact (chrome trace); off on Firefox, where paint is off-main-thread */
+  paintCount: boolean;
+  /** long-task COUNT is exact (chrome DevTools trace); off on Firefox */
+  longTasks: boolean;
+  /** invalidation COUNTS are real (invalidationTracking present: --deep / full trace) */
+  invalidations: boolean;
+  /** slice/derived DURATIONS are trustworthy (light no-`.stack` trace); off on --deep (.stack) */
+  durations: boolean;
+  /** forced-layout detection ran (.stack, or Firefox marker cause) */
+  forced: boolean;
+}
+
+/** Everything not-measured: the default/precise-wall rung and node, which capture no rendering work. */
+export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
+  counts: false,
+  paintCount: false,
+  longTasks: false,
+  invalidations: false,
+  durations: false,
+  forced: false,
+};
+
 export interface SummaryInputs {
   detailEvents: NormalizedEvent[];
   detailWindowStart: number | null;
-  /** CDP getMetrics delta from the clean (timing) pass; {} for per-step trace-only */
-  cdpDelta: Record<string, number>;
   wallMs?: number | null;
   inpMs?: number | null;
   /** in-page CWV split of the interaction that produced `inpMs` */
@@ -104,18 +134,16 @@ export interface SummaryInputs {
    * computeStats contract, and no caller can invent a statistic that bypasses it.
    */
   perStep?: Omit<StepTiming, "stats">[];
-  /**
-   * Whether forced-layout detection ran (default true). False when the trace lacked the `.stack`
-   * category (--breakdown): forced is then reported as null (not measured), never a fake 0, because
-   * every layout in the window WOULD count as unforced with no stack to prove otherwise.
-   */
-  forcedMeasured?: boolean;
+  /** what the capture could observe; defaults to NO_RENDERING_CAPTURE (default rung / node). */
+  capabilities?: CaptureCapabilities;
+  /** JS self-time from the CPU model, or null (--deep has no sampler, so no CPU model). */
+  scriptingMs?: Measured<number>;
 }
 
 export function buildSummary(input: SummaryInputs): RecordingSummary {
-  const { detailEvents, detailWindowStart, cdpDelta } = input;
+  const { detailEvents, detailWindowStart } = input;
   const perIteration = input.perIteration ?? [];
-  const forcedMeasured = input.forcedMeasured !== false;
+  const capabilities = input.capabilities ?? NO_RENDERING_CAPTURE;
 
   // Layout/style counts and durations are windowed on the bar's main thread, so they are sourced
   // by traceRenderingWork rather than the general loop below (which counts every pid/tid).
@@ -186,34 +214,36 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     wallMs: input.wallMs ?? null,
     inpMs: input.inpMs ?? null,
     interaction: input.interaction,
-    // Prefer authoritative low-overhead CDP counters; fall back to the main-thread-windowed trace
-    // counts. The two branches convert opposite ways: CDP durations are seconds, trace durations are
-    // microseconds.
-    layoutCount: cdpDelta.LayoutCount ?? renderingWork.layoutCount,
-    layoutMs:
-      cdpDelta.LayoutDuration != null
-        ? cdpSecondsToMs(cdpDelta.LayoutDuration)
-        : usToMs(renderingWork.layoutUs),
-    styleCount: cdpDelta.RecalcStyleCount ?? renderingWork.styleCount,
-    styleMs:
-      cdpDelta.RecalcStyleDuration != null
-        ? cdpSecondsToMs(cdpDelta.RecalcStyleDuration)
-        : usToMs(renderingWork.styleUs),
+    // Counts come from the trace, main-thread windowed (renderingWork); a rung with no trace reports
+    // null, never a fake 0. Durations ride Chrome's `base::TimeTicks` (wall-tier, ~1%) and are valid
+    // only on the light no-`.stack` trace, so a `--deep` (.stack) capture reports the exact counts
+    // but null durations -- a distorted number is worse than none (.stack inflates style up to +38%).
+    layoutCount: measuredIf(capabilities.counts, renderingWork.layoutCount),
+    layoutMs: measuredIf(capabilities.durations, usToMs(renderingWork.layoutUs)),
+    styleCount: measuredIf(capabilities.counts, renderingWork.styleCount),
+    styleMs: measuredIf(capabilities.durations, usToMs(renderingWork.styleUs)),
     // Main-thread paint chunks only; see PAINT in trace/classify.ts. There is deliberately no
     // composite count: [measured] it tracks --settle duration (7x swing on a constant workload),
     // i.e. frames elapsed, never the page's work. docs/dev/rendering-counts.md.
-    paintCount,
-    paintMs: usToMs(paintUs),
-    layoutInvalidations: layoutInval,
-    paintInvalidations: paintInval,
-    styleInvalidations: styleInval,
-    // null (not 0) when detection did not run: --breakdown drops the `.stack` category forced
-    // detection needs, so a 0 here would read as "no thrashing" instead of "not measured".
-    forcedLayoutCount: measuredIf(forcedMeasured, forcedLayoutCount),
-    forcedLayoutMs: measuredIf(forcedMeasured, usToMs(forcedLayoutUs)),
-    longTaskCount,
-    longestTaskMs: usToMs(longestTaskUs),
-    scriptingMs: cdpSecondsToMs(cdpDelta.ScriptDuration ?? 0),
+    paintCount: measuredIf(capabilities.paintCount, paintCount),
+    paintMs: measuredIf(capabilities.paintCount && capabilities.durations, usToMs(paintUs)),
+    layoutInvalidations: measuredIf(capabilities.invalidations, layoutInval),
+    paintInvalidations: measuredIf(capabilities.invalidations, paintInval),
+    styleInvalidations: measuredIf(capabilities.invalidations, styleInval),
+    // null (not 0) when detection did not run: the default/--breakdown rungs drop the `.stack`
+    // category forced detection needs, so a 0 here would read as "no thrashing" instead of "not
+    // measured". forcedLayoutMs is additionally a duration, so it is null wherever durations are.
+    forcedLayoutCount: measuredIf(capabilities.forced, forcedLayoutCount),
+    forcedLayoutMs: measuredIf(
+      capabilities.forced && capabilities.durations,
+      usToMs(forcedLayoutUs),
+    ),
+    longTaskCount: measuredIf(capabilities.longTasks, longTaskCount),
+    longestTaskMs: measuredIf(
+      capabilities.longTasks && capabilities.durations,
+      usToMs(longestTaskUs),
+    ),
+    scriptingMs: input.scriptingMs ?? null,
     totalEvents: total,
     perIteration,
     stats: computeStats(perIteration),

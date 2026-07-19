@@ -1,28 +1,31 @@
 import type { Recording } from "../model/recording.js";
-import { formatMeasured } from "../model/measured.js";
+import { formatMeasured, type Measured } from "../model/measured.js";
 import { kv, num, sparkline, table } from "../output/ascii.js";
 import { dim } from "../output/color.js";
-import { capsFor } from "../browser/backend.js";
 
 /**
- * Where the count column came from, which differs by lane and must not be asserted blindly.
+ * Where the count column came from, which differs by rung/lane and must not be asserted blindly.
  *
- * Provenance is not what makes a count trustworthy; reproducibility is (see diff.ts). Chrome's
- * columns are exact whether they come from CDP counters (layout/style) or the trace (paint,
- * forced): all of them are measured bit-identical across repeated runs of the same flow. Firefox
- * counts Gecko Reflow/Styles markers instead: real, but batched by a different engine, so calling
- * them "authoritative" invites diffing them against Chrome's as though the two counted the same
- * thing. With no counting mechanism at all the column is all zeros, and saying so beats letting a
- * reader take them for a clean run.
+ * Provenance is not what makes a count trustworthy; reproducibility is (see diff.ts). Chrome counts
+ * come from the trace, main-thread windowed, and are exact (bit-identical across repeated runs) --
+ * but only a --breakdown/--deep capture has a trace; the default rung has none, so its counts read
+ * as not-measured (—). Firefox counts Gecko Reflow/Styles markers instead: real, but batched by a
+ * different engine, so calling them "authoritative" invites diffing them against Chrome's as though
+ * the two counted the same thing.
  */
 export function countProvenance(rec: Recording): string {
-  if (capsFor(rec.meta.browser ?? "chrome").cdpCounts) {
-    return "counts are authoritative; durations are coarse";
-  }
   if (rec.meta.passes.includes("gecko")) {
     return "counts come from Gecko markers — approximate, not comparable to Chrome; durations are coarse";
   }
-  return "counts NOT measured on this lane and shown as 0; see notes";
+  // The default/precise-wall rung captures no trace, so it counts nothing: a — is not-measured, not 0.
+  if (rec.summary.layoutCount == null) {
+    return "counts NOT measured on this rung (no trace): shown as —, never 0. Add --breakdown or --deep; see notes";
+  }
+  // --deep has exact counts but suppresses its (.stack-distorted) durations; --breakdown has both.
+  if (rec.summary.layoutMs == null) {
+    return "counts from the trace (main-thread windowed) are exact; slice durations are suppressed on this rung (—) — run --breakdown for the reconciling bar";
+  }
+  return "counts from the trace (main-thread windowed) are exact; durations are wall-tier";
 }
 
 /**
@@ -63,14 +66,20 @@ export function printSummary(rec: Recording): void {
     `browser: ${meta.browser ?? "chrome"}   passes: ${meta.passes.join(" + ")}   driver: ${meta.driver}   lifecycle: ${meta.lifecycle.join("→") || "run"}`,
   );
 
+  // A Measured count/ms renders as its number, or "—" when the rung did not measure it (never 0).
+  const count = (value: Measured<number>): string =>
+    formatMeasured(value, (measured) => String(measured));
+  const ms = (value: Measured<number>): string =>
+    formatMeasured(value, (measured) => num(measured));
+
   console.log(`\nRendering work (${countProvenance(rec)})\n`);
   console.log(
     table(
       ["metric", "count", "ms"],
       [
-        ["layout", summary.layoutCount, num(summary.layoutMs)],
-        ["style recalc", summary.styleCount, num(summary.styleMs)],
-        ["paint", summary.paintCount, num(summary.paintMs)],
+        ["layout", count(summary.layoutCount), ms(summary.layoutMs)],
+        ["style recalc", count(summary.styleCount), ms(summary.styleMs)],
+        ["paint", count(summary.paintCount), ms(summary.paintMs)],
       ],
     ),
   );
@@ -78,9 +87,9 @@ export function printSummary(rec: Recording): void {
   console.log("\nInvalidations\n");
   console.log(
     kv([
-      ["layout", summary.layoutInvalidations],
-      ["paint", summary.paintInvalidations],
-      ["style/selector", summary.styleInvalidations],
+      ["layout", count(summary.layoutInvalidations)],
+      ["paint", count(summary.paintInvalidations)],
+      ["style/selector", count(summary.styleInvalidations)],
     ]),
   );
 
@@ -88,14 +97,21 @@ export function printSummary(rec: Recording): void {
   // "not measured" and point at the mode that does, never print 0 (which reads as "no thrashing").
   const forcedCell = formatMeasured(
     summary.forcedLayoutCount,
-    (count) => `${count}  (${num(summary.forcedLayoutMs ?? 0)} ms)`,
-    dim("not measured (run the default mode for forced-layout blame)"),
+    (forced) =>
+      `${forced}  (${formatMeasured(summary.forcedLayoutMs, (value) => num(value), "— ms not measured")})`,
+    dim("not measured (run --deep for forced-layout blame)"),
+  );
+  const longTaskCell = formatMeasured(
+    summary.longTaskCount,
+    (tasks) =>
+      `${tasks}  (longest ${formatMeasured(summary.longestTaskMs, (value) => num(value), "—")} ms)`,
+    "—",
   );
   console.log("\nHotspots\n");
   console.log(
     kv([
       ["forced layout/style", forcedCell],
-      ["long tasks ≥50ms", `${summary.longTaskCount}  (longest ${num(summary.longestTaskMs)} ms)`],
+      ["long tasks ≥50ms", longTaskCell],
       ["INP (worst interaction)", summary.inpMs == null ? "—" : `${num(summary.inpMs)} ms`],
       ...wallRow(rec),
     ]),
@@ -124,12 +140,18 @@ export function printSummary(rec: Recording): void {
     console.log("  ⚠ layout thrashing — run `query blame --forced` to see the source lines");
   }
 
-  // Detect a run that recorded no layout/paint/style/event activity at all. On Firefox without a
-  // Gecko pass, rendering is simply not collected (not a sign of a broken run), so skip the hint.
+  // Detect a run that recorded no layout/paint/style/event activity at all. A null count (the rung
+  // did not measure it) is treated as 0 here -- it contributes no evidence of work either way, and
+  // totalEvents still fires the hint on a genuinely empty trace. On Firefox without a Gecko pass, or
+  // the default rung (no trace), rendering is simply not collected, so skip the hint.
   const didWork =
-    summary.layoutCount + summary.paintCount + summary.styleCount + summary.totalEvents;
+    (summary.layoutCount ?? 0) +
+    (summary.paintCount ?? 0) +
+    (summary.styleCount ?? 0) +
+    summary.totalEvents;
   const firefoxNoDetail = meta.browser === "firefox" && !meta.passes.includes("gecko");
-  if (didWork === 0 && !firefoxNoDetail) {
+  const noTrace = meta.browser !== "firefox" && summary.layoutCount == null;
+  if (didWork === 0 && !firefoxNoDetail && !noTrace) {
     console.log(
       "  ⚠ no rendering work recorded — did your run/step actually do anything (selector correct)?",
     );
@@ -184,7 +206,7 @@ export function printSummary(rec: Recording): void {
   }
 
   console.log(
-    `\nscripting ms: ${num(summary.scriptingMs)}   events in window: ${summary.totalEvents}`,
+    `\nscripting ms: ${ms(summary.scriptingMs)}   events in window: ${summary.totalEvents}`,
   );
   if (meta.notes.length) {
     console.log("\nnotes:");

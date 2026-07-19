@@ -42,25 +42,23 @@ test("published types declare the documented public shapes", () => {
 
 // --- Count provenance (the same number means different things per target) ---
 
-test("countProvenance never calls a non-CDP count authoritative", () => {
-  const recording = (meta) => ({ meta: { passes: ["timing"], ...meta }, summary: {} });
+test("countProvenance distinguishes exact trace counts, Gecko markers, and a rung that measured none", () => {
+  const recording = (meta, summary = {}) => ({ meta: { passes: ["default"], ...meta }, summary });
 
-  // Chrome: CDP counters, the only exact ones.
-  assert.match(countProvenance(recording({ passes: ["timing", "trace"] })), /authoritative/);
-  assert.match(countProvenance(recording({ browser: "chrome" })), /authoritative/);
+  // Chrome with a trace (breakdown/deep): counts come from the trace, main-thread windowed, exact.
+  const exact = countProvenance(recording({ passes: ["deep"] }, { layoutCount: 5 }));
+  assert.match(exact, /exact/);
+  assert.doesNotMatch(exact, /NOT measured/);
 
-  // Firefox + gecko pass: summarize falls back to counting Reflow/Styles markers, so the counts
-  // are real -- but Gecko batches layout differently, so they must not read as comparable.
-  const gecko = countProvenance(recording({ browser: "firefox", passes: ["timing", "gecko"] }));
+  // Firefox + gecko pass: counts from Reflow/Styles markers -- real, but batched by a different
+  // engine, so they must not read as comparable to Chrome.
+  const gecko = countProvenance(recording({ browser: "firefox", passes: ["gecko"] }, { layoutCount: 3 }));
   assert.match(gecko, /Gecko markers/);
   assert.match(gecko, /not comparable to Chrome/);
-  assert.doesNotMatch(gecko, /authoritative/);
 
-  // Firefox with no gecko pass: nothing counts anything, so every count is 0. Saying so is the
-  // difference between "clean" and "unmeasured".
-  const none = countProvenance(recording({ browser: "firefox", passes: ["timing"] }));
+  // The default rung captures no trace: layoutCount is null, so the header says NOT measured, never 0.
+  const none = countProvenance(recording({ passes: ["default"] }, { layoutCount: null }));
   assert.match(none, /NOT measured/);
-  assert.doesNotMatch(none, /authoritative/);
 });
 
 test("diff: advisory wall/INP/scripting deltas do NOT fail the gate (H1)", async () => {

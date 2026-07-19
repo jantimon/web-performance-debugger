@@ -84,10 +84,9 @@ program
     "Record where rendering work comes from. Default: run({ page, ctx, measureStep }) executes in Node and drives the page via Puppeteer. --bench: run(ctx) executes inside the page itself, with live document/window and no page handle, timed in-page.",
   )
   .argument("<module>", "path to a JS/ESM module exporting `run` (and optional prepare/cleanup)")
-  .option("--fn <name>", "exported function to run", "run")
   .option(
     "--target <name>",
-    "where to run: chrome (default, full CDP) | firefox (WebDriver BiDi + Gecko profiler) | node (in-process, CPU only, no DOM)",
+    "where to run: chrome (default) | firefox (WebDriver BiDi + Gecko profiler) | node (in-process, CPU only, no DOM)",
     "chrome",
   )
   .option("--html <file>", "host page: load this local HTML, then run the module against it")
@@ -98,7 +97,7 @@ program
   )
   .option(
     "--iterations <n>",
-    "timed repetitions of run(); every step is re-measured, so each gets a median instead of one sample. Counts stay per-iteration. For a fresh page each time, page.goto() inside run() outside any measureStep",
+    "timed repetitions of run(); every step is re-measured, so each gets a median instead of one sample. For a fresh page each time, page.goto() inside run() outside any measureStep",
     toInt,
     1,
   )
@@ -109,32 +108,26 @@ program
     "--user-data-dir <path>",
     "reuse a persistent Chrome profile (log in once; shared across passes/runs)",
   )
-  .option("--screenshot <when>", "capture screenshots: before | after | both")
-  .option("--no-isolate", "single pass (faster, but timing is polluted by instrumentation)")
-  .option("--settle <ms>", "ms to wait after run for async paints to flush", toInt, 200)
   .option("--cpu-throttle <rate>", "artificial slowdown: CPU multiplier (4 = 4x slower)", toInt)
-  .option("--network <preset>", "artificial slowdown: slow-3g | fast-3g | slow-4g | offline")
-  .option(
-    "--no-cpu-profile",
-    "skip CPU sampling: keeps the timing pass pristine (the sampler perturbs wall by ~10%), at the cost of no .cpu model",
-  )
-  .option("--cpu-interval <us>", "CPU sampler interval in microseconds (default 200)", toInt)
   .option(
     "--protocol-timeout <ms>",
     "timeout in ms for one protocol call (default 180000); raise it when a heavy traced interaction pins the main thread, or when a loaded machine makes Firefox time out launching",
     toInt,
   )
-  .option(
-    "--no-invalidation-tracking",
-    "drop the invalidationTracking trace category (much lower overhead on invalidation-heavy pages; keeps paint + forced-reflow blame, loses the invalidation rollup)",
-  )
-  .option(
-    "--no-trace",
-    "skip the trace pass: counts from CDP + the CPU model only, no paint/forced/invalidation detail. Use when the trace pass hangs on a pathological interaction",
-  )
+  // The chrome capture ladder. Default (no flag) is rung 1: CPU sampler only, no trace, cleanest
+  // wall -- the four-slice CPU bar, no rendering counts. --breakdown and --deep are the higher rungs;
+  // --precise-wall is rung 1 minus the sampler. Every invocation is exactly ONE pass.
   .option(
     "--breakdown",
-    "chrome only: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (run, driver steps, user performance.measure). Cannot report forced-layout counts or blame (they need the dropped `.stack` category)",
+    "chrome rung 2: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span, plus exact layout/style/paint counts. Cannot report forced-layout counts or blame (they need the `.stack` category, which --deep captures)",
+  )
+  .option(
+    "--deep",
+    "chrome rung 3: ONE full-trace pass (.stack + invalidationTracking), sampler OFF. The attribution report -- exact forced-layout blame, invalidation rollup, exact counts, long tasks. Slice durations are suppressed (the trace distorts them); no CPU model or reconciling bar (run --breakdown for those)",
+  )
+  .option(
+    "--precise-wall",
+    "rung 1 minus the CPU sampler: a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts",
   )
   .option(
     "--headless-mode <mode>",
@@ -142,9 +135,6 @@ program
   )
   .option("--format <fmt>", "on-disk format: json | toon", "json")
   .action(async (module: string, cmdOpts: any) => {
-    if (cmdOpts.screenshot && !["before", "after", "both"].includes(cmdOpts.screenshot)) {
-      program.error("--screenshot must be one of: before, after, both");
-    }
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
     // One axis: chrome | firefox | node, so a conflicting browser/runtime combination is
     // unrepresentable rather than something to guard against.
@@ -166,47 +156,30 @@ program
     // explicit --headless-mode shell conflicts with --no-headless; the shell default does not.
     if (cmdOpts.headlessMode === "shell" && cmdOpts.headless === false)
       program.error("--headless-mode shell requires headless (drop --no-headless)");
-    if (cmdOpts.breakdown) {
-      // Breakdown needs a trace on ONE fused pass; the conflicting flags each break that shape.
-      // firefox/node have no DevTools trace; --no-isolate/--no-cpu-profile contradict the fusion;
-      // --no-trace/--no-invalidation-tracking are meaningless (the light trace is fixed).
-      const conflicts = [
-        firefox &&
-          "--target firefox (no DevTools trace; its reconciling breakdown comes from the Gecko profile automatically, no --breakdown needed). Your own performance.measure() spans also surface automatically in `query digest` / recording.breakdowns on Firefox without the flag",
-        node && "--target node (no DevTools trace)",
-        cmdOpts.isolate === false && "--no-isolate (breakdown IS a single pass)",
-        cmdOpts.cpuProfile === false &&
-          "--no-cpu-profile (the sampler is required for the js split)",
-        cmdOpts.trace === false && "--no-trace (the trace IS the breakdown's timeline)",
-        cmdOpts.invalidationTracking === false &&
-          "--no-invalidation-tracking (breakdown already drops it)",
-      ].filter(Boolean);
-      if (conflicts.length) program.error(`--breakdown conflicts with: ${conflicts.join("; ")}`);
-    }
+    // The rungs are mutually exclusive: each answers a different question with a different capture,
+    // and every invocation is exactly one pass. Two rungs means two invocations.
+    if (cmdOpts.breakdown && cmdOpts.deep)
+      program.error(
+        "--breakdown and --deep are two different rungs (two captures, two questions): --breakdown is the reconciling bar, --deep is the attribution report. Run wpd twice to get both.",
+      );
+    if (cmdOpts.preciseWall && (cmdOpts.breakdown || cmdOpts.deep))
+      program.error(
+        `--precise-wall is rung 1 minus the sampler; it cannot combine with ${cmdOpts.breakdown ? "--breakdown" : "--deep"} (a higher rung). Drop one.`,
+      );
     if (firefox) {
-      // Firefox is driven over BiDi, and wpd implements these three through CDP, which it has no
-      // access to there. Not all of them are beyond Gecko: `--network offline` has a BiDi
-      // equivalent (browsingContext.setOfflineMode), and only lands here because throttle.ts takes
-      // a raw CDPSession. So this list is "unsupported as built", not "impossible on Firefox".
-      //
-      // --protocol-timeout is deliberately NOT here: it is not a CDP knob. Puppeteer threads it
-      // into the BiDi connection, where it bounds every send() including the `session.new`
-      // handshake, a BiDi-only command with no CDP counterpart.
+      // On firefox the ONE gecko pass IS the lane at every rung: --breakdown/--deep/--precise-wall
+      // have no meaning over it, and --cpu-throttle needs CDP, which BiDi does not expose.
+      // --protocol-timeout is deliberately allowed: puppeteer threads it into the BiDi connection.
       const unsupported = [
-        cmdOpts.cpuThrottle && "--cpu-throttle",
-        cmdOpts.network && "--network",
-        cmdOpts.invalidationTracking === false && "--no-invalidation-tracking",
+        cmdOpts.breakdown &&
+          "--breakdown (firefox's reconciling bar comes from the Gecko profile automatically; your performance.measure() spans surface in recording.breakdowns without a flag)",
+        cmdOpts.deep && "--deep (no .stack / invalidationTracking on Gecko)",
+        cmdOpts.preciseWall && "--precise-wall (the gecko pass IS the firefox lane)",
+        cmdOpts.cpuThrottle && "--cpu-throttle (needs CDP)",
       ].filter(Boolean);
       if (unsupported.length) {
         program.error(
-          `--target firefox has no CDP, so these are unsupported: ${unsupported.join(", ")}. See the target-support matrix in the README.`,
-        );
-      }
-      // On firefox the profiler pass is the ONLY source of counts and blame, so opting out is not
-      // the "slightly less data" it means on chrome: it leaves wall times and nothing else.
-      if (cmdOpts.cpuProfile === false) {
-        program.error(
-          "--target firefox --no-cpu-profile would record timing only: on firefox the profiler pass is what yields layout/style counts and blame. Drop --no-cpu-profile.",
+          `--target firefox has no CDP/DevTools trace, so these are unsupported: ${unsupported.join(", ")}. See the target-support matrix in the README.`,
         );
       }
     }
@@ -214,26 +187,20 @@ program
       const browserOnly = [
         cmdOpts.url && "--url",
         cmdOpts.html && "--html",
-        cmdOpts.screenshot && "--screenshot",
-        cmdOpts.network && "--network",
         cmdOpts.cpuThrottle && "--cpu-throttle",
         cmdOpts.userDataDir && "--user-data-dir",
+        cmdOpts.breakdown && "--breakdown",
+        cmdOpts.deep && "--deep",
+        cmdOpts.preciseWall && "--precise-wall",
       ].filter(Boolean);
       if (browserOnly.length)
         program.error(
-          `--target node is CPU-only and has no browser: remove ${browserOnly.join(", ")}`,
+          `--target node is a CPU-only lane with no browser or trace: remove ${browserOnly.join(", ")}`,
         );
       // --bench selects in-page execution, not iteration, so it has no meaning without a page.
-      // Rejected with its own message rather than folded into browserOnly above, whose "has no
-      // browser" wording would imply --bench is about the browser rather than about *where run()
-      // executes*.
       if (bench)
         program.error(
           "--bench imports the module inside a page; --target node has no page. Drop --bench (--iterations already repeats run() on this lane).",
-        );
-      if (cmdOpts.cpuProfile === false)
-        program.error(
-          "--target node is a CPU-profiling lane; --no-cpu-profile leaves it nothing to measure.",
         );
     }
     // toInt already rejected non-numbers, so these are range checks only. 0 iterations would run
@@ -242,7 +209,9 @@ program
     if (cmdOpts.warmup < 0) program.error("--warmup cannot be negative");
     const opts: RecordOptions = {
       module,
-      fn: cmdOpts.fn,
+      // `run` is the sole export the harness/driver look for (plus prepare/cleanup); there is no
+      // flag to name another.
+      fn: "run",
       // RecordOptions keeps browser/runtime as separate internal axes because runPass and capsFor
       // are written against them. --target is the single user-facing axis that maps onto both.
       browser: firefox ? "firefox" : "chrome",
@@ -254,22 +223,19 @@ program
       headless: cmdOpts.headless,
       headlessMode: cmdOpts.headlessMode,
       userDataDir: cmdOpts.userDataDir ? path.resolve(cmdOpts.userDataDir) : undefined,
-      screenshot: cmdOpts.screenshot,
-      isolate: cmdOpts.isolate,
-      settleMs: cmdOpts.settle,
+      // Internal default (no user flag): async paints flush before tracing stops.
+      settleMs: 200,
       format: cmdOpts.format,
       driver: !bench && !node,
       runtime: node ? "node" : "chrome",
       cpuThrottle: cmdOpts.cpuThrottle,
-      network: cmdOpts.network,
-      // On by default on every target: the sampler rides the timing pass, so it costs no extra
-      // pass, and on firefox it is what produces counts + blame at all. --no-cpu-profile opts out.
-      cpuProfile: cmdOpts.cpuProfile !== false,
-      cpuIntervalUs: cmdOpts.cpuInterval,
+      // On by default; captureFor turns it off on --deep (the sampler cannot ride a .stack trace)
+      // and --precise-wall. On firefox it is what produces counts + blame at all.
+      cpuProfile: true,
       protocolTimeoutMs: cmdOpts.protocolTimeout,
-      trace: cmdOpts.trace,
-      invalidationTracking: cmdOpts.invalidationTracking,
       breakdown: !!cmdOpts.breakdown,
+      deep: !!cmdOpts.deep,
+      preciseWall: !!cmdOpts.preciseWall,
     };
     try {
       await recordAndReport(opts);

@@ -172,60 +172,65 @@ test("userMeasureSpans: pairs user measures, excludes wpd:*, drops out-of-window
   ]);
 });
 
-// A recording written before --breakdown existed has no `breakdowns` field and a numeric
-// forcedLayoutCount; both must still load and behave. Guards the additive-compatibility promise.
-test("buildSummary: forcedMeasured false reports forced as null (never a fake 0)", () => {
+// The one capture that ran gates each count/duration to Measured null vs a number. A --deep-shaped
+// capture (counts + forced, durations OFF because .stack distorts them); a breakdown-shaped one
+// (counts + durations, forced OFF); the default rung (nothing).
+const DEEP = { counts: true, paintCount: true, longTasks: true, invalidations: true, durations: false, forced: true };
+const LIGHT = { counts: true, paintCount: true, longTasks: true, invalidations: false, durations: true, forced: false };
+
+// Rendering counts are Measured: a rung that saw a trace reports the exact count, a rung that did
+// not (the default rung, or a mode that drops the .stack forced detection) reports null, never 0.
+test("buildSummary: capabilities gate forced to a count or to null (never a fake 0)", () => {
   const events = [{ id: 0, name: "Layout", ts: 1, dur: 2000, ph: "X", kind: "layout" }];
-  const measured = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
-  assert.equal(measured.forcedLayoutCount, 0, "default: measured, and this window forced nothing");
-  const notMeasured = buildSummary({
-    detailEvents: events,
-    detailWindowStart: null,
-    cdpDelta: {},
-    forcedMeasured: false,
-  });
-  assert.equal(notMeasured.forcedLayoutCount, null, "breakdown mode: not measured, so null");
+  const measured = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: DEEP });
+  assert.equal(measured.forcedLayoutCount, 0, "forced measured, and this window forced nothing");
+  const notMeasured = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: LIGHT });
+  assert.equal(notMeasured.forcedLayoutCount, null, "light trace has no .stack: forced not measured, so null");
   assert.equal(notMeasured.forcedLayoutMs, null);
+  // The default rung captures no trace: every count is null.
+  const defaultRung = buildSummary({ detailEvents: events, detailWindowStart: null });
+  assert.equal(defaultRung.layoutCount, null, "default rung has no trace, so no counts");
 });
 
-test("buildSummary prefers CDP counts, falls back to trace", () => {
+// Counts come from the trace, main-thread windowed, when the capture captured one.
+test("buildSummary: trace counts are Measured on capabilities.counts, null without", () => {
   const events = [
     { id: 0, name: "Layout", ts: 1, dur: 2000, ph: "X", kind: "layout" },
     { id: 1, name: "Paint", ts: 2, dur: 1000, ph: "X", kind: "paint" },
   ];
-  const withCdp = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: { LayoutCount: 7 } });
-  assert.equal(withCdp.layoutCount, 7); // CDP wins
-  assert.equal(withCdp.paintCount, 1); // trace
-  const noCdp = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
-  assert.equal(noCdp.layoutCount, 1); // trace fallback
+  const withTrace = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: LIGHT });
+  assert.equal(withTrace.layoutCount, 1);
+  assert.equal(withTrace.paintCount, 1);
+  const noTrace = buildSummary({ detailEvents: events, detailWindowStart: null });
+  assert.equal(noTrace.layoutCount, null, "default rung: no trace, no count");
+  assert.equal(noTrace.paintCount, null);
 });
 
-// The trace-derived style fallback (used when no CDP RecalcStyleCount delta is present) must match
-// CDP, which counts recalcs only: ParseAuthorStyleSheet is a stylesheet parse, real style time but
-// not a recalc, so it is excluded from the fallback count/duration. See docs/dev/rendering-counts.md.
-test("buildSummary: trace style fallback excludes ParseAuthorStyleSheet, matching RecalcStyleCount", () => {
+// The HARD GUARD: durations are structurally refusable on a .stack trace. A --deep capture reports
+// the exact style COUNT but a null style DURATION (the .stack trace inflates it up to +38%); a light
+// (--breakdown) capture reports both. Either way ParseAuthorStyleSheet is excluded (real style time,
+// not a recalc). See docs/dev/rendering-counts.md and §25 disclosure rule 2.
+test("buildSummary: .stack (--deep) capture reports counts but refuses durations; light reports both", () => {
   const events = [
     { id: 0, name: "UpdateLayoutTree", ts: 1, dur: 2000, ph: "X", kind: "style" },
     { id: 1, name: "UpdateLayoutTree", ts: 3, dur: 3000, ph: "X", kind: "style" },
     { id: 2, name: "ParseAuthorStyleSheet", ts: 5, dur: 9000, ph: "X", kind: "style" },
   ];
-  const noCdp = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
-  assert.equal(noCdp.styleCount, 2, "only the two recalcs count, not the parse");
-  assert.equal(noCdp.styleMs, 5, "duration sums the recalcs (2ms + 3ms), not the parse");
-  // CDP still wins when present.
-  const withCdp = buildSummary({
-    detailEvents: events,
-    detailWindowStart: null,
-    cdpDelta: { RecalcStyleCount: 2 },
-  });
-  assert.equal(withCdp.styleCount, 2);
+  const light = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: LIGHT });
+  assert.equal(light.styleCount, 2, "only the two recalcs count, not the parse");
+  assert.equal(light.styleMs, 5, "light trace: duration sums the recalcs (2ms + 3ms), not the parse");
+
+  const deep = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: DEEP });
+  assert.equal(deep.styleCount, 2, "--deep still counts exactly (counts are exact on the .stack trace)");
+  assert.equal(deep.styleMs, null, "--deep refuses the distorted style duration (durations off on .stack)");
+  assert.equal(deep.layoutMs, null, "and layout duration too");
 });
 
 // Driver steps are heterogeneous ("mount" vs "inp"), so the ONLY meaningful aggregation is each
 // step against itself. A median pooled across steps, or leaking into the bench-shaped top-level
 // stats, would render a meaningless number as a real one.
 test("buildSummary: perStep aggregates each step against itself, never across steps", () => {
-  const base = { detailEvents: [], detailWindowStart: null, cdpDelta: {} };
+  const base = { detailEvents: [], detailWindowStart: null };
   const summary = buildSummary({
     ...base,
     perStep: [
@@ -252,7 +257,6 @@ test("buildSummary: a step measured once has stats null but keeps its sample", (
   const summary = buildSummary({
     detailEvents: [],
     detailWindowStart: null,
-    cdpDelta: {},
     perStep: [{ label: "mount", perIteration: [36.7] }],
   });
   // same contract as the bench stats: no statistic below 2 samples, rather than a fake one

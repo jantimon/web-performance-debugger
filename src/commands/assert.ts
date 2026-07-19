@@ -24,14 +24,15 @@ export interface Thresholds {
 }
 
 interface Metrics {
-  /** Measured (model/measured.ts): null when the run did not measure forced layout (--breakdown),
-   * which a gate on it turns into a loud FAIL. Same for inpMs/wallMs on lanes that never observed them. */
+  /** Every gated metric is Measured (model/measured.ts): null when the rung did not observe it (the
+   * default rung captures no counts; --breakdown drops forced; a bench run captures no interaction),
+   * which `gateMeasured` turns into a loud FAIL -- a gate you asked for but cannot evaluate has not passed. */
   forcedLayoutCount: Measured<number>;
-  layoutCount: number;
-  paintCount: number;
-  layoutInvalidations: number;
-  styleInvalidations: number;
-  longTaskCount: number;
+  layoutCount: Measured<number>;
+  paintCount: Measured<number>;
+  layoutInvalidations: Measured<number>;
+  styleInvalidations: Measured<number>;
+  longTaskCount: Measured<number>;
   inpMs: Measured<number>;
   wallMs: Measured<number>;
 }

@@ -13,23 +13,17 @@ import {
 import type { GeckoMeasureWindow } from "../profile/gecko-breakdown.js";
 import { runHarness } from "../browser/harness.js";
 import { runDriver, type DriverStep } from "../browser/driver.js";
-import { applyCpuThrottle, applyNetworkPreset } from "../browser/throttle.js";
+import { applyCpuThrottle } from "../browser/throttle.js";
 import { parseTrace, findWindow, findSteps } from "../trace/parse.js";
 import { labelWindows, type LabelledWindow } from "../trace/steps.js";
 import { attachStacks } from "../trace/stacks.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { markForced } from "../trace/analysis.js";
-import {
-  enableMetrics,
-  snapshotMetricsIfAvailable,
-  metricsDelta,
-  startCpuProfile,
-  stopCpuProfile,
-} from "../metrics/cdp.js";
+import { startCpuProfile, stopCpuProfile } from "../metrics/cdp.js";
 import { DEFAULT_CPU_INTERVAL_US, type RawCpuProfile } from "../profile/cpuprofile.js";
 import { usToMs, msToUs } from "../model/time.js";
-import type { NormalizedEvent, ScreenshotRefs, TimingEntry } from "../model/recording.js";
-import type { PassSpec } from "./passplan.js";
+import type { NormalizedEvent, TimingEntry } from "../model/recording.js";
+import type { CaptureConfig } from "./capture.js";
 import type { RecordOptions } from "../commands/record.js";
 
 export interface PassResult {
@@ -37,15 +31,11 @@ export interface PassResult {
   events: NormalizedEvent[];
   windowStart: number | null;
   windowEnd: number | null;
-  cdpDelta: Record<string, number>;
-  cdpBefore: Record<string, number>;
-  cdpAfter: Record<string, number>;
   perIteration: number[];
   lifecycle: string[];
   marks: TimingEntry[];
   measures: TimingEntry[];
-  screenshots?: ScreenshotRefs;
-  /** driver mode: per-step wall time + clean CDP delta (from timing pass) */
+  /** driver mode: per-step wall time + INP */
   driverSteps?: DriverStep[];
   /** driver mode: this pass's own trace windows, already re-keyed from index to label */
   stepWindows?: LabelledWindow[];
@@ -123,11 +113,10 @@ async function waitForGeckoDump(
 export async function runPass(
   server: StaticServer,
   root: string,
-  spec: PassSpec,
+  spec: CaptureConfig,
   opts: RecordOptions,
   mode: "module" | "html" | "url",
   absModule: string,
-  shots: { before: boolean; after: boolean; dir: string; base: string } | null,
   maps: SourceMapResolver,
 ): Promise<PassResult> {
   const browserName: BrowserName = opts.browser ?? "chrome";
@@ -150,16 +139,10 @@ export async function runPass(
       ? { dumpPath: geckoDumpPath, intervalMs: geckoIntervalMs(opts) }
       : undefined,
   });
-  // On Firefox client is null; every CDP call is guarded by the caps object or this helper.
-  const countsClient = caps.cdpCounts ? client : null;
-  const snapshot = () => snapshotMetricsIfAvailable(countsClient);
-  const screenshots: ScreenshotRefs = {};
   let result: PassResult;
   try {
-    if (countsClient) await enableMetrics(countsClient);
     if (opts.cpuThrottle && client && caps.throttle)
       await applyCpuThrottle(client, opts.cpuThrottle);
-    if (opts.network && client && caps.throttle) await applyNetworkPreset(client, opts.network);
 
     if (mode === "html") {
       await page.goto(toServedUrl(server, root, path.resolve(opts.html!)), {
@@ -173,93 +156,50 @@ export async function runPass(
       await page.goto(`${server.url}/__wpd_blank__`, { waitUntil: "load" });
     }
 
-    if (shots?.before) {
-      const screenshotPath = path.join(shots.dir, `${shots.base}.${spec.name}.before.png`);
-      await page.screenshot({ path: screenshotPath as `${string}.png` });
-      screenshots.before = screenshotPath;
-    }
-
     let perIteration: number[];
     let lifecycle: string[];
     let driverSteps: DriverStep[] | undefined;
-    // Teardown is deferred until after tracing stops + counters are snapshotted, so it
-    // never inflates the measured counts.
+    // Teardown is deferred until after tracing stops, so it never inflates the measured counts.
     let runCleanup: (() => unknown | Promise<unknown>) | undefined;
-    let cdpBefore: Record<string, number>;
-    // Set only when the timed phase was split: the counter snapshot taken right after the first
-    // timed iteration, which becomes this pass's authoritative `after` so the counts describe one
-    // iteration instead of --iterations of them.
-    let countsAfter: Record<string, number> | undefined;
     let cpuProfile: RawCpuProfile | undefined;
     const cpuIntervalUs = opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
 
     if (opts.driver) {
       if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
       if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
-      // runDriver snapshots cdpBefore at run:start (after prepare()), so setup DOM work stays
-      // out of the authoritative counts (consistent with bench mode below).
       // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
       // just won't resolve through makeSourceResolver (which keys off the served-url prefix),
       // so its own frames stay unresolved; the page's frames are unaffected.
-      const driverResult = await runDriver(page, client, absModule, opts.fn, {
-        iterations: spec.iterations ?? opts.iterations,
+      const driverResult = await runDriver(page, absModule, opts.fn, {
+        iterations: opts.iterations,
         warmup: opts.warmup,
       });
-      cdpBefore = driverResult.cdpBefore;
-      // Same contract as the bench split: the overall counts describe the first timed iteration,
-      // so they mean the same at any --iterations. runDriver closes the bracket itself (its
-      // counter reads already happen in Node, so unlike bench there is nothing to split).
-      if (spec.bracketFirstIteration && caps.cdpCounts)
-        countsAfter = driverResult.cdpAfterFirstIteration;
       driverSteps = driverResult.steps;
       lifecycle = driverResult.lifecycle;
       perIteration = driverResult.steps.map((step) => step.wallMs);
       runCleanup = driverResult.cleanup;
     } else {
-      const passIterations = spec.iterations ?? opts.iterations;
       const harnessArg = {
         // Bench mode only: the module is import()ed INSIDE the page, so it must be servable.
         // Driver mode imports it in Node (see runDriver above) and needs no url.
         moduleUrl: toServedUrl(server, root, absModule),
         fnName: opts.fn,
-        iterations: passIterations,
+        iterations: opts.iterations,
         warmup: opts.warmup,
       };
-      // prepare() + warmup run BEFORE the CDP snapshot / tracing so their layout/style
-      // work isn't folded into the authoritative counts (warmup especially would inflate
-      // them and disagree with the trace-window-scoped forced/paint counts).
+      // prepare() + warmup run BEFORE tracing so their layout/style work isn't folded into the
+      // window-scoped forced/paint counts (warmup especially would inflate them).
       const setup = await page.evaluate(runHarness, { ...harnessArg, phase: "setup" as const });
       lifecycle = setup.lifecycle;
-      cdpBefore = await snapshot();
       if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
       if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
-      // Counts must mean the same thing at --iterations 1 and 50, so the CDP counters bracket the
-      // FIRST timed iteration alone rather than the whole loop. The counters are read from Node,
-      // so the only way to close that bracket mid-loop is to return from page.evaluate: hence the
-      // split. Skipped at one iteration (nothing to split), on lanes without CDP counters
-      // (Firefox), and on passes that are their own count source (see bracketFirstIteration).
-      const splitCounts = !!spec.bracketFirstIteration && passIterations > 1 && caps.cdpCounts;
-      const first = await page.evaluate(runHarness, {
+      // One timed page.evaluate over the whole loop: with no CDP counter bracket to close mid-loop,
+      // there is nothing to split. Bench wall is the sum of these timed samples (record.ts).
+      const timed = await page.evaluate(runHarness, {
         ...harnessArg,
         phase: "timed" as const,
-        iterations: splitCounts ? 1 : passIterations,
-        offset: 0,
-        runEnd: !splitCounts,
       });
-      perIteration = first.perIteration;
-      if (splitCounts) {
-        // Closes the counts bracket. The gap costs one CDP round trip between iteration 0 and 1;
-        // per-iteration wall is measured in-page, so the samples themselves are unaffected.
-        countsAfter = await snapshot();
-        const rest = await page.evaluate(runHarness, {
-          ...harnessArg,
-          phase: "timed" as const,
-          iterations: passIterations - 1,
-          offset: 1,
-          runStart: false,
-        });
-        perIteration = perIteration.concat(rest.perIteration);
-      }
+      perIteration = timed.perIteration;
       runCleanup = () => page.evaluate(runHarness, { ...harnessArg, phase: "cleanup" as const });
     }
 
@@ -284,25 +224,12 @@ export async function runPass(
       const runWindow = findWindow(events);
       windowStart = runWindow.startTs;
       windowEnd = runWindow.endTs;
-      // Re-key this pass's windows from index to label immediately: the index is only meaningful
-      // inside the pass that produced it, and both sides are right here.
+      // Re-key this pass's step windows from index to label; both sides come from this one pass.
       if (opts.driver && driverSteps) stepWindows = labelWindows(driverSteps, findSteps(events));
     }
 
-    // A split phase already closed the bracket after iteration 0; reuse it rather than snapshot
-    // again, so `delta === after - before` holds and the metrics block describes one coherent
-    // window. Unsplit, this is the post-settle snapshot.
-    const cdpAfter = countsAfter ?? (await snapshot());
-
-    // Teardown now; tracing is stopped and both counters are captured, so cleanup work
-    // stays out of the measured window (the after-screenshot still shows post-cleanup).
+    // Teardown now; tracing is stopped, so cleanup work stays out of the measured window.
     if (runCleanup) await runCleanup();
-
-    if (shots?.after) {
-      const screenshotPath = path.join(shots.dir, `${shots.base}.${spec.name}.after.png`);
-      await page.screenshot({ path: screenshotPath as `${string}.png` });
-      screenshots.after = screenshotPath;
-    }
 
     const entries = (await page.evaluate(() => {
       const markEntries = performance
@@ -317,18 +244,14 @@ export async function runPass(
     })) as { marks: TimingEntry[]; measures: TimingEntry[] };
 
     result = {
-      name: spec.name,
+      name: spec.rung,
       events,
       windowStart,
       windowEnd,
-      cdpBefore,
-      cdpAfter,
-      cdpDelta: metricsDelta(cdpBefore, cdpAfter),
       perIteration,
       lifecycle,
       marks: entries.marks,
       measures: entries.measures,
-      screenshots: shots ? screenshots : undefined,
       driverSteps,
       stepWindows,
       cpuProfile,

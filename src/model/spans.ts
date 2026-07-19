@@ -98,8 +98,8 @@ function runEntryFromCpuBreakdown(cpu: CpuBreakdown, iterations: number): SpanEn
  * Build the unified `query spans` result. Prefers the recording's stored per-span bars
  * (`recording.breakdowns`); falls back to synthesizing a single `run` span from a
  * `CpuModel.breakdown` so the verb never comes back empty when any bar exists. Returns null when the
- * recording holds neither (an old recording, or `--target node` with `--no-cpu-profile`), which the
- * caller turns into a non-zero error. `iterations` (the recording's `meta.iterations`) is stamped on
+ * recording holds neither (an old recording, or a sampler-off rung like --deep/--precise-wall), which
+ * the caller turns into a non-zero error. `iterations` (the recording's `meta.iterations`) is stamped on
  * every entry alongside its `aggregation`, so a consumer can read what a span's numbers represent.
  */
 export function buildSpans(

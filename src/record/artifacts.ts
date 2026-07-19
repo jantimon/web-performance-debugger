@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { buildSummary } from "../metrics/summarize.js";
+import { buildSummary, type CaptureCapabilities } from "../metrics/summarize.js";
 import { buildDigest } from "../commands/digest.js";
 import { serialize, extFor, type Format } from "../output/format.js";
 import { stepMark } from "../model/marks.js";
@@ -78,10 +78,10 @@ export async function writeStepIndex(params: {
   recordingPath: string;
   detailEvents: NormalizedEvent[];
   mergedSteps: MergedStep[];
-  /** false in --breakdown mode: forced layout was not measured, so steps report it as null */
-  forcedMeasured: boolean;
+  /** what the rung could observe; gates each per-step count/duration to Measured null vs a number */
+  capabilities: CaptureCapabilities;
 }): Promise<string> {
-  const { outDir, base, format, meta, recordingPath, detailEvents, mergedSteps, forcedMeasured } =
+  const { outDir, base, format, meta, recordingPath, detailEvents, mergedSteps, capabilities } =
     params;
   const ext = extFor(format);
 
@@ -102,7 +102,7 @@ export async function writeStepIndex(params: {
         wallMs: step.wallMs,
       },
       marks: [],
-      metrics: { before: {}, after: {}, delta: step.cdpDelta },
+      metrics: { before: {}, after: {}, delta: {} },
       events: evs,
       summary: buildSummary({
         wallMs: step.wallMs,
@@ -110,11 +110,10 @@ export async function writeStepIndex(params: {
         interaction: step.interaction,
         detailEvents: evs,
         detailWindowStart: step.startTs,
-        cdpDelta: step.cdpDelta,
         // This step's own repetitions, so a per-step recording carries the same samples+stats
         // contract as a bench one: `wallMs` is their median, `stats` their spread.
         perIteration: step.perIteration,
-        forcedMeasured,
+        capabilities,
       }),
     };
     const stepBase = `${base}.step-${step.index}-${slug(step.label)}`;

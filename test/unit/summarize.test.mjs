@@ -40,16 +40,28 @@ test("traceRenderingWork counts layout on the main thread only, excluding an OOP
   assert.equal(allPids.layoutCount, 18, "an unfiltered sum double-scopes the OOPIF (6 + 12)");
 });
 
-// buildSummary is the regression gate: with the CDP path deleted (cdpDelta {}), the reported
-// layoutCount must equal the pre-deletion top-process number, sourced from the trace, main-thread
-// windowed. The OOPIF's 12 are excluded exactly as getMetrics excluded them.
-test("buildSummary: trace-fallback layoutCount is main-thread windowed, matching top-process getMetrics", () => {
+// buildSummary is the regression gate: with the CDP counter path deleted, the reported layoutCount
+// must equal the pre-deletion top-process number, sourced from the trace, main-thread windowed. The
+// OOPIF's 12 are excluded exactly as getMetrics excluded them (§25 disclosure rule 3).
+const TRACE_CAP = {
+  counts: true,
+  paintCount: true,
+  longTasks: true,
+  invalidations: true,
+  durations: true,
+  forced: true,
+};
+test("buildSummary: trace-sourced layoutCount is main-thread windowed, matching top-process getMetrics", () => {
   const events = [marker(48371, 1)];
   for (let index = 0; index < 6; index++) events.push(layout(index + 1, 1000, 48371, 1));
   for (let index = 0; index < 12; index++) events.push(layout(index + 100, 1000, 48373, 1));
 
-  const summary = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
+  const summary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
   assert.equal(summary.layoutCount, 6);
+
+  // The default rung (no capabilities) captures no trace: the count is Measured null, never a fake 0.
+  const defaultRung = buildSummary({ detailEvents: events, detailWindowStart: null });
+  assert.equal(defaultRung.layoutCount, null, "no trace on the default rung, so no count");
 });
 
 // §26 probe F: CDP RecalcStyleDuration EXCLUDES the stylesheet parse. The excluded variant tracks
@@ -111,23 +123,23 @@ test("traceRenderingWork skips sampled annotations and pre-window events", () =>
   assert.equal(work.styleCount, 0, "the only recalc is a sampled annotation");
 });
 
-// Wave-1 is behaviorally inert: the CDP-first preference is unchanged, so a present CDP counter still
-// shadows the trace count/duration exactly as before.
-test("buildSummary still prefers CDP counts/durations over the trace fallback", () => {
+// With the CDP counter path deleted, counts and durations come from the trace alone (no CDP source
+// to shadow them). The single-axis invariant: on a light trace both counts and durations are
+// measured; on a .stack (--deep) trace the counts stay exact but the durations are refused (null).
+test("buildSummary sources counts/durations from the trace; --deep refuses the distorted durations", () => {
   const events = [marker(100, 1), layout(1, 2000, 100, 1), recalc(2, 3000, 100, 1)];
-  const withCdp = buildSummary({
+  const light = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
+  assert.equal(light.layoutCount, 1);
+  assert.equal(light.layoutMs, 2);
+  assert.equal(light.styleCount, 1);
+  assert.equal(light.styleMs, 3);
+
+  const deep = buildSummary({
     detailEvents: events,
     detailWindowStart: null,
-    cdpDelta: { LayoutCount: 7, LayoutDuration: 0.05, RecalcStyleCount: 4, RecalcStyleDuration: 0.02 },
+    capabilities: { ...TRACE_CAP, durations: false },
   });
-  assert.equal(withCdp.layoutCount, 7);
-  assert.equal(withCdp.layoutMs, 50);
-  assert.equal(withCdp.styleCount, 4);
-  assert.equal(withCdp.styleMs, 20);
-
-  const noCdp = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
-  assert.equal(noCdp.layoutCount, 1);
-  assert.equal(noCdp.layoutMs, 2);
-  assert.equal(noCdp.styleCount, 1);
-  assert.equal(noCdp.styleMs, 3);
+  assert.equal(deep.layoutCount, 1, "counts stay exact on a .stack trace");
+  assert.equal(deep.layoutMs, null, "durations are refused on a .stack trace");
+  assert.equal(deep.styleMs, null);
 });

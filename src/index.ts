@@ -20,7 +20,6 @@ export type {
   StepTiming,
   RecordingSummary,
   RecordingWindow,
-  ScreenshotRefs,
   BlameSemantic,
   RecordingMeta,
   Recording,

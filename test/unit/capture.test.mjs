@@ -1,0 +1,118 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  captureFor,
+  capabilitiesFor,
+  blameSemanticFor,
+  countScopeNote,
+} from "../../dist/record/capture.js";
+
+// The one-pass ladder: which capture config each flag combination yields. Every rung is exactly one
+// pass (one categories set, one cpu decision), so the whole capture story is this pure function.
+const opts = (over = {}) => ({ iterations: 1, driver: false, cpuProfile: true, ...over });
+
+test("captureFor: chrome default rung is the sampler alone, no trace", () => {
+  const config = captureFor(opts(), "chrome");
+  assert.equal(config.rung, "default");
+  assert.equal(config.categories, null, "no trace on the default rung");
+  assert.equal(config.cpu, true, "the sampler rides the default rung");
+  assert.equal(config.gecko, false);
+});
+
+test("captureFor: --precise-wall is rung 1 minus the sampler", () => {
+  const config = captureFor(opts({ preciseWall: true }), "chrome");
+  assert.equal(config.rung, "precise-wall");
+  assert.equal(config.categories, null, "no trace");
+  assert.equal(config.cpu, false, "the sampler is off for a pristine wall");
+});
+
+test("captureFor: --breakdown is the light trace fused with the sampler (no .stack, no invalidationTracking)", () => {
+  const config = captureFor(opts({ breakdown: true }), "chrome");
+  assert.equal(config.rung, "breakdown");
+  assert.ok(Array.isArray(config.categories));
+  assert.ok(
+    !config.categories.includes("disabled-by-default-devtools.timeline.stack"),
+    "the light trace drops .stack (keeps sampled self-time clean and blame out)",
+  );
+  assert.ok(
+    !config.categories.includes("disabled-by-default-devtools.timeline.invalidationTracking"),
+    "and invalidationTracking",
+  );
+  assert.equal(config.cpu, true, "the sampler rides the light trace");
+  assert.equal(config.keepThreadIds, true, "the bar windows to the main thread");
+});
+
+test("captureFor: --deep is the full trace with the sampler OFF", () => {
+  const config = captureFor(opts({ deep: true }), "chrome");
+  assert.equal(config.rung, "deep");
+  assert.ok(config.categories.includes("disabled-by-default-devtools.timeline.stack"), "keeps .stack for forced blame");
+  assert.ok(config.categories.includes("disabled-by-default-devtools.timeline.invalidationTracking"), "keeps invalidationTracking");
+  assert.equal(config.cpu, false, "the sampler must NEVER ride a .stack trace (+21% self-time inflation)");
+  assert.equal(config.keepThreadIds, true, "counts window to the main thread");
+});
+
+test("captureFor: firefox is always the one gecko pass (the rungs are reporting tiers over it)", () => {
+  const config = captureFor(opts(), "firefox");
+  assert.equal(config.rung, "gecko");
+  assert.equal(config.gecko, true, "the gecko profiler runs");
+  assert.equal(config.categories, null, "no DevTools trace on firefox");
+  // A programmatic cpuProfile:false yields a timing-only pass that counts nothing.
+  const off = captureFor(opts({ cpuProfile: false }), "firefox");
+  assert.equal(off.gecko, false);
+});
+
+// capabilitiesFor gates each count/duration to Measured. The HARD GUARD: durations are refusable on
+// a .stack trace (--deep counts yes, durations no), and the default rung measures nothing.
+test("capabilitiesFor: default rung measures nothing; --breakdown counts+durations; --deep counts, no durations", () => {
+  const dflt = capabilitiesFor(captureFor(opts(), "chrome"), "chrome");
+  assert.deepEqual(dflt, {
+    counts: false,
+    paintCount: false,
+    longTasks: false,
+    invalidations: false,
+    durations: false,
+    forced: false,
+  });
+
+  const light = capabilitiesFor(captureFor(opts({ breakdown: true }), "chrome"), "chrome");
+  assert.equal(light.counts, true);
+  assert.equal(light.durations, true, "light trace: durations trustworthy");
+  assert.equal(light.forced, false, "no .stack, so no forced detection");
+  assert.equal(light.invalidations, false, "invalidationTracking dropped");
+
+  const deep = capabilitiesFor(captureFor(opts({ deep: true }), "chrome"), "chrome");
+  assert.equal(deep.counts, true, "counts exact on the .stack trace");
+  assert.equal(deep.durations, false, "durations REFUSED on the .stack trace (it inflates them)");
+  assert.equal(deep.forced, true, ".stack drives forced detection");
+  assert.equal(deep.invalidations, true, "invalidationTracking present");
+});
+
+test("capabilitiesFor: firefox counts layout/style/forced from markers, never paint/invalidations/long-tasks", () => {
+  const caps = capabilitiesFor(captureFor(opts(), "firefox"), "firefox");
+  assert.equal(caps.counts, true);
+  assert.equal(caps.forced, true);
+  assert.equal(caps.paintCount, false, "paint is off-main-thread on Gecko");
+  assert.equal(caps.invalidations, false);
+  assert.equal(caps.longTasks, false);
+});
+
+test("blameSemanticFor: --deep and firefox name the read (flush-site); the default rung has no blame", () => {
+  assert.equal(blameSemanticFor(captureFor(opts({ deep: true }), "chrome")), "flush-site");
+  assert.equal(blameSemanticFor(captureFor(opts(), "firefox")), "flush-site");
+  assert.equal(blameSemanticFor(captureFor(opts(), "chrome")), undefined, "default rung: no trace, no blame");
+  assert.equal(blameSemanticFor(captureFor(opts({ breakdown: true }), "chrome")), undefined, "light trace has no .stack, so no blame");
+});
+
+test("countScopeNote: null at one iteration or with no counts; a TOTAL disclosure otherwise", () => {
+  const light = capabilitiesFor(captureFor(opts({ breakdown: true }), "chrome"), "chrome");
+  assert.equal(countScopeNote(light, opts({ breakdown: true, iterations: 1 })), null, "nothing to scale at 1");
+  const dflt = capabilitiesFor(captureFor(opts(), "chrome"), "chrome");
+  assert.equal(countScopeNote(dflt, opts({ iterations: 8 })), null, "the default rung counts nothing to scope");
+
+  const note = countScopeNote(light, opts({ breakdown: true, iterations: 8 }));
+  assert.match(note, /TOTALS across all 8/);
+  assert.match(note, /one pass/);
+  // Driver per-step counts window to iteration 0, so the note says they are unaffected.
+  const driverNote = countScopeNote(light, opts({ breakdown: true, iterations: 8, driver: true }));
+  assert.match(driverNote, /Per-step counts are unaffected/);
+});

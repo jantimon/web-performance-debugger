@@ -817,7 +817,7 @@ export async function loadCpuModel(file: string): Promise<CpuModel> {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
   }
   const noModel = new Error(
-    `${file} is not a CPU model. Pass the .cpu.json, or use 'latest' after a record run that was not given --no-cpu-profile.`,
+    `${file} is not a CPU model. Pass the .cpu.json, or use 'latest' after a record run on a rung that samples CPU (the default or --breakdown, not --deep/--precise-wall).`,
   );
   (noModel as NodeJS.ErrnoException).code = "ENOCPUMODEL";
   throw noModel;

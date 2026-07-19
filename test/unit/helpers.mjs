@@ -225,14 +225,13 @@ export function remoteBundleProfile(origin) {
   };
 }
 
-// --- Cross-pass step merge (label-keyed; indices are per-pass and not comparable) ---
+// --- Step merge (label-keyed; step timings and trace windows come from the same one pass) ---
 
 export const driverStep = (index, label) => ({
   index,
   label,
   wallMs: 10 + index,
   inpMs: null,
-  cdpDelta: { LayoutCount: index },
 });
 
 export const geckoFixture = JSON.parse(

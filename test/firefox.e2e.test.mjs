@@ -74,12 +74,13 @@ e2e(
   },
 );
 
-// --no-cpu-profile on firefox would leave wall times and nothing else, so it is rejected rather
-// than silently producing the empty recording the flag used to yield by default.
-e2e("record --target firefox --no-cpu-profile is refused", { timeout: TIMEOUT_MS }, () => {
-  const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--no-cpu-profile"], { encoding: "utf8" });
+// The chrome capture-ladder flags have no meaning on firefox: the ONE gecko pass IS the lane at
+// every rung. --deep (and --breakdown / --precise-wall) are refused rather than silently ignored.
+// The guard fires before any browser launches, so this runs everywhere (not gated on Firefox).
+test("record --target firefox --deep is refused (the gecko pass IS the firefox lane)", () => {
+  const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--deep"], { encoding: "utf8" });
   assert.notEqual(result.status, 0, "exits non-zero");
-  assert.match(result.stderr, /timing only/, "explains why it is refused");
+  assert.match(result.stderr, /unsupported/, "explains why it is refused");
 });
 
 e2e(
