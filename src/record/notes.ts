@@ -27,6 +27,15 @@ export function breakdownInvalidationNotMeasured(): string {
   return "NOT measured in breakdown mode: invalidation counts (layout/style/paint), because the invalidationTracking category is dropped. A 0 there means unmeasured, not clean. Layout/style/paint counts, long tasks, and CPU self-time ARE measured.";
 }
 
+/** The chrome run's rendering counts and its reconciling bar cover different windows, by design.
+ * Counts are start-onward (analysis.ts inWindow), the bar tiles [run:start, run:end]. Pushed for the
+ * chrome --breakdown rung (exact counts AND a bar with ms), where the two sit together and a count
+ * can read larger than its slice. Not firefox: the gecko lane windows its markers bounded on both
+ * sides and reports paint as not-measured, so start-onward is not its count rule. */
+export function runCountWindow(): string {
+  return "Run-level rendering counts (layout/style/paint) are windowed start-onward from wpd:run:start with no upper bound, so a paint or layout the run commits just after wpd:run:end (the trailing frame, which paints on the next tick) is counted. The reconciling bar instead tiles [run:start, run:end] exactly, so its slice ms stop at run:end: a run count can be larger than its bar slice would imply. This is not double-counting, it is the trailing frame the count is meant to catch. Per-step counts are windowed to their own step marks and match their step bar.";
+}
+
 /** WARNING when the breakdown's main thread was picked by activity because the run:start marker was
  * lost. Pushed from buildBreakdowns, not the record() notes block. */
 export function breakdownHeuristicMainThread(): string {
