@@ -149,7 +149,9 @@ export function isToolFrameUrl(url: string | undefined): boolean {
     } catch {
       // malformed percent-encoding: match against the raw url instead
     }
-    return WPD_EVALUATE_SITES.some((fragment) => site.includes(fragment));
+    // The call site is a filesystem path, so on Windows its separators are backslashes; the
+    // fragments are written with forward slashes, so normalize before matching.
+    return WPD_EVALUATE_SITES.some((fragment) => site.replaceAll("\\", "/").includes(fragment));
   }
   return false;
 }

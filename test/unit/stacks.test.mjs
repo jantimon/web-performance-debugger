@@ -19,6 +19,13 @@ test("isToolFrameUrl drops wpd's own injected page.evaluate frames", () => {
   assert.equal(isToolFrameUrl("file:///repo/dist/runtime/node.js:9:5"), true);
 });
 
+test("isToolFrameUrl drops wpd's injected frames when the call site is a Windows path", () => {
+  const windowsSite = String.raw`settle (C:\Users\u\app\node_modules\@jantimon\web-performance-debugger\dist\browser\driver.js:185:31)`;
+  assert.equal(isToolFrameUrl(pptr(windowsSite)), true);
+  const windowsUserSite = String.raw`run (C:\Users\u\app\steps.mjs:12:20)`;
+  assert.equal(isToolFrameUrl(pptr(windowsUserSite)), false, "a user's Windows call site survives");
+});
+
 test("isToolFrameUrl keeps a user's driver-mode page.evaluate callback (F11)", () => {
   // The user's own module drives the page; its evaluated callback must reach blame/cpu.
   assert.equal(isToolFrameUrl(pptr("(/home/u/app/steps.mjs:12:20)")), false);

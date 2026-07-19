@@ -375,6 +375,22 @@ test("a local sourceMappingURL pointing at a sibling directory resolves off disk
   assert.ok(frame.source.endsWith(path.join("src", "original.ts")), "source re-pointed at the original");
 });
 
+test("a root-absolute local sourceMappingURL re-anchors under the bundle's directory", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-rootmap-"));
+  mkdirSync(path.join(dir, "maps"));
+  const bundle = path.join(dir, "bundle.js");
+  writeFileSync(bundle, "function Bh(){}\n//# sourceMappingURL=/maps/bundle.js.map\n");
+  writeFileSync(path.join(dir, "maps", "bundle.js.map"), sourcemapFor("src/original.ts", "realName"));
+
+  const maps = new SourceMapResolver();
+  const frame = { source: bundle, line: 1, column: 1 };
+  await maps.resolveFrame(frame);
+
+  const diagnostics = maps.diagnostics();
+  assert.equal(diagnostics.resolved, 1, "the serving-root path resolved under the bundle dir");
+  assert.equal(frame.originalName, "realName");
+});
+
 test("served frame with an on-disk bundle but off-disk sourcemap source gets the real served package", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wpd-served-map-"));
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "my-served-app" }));

@@ -6,7 +6,7 @@ import type { SourceMapDiagnostics, SourceMapFailure, StackFrame } from "../mode
 /** ms before a remote .js / .map fetch is abandoned (keeps a hung CDN from stalling a run). */
 const FETCH_TIMEOUT_MS = 5000;
 
-function isHttpUrl(value: string | undefined): value is string {
+function isHttpUrl(value: string | undefined): value is `http${string}` {
   return !!value && (value.startsWith("http://") || value.startsWith("https://"));
 }
 
@@ -155,6 +155,22 @@ export class SourceMapResolver {
     try {
       return { raw: await fs.readFile(path.resolve(path.dirname(jsFile), reference), "utf8") };
     } catch {
+      // A root-absolute URL path (`/maps/app.js.map`) names a location under the SERVING root,
+      // which a filesystem read cannot know; path.resolve read it as a filesystem-absolute path
+      // above. Best effort: re-anchor it under the JS file's own directory (dist/app.js ->
+      // dist/maps/app.js.map, the common bundle layout) before reporting failure.
+      if (reference.startsWith("/")) {
+        try {
+          return {
+            raw: await fs.readFile(
+              path.join(path.dirname(jsFile), ...reference.split("/")),
+              "utf8",
+            ),
+          };
+        } catch {
+          return { failure: "map-fetch-failed" };
+        }
+      }
       return { failure: "map-fetch-failed" };
     }
   }
