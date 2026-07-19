@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import path from "node:path";
-import { Command, InvalidArgumentError } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 import { recordAndReport, type RecordOptions } from "./commands/record.js";
+import { resolvePageOption } from "./record/page-option.js";
 import { queryBlame, queryEvents, queryGet, querySpan, querySpans } from "./commands/query.js";
 import { queryCpu, queryFrame } from "./commands/cpu.js";
 import { assertCmd, type Thresholds } from "./commands/assert.js";
@@ -76,17 +77,29 @@ program
   .description(
     "Record where rendering work comes from. Default: run({ page, ctx, measureStep }) executes in Node and drives the page via Puppeteer. --bench: run(ctx) executes inside the page itself, with live document/window and no page handle, timed in-page.",
   )
-  .argument("<module>", "path to a JS/ESM module exporting `run` (and optional prepare/cleanup)")
+  // Optional: with no module, wpd runs a built-in load flow (navigate to --url and settle), so a
+  // first run needs zero authoring. A module continues to work exactly as before.
+  .argument(
+    "[module]",
+    "path to a JS/ESM module exporting `run` (and optional prepare/cleanup). Omit it with --url to run the built-in load flow",
+  )
   .option(
     "--target <name>",
     "where to run: chrome (default) | firefox (WebDriver BiDi + Gecko profiler) | node (in-process, CPU only, no DOM)",
     "chrome",
   )
-  .option("--html <file>", "host page: load this local HTML, then run the module against it")
-  .option("--url <url>", "host page: load this live URL, then run the module against it")
+  .option(
+    "--url <url-or-file>",
+    "the host page: a live URL (http://localhost:5173) or a local HTML file path. Run the module against it, or run it alone (no module) as the built-in load flow",
+  )
+  // --html is the pre-unification spelling, kept as a hidden alias that resolves onto the same host
+  // page as --url. Zero behavior change for existing invocations; absent from --help.
+  .addOption(
+    new Option("--html <file>", "host page: a local HTML file (alias of --url)").hideHelp(),
+  )
   .option(
     "--bench",
-    "run(ctx) executes inside the page with live document/window (no page handle), timed in-page, so its wall excludes the driver's dispatch and settle. Pair with --html/--url for a host page; repeat with --iterations",
+    "run(ctx) executes inside the page with live document/window (no page handle), timed in-page, so its wall excludes the driver's dispatch and settle. Pair with --url for a host page; repeat with --iterations",
   )
   .option(
     "--iterations <n>",
@@ -127,7 +140,7 @@ program
     "chrome headless flavour: shell (default, chrome-headless-shell, ~120Hz frames) | new (full Chrome, ~60Hz frames). See docs/dev/frame-floor.md",
   )
   .option("--format <fmt>", "on-disk format: json | toon", "json")
-  .action(async (module: string, cmdOpts: any) => {
+  .action(async (module: string | undefined, cmdOpts: any) => {
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
     // One axis: chrome | firefox | node, so a conflicting browser/runtime combination is
     // unrepresentable rather than something to guard against.
@@ -136,6 +149,51 @@ program
     const bench = !!cmdOpts.bench;
     const node = cmdOpts.target === "node";
     const firefox = cmdOpts.target === "firefox";
+    // --url is the one documented way to name the host page, and it accepts a live URL OR a local
+    // HTML file path; --html is a hidden alias that resolves onto the same host page. Whichever is
+    // given feeds the same detection (URL vs file), so exactly one may be present. node has no page,
+    // so its own guard (below) rejects either flag with a lane-specific message; skip the detection
+    // there so a bad value does not preempt it.
+    let urlSchemeAssumed = false;
+    if (cmdOpts.url != null && cmdOpts.html != null)
+      program.error("--url and --html name the same host page two ways: pass just one.");
+    const rawHostPage = cmdOpts.url ?? cmdOpts.html;
+    if (rawHostPage != null && !node) {
+      try {
+        const resolved = resolvePageOption(rawHostPage);
+        if (resolved.kind === "url") {
+          cmdOpts.url = resolved.url;
+          cmdOpts.html = undefined;
+          urlSchemeAssumed = resolved.schemeAssumed;
+        } else {
+          cmdOpts.html = resolved.html;
+          cmdOpts.url = undefined;
+        }
+      } catch (error) {
+        program.error((error as Error).message);
+      }
+    }
+    // Zero-authoring on-ramp: no module runs the built-in driver flow (navigate to --url and
+    // settle). It needs a page to load and a driver to load it, so --bench (imports run() in-page)
+    // and --target node (no page) have nothing to run, and a bare `record` has no target at all.
+    if (!module) {
+      if (node)
+        program.error(
+          "record --target node needs a module: it imports and profiles run() in this process, and the built-in flow (which loads a page) has no page here. Pass a module path.",
+        );
+      if (bench)
+        program.error(
+          "record --bench needs a module: it import()s run() inside the page. Pass a module path, or drop --bench to run the built-in load flow against --url.",
+        );
+      if (!cmdOpts.url && !cmdOpts.html)
+        program.error(
+          "record needs a module path, or --url to run the built-in load flow. Try: wpd record --url https://example.com",
+        );
+      if (cmdOpts.preciseWall)
+        program.error(
+          "record --precise-wall needs a module: the built-in load flow's only step is a navigation, whose wall the page clock cannot price on a no-trace rung (nothing would be measured). Drop --precise-wall, or pass a module.",
+        );
+    }
     // undefined = flag not passed; the flavour then defaults to shell in launchBrowser. The two
     // guards below fire only on an EXPLICIT --headless-mode, so plain --no-headless stays headed
     // and a firefox/node run is not rejected for a default it never asked for.
@@ -178,8 +236,8 @@ program
     }
     if (node) {
       const browserOnly = [
-        cmdOpts.url && "--url",
-        cmdOpts.html && "--html",
+        // Detection is skipped on node (above), so these hold the raw flag the user passed.
+        (cmdOpts.url || cmdOpts.html) && (cmdOpts.url ? "--url" : "--html"),
         cmdOpts.cpuThrottle && "--cpu-throttle",
         cmdOpts.userDataDir && "--user-data-dir",
         cmdOpts.breakdown && "--breakdown",
@@ -210,6 +268,7 @@ program
       browser: firefox ? "firefox" : "chrome",
       html: cmdOpts.html,
       url: cmdOpts.url,
+      urlSchemeAssumed,
       iterations: cmdOpts.iterations,
       warmup: cmdOpts.warmup,
       out: cmdOpts.out,

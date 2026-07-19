@@ -2,7 +2,7 @@
 // { page, ctx, measureStep }. Driver is the default mode.
 //
 //   wpd record examples/counter-steps.mjs \
-//     --html examples/react-counter/dist/index.html
+//     --url examples/react-counter/dist/index.html
 //
 // measureStep(label, action, { until })   // positional, the common case
 // measureStep({ label, action, until })   // object form

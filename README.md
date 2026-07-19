@@ -51,8 +51,24 @@ Each section below is one of these: reproduce it, read the result, fix the line.
 
 ## 30-second quickstart
 
-Every run starts from a small JS file you write that exports a `run` function (the contract:
-[Your `run` module](#your-run-module)). Pick the lane by what you are measuring:
+The fastest start needs no file at all: point `wpd` at a URL your dev/preview server is already
+serving, and it profiles the page's own boot (navigate, then settle) as one `load` step.
+
+```bash
+# zero authoring: the built-in load flow, then read the boot's breakdown
+npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown
+npx @jantimon/web-performance-debugger query spans latest
+```
+
+`--url` names the host page — a live URL or a local HTML file path — and wpd tells the two apart.
+(The `--html` spelling still works as a hidden alias, and a host with no scheme like `localhost:5173`
+gets `http://` assumed.)
+
+Default gives the boot's four-slice CPU bar; `--breakdown` adds the reconciling
+js/style/layout/paint bar and exact counts; `--deep` adds forced-layout blame. A page load has no
+interaction, so `INP` stays null there — to measure a click, a re-render, or SSR, you write a small
+`run` function (the contract: [Your `run` module](#your-run-module)) and pick the lane by what you
+are measuring:
 
 - **A real user flow in a real app** → the default **driver** lane: `run` gets a Puppeteer `page`
   and drives your `--url`.
@@ -93,10 +109,11 @@ newest run, so every `query` verb accepts `latest` instead of a file path.
   populate the puppeteer cache with `npx puppeteer browsers install chrome`).
 - **Firefox** is optional (`--target firefox`): install it once with
   `npx puppeteer browsers install firefox`. See [What each target gives you](#what-each-target-gives-you).
-- For `--url`, **your dev/preview server must already be running** at that URL; wpd does not start it.
-- `--html` files, and `--bench` modules, must live **under the current working directory** (they are
-  served to the browser from there). Driver and `--target node` modules are imported in Node and can
-  live anywhere.
+- When `--url` is a URL, **your dev/preview server must already be running** at that URL; wpd does
+  not start it.
+- A `--url` local HTML file, and `--bench` modules, must live **under the current working directory**
+  (they are served to the browser from there). Driver and `--target node` modules are imported in Node
+  and can live anywhere.
 
 ## Your `run` module
 
@@ -429,7 +446,7 @@ wpd query cpu latest
 ```
 
 Either lane writes a `.cpu.json` model (read by the verbs) and a raw `.cpuprofile` that opens in Chrome
-DevTools (Performance → Load profile) or Speedscope. On a `--url` site each remote bundle's sourcemap is
+DevTools (Performance → Load profile) or Speedscope. On a live-URL `--url` each remote bundle's sourcemap is
 auto-fetched (from its `sourceMappingURL` comment, or the `SourceMap` response header if the build
 stripped the comment), so **minification is not a problem**: a minified single bundle still splits per
 package, as long as its map is reachable. See

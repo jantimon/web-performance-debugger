@@ -147,10 +147,13 @@ export async function runPass(
   spec: CaptureConfig,
   opts: RecordOptions,
   mode: "module" | "html" | "url",
-  absModule: string,
+  absModule: string | undefined,
   maps: SourceMapResolver,
 ): Promise<PassResult> {
   const browserName: BrowserName = opts.browser ?? "chrome";
+  // No module = the built-in on-ramp flow (driver mode only). It skips the host-page pre-navigation
+  // and instead navigates to the target INSIDE a "load" step, so the boot lands in the run window.
+  const onramp = opts.driver && absModule == null;
   const caps = capsFor(browserName);
   // Firefox: the Gecko pass profiles for its whole lifetime and dumps on exit; a fresh temp
   // file per pass keeps concurrent/retried runs from colliding.
@@ -175,7 +178,19 @@ export async function runPass(
     if (opts.cpuThrottle && client && caps.throttle)
       await applyCpuThrottle(client, opts.cpuThrottle);
 
-    if (mode === "html") {
+    // The target the built-in "load" step navigates to (on-ramp only): the live --url as-is, or the
+    // served --html file. Computed before the pre-navigation so the same served-url check applies.
+    const onrampNavigateUrl = onramp
+      ? mode === "url"
+        ? opts.url!
+        : toServedUrl(server, root, path.resolve(opts.html!))
+      : undefined;
+
+    if (onramp) {
+      // Start blank; the "load" step navigates to the target inside the run window, so the measured
+      // window is the page's own cold boot rather than a host page loaded before it (module mode).
+      await page.goto(`${server.url}/__wpd_blank__`, { waitUntil: "load" });
+    } else if (mode === "html") {
       await page.goto(toServedUrl(server, root, path.resolve(opts.html!)), {
         waitUntil: "load",
         timeout: 30000,
@@ -201,10 +216,13 @@ export async function runPass(
       // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
       // just won't resolve through makeSourceResolver (which keys off the served-url prefix),
       // so its own frames stay unresolved; the page's frames are unaffected.
-      const driverResult = await runDriver(page, absModule, opts.fn, {
-        iterations: opts.iterations,
-        warmup: opts.warmup,
-      });
+      const driverResult = await runDriver(
+        page,
+        absModule,
+        opts.fn,
+        { iterations: opts.iterations, warmup: opts.warmup },
+        onramp ? { navigateUrl: onrampNavigateUrl! } : undefined,
+      );
       driverSteps = driverResult.steps;
       lifecycle = driverResult.lifecycle;
       // Driver pass-level perIteration is unused (record.ts sums step samples instead), but keep it
@@ -214,6 +232,9 @@ export async function runPass(
         .filter((wallMs): wallMs is number => wallMs != null);
       runCleanup = driverResult.cleanup;
     } else {
+      // Bench mode always has a module (the on-ramp is driver-only; the CLI rejects --bench with no
+      // module), so absModule is defined here; narrow it for toServedUrl.
+      if (!absModule) throw new Error("Bench mode needs a module to import inside the page.");
       const harnessArg = {
         // Bench mode only: the module is import()ed INSIDE the page, so it must be servable.
         // Driver mode imports it in Node (see runDriver above) and needs no url.

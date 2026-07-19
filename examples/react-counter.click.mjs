@@ -1,8 +1,8 @@
 // wpd bench module for the Vite/React counter.
 //
-// Use with --bench --html so the built app is the host page, e.g.:
+// Use with --bench --url so the built app is the host page, e.g.:
 //   wpd record examples/react-counter.click.mjs --bench \
-//     --html examples/react-counter/dist/index.html --iterations 50 --warmup 5
+//     --url examples/react-counter/dist/index.html --iterations 50 --warmup 5
 //
 // Each timed run() clicks the "+1" button; we measure the layout/paint cost of
 // React re-rendering the changed count.
