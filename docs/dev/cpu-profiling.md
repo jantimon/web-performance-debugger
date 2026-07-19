@@ -309,8 +309,8 @@ under chrome `--breakdown`; measures get it under chrome `--breakdown` and firef
 navigation: `Profiler.stop` returns only the post-navigation process's samples. So the `CpuModel`, the
 run bar's `js` slice, the per-span hot list, and the "sampled window" cover **only the run after its
 last cross-process navigation**; page CPU work done in a prior renderer is absent from `selfMs` and the
-bar. **wpd does not detect or flag this under-coverage** on main: the sampled window is the profiler's
-own `endTime − startTime` and is never compared against the run wall.
+bar. A pre-navigation span can therefore hold zero samples while its own bar shows real
+trace-measured JS: the sampled window is the profiler's own `endTime − startTime`, not the run wall.
 
 Probe: a driver module that burns ~150 ms of page CPU on the blank host page, then
 `page.goto()` to a different origin (a true renderer swap), reports **10.4 ms** total JS self-time and
