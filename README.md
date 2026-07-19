@@ -565,14 +565,20 @@ maps, and bucketing them by origin is the honest answer — their cost is real, 
 run with `--out` (the recording is written to exactly that path; the `.cpu.json` model lands next to
 it), or just rely on `latest`:
 
+Slice ms comes from `--breakdown` and forced counts from `--deep`, and every run is one capture (one
+pass per run keeps every number trustworthy). So record each rung you need and gate each threshold on
+the rung that measured it:
+
 ```bash
 wpd record probe.mjs --bench --breakdown --out runs/before.json
 # ...apply your change, rebuild...
 wpd record probe.mjs --bench --breakdown --out runs/after.json
+wpd record probe.mjs --bench --deep      --out runs/after.deep.json
 
-# exit 1 on violation:
-wpd assert   runs/after.json --max-forced 0 --max-layouts 120 --max-slice layout=2
-wpd diff     runs/before.json runs/after.json --fail-on-regression
+# exit 1 on violation, each threshold on the rung that measures it:
+wpd assert   runs/after.json      --max-layouts 120 --max-slice layout=2  # --breakdown: counts + slice ms
+wpd assert   runs/after.deep.json --max-forced 0                          # --deep: forced counts
+wpd diff     runs/before.json runs/after.json --fail-on-regression        # same rung on both sides
 # per-function self-time deltas, noise filtered
 wpd cpu-diff runs/before.json runs/after.json --fail-on-regression
 ```
@@ -581,9 +587,10 @@ wpd cpu-diff runs/before.json runs/after.json --fail-on-regression
 `--max-layout-invalidations`, `--max-style-invalidations`, `--max-long-tasks`, `--max-inp`,
 `--max-wall`) and the reconciling bar's slices (`--max-slice <name>=<ms>`, repeatable, defaulting to the
 run span; `--label` targets another span). Slice ms is directional (wall-tier ~1%), never count-exact,
-so a slice budget is a directional gate like `--max-inp`, not a count gate. A budget on a slice the rung
-didn't measure — `layout` on a default-rung recording, say — is a **loud FAIL** (`n/a`), never a silent
-pass:
+so a slice budget is a directional gate like `--max-inp`, not a count gate. A budget on a metric the
+rung didn't measure — `--max-slice layout` on the default rung, or `--max-forced` on a `--breakdown`
+recording (forced counts need the `--deep` `.stack` trace) — is a **loud FAIL** (`n/a`), never a
+silent pass:
 
 ```
 target  metric  value  max
