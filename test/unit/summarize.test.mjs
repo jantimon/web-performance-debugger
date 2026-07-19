@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildSummary, traceRenderingWork } from "../../dist/metrics/summarize.js";
 import { buildRecordingSpans } from "../../dist/record/spans-build.js";
 import { mainThread } from "../../dist/trace/main-thread.js";
+import { reanchoredMainThread } from "../../dist/record/notes.js";
 import { classify } from "../../dist/trace/classify.js";
 
 // Trace-sourced layout/style counts and durations, windowed on the breakdown bar's single main
@@ -233,4 +234,64 @@ test("buildRecordingSpans: a start-only step windows counts to the run end, not 
   });
   const step = spans.find((span) => span.kind === "step");
   assert.equal(step.counts.layoutCount, 1, "bounded to the run end (1), not open to trace end (2)");
+});
+
+// F1/F2: a top-level cross-process navigation (a --url boot) marks wpd:run:start on the pre-navigation
+// (blank host) renderer, which then does NONE of the window's rendering work; all layout/paint lands on
+// the process the page navigated into. mainThread re-anchors the count/bar scope to that process, and
+// buildSummary then reports the navigated thread's counts instead of a fake measured-clean 0 (the F2
+// consequence: a page that clearly lays out passing an assert --max-layouts gate at 0).
+const markerAt = (pid, tid, ts) => ({ id: 0, name: "wpd:run:start", ts, dur: 0, ph: "R", kind: "usertiming", pid, tid });
+
+test("mainThread re-anchors to the navigated process when the marker thread did no rendering work (F1)", () => {
+  const events = [marker(100, 1)]; // run:start on the blank host renderer (pid 100), ts 0
+  for (let index = 0; index < 20; index++) events.push(layout(index + 1, 500, 200, 5)); // navigated renderer
+  events.push(paint(30, 200, 200, 5));
+
+  const main = mainThread(events);
+  assert.deepEqual(
+    { pid: main.pid, tid: main.tid, via: main.via },
+    { pid: 200, tid: 5, via: "reanchored" },
+    "selection follows the page to the navigated renderer, disclosed as reanchored",
+  );
+
+  const summary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
+  assert.equal(summary.layoutCount, 20, "counts the navigated renderer's 20 layouts, not the marker thread's 0");
+  assert.equal(summary.paintCount, 1, "the navigated renderer's paint counts too, never a measured-clean 0");
+});
+
+// The re-anchor must NOT fire for an out-of-process iframe: the marker (top) thread keeps doing the top
+// page's own work while the OOPIF lays out on its own thread. Any window rendering on the marker thread
+// keeps it > 0, so the marker wins even when the OOPIF thread is busier -- the OOPIF never steals it.
+test("mainThread keeps the marker when its thread did any window rendering, even if another is busier (F1 OOPIF guard)", () => {
+  const events = [marker(1, 1)];
+  events.push(layout(10, 500, 1, 1)); // 1 layout on the marker (top) thread inside the window
+  for (let index = 0; index < 12; index++) events.push(layout(index + 100, 500, 2, 1)); // busier OOPIF thread
+
+  const main = mainThread(events);
+  assert.deepEqual(
+    { pid: main.pid, tid: main.tid, via: main.via },
+    { pid: 1, tid: 1, via: "marker" },
+    "the OOPIF's busier thread must not steal the attribution from the working marker thread",
+  );
+});
+
+// The marker-thread work check is windowed (start-onward): a blank-host flush BEFORE run:start does not
+// count as the marker thread carrying the window's work, so a genuine post-nav swap still re-anchors.
+test("mainThread windows the marker-thread check, so a pre-window blank flush does not block re-anchor (F1)", () => {
+  const events = [markerAt(100, 1, 1000)]; // run:start at ts 1000 on the blank host renderer
+  events.push(layout(500, 200, 100, 1)); // a blank-host layout BEFORE the window (ts 500 < 1000)
+  for (let index = 0; index < 8; index++) events.push(layout(1000 + index, 300, 200, 5)); // in-window, navigated
+
+  const main = mainThread(events);
+  assert.equal(main.pid, 200, "the pre-window blank flush is not the window's work; re-anchor still fires");
+  assert.equal(main.via, "reanchored");
+});
+
+// The re-anchor is disclosed: record() pushes this note whenever mainThread returns "reanchored", so a
+// reader knows the counts describe the navigated page, not the blank host it started on.
+test("reanchoredMainThread note names the cross-process navigation", () => {
+  const note = reanchoredMainThread();
+  assert.match(note, /new renderer process/);
+  assert.match(note, /post-navigation renderer main thread/);
 });

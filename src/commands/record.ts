@@ -4,6 +4,7 @@ import type { HeadlessMode } from "../browser/launch.js";
 import type { BrowserName } from "../browser/backend.js";
 import { startStaticServer } from "../browser/server.js";
 import { mergeSteps, type MergedStep } from "../trace/steps.js";
+import { mainThread } from "../trace/main-thread.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { buildSummary } from "../metrics/summarize.js";
 import {
@@ -369,6 +370,18 @@ export async function record(opts: RecordOptions): Promise<{
   const effectiveCapabilities = capabilitiesAfterParse(capabilities, !traceWindowMissing);
   const countScope = countScopeNote(effectiveCapabilities, opts);
   if (countScope) notes.push(countScope);
+  // A top-level cross-process navigation (typical of a --url boot) marks wpd:run:start on the
+  // pre-navigation renderer while the window's rendering work lands on the process the page navigated
+  // into. mainThread re-anchors the counts/bar to that thread; disclose it so a reader knows the
+  // numbers describe the loaded page, not the blank host it started on. Fires for any counting chrome
+  // rung (--breakdown/--deep); firefox is single-process (no CDP trace) and the no-trace rungs count
+  // nothing. Skipped when the window was lost (counts already downgraded to not-measured).
+  if (
+    effectiveCapabilities.counts &&
+    browserName !== "firefox" &&
+    mainThread(detail.events)?.via === "reanchored"
+  )
+    notes.push(notesCatalog.reanchoredMainThread());
   if (opts.cpuThrottle) {
     notes.push(notesCatalog.artificialSlowdown(opts.cpuThrottle));
   }

@@ -33,6 +33,13 @@ export function breakdownHeuristicMainThread(): string {
   return "WARNING: the wpd:run:start marker was not found, so the breakdown's main thread was picked by layout/paint activity (heuristic). Per-span breakdown attribution may be on the wrong thread.";
 }
 
+/** The run window's rendering work landed on a different renderer process than the one wpd:run:start
+ * was marked on: a top-level cross-process navigation (typical of a --url boot). Counts and the bar
+ * follow the page to its new process. Pushed from record() for any counting rung (--breakdown/--deep). */
+export function reanchoredMainThread(): string {
+  return "The run navigated to a new renderer process (a top-level cross-process navigation, typical of a --url boot): wpd:run:start was marked on the pre-navigation renderer, but the window's layout/paint/style work ran on the process the page navigated INTO. Counts and the breakdown bar are scoped to that post-navigation renderer main thread, so they describe the page you loaded, not the blank host page it started on.";
+}
+
 // --- Firefox lane ---
 
 export function firefoxBackend(): string {

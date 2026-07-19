@@ -85,6 +85,36 @@ sit inside both sides); only the **process** boundary does. So windowing the tra
 `pid`/`tid` reproduces `getMetrics`'s **top-process scope** without reading a CDP counter, and the
 breakdown bar filters to that same main thread — count and bar agree.
 
+## The main thread follows a cross-process navigation
+
+`mainThread` (`trace/main-thread.ts`) picks the `pid`/`tid` the counts and the bar share. It keys on
+the `wpd:run:start` marker's thread, because the page makes that mark on its own main thread. But a
+**top-level cross-process navigation** breaks that identity: a `--url` boot starts on wpd's blank host
+page (served on `127.0.0.1`), marks `wpd:run:start` there, then `page.goto`s the target. When the
+target is a different **site**, Chrome swaps the renderer **process**, so the marker sits on the
+pre-navigation renderer while every layout/style/paint of the boot runs on the process the page
+navigated **into**.
+
+**[measured]** probe: blank host on `127.0.0.1`, `wpd:run:start` marked, then navigate and settle.
+
+| target | marker thread's in-window layout/paint | where the 300+ boot flushes landed |
+| --- | --- | --- |
+| `127.0.0.1:B` (same site, different port) | 302 | the marker thread — no swap |
+| `localhost` (different site) | **0** | a new pid — swapped |
+
+A mere port change is same-site and stays in-process; a different site (an IP vs `localhost`, or any
+real cross-origin `--url`) swaps. Anchoring on the marker thread alone reports the swapped boot as
+**~100% idle, 0 counts** — and a page that clearly lays out then passes `assert --max-layouts` at 0.
+
+So when the marker thread carries **zero** in-window layout/paint but another thread carries some,
+`mainThread` **re-anchors** to the busiest layout/paint thread (`via: "reanchored"`, disclosed by a
+`meta.notes` line). The zero threshold is what separates a process swap from an **OOPIF**: an
+out-of-process iframe runs its own layout on its own thread while the top (marker) thread keeps doing
+the top page's work, so the marker thread's count stays > 0 and it wins — the OOPIF never steals the
+attribution, however much layout it does. A single-process recording (marker thread did the work)
+always resolves to `via: "marker"`, unchanged. The work check is windowed start-onward, so a
+blank-host flush **before** `run:start` does not mask the swap.
+
 ## `Paint` is exact, and it is per-chunk
 
 | dirtied regions | 0 | 1 | 2 | 5 | 10 | 20 | 40 |
