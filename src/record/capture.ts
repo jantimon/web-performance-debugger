@@ -6,8 +6,10 @@
 //   --breakdown    light trace + sampler            -> the reconciling seven-slice bar + exact counts
 //   --deep         full trace (.stack + inval), OFF  -> forced-layout blame + exact counts, no bar
 //   --precise-wall sampler off, no trace            -> a pristine benchmark wall, nothing else
-// Firefox is one gecko pass at every rung (samples + markers are entangled at profiler startup);
-// node is its own in-process lane (runtime/node.ts).
+// Firefox is one gecko pass at every rung (samples + markers are entangled at profiler startup); its
+// rungs are REPORTING tiers over that one capture, not capture tiers. --deep adds a reporting tier
+// (rung "gecko-deep"): it surfaces Gecko's native cause-stack write identity as a dirtied-by report,
+// captured no differently from the default gecko pass. node is its own in-process lane (runtime/node.ts).
 //
 // [measured] constraints that shape the ladder (present-tense; docs/dev/cpu-profiling.md):
 //   - The CPU sampler must NEVER ride a `.stack` trace: `disabled-by-default-devtools.timeline.stack`
@@ -24,7 +26,7 @@ import type { BlameSemantic } from "../model/recording.js";
 import type { CaptureCapabilities } from "../metrics/summarize.js";
 import type { RecordOptions } from "../commands/record.js";
 
-export type Rung = "default" | "breakdown" | "deep" | "precise-wall" | "gecko";
+export type Rung = "default" | "breakdown" | "deep" | "precise-wall" | "gecko" | "gecko-deep";
 
 /** The single capture that runs for an invocation. `categories: null` means no DevTools trace. */
 export interface CaptureConfig {
@@ -49,7 +51,11 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
     // The CLI forces the profiler on; a programmatic cpuProfile:false yields a timing-only pass,
     // which counts nothing (capabilitiesFor keys off `gecko`, and the notes say so loudly).
     const gecko = opts.cpuProfile !== false;
-    return { rung: "gecko", categories: null, cpu: gecko, keepThreadIds: false, gecko };
+    // --deep is a reporting tier on firefox, not a capture change: the same gecko pass runs, and the
+    // rung name ("gecko-deep") records that the dirtied-by write report was requested. capabilitiesFor
+    // and blameSemanticFor key off `gecko` (still true), so nothing about what is captured moves.
+    const rung: Rung = opts.deep ? "gecko-deep" : "gecko";
+    return { rung, categories: null, cpu: gecko, keepThreadIds: false, gecko };
   }
   if (opts.breakdown) {
     // Light trace (no `.stack`, no invalidationTracking) fused with the sampler: trace events and

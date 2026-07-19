@@ -465,11 +465,14 @@ test("record --precise-wall --breakdown is rejected (rung 1 minus sampler vs a h
   assert.match(result.stderr, /--precise-wall is rung 1 minus the sampler/);
 });
 
-test("record --deep on firefox is rejected (no .stack / invalidationTracking on Gecko)", () => {
-  const result = guardError(["--target", "firefox", "--deep"]);
+test("record --breakdown on firefox is rejected (the gecko pass IS the firefox lane)", () => {
+  // --deep on firefox is NO LONGER rejected: it is a reporting tier over the same gecko pass (its
+  // dirtied-by write report is covered in test/firefox.e2e.test.mjs). --breakdown still has no
+  // meaning on firefox and is refused before any browser launches.
+  const result = guardError(["--target", "firefox", "--breakdown"]);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /unsupported/);
-  assert.match(result.stderr, /--deep/);
+  assert.match(result.stderr, /--breakdown/);
 });
 
 test("record --deep on node is rejected (CPU-only lane, no trace)", () => {

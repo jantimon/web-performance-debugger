@@ -74,13 +74,79 @@ e2e(
   },
 );
 
-// The chrome capture-ladder flags have no meaning on firefox: the ONE gecko pass IS the lane at
-// every rung. --deep (and --breakdown / --precise-wall) are refused rather than silently ignored.
-// The guard fires before any browser launches, so this runs everywhere (not gated on Firefox).
-test("record --target firefox --deep is refused (the gecko pass IS the firefox lane)", () => {
-  const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--deep"], { encoding: "utf8" });
+// --breakdown / --precise-wall have no meaning on firefox (the ONE gecko pass IS the lane) and are
+// refused. --deep is NOT refused: it is a reporting tier over that same pass. The guards fire before
+// any browser launches, so this runs everywhere (not gated on Firefox).
+test("record --target firefox --breakdown/--precise-wall are refused (the gecko pass IS the lane)", () => {
+  for (const flag of ["--breakdown", "--precise-wall"]) {
+    const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", flag], { encoding: "utf8" });
+    assert.notEqual(result.status, 0, `${flag} exits non-zero`);
+    assert.match(result.stderr, /unsupported/, `${flag} explains why it is refused`);
+  }
+});
+
+// --deep --target firefox is the partial dirtied-by report: the SAME gecko pass, plus Gecko's native
+// cause-stack write identity surfaced as a first-invalidation-only dirtied-by report. It must NOT
+// fabricate the parity Gecko lacks: no thrash detector, no forced-by, no chrome-style full write set.
+// The read-site --forced blame is unchanged (it lives on the sampled events, not this report).
+e2e(
+  "record --target firefox --deep emits the dirtied-by write report without faking chrome parity",
+  { timeout: TIMEOUT_MS },
+  () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+    const out = path.join(dir, "deep");
+    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "40", "--deep", "--out", out]);
+    assert.ok(existsSync(out), "recording file written");
+
+    const digest = JSON.parse(runCli(["query", "digest", out, "--json"]));
+    // The reporting tier is recorded as its own rung name; the capture is still the one gecko pass.
+    assert.deepEqual(digest.meta.passes, ["gecko-deep"], "the --deep reporting tier over the one gecko pass");
+    // The dirtied-by report is present, first-invalidation-only, with a WRITE line from the example.
+    assert.ok(digest.firefoxDirtiedBy, "firefox dirtied-by report present");
+    assert.equal(digest.firefoxDirtiedBy.semantic, "first-invalidation", "scope marked so it is never read as chrome's full set");
+    const writes = digest.firefoxDirtiedBy.writes;
+    assert.ok(Array.isArray(writes) && writes.length > 0, "at least one dirtied-by write");
+    const writeLines = new Set(
+      writes
+        .filter((write) => write.at?.includes("forces-layout.mjs"))
+        .map((write) => Number(write.at.match(/forces-layout\.mjs:(\d+)/)?.[1])),
+    );
+    assert.ok(writeLines.size > 0, "a write line attributed to forces-layout.mjs");
+    // Never-fake-parity: the thrash detector NEVER runs on firefox (it needs the full write set).
+    assert.equal(digest.thrash, undefined, "no thrash rollup on firefox --deep (partial write set)");
+
+    // The read-site --forced blame is UNCHANGED by --deep: still the sampled read lines + properties.
+    const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
+    assert.ok(Array.isArray(blame) && blame.length > 0, "read-site forced blame still present");
+    const readLines = new Set(
+      blame
+        .filter((row) => row.at?.includes("forces-layout.mjs"))
+        .map((row) => Number(row.at.match(/forces-layout\.mjs:(\d+)/)?.[1])),
+    );
+    assert.ok([...readLines].some((line) => line >= 46 && line <= 145), "a geometry-read line is still blamed");
+    assert.equal(digest.meta.blameSemantic, "flush-site", "blame semantic stays the read site");
+    // Write and read are DISJOINT concepts: at least one dirtied-by write line is not a read-site row
+    // (the dirtied-by report names the mutation; --forced names the geometry read that paid).
+    assert.ok([...writeLines].some((line) => !readLines.has(line)), "a write line that is not a read-site row (write != read)");
+
+    // `query blame --dirtied` is the write report alone, with the semantic marker for JSON consumers.
+    const dirtied = JSON.parse(runCli(["query", "blame", out, "--dirtied", "--json"]));
+    assert.equal(dirtied.semantic, "first-invalidation", "the --dirtied JSON marks its scope");
+    assert.ok(dirtied.writes.length > 0, "--dirtied lists the write rows");
+  },
+);
+
+// --dirtied is refused off the firefox --deep lane: chrome has no such report (its write set is the
+// dirtied-by rows under `query blame` + the thrash rollup in `query digest`).
+test("query blame --dirtied is refused on a non-firefox-deep recording", () => {
+  const chromeDir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
+  const out = path.join(chromeDir, "chrome-deep");
+  // A chrome --deep recording (no firefox needed): the guard is on the rung, not the browser launch.
+  const rec = spawnSync(process.execPath, [cli, "record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", "1", "--out", out], { encoding: "utf8" });
+  if (rec.status !== 0) return; // chrome not installed on this host; the unit test covers the guard
+  const result = spawnSync(process.execPath, [cli, "query", "blame", out, "--dirtied"], { encoding: "utf8" });
   assert.notEqual(result.status, 0, "exits non-zero");
-  assert.match(result.stderr, /unsupported/, "explains why it is refused");
+  assert.match(result.stderr, /firefox --deep/, "names where the write identity lives");
 });
 
 e2e(

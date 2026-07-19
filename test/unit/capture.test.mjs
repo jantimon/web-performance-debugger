@@ -62,6 +62,22 @@ test("captureFor: firefox is always the one gecko pass (the rungs are reporting 
   assert.equal(off.gecko, false);
 });
 
+test("captureFor: firefox --deep is the SAME gecko capture, only the rung name records the report tier", () => {
+  const deep = captureFor(opts({ deep: true }), "firefox");
+  assert.equal(deep.rung, "gecko-deep", "the --deep reporting tier is named in the rung");
+  assert.equal(deep.gecko, true, "the gecko profiler still runs (capture is unchanged)");
+  assert.equal(deep.categories, null, "still no DevTools trace: --deep adds no .stack on firefox");
+  // The capture is byte-identical to the default gecko pass apart from the rung label, so what the
+  // pass can observe (capabilities) and what blame names are unchanged.
+  const dflt = captureFor(opts(), "firefox");
+  assert.deepEqual(
+    capabilitiesFor(deep, "firefox"),
+    capabilitiesFor(dflt, "firefox"),
+    "firefox --deep observes exactly what the default gecko pass does",
+  );
+  assert.equal(blameSemanticFor(deep), "flush-site", "blame still names the read site, not the write");
+});
+
 // capabilitiesFor gates each count/duration to Measured. The HARD GUARD: durations are refusable on
 // a .stack trace (--deep counts yes, durations no), and the default rung measures nothing.
 test("capabilitiesFor: default rung measures nothing; --breakdown counts+durations; --deep counts, no durations", () => {

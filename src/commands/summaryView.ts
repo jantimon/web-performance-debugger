@@ -1,8 +1,10 @@
 import type { Recording } from "../model/recording.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
+import { isFirefoxDeep, isGeckoRung } from "../model/rung.js";
 import { kv, num, sparkline, table } from "../output/ascii.js";
 import { bold, dim } from "../output/color.js";
 import { analyzeThrash, renderThrashStep, THRASH_HEADLINE_MIN } from "../trace/thrash.js";
+import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
 
 /**
  * Where the count column came from, which differs by rung/lane and must not be asserted blindly.
@@ -15,7 +17,7 @@ import { analyzeThrash, renderThrashStep, THRASH_HEADLINE_MIN } from "../trace/t
  * the two counted the same thing.
  */
 export function countProvenance(rec: Recording): string {
-  if (rec.meta.passes.includes("gecko")) {
+  if (isGeckoRung(rec.meta.passes)) {
     return "counts come from Gecko markers — approximate, not comparable to Chrome; durations are coarse";
   }
   // The default/precise-wall rung captures no trace, so it counts nothing: a — is not-measured, not 0.
@@ -86,6 +88,47 @@ function printForcedAttribution(rec: Recording): void {
   if (report.omitted > 0) console.log(dim(`    … +${report.omitted} more thrash step(s)`));
   console.log(dim("  full read + dirtied-by lines: query blame --forced"));
 }
+
+/**
+ * The Firefox `--deep` dirtied-by section: Gecko's native cause-stack write identity, led by the
+ * never-fake-parity disclaimer. Unlike Chrome's forced-attribution section there is no thrash detector
+ * and no forced-by read side here -- Gecko records only the FIRST invalidation since the last flush,
+ * so the write set is partial and the read stays the sampled read-site blame. Prints nothing when no
+ * forced flush carried a resolvable cause. Firefox --deep only (the caller gates on the rung).
+ */
+function printFirefoxDirtiedBy(rec: Recording): void {
+  const report = firefoxDirtiedBy(rec.events, rec.window.startTs);
+  if (rec.summary.forcedLayoutCount != null && rec.summary.forcedLayoutCount > 0 && !report) {
+    // Forced flushes were counted but none carried a JS cause stack to name a write.
+    console.log(
+      `\nForced layout/style: ${rec.summary.forcedLayoutCount} flush(es); no JS cause stack named a write. ${dim("read side: query blame --forced")}`,
+    );
+    return;
+  }
+  if (!report) return;
+  const total = report.writes.reduce((sum, write) => sum + write.count, 0);
+  console.log(`\ndirtied-by (first invalidation only) ${dim(`— ${total} forced flush(es)`)}`);
+  console.log(
+    dim(
+      "  the write Gecko blames for each forced flush. Gecko records only the FIRST invalidation since",
+    ),
+  );
+  console.log(dim("  the last flush, so this is not Chrome's full write set."));
+  console.log(
+    dim(
+      "  forced-by: n/a (firefox --deep) — the read that forced each flush is the sampled read-site blame: query blame --forced",
+    ),
+  );
+  const shown = report.writes.slice(0, DIRTIED_BY_REPORT_CAP);
+  for (const write of shown)
+    console.log(`    ${write.at}  ${dim(`(${write.kinds.join(",")} ×${write.count})`)}`);
+  const omitted = report.writes.length - shown.length;
+  if (omitted > 0)
+    console.log(dim(`    … +${omitted} more write(s) — query blame --dirtied for the full list`));
+}
+
+/** How many dirtied-by writes the record report names before collapsing the rest (query blame --dirtied has all). */
+const DIRTIED_BY_REPORT_CAP = 8;
 
 export function printSummary(rec: Recording): void {
   const summary = rec.summary;
@@ -168,10 +211,13 @@ export function printSummary(rec: Recording): void {
       ]),
     );
   }
-  // The identity-led forced-layout section: on --deep the write side is available (dirtied-by) and
-  // the interleave detector runs, so lead with them; every other lane that measured forced counts
-  // (firefox markers) can only point at the read-site blame verb.
-  if (rec.meta.passes.includes("deep")) {
+  // The identity-led forced-layout section. Chrome --deep: the write side (dirtied-by) is available
+  // AND the interleave detector runs, so lead with both. Firefox --deep: Gecko's cause-stack write
+  // identity, first-invalidation-only, no thrash detector (its partial write set cannot feed one).
+  // Every other lane that measured forced counts (firefox default) can only point at read-site blame.
+  if (isFirefoxDeep(meta.passes)) {
+    printFirefoxDirtiedBy(rec);
+  } else if (meta.passes.includes("deep")) {
     printForcedAttribution(rec);
   } else if (summary.forcedLayoutCount != null && summary.forcedLayoutCount > 0) {
     console.log("  ⚠ layout thrashing — run `query blame --forced` to see the source lines");
@@ -186,7 +232,7 @@ export function printSummary(rec: Recording): void {
     (summary.paintCount ?? 0) +
     (summary.styleCount ?? 0) +
     summary.totalEvents;
-  const firefoxNoDetail = meta.browser === "firefox" && !meta.passes.includes("gecko");
+  const firefoxNoDetail = meta.browser === "firefox" && !isGeckoRung(meta.passes);
   const noTrace = meta.browser !== "firefox" && summary.layoutCount == null;
   if (didWork === 0 && !firefoxNoDetail && !noTrace) {
     console.log(

@@ -1,7 +1,9 @@
 import type { Digest, NormalizedEvent, Recording } from "../model/recording.js";
 import { usToMs } from "../model/time.js";
+import { isFirefoxDeep } from "../model/rung.js";
 import { forcedLayouts, longTasks, extractInvalidations } from "../trace/analysis.js";
 import { analyzeThrash } from "../trace/thrash.js";
+import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
 
 export function buildDigest(rec: Recording, recordingPath: string, topN = 20): Digest {
   const start = rec.window.startTs;
@@ -76,6 +78,13 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
   // the run:start mark, so windowing first would drop it; analyzeThrash windows the flushes itself.
   const isDeep = rec.meta.passes.includes("deep");
   const thrashAnalysis = isDeep ? analyzeThrash(rec.events, start) : null;
+  // Firefox --deep: Gecko's native cause-stack write identity, first-invalidation-only. A SEPARATE
+  // rollup from the read-site `forced` above (never merged into it), and never a thrash input -- the
+  // partial write set cannot feed the detector. Absent (undefined) on chrome and every non-deep
+  // firefox run, so a consumer never mistakes it for chrome's full write set or a fabricated one.
+  const firefoxDirtiedByReport = isFirefoxDeep(rec.meta.passes)
+    ? firefoxDirtiedBy(rec.events, start)
+    : null;
   const forced = forcedLayouts(inWindow, start)
     .slice(0, topN)
     .map((forcedEntry) => {
@@ -105,9 +114,13 @@ export function buildDigest(rec: Recording, recordingPath: string, topN = 20): D
       durMs: forcedEntry.durMs,
       ...("dirtiedBy" in forcedEntry ? { dirtiedBy: forcedEntry.dirtiedBy } : {}),
     })),
-    // The thrash rollup rides only a --deep recording (thrashAnalysis is null otherwise), so this is
-    // absent on every other lane -- "not available", never a fabricated count: 0.
+    // The thrash rollup rides only a Chrome --deep recording (thrashAnalysis is null otherwise), so
+    // this is absent on every other lane, Firefox included -- "not available", never a fabricated
+    // count: 0. Firefox --deep has no full write set to detect thrashing from.
     ...(thrashAnalysis ? { thrash: thrashAnalysis.report } : {}),
+    // Firefox --deep's dirtied-by write report (first-invalidation-only). Absent on chrome and
+    // non-deep firefox, so it never poses as chrome's exact write set.
+    ...(firefoxDirtiedByReport ? { firefoxDirtiedBy: firefoxDirtiedByReport } : {}),
     longTasks: tasks,
     invalidationsByReason,
     // The recording's spans (run + steps + measures), carried through so `query digest` exposes them

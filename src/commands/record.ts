@@ -271,9 +271,11 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(notesCatalog.breakdownShape());
     notes.push(notesCatalog.breakdownForcedNotMeasured());
     notes.push(notesCatalog.breakdownInvalidationNotMeasured());
-  } else if (opts.deep) {
-    // Rung 3: exact counts + forced-layout blame are the product; slice durations are suppressed
-    // (null) because the `.stack` trace distorts them. Say so, and that there is no bar/CPU model.
+  } else if (opts.deep && browserName !== "firefox") {
+    // Chrome rung 3: exact counts + forced-layout blame are the product; slice durations are
+    // suppressed (null) because the `.stack` trace distorts them. Say so, and that there is no
+    // bar/CPU model. Firefox --deep is NOT this rung -- it is the gecko pass plus a report tier, so
+    // it falls to the firefox branch below (which adds the dirtied-by note).
     notes.push(notesCatalog.deepRung());
   } else if (opts.preciseWall) {
     // Rung 1 minus the sampler: only the wall is measured. No counts, no CPU model.
@@ -296,6 +298,11 @@ export async function record(opts: RecordOptions): Promise<{
     // flags reflows Chrome's read-site rule reports 0 for. Disclose it so the count is never diffed
     // cross-engine. Only when the gecko pass ran: without it every count is a hard 0 (note above).
     if (opts.cpuProfile) notes.push(notesCatalog.firefoxForcedCountSemantics());
+    // --deep on firefox is a reporting tier over the same gecko pass: it surfaces Gecko's native
+    // cause-stack write identity as a dirtied-by (first-invalidation-only) report. The note states
+    // the honest scope loudly (no exact-count parity, no forced-by, no thrash) so the write is never
+    // read as chrome's full set.
+    if (opts.deep) notes.push(notesCatalog.firefoxDeepReport());
     // INP is deliberately NOT in the caps list above: it never came from CDP. It is the same
     // in-page Event Timing observer Chrome uses, so it works here; the honest caveat is that the
     // two engines' numbers are not interchangeable, not that Firefox cannot measure it.

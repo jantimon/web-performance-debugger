@@ -15,6 +15,8 @@ import { buildCpuModel, packagesByProfileNode } from "../../dist/profile/cpuprof
 import { attachStacks } from "../../dist/trace/stacks.js";
 import { findWindow } from "../../dist/trace/parse.js";
 import { markForced } from "../../dist/trace/analysis.js";
+import { firefoxDirtiedBy } from "../../dist/trace/firefox-dirtied.js";
+import { analyzeThrash } from "../../dist/trace/thrash.js";
 import { geckoFixture, repoRoot, FIXTURE_ORIGIN, syntheticGeckoDump } from "./helpers.mjs";
 
 // --- Firefox Gecko profile converter (against a real trimmed shutdown dump) ---
@@ -137,6 +139,61 @@ test("read-site blame: names the read line + property, never the write line", as
   const markerForced = events.filter((event) => event.forced && !event.sampled);
   assert.ok(markerForced.length > 0, "marker flushes still flagged forced for the count");
   assert.ok(markerForced.every((event) => !event.at), "marker forced events carry no blame line");
+});
+
+// --- Firefox --deep dirtied-by write report (Gecko cause stacks, first-invalidation-only) ---
+
+test("firefox --deep: cause stacks resolve to write lines on the forced markers, off `at`", async () => {
+  const context = parseGecko(geckoFixture);
+  const events = geckoToRenderingEvents(context);
+  await attachStacks(events, FIXTURE_ORIGIN, repoRoot);
+  markForced(events);
+
+  // The forced Reflow/Styles markers now carry a resolved WRITE line (event.dirtiedBy), from the
+  // Gecko cause stack -- but never an `at` (that stays the read-site blame answer).
+  const markerForced = events.filter((event) => event.forced && !event.sampled);
+  assert.ok(markerForced.length > 0, "forced markers present");
+  const withWrite = markerForced.filter((event) => event.dirtiedBy);
+  assert.ok(withWrite.length > 0, "a forced marker carries a resolved dirtied-by write");
+  assert.ok(markerForced.every((event) => !event.at), "the write is never surfaced as a blame `at`");
+  for (const event of withWrite)
+    assert.match(event.dirtiedBy.at, /forces-layout\.mjs:\d+/, "the write resolves to a source line");
+});
+
+test("firefox --deep: the dirtied-by rollup is first-invalidation-only and never fabricates parity", async () => {
+  const context = parseGecko(geckoFixture);
+  const events = geckoToRenderingEvents(context);
+  await attachStacks(events, FIXTURE_ORIGIN, repoRoot);
+  markForced(events);
+  const window = findWindow(events);
+
+  const report = firefoxDirtiedBy(events, window.startTs);
+  assert.ok(report, "a dirtied-by report is produced");
+  assert.equal(report.semantic, "first-invalidation", "the scope marker so it is never read as chrome's full set");
+  assert.ok(report.writes.length > 0, "at least one write line");
+  for (const write of report.writes) {
+    assert.match(write.at, /forces-layout\.mjs:\d+/, "write attributed to the example source");
+    assert.ok(write.count >= 1, "each write carries a flush count");
+    assert.ok(write.kinds.every((kind) => kind === "layout" || kind === "style"), "kinds are layout/style");
+  }
+  // Write != read: the dirtied-by write lines are never the geometry-read lines the sampled read-site
+  // blame names (46, 64, 83, ... in forces-layout.mjs).
+  const writeLines = new Set(report.writes.map((write) => Number(write.at.match(/:(\d+):/)?.[1])));
+  for (const readLine of [46, 64, 83, 87, 96, 103, 104])
+    assert.ok(!writeLines.has(readLine), `read line ${readLine} must never be a dirtied-by write`);
+
+  // Never-fake-parity: the thrash detector observes NOTHING on these events (no invalidation-kind
+  // records to walk), so a firefox recording produces no thrash rollup and no dirtied-by-read-site.
+  const thrash = analyzeThrash(events, window.startTs);
+  assert.equal(thrash.report.count, 0, "no thrash steps (firefox has no full write set)");
+  assert.equal(Object.keys(thrash.dirtiedByReadSite).length, 0, "no read-site dirtied-by fabricated");
+});
+
+test("firefoxDirtiedBy: null when no forced flush carried a cause (not an empty-but-present report)", () => {
+  assert.equal(firefoxDirtiedBy([], null), null, "empty log -> null");
+  // A sampled read-site event carries no dirtiedBy, so it must not produce a write report.
+  const sampledOnly = [{ id: 0, name: "Layout", ts: 5, dur: 1, ph: "X", kind: "layout", sampled: true }];
+  assert.equal(firefoxDirtiedBy(sampledOnly, null), null, "sampled read events never make a write report");
 });
 
 // --- Firefox reconciling breakdown (threadCPUDelta idle + category rollup) ---

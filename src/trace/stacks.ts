@@ -47,6 +47,26 @@ export function extractStack(args: unknown): StackFrame[] | undefined {
     }));
 }
 
+/**
+ * Pull the Gecko cause stack (the WRITE that dirtied a flush) out of a Reflow/Styles marker event.
+ * Gecko stashes it under `args.data.invalidationStack` (leaf-first JS frames), a different key from
+ * the read-site `stackTrace` above, so it never becomes a blame `at`. Undefined on chrome events,
+ * which carry no such key.
+ */
+export function extractInvalidationStack(args: unknown): StackFrame[] | undefined {
+  const data = (args as { data?: { invalidationStack?: RawFrame[] } } | undefined)?.data;
+  const raw = data?.invalidationStack;
+  if (!raw || !raw.length) return undefined;
+  return raw
+    .filter((frame) => frame && (frame.url || frame.functionName))
+    .map((frame) => ({
+      functionName: frame.functionName || undefined,
+      url: frame.url || undefined,
+      line: typeof frame.lineNumber === "number" ? frame.lineNumber : undefined,
+      column: typeof frame.columnNumber === "number" ? frame.columnNumber : undefined,
+    }));
+}
+
 /** Rewrite served (http://127.0.0.1:PORT/...) urls back to local file paths. */
 export function makeSourceResolver(serverUrl: string, root: string) {
   return (frame: StackFrame): StackFrame => {
@@ -158,5 +178,18 @@ export async function attachStacks(
     for (const frame of stack) frame.source = relativizeSource(frame.source, root);
     event.stack = stack;
     event.at = topLocation(stack);
+  }
+  // Resolve the Gecko cause stack (firefox marker events) the same way, so `query get` shows local
+  // sources and the firefox --deep dirtied-by report has a write line. This is the WRITE, kept off
+  // `at` on purpose (the read-site stays the blame answer). A no-op on chrome (no invalidationStack).
+  for (const event of events) {
+    const cause = extractInvalidationStack(event.args);
+    if (!cause) continue;
+    cause.forEach(resolve);
+    await maps.resolveStack(cause);
+    for (const frame of cause) frame.source = relativizeSource(frame.source, root);
+    (event.args as { data: { invalidationStack: StackFrame[] } }).data.invalidationStack = cause;
+    const writeAt = topLocation(cause);
+    if (writeAt) event.dirtiedBy = { at: writeAt };
   }
 }

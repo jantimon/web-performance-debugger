@@ -186,10 +186,9 @@ agreeing within 5%). See
 ## Chrome's write side: dirtied-by + the thrash detector (`--deep`)
 
 Chrome's `.stack` names the **read** that forced a flush; Chrome's `invalidationTracking` records name
-the **write** that dirtied the DOM. `--deep` captures both, so on Chrome (and only Chrome) a forced
-flush carries both causal ends: `forced-by` (the read) and `dirtied-by` (the write). Firefox has no
-`invalidationTracking`, so its `--deep` write side would come from the marker cause stack instead
-(reachable under `args.data.invalidationStack`), never surfaced as this dual annotation.
+the **write** that dirtied the DOM. `--deep` captures both, so on Chrome a forced flush carries both
+causal ends: `forced-by` (the read) and `dirtied-by` (the write), and the FULL write set in a flush's
+gap is what lets the thrash detector run.
 
 **[measured]** on `examples/forces-layout.mjs` under the full trace, main thread, `ts`-ordered:
 
@@ -212,6 +211,25 @@ flush carries both causal ends: `forced-by` (the read) and `dirtied-by` (the wri
   whose gap holds only a `:focus`-recalc style write and no layout write -- a genuine non-thrash (it
   re-read clean geometry). Relaxing to "any layout|style write in the gap" reaches 43/43 but counts
   that clean re-read, so wpd keeps the matching-kind rule and accepts the one-step under-count.
+
+### Firefox's write side: partial dirtied-by, first-invalidation-only (`--deep`)
+
+Firefox has no `invalidationTracking`, but a Gecko Reflow/Styles marker's **cause stack natively names
+the write** that dirtied the flush. So `--deep --target firefox` is not empty and not chrome-in-a-wig:
+it is the same one gecko pass, plus that write identity surfaced as a `dirtied-by (first invalidation
+only)` report. The write is the innermost JS caller of the marker's cause stack (`args.data.invalidationStack`,
+resolved to a source line); it is deliberately kept off `blame`'s `at`, which stays the read (the
+sampled read-site events, unchanged by `--deep`). This is the pleasing symmetry: Chrome *adds*
+dirtied-by via `invalidationTracking` and alone names the read; Firefox has the write natively and its
+read is the sampled estimate. Both engines end dual-annotated on the write, stated per engine, never
+implied as parity.
+
+The scope is the honest limit, and the code states it everywhere (`semantic: "first-invalidation"`,
+`forced-by: n/a (firefox --deep)`): Gecko records only the **FIRST invalidation since the last flush**,
+so a flush names ONE write, not the full set of writes in its gap. That is why this lane runs **no
+thrash detector** (the detector needs every write in a gap to see write->read->write interleaving) and
+claims **no exact-count parity** with Chrome. Comparable to Chrome's dirtied-by at line granularity,
+but a partial write set, never the input to a thrash headline.
 
 ## What is actually comparable across engines
 

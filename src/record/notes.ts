@@ -55,6 +55,10 @@ export function firefoxForcedCountSemantics(): string {
   return "Firefox forcedLayoutCount comes from Gecko Reflow/Styles marker cause stacks (the write-site JS cause), not Chrome's read-site rule, so it counts mount-driven reflows Chrome reports 0 for. Never compare forced counts across engines: read a Firefox run against another Firefox run.";
 }
 
+export function firefoxDeepReport(): string {
+  return "Deep report on Firefox (--deep): the SAME gecko pass, plus a dirtied-by (first-invalidation-only) write report from Gecko's Reflow/Styles cause stacks — the write that dirtied each forced flush. Gecko records only the FIRST invalidation since the last flush, so this is NOT Chrome's full write set: no exact-count parity, no forced-by read side (the read that forced each flush stays the sampled read-site blame: query blame --forced), and no layout-thrashing detector. See query blame --dirtied and query digest.";
+}
+
 export function firefoxBreakdown(): string {
   return "CPU time breakdown (js/style/layout/browser/gc/idle bar) on Firefox: idle comes from the per-sample CPU-usage signal (threadCPUDelta ~0 == the thread was descheduled/waiting; 95.7% on a pure-wait window), and style/layout from the sampled Layout-category frames. The slices reconcile (Σ slices = the sampled window). NOT in the bar: paint (off-main-thread compositor work, a side track shown separately, never summed), and on tiny workloads a ~1ms sampling floor. Layout/style/forced-layout counts come from the Reflow/Styles markers, not this bar.";
 }

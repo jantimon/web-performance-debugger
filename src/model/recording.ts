@@ -64,6 +64,15 @@ export interface NormalizedEvent {
    * every trace-derived event.
    */
   sampled?: boolean;
+  /**
+   * The WRITE that dirtied this flush, resolved from a Firefox Gecko cause stack (the innermost JS
+   * caller of the FIRST invalidation since the last flush). Set on a forced Reflow/Styles marker
+   * event under `--deep --target firefox`; absent everywhere else. It is a WRITE, deliberately never
+   * surfaced as `at` (which stays the blame read-site), so write and read never collide. Being
+   * first-invalidation-only it is Gecko's write, NOT chrome's full write set, and drives no thrash
+   * detector. See trace/firefox-dirtied.ts.
+   */
+  dirtiedBy?: DirtiedByWrite;
   args?: unknown;
 }
 
@@ -577,17 +586,23 @@ export interface Recording {
 }
 
 /**
- * The WRITE end of the forced-flush dual annotation: a DOM mutation that dirtied layout/style
- * so a later geometry read had to flush it synchronously. `at` is the mutation's source line, `reason`
- * the Chrome invalidation reason (e.g. "Inline CSS style declaration was mutated"). Sourced from the
- * STYLE-kind invalidation records only; the layout-kind `LayoutInvalidationTracking` stack names the
- * forcing READ on style-driven invalidations, not the write, so it is never a dirtied-by (measured;
- * docs/dev/engine-mapping.md). Chrome `--deep` only -- Gecko has no invalidationTracking.
+ * The WRITE end of a forced flush: a DOM mutation that dirtied layout/style so a later geometry read
+ * had to flush it synchronously. `at` is the mutation's source line.
+ *
+ * Both browser lanes reach it, by different routes (docs/dev/engine-mapping.md):
+ *  - Chrome `--deep`: from the STYLE-kind invalidation records the trace's invalidationTracking
+ *    carries, with the invalidation `reason` (e.g. "Inline CSS style declaration was mutated"). The
+ *    layout-kind `LayoutInvalidationTracking` stack names the forcing READ on style-driven
+ *    invalidations, not the write, so it is never a dirtied-by (measured). This is the FULL write set
+ *    in a flush's gap, which is what lets the thrash detector run.
+ *  - Firefox `--deep`: from a Gecko Reflow/Styles marker's cause stack (its innermost JS caller),
+ *    with no `reason`. Gecko records only the FIRST invalidation since the last flush, so this is one
+ *    write per flush, NOT the full set -- comparable at line granularity but never a thrash input.
  */
 export interface DirtiedByWrite {
   /** source line of the mutation (the write), relative to root */
   at: string;
-  /** the Chrome invalidation reason string, when the record carried one */
+  /** the Chrome invalidation reason string, when the record carried one (absent on firefox) */
   reason?: string;
 }
 
@@ -618,6 +633,28 @@ export interface ThrashReport {
   omitted: number;
 }
 
+/** One write line Gecko blamed (firefox `--deep`), rolled up across the forced flushes that named it. */
+export interface DirtiedByWriteRollup {
+  /** source line of the write (the cause stack's innermost JS caller), relative to root */
+  at: string;
+  /** which flush kinds this write dirtied (layout, style, or both) */
+  kinds: ("layout" | "style")[];
+  /** how many forced flushes named this write as their first-since-last-flush invalidation */
+  count: number;
+}
+
+/**
+ * The firefox `--deep` dirtied-by report: Gecko's native cause-stack write identity as a first-class
+ * rollup. `semantic: "first-invalidation"` marks the honest scope -- Gecko records only the FIRST
+ * invalidation since the last flush, so `writes` is the write Gecko blames, NOT chrome's full write
+ * set. This is why the firefox lane runs no thrash detector and fabricates no forced-by read side
+ * (the read stays the sampled read-site blame on the same gecko pass). See trace/firefox-dirtied.ts.
+ */
+export interface FirefoxDirtiedByReport {
+  semantic: "first-invalidation";
+  writes: DirtiedByWriteRollup[];
+}
+
 /**
  * Small, context-friendly entry point into a (possibly huge) recording. Read this
  * first, then drill by event `id` (`query get`) or bounded `query` calls.
@@ -646,6 +683,14 @@ export interface Digest {
    * reader sees "not available", never a fabricated `count: 0`.
    */
   thrash?: ThrashReport;
+  /**
+   * The firefox `--deep` dirtied-by report: Gecko's native cause-stack write identity, rolled up by
+   * write line and marked `semantic: "first-invalidation"`. Present ONLY on a `--deep --target
+   * firefox` recording; absent on chrome (which surfaces its full write set through `forced[].dirtiedBy`
+   * and `thrash` instead) and on every non-deep firefox run -- so a reader never mistakes this
+   * first-invalidation-only write for chrome's exact set, and never sees a fabricated one.
+   */
+  firefoxDirtiedBy?: FirefoxDirtiedByReport;
   /** the recording's spans (run + steps + measures), carried through so `query digest` exposes them */
   spans: Span[];
   hints: string[];

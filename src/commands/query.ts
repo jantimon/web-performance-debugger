@@ -10,10 +10,12 @@ import type {
 } from "../model/recording.js";
 import type { BlameEntry } from "../model/query.js";
 import { buildSpans, recordingLane } from "../model/spans.js";
+import { isFirefoxDeep, isGeckoRung } from "../model/rung.js";
 import { isSteppedRecording, stepIndexView } from "../model/step-view.js";
 import { num, table } from "../output/ascii.js";
 import { dim } from "../output/color.js";
 import { analyzeThrash } from "../trace/thrash.js";
+import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
 import { assertRecordingArtifact } from "../model/artifact.js";
 import { buildDigest } from "./digest.js";
@@ -63,7 +65,7 @@ function eventsInWindow(rec: Recording): NormalizedEvent[] {
  * the array length, is the test.
  */
 function requireEventLog(rec: Recording, file: string): void {
-  if (rec.meta.passes.includes("deep") || rec.meta.passes.includes("gecko")) return;
+  if (rec.meta.passes.includes("deep") || isGeckoRung(rec.meta.passes)) return;
   throw new Error(
     `${file}: the event log was not captured at this rung (${rec.meta.passes.join("+")}). Events, ` +
       `forced-layout blame, and invalidation records are stored only under --deep (chrome) or ` +
@@ -92,6 +94,25 @@ export async function queryDigest(file: string, opts: OutOpts): Promise<void> {
         digest.forced
           .slice(0, 8)
           .map((forcedEntry) => [forcedEntry.count, num(forcedEntry.durMs, 2), forcedEntry.at]),
+      ),
+    );
+  }
+  if (digest.firefoxDirtiedBy) {
+    console.log(
+      "\ndirtied-by (first invalidation only) — the write Gecko blames for each forced flush:",
+    );
+    console.log(
+      dim(
+        "  forced-by: n/a (firefox --deep); Gecko records only the FIRST invalidation since the last " +
+          "flush, so this is not Chrome's full write set. Read side: query blame --forced.",
+      ),
+    );
+    console.log(
+      table(
+        ["count", "kinds", "write"],
+        digest.firefoxDirtiedBy.writes
+          .slice(0, 8)
+          .map((write) => [write.count, write.kinds.join(","), write.at]),
       ),
     );
   }
@@ -296,6 +317,8 @@ export interface BlameQuery extends OutOpts {
   forced?: boolean;
   /** show every attributed source line with a `forced` column (incl. forced=0) */
   all?: boolean;
+  /** firefox --deep only: the dirtied-by write report, separate from the read-site rows */
+  dirtied?: boolean;
   top?: number;
 }
 
@@ -304,6 +327,13 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     throw new Error(`Unknown --kind '${query.kind}'. Valid kinds: ${EVENT_KINDS.join(", ")}`);
   const rec = await load(file);
   requireEventLog(rec, file);
+
+  // --dirtied: the firefox --deep write report ALONE (Gecko cause stacks, first-invalidation-only).
+  // Kept a distinct mode so the write side never merges into the --forced read-site rows, and so its
+  // JSON carries the `semantic: "first-invalidation"` marker a consumer needs to not read it as
+  // chrome's exact write set. Refused off this lane, naming where the write identity actually lives.
+  if (query.dirtied) return void queryDirtied(rec, file, query);
+
   let events = eventsInWindow(rec).filter((event) => event.at);
   // --forced narrows to thrashing; --all keeps everything (and reports forced=0 lines)
   if (query.forced && !query.all) events = events.filter((event) => event.forced);
@@ -414,6 +444,25 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
         );
     }
   }
+  // Firefox --deep: the dirtied-by WRITE section, appended AFTER the read-site table so a reader sees
+  // both without the two ever merging into one row. It is Gecko's cause-stack write identity,
+  // first-invalidation-only -- a distinct concept from the read rows above (whose `at` is the read
+  // that paid). The full JSON write report is `query blame --dirtied`.
+  if (isFirefoxDeep(rec.meta.passes)) {
+    const report = firefoxDirtiedBy(eventsInWindow(rec), rec.window.startTs);
+    if (report) {
+      console.log(
+        "\ndirtied-by (first invalidation only) — the write Gecko blames for each flush:",
+      );
+      console.log(
+        dim(
+          "  forced-by: n/a (firefox --deep); not Chrome's full write set. Full report: query blame --dirtied",
+        ),
+      );
+      for (const write of report.writes)
+        console.log(`    ${write.at}  ${dim(`(${write.kinds.join(",")} ×${write.count})`)}`);
+    }
+  }
   // Only the forced rows have an engine-specific meaning worth naming, so the note is gated on
   // one being present rather than on the --forced flag: plain `blame` and `--all` show forced and
   // unforced rows together, and an unforced scripting/invalidation row is not a geometry read at
@@ -423,6 +472,43 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     const semantic = blameSemanticLine(rec.meta.blameSemantic, rec.meta.browser);
     if (semantic) console.log(`\n${semantic}`);
   }
+}
+
+/**
+ * `query blame --dirtied`: the firefox --deep dirtied-by write report alone. Refused off the firefox
+ * --deep lane -- the write identity comes from Gecko's cause stacks, so there is nothing to show
+ * elsewhere (chrome's write set is `query blame` dirtied-by rows + `query digest` thrash instead).
+ */
+async function queryDirtied(rec: Recording, file: string, query: BlameQuery): Promise<void> {
+  if (!isFirefoxDeep(rec.meta.passes))
+    throw new Error(
+      `${file}: --dirtied is the firefox --deep write report (Gecko cause stacks, first-invalidation-only). ` +
+        `This recording is not one (passes: ${rec.meta.passes.join("+")}). On chrome, the write side is the ` +
+        `dirtied-by rows under \`query blame\` and the thrash rollup in \`query digest\`.`,
+    );
+  const report = firefoxDirtiedBy(eventsInWindow(rec), rec.window.startTs);
+  const fmt = structuredFormat(query);
+  if (fmt) return emit(report ?? { semantic: "first-invalidation", writes: [] }, fmt);
+  if (!report) {
+    console.log("No JS-forced flush named a write (no cause stack resolved). 🎉");
+    return;
+  }
+  console.log(
+    "dirtied-by (first invalidation only) — the write Gecko blames for each forced flush.",
+  );
+  console.log(
+    dim(
+      "forced-by: n/a (firefox --deep). Gecko records only the FIRST invalidation since the last flush, so\n" +
+        "this is not Chrome's full write set. The read that forced each flush is the sampled read-site\n" +
+        "blame: query blame --forced.",
+    ),
+  );
+  console.log(
+    table(
+      ["count", "kinds", "write"],
+      report.writes.map((write) => [write.count, write.kinds.join(","), write.at]),
+    ),
+  );
 }
 
 /**

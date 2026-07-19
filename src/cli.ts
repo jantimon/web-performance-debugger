@@ -123,7 +123,7 @@ program
   )
   .option(
     "--deep",
-    "chrome rung 3: ONE full-trace pass (.stack + invalidationTracking), sampler OFF. The attribution report -- exact forced-layout blame, invalidation rollup, exact counts, long tasks. Slice durations are suppressed (the trace distorts them); no CPU model or reconciling bar (run --breakdown for those)",
+    "rung 3 attribution report. Chrome: ONE full-trace pass (.stack + invalidationTracking), sampler OFF -- exact forced-layout blame, dirtied-by writes, invalidation rollup, exact counts, long tasks; slice durations suppressed (the trace distorts them), no CPU model. Firefox: the SAME gecko pass, adding a dirtied-by (first-invalidation-only) write report from Gecko's cause stacks (no exact-count parity, no forced-by, no thrash detector)",
   )
   .option(
     "--precise-wall",
@@ -167,13 +167,13 @@ program
         `--precise-wall is rung 1 minus the sampler; it cannot combine with ${cmdOpts.breakdown ? "--breakdown" : "--deep"} (a higher rung). Drop one.`,
       );
     if (firefox) {
-      // On firefox the ONE gecko pass IS the lane at every rung: --breakdown/--deep/--precise-wall
-      // have no meaning over it, and --cpu-throttle needs CDP, which BiDi does not expose.
-      // --protocol-timeout is deliberately allowed: puppeteer threads it into the BiDi connection.
+      // On firefox the ONE gecko pass IS the lane at every rung. --breakdown/--precise-wall have no
+      // meaning over it, and --cpu-throttle needs CDP, which BiDi does not expose. --deep IS
+      // supported: it is a reporting tier (the dirtied-by write report from Gecko's cause stacks), not
+      // a capture change. --protocol-timeout is deliberately allowed: puppeteer threads it into BiDi.
       const unsupported = [
         cmdOpts.breakdown &&
           "--breakdown (firefox's reconciling bar comes from the Gecko profile automatically; your performance.measure() spans surface in recording.spans without a flag)",
-        cmdOpts.deep && "--deep (no .stack / invalidationTracking on Gecko)",
         cmdOpts.preciseWall && "--precise-wall (the gecko pass IS the firefox lane)",
         cmdOpts.cpuThrottle && "--cpu-throttle (needs CDP)",
       ].filter(Boolean);
@@ -292,6 +292,10 @@ fmtOpts(
     .option("--kind <kind>", "restrict to one event kind")
     .option("--forced", "only forced (synchronous) layout/style — layout thrashing")
     .option("--all", "every attributed line with a 'forced' column (shows ran-but-forced-0)")
+    .option(
+      "--dirtied",
+      "firefox --deep only: the dirtied-by write report (Gecko cause stacks, first-invalidation-only), separate from the --forced read-site rows",
+    )
     .option("--top <n>", "limit to first n locations", toInt),
 ).action((file, opts) => run(queryBlame(file, opts)));
 query
