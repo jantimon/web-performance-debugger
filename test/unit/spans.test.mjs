@@ -274,7 +274,7 @@ async function captureJson(runner) {
 
 test("query spans --label keeps the exact match; a miss is an empty array, not an error", async () => {
   const file = writeRec("spans-chrome.json", {
-    meta: { target: "chrome", iterations: 4 },
+    meta: { schemaVersion: "3", target: "chrome", iterations: 4 },
     breakdowns: chromeBreakdowns,
   });
 
@@ -290,11 +290,13 @@ test("query spans --label keeps the exact match; a miss is an empty array, not a
 });
 
 test("query spans synthesizes the run span from a sibling cpu model (never empty when a bar exists)", async () => {
-  const file = writeRec("spans-ff.json", { meta: { target: "firefox", browser: "firefox" } });
+  const file = writeRec("spans-ff.json", {
+    meta: { schemaVersion: "3", target: "firefox", browser: "firefox" },
+  });
   // loadCpuModel finds `<base>.cpu.json` beside the recording; it must carry a functions array.
   writeFileSync(
     path.join(tmpDir, "spans-ff.cpu.json"),
-    JSON.stringify({ functions: [], breakdown: firefoxCpu }),
+    JSON.stringify({ meta: { schemaVersion: "3" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
   const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
@@ -305,6 +307,8 @@ test("query spans synthesizes the run span from a sibling cpu model (never empty
 });
 
 test("query spans errors (non-zero) on a recording that holds no bar at all", async () => {
-  const file = writeRec("spans-old.json", { meta: { target: "chrome" } });
+  const file = writeRec("spans-no-bar.json", {
+    meta: { schemaVersion: "3", target: "chrome" },
+  });
   await assert.rejects(() => querySpans(file, { json: true }), /no per-span breakdown/);
 });

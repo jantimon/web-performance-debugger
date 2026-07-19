@@ -7,9 +7,10 @@ import { serialize, deserialize } from "../../dist/output/format.js";
 import { diffCmd } from "../../dist/commands/diff.js";
 import { assertCmd } from "../../dist/commands/assert.js";
 import { countProvenance } from "../../dist/commands/summaryView.js";
+import { assertSchemaVersion } from "../../dist/model/artifact.js";
 import { resolveHeadless } from "../../dist/browser/launch.js";
 import { SCHEMA_VERSION } from "../../dist/index.js";
-import { writeRecording, captureExitCode } from "./helpers.mjs";
+import { writeRecording, writeSchemaArtifact, captureExitCode } from "./helpers.mjs";
 
 test("serialize/deserialize round-trips json and toon", () => {
   const obj = { a: 1, b: [{ x: 1 }, { x: 2 }], c: "hi" };
@@ -18,7 +19,27 @@ test("serialize/deserialize round-trips json and toon", () => {
 });
 
 test("public entrypoint exposes the schema version anchor", () => {
-  assert.equal(SCHEMA_VERSION, "2");
+  assert.equal(SCHEMA_VERSION, "3");
+});
+
+// Write-first (§17.13.9 item 5): an artifact stamped with an older schema epoch is REJECTED, loudly,
+// with the re-record message -- never mis-parsed against a shape it was not written to.
+test("schema reject: an artifact recorded by an older wpd is refused with the re-record message", () => {
+  assert.throws(
+    () => assertSchemaVersion("2", "/tmp/old.json"),
+    /re-record with this version/,
+    "a schema-2 artifact is rejected, not silently read as the current shape",
+  );
+  assert.throws(() => assertSchemaVersion(undefined, "/tmp/nometa.json"), /re-record/);
+  // The current epoch passes through untouched.
+  assert.doesNotThrow(() => assertSchemaVersion(SCHEMA_VERSION, "/tmp/current.json"));
+});
+
+// The reject reaches through the verbs, not only the pure guard: `assert` on a schema-2 recording
+// refuses rather than gating a mis-parsed (all-null) summary green.
+test("schema reject: `assert` on an older-schema recording refuses instead of mis-gating", async () => {
+  const old = writeSchemaArtifact("assert-old-schema.json", "2", { forcedLayoutCount: 0 });
+  await assert.rejects(() => assertCmd(old, { forced: 0 }), /re-record with this version/);
 });
 
 test("package exports map points at files that exist", () => {

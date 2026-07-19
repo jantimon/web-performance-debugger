@@ -205,7 +205,7 @@ function writeBreakdownRecording(name, breakdowns) {
   const file = path.join(tmpDir, name);
   writeFileSync(
     file,
-    JSON.stringify({ meta: { target: "chrome", iterations: 1 }, summary: emptySummary, breakdowns }),
+    JSON.stringify({ meta: { schemaVersion: "3", target: "chrome", iterations: 1 }, summary: emptySummary, breakdowns }),
     "utf8",
   );
   return file;
@@ -248,6 +248,7 @@ test("assertCmd: --max-slice on a step-index file reads the recording it points 
   writeFileSync(
     indexFile,
     JSON.stringify({
+      meta: { schemaVersion: "3", iterations: 1 },
       recording,
       steps: [
         {
@@ -272,7 +273,7 @@ test("assertCmd: a corrupt sibling CPU model surfaces instead of reading as no s
   const file = path.join(tmpDir, "no-bars.json");
   writeFileSync(
     file,
-    JSON.stringify({ meta: { target: "chrome", iterations: 1 }, summary: emptySummary }),
+    JSON.stringify({ meta: { schemaVersion: "3", target: "chrome", iterations: 1 }, summary: emptySummary }),
     "utf8",
   );
   writeFileSync(path.join(tmpDir, "no-bars.cpu.json"), "{ not json", "utf8");

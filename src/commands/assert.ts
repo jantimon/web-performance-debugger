@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { deserialize } from "../output/format.js";
+import { assertSchemaVersion } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget } from "./resolve.js";
 import { gateMeasured, type Measured } from "../model/measured.js";
@@ -74,6 +75,7 @@ export async function assertCmd(
 ): Promise<void> {
   const abs = await resolveTarget(file, "auto");
   const obj = deserialize(await fs.readFile(abs, "utf8"), path.extname(abs).toLowerCase()) as any;
+  assertSchemaVersion(obj?.meta?.schemaVersion, abs);
 
   // A run-level driver recording has no wall by design, so `--max-wall` against it can only fail.
   // "was not measured" would be true but useless: the wall exists, one per step, in the sidecar.

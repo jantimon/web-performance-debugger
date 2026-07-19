@@ -114,10 +114,11 @@ test("buildCpuModel: Firefox gets NO breakdown (Gecko does not represent idle ho
 
 test("loadCpuModel: an old model without a breakdown still loads and queries", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-cpu-"));
-  // A model shaped like an artifact written before the breakdown field existed: no `breakdown` key.
+  // A model shaped like an artifact written before the breakdown field was added: current schema,
+  // but no `breakdown` key. The verbs must read it without assuming the field is present.
   const legacy = {
     profile: "old.cpuprofile",
-    meta: { tool: "wpd", version: "0.4.0", schemaVersion: "2" },
+    meta: { tool: "wpd", version: "0.9.0", schemaVersion: "3" },
     sampleCount: 2,
     sampleIntervalUs: 200,
     totalMs: 5,

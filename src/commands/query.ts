@@ -13,6 +13,7 @@ import type { BlameEntry } from "../model/query.js";
 import { buildSpans, recordingLane } from "../model/spans.js";
 import { num, table } from "../output/ascii.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
+import { assertSchemaVersion } from "../model/artifact.js";
 import { buildDigest } from "./digest.js";
 import { printSpanBreakdowns, printCpuBreakdown } from "./cpu.js";
 import { loadCpuModel } from "../profile/cpuprofile.js";
@@ -30,7 +31,9 @@ interface OutOpts {
 async function load(file: string): Promise<Recording> {
   const abs = await resolveTarget(file, "recording");
   const raw = await fs.readFile(abs, "utf8");
-  return deserialize(raw, path.extname(abs).toLowerCase()) as Recording;
+  const rec = deserialize(raw, path.extname(abs).toLowerCase()) as Recording;
+  assertSchemaVersion(rec.meta?.schemaVersion, abs);
+  return rec;
 }
 
 function structuredFormat(opts: OutOpts): Format | null {
@@ -159,6 +162,7 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
   const abs = await resolveTarget(file, "index");
   const raw = await fs.readFile(abs, "utf8");
   const idx = deserialize(raw, path.extname(abs).toLowerCase()) as StepIndex;
+  assertSchemaVersion(idx.meta?.schemaVersion, abs);
   // `latest` resolves to the index via the pointer, but an explicit path is taken as given, so
   // `query index <recording>` would otherwise read a Recording as a StepIndex and die on
   // `Cannot read properties of undefined (reading 'length')`, naming neither the file nor the fix.

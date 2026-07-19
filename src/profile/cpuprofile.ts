@@ -21,6 +21,7 @@ import { computeGeckoCpuBreakdown } from "./gecko-breakdown.js";
 import { usToMs, msToUs } from "../model/time.js";
 import { reconcileResidual } from "../model/reconcile.js";
 import { deserialize } from "../output/format.js";
+import { assertSchemaVersion } from "../model/artifact.js";
 import { resolveTarget } from "../commands/resolve.js";
 
 /** Raw V8 CPU sampling profile, as returned by CDP `Profiler.stop` (`.profile`). */
@@ -798,7 +799,10 @@ export function shortSource(
 export async function loadCpuModel(file: string): Promise<CpuModel> {
   const abs = await resolveTarget(file, "cpu-model");
   const parsed = deserialize(await fs.readFile(abs, "utf8"), path.extname(abs).toLowerCase());
-  if (parsed && Array.isArray((parsed as CpuModel).functions)) return parsed as CpuModel;
+  if (parsed && Array.isArray((parsed as CpuModel).functions)) {
+    assertSchemaVersion((parsed as CpuModel).meta?.schemaVersion, abs);
+    return parsed as CpuModel;
+  }
   // a recording path was likely passed; try its sibling cpu model. `--out runs/a` writes the
   // recording to an extension-less path, so default the sibling to `.json` when there is no ext
   // (slicing by a zero-length ext would otherwise blank the whole base path).
@@ -810,7 +814,10 @@ export async function loadCpuModel(file: string): Promise<CpuModel> {
       await fs.readFile(sibling, "utf8"),
       path.extname(sibling).toLowerCase(),
     );
-    if (fallback && Array.isArray((fallback as CpuModel).functions)) return fallback as CpuModel;
+    if (fallback && Array.isArray((fallback as CpuModel).functions)) {
+      assertSchemaVersion((fallback as CpuModel).meta?.schemaVersion, sibling);
+      return fallback as CpuModel;
+    }
   } catch (error) {
     // A missing sibling is the expected "no CPU model" case, reported below; a corrupt or
     // unreadable sibling surfaces as its own error rather than masquerading as absence.
