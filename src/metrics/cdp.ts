@@ -1,9 +1,9 @@
 import type { CDPSession } from "puppeteer";
 import type { RawCpuProfile } from "../profile/cpuprofile.js";
 
-// Only the V8 sampling profiler lives here. The `Performance.getMetrics` counter path is gone:
-// layout/style/paint counts and durations come from the trace, windowed on the bar's main thread
-// (metrics/summarize.ts), which reproduces the CDP counters exactly and is windowable per span.
+// Only the V8 sampling profiler lives here. Layout/style/paint counts and durations come from the
+// trace, windowed on the bar's main thread (metrics/summarize.ts), which reproduces Blink's
+// per-process counters exactly and is windowable per span.
 
 /** Start the V8 sampling profiler. `intervalUs` must be set before `Profiler.start`. */
 export async function startCpuProfile(client: CDPSession, intervalUs: number): Promise<void> {

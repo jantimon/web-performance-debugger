@@ -38,8 +38,8 @@ export function countProvenance(rec: Recording): string {
  *   - run-level driver recording: no wall exists (see runWallMs in record.ts). No row at all: a "—"
  *     would advertise a number as missing when it does not exist, and send a reader off to look for
  *     a flag that would bring it back.
- *   - per-step recording: the MEDIAN of that step's samples (mergeSteps), measured on the clean
- *     timing pass. This is the honest per-interaction wall, so it must print -- note it inherits
+ *   - per-step recording: the MEDIAN of that step's samples (mergeSteps), on the clock the rung
+ *     priced it with (Span.wallClock). The honest per-interaction wall, so it must print -- note it inherits
  *     meta.driver from the parent run, which is why the check above is not on driver alone.
  *   - bench / node: the SUM of the timed iterations.
  */

@@ -79,8 +79,8 @@ const GECKO_DUMP_POLL_MS = 250;
 /** Consecutive equal sizes that count as "done growing" (the dump is written incrementally). */
 const GECKO_DUMP_STABLE_READS = 3;
 
-/** The Gecko sampling interval for this run: --cpu-interval is expressed in microseconds (the V8
- * unit) and Gecko takes milliseconds, clamped up to its ~1ms floor by geckoEnv. Unset => the floor. */
+/** The Gecko sampling interval for this run: the interval option is expressed in microseconds (the
+ * V8 unit) and Gecko takes milliseconds, clamped up to its ~1ms floor by geckoEnv. Unset => the floor. */
 function geckoIntervalMs(opts: RecordOptions): number {
   return opts.cpuIntervalUs != null
     ? Math.max(GECKO_MIN_INTERVAL_MS, usToMs(opts.cpuIntervalUs))

@@ -18,7 +18,7 @@ export interface LabelledWindow {
   endTs: number | null;
 }
 
-/** A step merged across passes: label/timing from the timing pass, window from the trace pass. */
+/** A step merged across iterations: label/timing from the driver-side samples, window from the trace. */
 export interface MergedStep {
   index: number;
   label: string;
@@ -158,8 +158,8 @@ function describeDivergence(timingLabels: string[], tracedLabels: string[]): str
   const missing = timingLabels.filter((label) => !traced.has(label));
   const extra = tracedLabels.filter((label) => !timed.has(label));
   const parts: string[] = [];
-  if (missing.length) parts.push(`only in the timing pass: ${missing.join(", ")}`);
-  if (extra.length) parts.push(`only in the trace pass: ${extra.join(", ")}`);
+  if (missing.length) parts.push(`only in the step timings: ${missing.join(", ")}`);
+  if (extra.length) parts.push(`only in the trace windows: ${extra.join(", ")}`);
   return parts.join("; ");
 }
 

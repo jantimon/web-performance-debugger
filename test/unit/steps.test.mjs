@@ -145,7 +145,7 @@ test("mergeSteps throws when the passes recorded different steps (never emits a 
     { label: "mount", startTs: 100, endTs: 200 },
     { label: "inp", startTs: 300, endTs: 400 },
   ];
-  assert.throws(() => mergeSteps(timing, traced), /different steps.*only in the timing pass: hydrate/s);
+  assert.throws(() => mergeSteps(timing, traced), /different steps.*only in the step timings: hydrate/s);
 });
 
 test("mergeSteps rejects duplicate labels rather than joining the wrong pair", () => {
