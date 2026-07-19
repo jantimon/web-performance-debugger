@@ -130,6 +130,12 @@ const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
   "script-fetch-failed": "the script could not be fetched (auth, CORS, or it is no longer served)",
   "map-fetch-failed": "the .map it names could not be fetched (commonly not deployed alongside it)",
   "map-parse-failed": "the .map it names is not a readable sourcemap",
+  "script-too-large": "the script exceeded the remote-fetch size cap and was not read",
+  "map-too-large": "the .map it names exceeded the remote-fetch size cap and was not read",
+  "fetch-budget-exhausted":
+    "the per-run remote-sourcemap time budget ran out before this script (heavy site with many scripts)",
+  "blocked-fetch":
+    "the fetch was refused by policy (a non-http(s) scheme, or a private host reached from a public page)",
 };
 
 /**
@@ -236,7 +242,9 @@ export async function record(opts: RecordOptions): Promise<{
   // One resolver for the whole run: stack resolution and the CPU model share its cache (a remote
   // script + map is fetched once) and its diagnostics, so `maps.diagnostics()` below sees every
   // script the run tried to map.
-  const maps = new SourceMapResolver();
+  // pageUrl (--url) tells the resolver whether the profiled page is public: a public page's bundle
+  // may not make wpd fetch a private/internal host for a sourcemap.
+  const maps = new SourceMapResolver({ pageUrl: opts.url });
   let pass: PassResult;
   try {
     pass = await runPass(server, root, capture, opts, mode, absModule, maps);

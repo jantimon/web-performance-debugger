@@ -3,11 +3,84 @@ import path from "node:path";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 import type { SourceMapDiagnostics, SourceMapFailure, StackFrame } from "../model/recording.js";
 
-/** ms before a remote .js / .map fetch is abandoned (keeps a hung CDN from stalling a run). */
+/** ms before a single remote .js / .map fetch is abandoned (keeps a hung CDN from stalling a run). */
 const FETCH_TIMEOUT_MS = 5000;
+
+/** Overall wall budget for ALL remote sourcemap work in one run. A heavy site can name hundreds of
+ * scripts, each up to FETCH_TIMEOUT_MS; without a run-wide ceiling that is minutes of stall. Once
+ * spent, remaining lookups record `fetch-budget-exhausted` and their frames keep minified names. */
+const REMOTE_BUDGET_MS = 30_000;
+
+/** Response-size caps: a map is bigger than its script, but neither should be able to exhaust memory
+ * on a hostile or misbehaving server. Enforced by content-length AND by streaming (a lying/absent
+ * content-length still aborts once the cap is crossed). */
+const MAX_SCRIPT_BYTES = 20 * 1024 * 1024;
+const MAX_MAP_BYTES = 50 * 1024 * 1024;
+
+/** Concurrent remote fetches. Distinct scripts resolve in parallel up to this, instead of strictly
+ * serial (minutes on a heavy site); the per-script cache/in-flight dedup keeps it one fetch each. */
+const MAX_CONCURRENT_FETCHES = 4;
+
+/** Redirect hops followed manually (each hop is re-checked against the fetch policy). */
+const MAX_REDIRECTS = 5;
 
 function isHttpUrl(value: string | undefined): value is `http${string}` {
   return !!value && (value.startsWith("http://") || value.startsWith("https://"));
+}
+
+/**
+ * Obviously-private / loopback / link-local host, by hostname or IP literal. Not a full RFC1918
+ * resolver (no DNS lookup): it matches the literal forms a sourcemap URL carries directly, which is
+ * where the SSRF risk on a public --url site actually lives.
+ */
+export function isPrivateHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host === "::1" || host === "::" || host === "0.0.0.0") return true;
+  // IPv6 unique-local (fc00::/7) and link-local (fe80::/10)
+  if (/^f[cd][0-9a-f]{2}:/.test(host) || host.startsWith("fe80:")) return true;
+  const parts = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!parts) return false;
+  const [first, second] = [Number(parts[1]), Number(parts[2])];
+  if (first === 0 || first === 127 || first === 10) return true;
+  if (first === 172 && second >= 16 && second <= 31) return true;
+  if (first === 192 && second === 168) return true;
+  if (first === 169 && second === 254) return true;
+  return false;
+}
+
+/**
+ * Why a fetch to `targetUrl` is refused, or null if allowed.
+ *
+ * - "scheme": anything but http(s). Blocks a redirect landing on file:/data:/etc.
+ * - "private": the target resolves to a private/loopback host while the profiled page is PUBLIC.
+ *   A public site's bundle should never make wpd reach into the operator's internal network. When
+ *   the page itself is private/loopback (a served fixture, a localhost dev server), private targets
+ *   are expected and allowed -- that is the common wpd case, so `pagePrivate` gates the rule.
+ */
+export function fetchBlockReason(
+  targetUrl: string,
+  pagePrivate: boolean,
+): "scheme" | "private" | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    return "scheme";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "scheme";
+  if (!pagePrivate && isPrivateHostname(parsed.hostname)) return "private";
+  return null;
+}
+
+/** Is the profiled page itself on a private/loopback host? Unparseable => treat as private (the
+ * common local/served case), so an odd page url never turns fetches off. */
+function isPageUrlPrivate(pageUrl: string): boolean {
+  try {
+    return isPrivateHostname(new URL(pageUrl).hostname);
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -56,21 +129,96 @@ function decodeDataUriMap(reference: string): string | null {
   return null;
 }
 
-async function fetchWithHeaders(url: string): Promise<{ text: string; headers: Headers } | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    return response.ok ? { text: await response.text(), headers: response.headers } : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+/** What kind of body is being fetched: picks the size cap and the generic-failure reason. */
+type FetchKind = "script" | "map";
+
+type FetchOutcome =
+  | { ok: true; text: string; headers: Headers }
+  | { ok: false; failure: SourceMapFailure };
+
+function genericFailure(kind: FetchKind): SourceMapFailure {
+  return kind === "map" ? "map-fetch-failed" : "script-fetch-failed";
 }
 
-async function fetchText(url: string): Promise<string | null> {
-  return (await fetchWithHeaders(url))?.text ?? null;
+function tooLargeFailure(kind: FetchKind): SourceMapFailure {
+  return kind === "map" ? "map-too-large" : "script-too-large";
+}
+
+/** Read a response body to text, aborting (and reporting too-large) the moment the cap is crossed.
+ * Streams so a lying or absent content-length cannot smuggle an over-cap body through. */
+async function readCapped(
+  response: Response,
+  cap: number,
+  kind: FetchKind,
+  abort: () => void,
+): Promise<FetchOutcome> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > cap) {
+    abort();
+    return { ok: false, failure: tooLargeFailure(kind) };
+  }
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text) > cap) return { ok: false, failure: tooLargeFailure(kind) };
+    return { ok: true, text, headers: response.headers };
+  }
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > cap) {
+      abort();
+      return { ok: false, failure: tooLargeFailure(kind) };
+    }
+    chunks.push(value);
+  }
+  return { ok: true, text: Buffer.concat(chunks).toString("utf8"), headers: response.headers };
+}
+
+/**
+ * A single remote fetch, bounded on every axis a hostile or slow server can abuse: the run-wide time
+ * budget (`deadlineMs`), the per-fetch timeout, the response-size cap, and the fetch policy (scheme +
+ * private-host), re-checked at every manually-followed redirect hop so a 302 cannot escape it.
+ */
+export async function boundedFetch(
+  url: string,
+  kind: FetchKind,
+  pagePrivate: boolean,
+  deadlineMs: number,
+): Promise<FetchOutcome> {
+  const cap = kind === "map" ? MAX_MAP_BYTES : MAX_SCRIPT_BYTES;
+  let currentUrl = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (fetchBlockReason(currentUrl, pagePrivate)) return { ok: false, failure: "blocked-fetch" };
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) return { ok: false, failure: "fetch-budget-exhausted" };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(FETCH_TIMEOUT_MS, remainingMs));
+    try {
+      const response = await fetch(currentUrl, {
+        signal: controller.signal,
+        redirect: "manual",
+      });
+      // redirect: "manual" surfaces the 3xx to us so the destination is policy-checked before we
+      // follow it (an automatic follow would fetch a private host before we could refuse).
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) return { ok: false, failure: genericFailure(kind) };
+        currentUrl = new URL(location, currentUrl).href;
+        continue;
+      }
+      if (!response.ok) return { ok: false, failure: genericFailure(kind) };
+      return await readCapped(response, cap, kind, () => controller.abort());
+    } catch {
+      return { ok: false, failure: genericFailure(kind) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { ok: false, failure: genericFailure(kind) };
 }
 
 /**
@@ -124,6 +272,55 @@ export class SourceMapResolver {
    * loads fine can still leak attribution -- invisible to `outcomes`, which only records LOAD
    * failures. Keyed like `cache`. */
   private positionCounts = new Map<string, { misses: number; hits: number }>();
+  /** in-flight loads, so two concurrent lookups of one script share the single fetch rather than
+   * racing (the cache is only populated after the await; `warm` fires many at once). Keyed like
+   * `cache`. */
+  private inflight = new Map<string, Promise<TraceMap | null>>();
+  /** True when the profiled page is itself on a private/loopback host, which makes private fetch
+   * targets expected (served fixtures, localhost dev). A public page cannot reach private hosts. */
+  private readonly pagePrivate: boolean;
+  /** Absolute wall deadline for ALL remote fetches, set lazily on the first one so the run's trace
+   * time before any fetch does not eat the budget. */
+  private remoteDeadline: number | null = null;
+  /** Concurrency gate for remote fetches (a hand-rolled counting semaphore). */
+  private activeFetches = 0;
+  private fetchWaiters: (() => void)[] = [];
+
+  /**
+   * @param options.pageUrl the profiled page's URL (--url), used to decide whether private fetch
+   *   targets are expected. Absent (bench/module/--html) means the page is wpd's own localhost
+   *   server, i.e. private, so private targets are permitted.
+   */
+  constructor(options: { pageUrl?: string } = {}) {
+    this.pagePrivate = options.pageUrl == null || isPageUrlPrivate(options.pageUrl);
+  }
+
+  private async acquireFetchSlot(): Promise<void> {
+    if (this.activeFetches < MAX_CONCURRENT_FETCHES) {
+      this.activeFetches++;
+      return;
+    }
+    await new Promise<void>((resolve) => this.fetchWaiters.push(resolve));
+  }
+
+  private releaseFetchSlot(): void {
+    const next = this.fetchWaiters.shift();
+    // Hand the slot directly to the next waiter (activeFetches unchanged); only drop the count when
+    // nobody is waiting.
+    if (next) next();
+    else this.activeFetches--;
+  }
+
+  /** One remote fetch, run under the concurrency gate and the run-wide time budget. */
+  private async remoteFetch(url: string, kind: FetchKind): Promise<FetchOutcome> {
+    this.remoteDeadline ??= Date.now() + REMOTE_BUDGET_MS;
+    await this.acquireFetchSlot();
+    try {
+      return await boundedFetch(url, kind, this.pagePrivate, this.remoteDeadline);
+    } finally {
+      this.releaseFetchSlot();
+    }
+  }
 
   private async loadLocalMap(jsFile: string): Promise<RawMap> {
     try {
@@ -149,8 +346,8 @@ export class SourceMapResolver {
     // mirroring the remote branch's `new URL(reference, jsUrl)`. The sibling `${jsFile}.map` read
     // above only covers the conventional adjacent name, so a map in a sibling directory reaches here.
     if (isHttpUrl(reference)) {
-      const raw = await fetchText(reference);
-      return raw ? { raw } : { failure: "map-fetch-failed" };
+      const fetched = await this.remoteFetch(reference, "map");
+      return fetched.ok ? { raw: fetched.text } : { failure: fetched.failure };
     }
     try {
       return { raw: await fs.readFile(path.resolve(path.dirname(jsFile), reference), "utf8") };
@@ -176,8 +373,8 @@ export class SourceMapResolver {
   }
 
   private async loadRemoteMap(jsUrl: string): Promise<RawMap> {
-    const script = await fetchWithHeaders(jsUrl);
-    if (!script) return { failure: "script-fetch-failed" };
+    const script = await this.remoteFetch(jsUrl, "script");
+    if (!script.ok) return { failure: script.failure };
     if (looksMinified(script.text)) this.minified.add(jsUrl);
     // DevTools honours the SourceMap response header as well as the trailing comment, and
     // production builds commonly emit the header while stripping the comment. Headers.get is
@@ -191,12 +388,23 @@ export class SourceMapResolver {
       const decoded = decodeDataUriMap(reference);
       return decoded ? { raw: decoded } : { failure: "map-parse-failed" };
     }
-    const raw = await fetchText(new URL(reference, jsUrl).href);
-    return raw ? { raw } : { failure: "map-fetch-failed" };
+    const fetched = await this.remoteFetch(new URL(reference, jsUrl).href, "map");
+    return fetched.ok ? { raw: fetched.text } : { failure: fetched.failure };
   }
 
   private async loadMap(target: string): Promise<TraceMap | null> {
     if (this.cache.has(target)) return this.cache.get(target)!;
+    const existing = this.inflight.get(target);
+    if (existing) return existing;
+    const load = this.loadMapUncached(target).then((map) => {
+      this.inflight.delete(target);
+      return map;
+    });
+    this.inflight.set(target, load);
+    return load;
+  }
+
+  private async loadMapUncached(target: string): Promise<TraceMap | null> {
     let map: TraceMap | null = null;
     let failure: SourceMapFailure | undefined;
     try {
@@ -218,6 +426,17 @@ export class SourceMapResolver {
     this.cache.set(target, map);
     this.outcomes.set(target, failure ?? null);
     return map;
+  }
+
+  /**
+   * Pre-load the maps for a set of distinct scripts concurrently (bounded by MAX_CONCURRENT_FETCHES),
+   * so the serial per-frame resolution below hits the cache instead of fetching one script at a time.
+   * The per-script cache/in-flight dedup keeps it one fetch each. Non-http targets are ignored: local
+   * reads are cheap and need no warming.
+   */
+  async warm(targets: Iterable<string>): Promise<void> {
+    const distinct = [...new Set([...targets].filter((target) => isHttpUrl(target)))];
+    await Promise.all(distinct.map((target) => this.loadMap(target)));
   }
 
   /**

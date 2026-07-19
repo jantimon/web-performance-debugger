@@ -557,6 +557,20 @@ export async function buildCpuModel(
   const maps = context.maps ?? new SourceMapResolver();
   const resolvedByKey = new Map<string, ResolvedFrame>();
   const packageCache = new Map<string, string | null>();
+  // Fetch the distinct remote script maps concurrently first, so the serial resolve below reads the
+  // cache instead of fetching one script at a time (minutes on a heavy --url site). Only genuinely
+  // remote urls (not the served origin, which resolves to local paths) are warmed.
+  const servedOrigin = context.serverUrl ?? "";
+  await maps.warm(
+    [...callFrameByKey.values()]
+      .map((callFrame) => callFrame.url)
+      .filter(
+        (url): url is string =>
+          url != null &&
+          url.startsWith("http") &&
+          (servedOrigin === "" || !url.startsWith(servedOrigin)),
+      ),
+  );
   for (const [key, callFrame] of callFrameByKey)
     resolvedByKey.set(
       key,

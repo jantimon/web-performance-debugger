@@ -208,7 +208,11 @@ export type SourceMapFailure =
   | /** the script carries neither a sourceMappingURL comment nor a SourceMap header */ "no-sourcemap-url"
   | /** the script itself could not be fetched/read */ "script-fetch-failed"
   | /** the script named a map, but it could not be fetched/read */ "map-fetch-failed"
-  | /** the map was fetched but is not valid JSON/not a sourcemap */ "map-parse-failed";
+  | /** the map was fetched but is not valid JSON/not a sourcemap */ "map-parse-failed"
+  | /** the script body exceeded the remote-fetch size cap */ "script-too-large"
+  | /** the map body exceeded the remote-fetch size cap */ "map-too-large"
+  | /** the per-run remote-sourcemap time budget was spent before this fetch */ "fetch-budget-exhausted"
+  | /** the fetch was refused: a non-http(s) scheme, or a private host reached from a public page */ "blocked-fetch";
 
 /**
  * What happened to every script a run tried to map. Failure is otherwise invisible: frames keep
