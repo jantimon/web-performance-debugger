@@ -131,7 +131,9 @@ function displayPath(absPath: string): string {
 const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
   "no-sourcemap-url":
     "the bundle carries no sourceMappingURL comment and no SourceMap response header (many production builds strip both)",
-  "script-fetch-failed": "the script could not be fetched (auth, CORS, or it is no longer served)",
+  "script-fetch-failed": "the script could not be fetched (it errored or is no longer served)",
+  "auth-required":
+    "the script or its map is behind authentication (a 401/403); wpd's fetches carry no cookies or credentials",
   "map-fetch-failed": "the .map it names could not be fetched (commonly not deployed alongside it)",
   "map-parse-failed": "the .map it names is not a readable sourcemap",
   "script-too-large": "the script exceeded the remote-fetch size cap and was not read",
@@ -162,7 +164,10 @@ const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
  * which is the failure this shape is designed against: when removing a false positive, check that
  * the true positive still fires.
  */
-function sourcemapNote(diagnostics: SourceMapDiagnostics, unmappedFrames: number): string | null {
+export function sourcemapNote(
+  diagnostics: SourceMapDiagnostics,
+  unmappedFrames: number,
+): string | null {
   const { scripts, resolved } = diagnostics;
   const unmappedBundles = diagnostics.unmappedBundles ?? 0;
   const reasons = Object.keys(diagnostics.failed ?? {}) as SourceMapFailure[];

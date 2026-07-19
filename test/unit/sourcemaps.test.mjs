@@ -20,6 +20,7 @@ import {
 } from "../../dist/trace/sourcemap.js";
 import http from "node:http";
 import { cpuDiffCmd } from "../../dist/commands/cpudiff.js";
+import { sourcemapNote } from "../../dist/commands/record.js";
 import {
   syntheticProfile,
   breakdownProfile,
@@ -790,4 +791,43 @@ test("SourceMapResolver.warm: distinct scripts resolve concurrently, each fetche
   } finally {
     await closeServer(server);
   }
+});
+
+// F17: an auth-walled script/map answers 401/403. wpd's node-side fetch carries no cookies, so this
+// is a distinct, actionable outcome -- not the generic script-fetch-failed whose remedy mentions
+// CORS (a browser-only concept that cannot apply to a Node fetch).
+test("a 401/403 sourcemap fetch records auth-required, and the note names it (F17)", async () => {
+  for (const status of [401, 403]) {
+    const server = http.createServer((request, response) => {
+      response.writeHead(status);
+      response.end("denied");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address();
+      const outcome = await boundedFetch(
+        `http://127.0.0.1:${port}/app.js.map`,
+        "map",
+        true, // the page is private (localhost), so the fetch is allowed to run
+        Date.now() + 5000,
+      );
+      assert.equal(outcome.ok, false, `${status} is a failure`);
+      assert.equal(
+        outcome.failure,
+        "auth-required",
+        `a ${status} is auth-required, not script-fetch-failed`,
+      );
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+
+  const note = sourcemapNote(
+    { scripts: 1, resolved: 0, failed: { "auth-required": ["http://example.com/app.js"] } },
+    1,
+  );
+  assert.ok(note, "the note fires when a script went unmapped");
+  assert.ok(/auth-required/.test(note), "the note names the reason");
+  assert.ok(/authentication/.test(note), "the note explains the resource is behind authentication");
+  assert.ok(!/CORS/.test(note), "the note does not misdirect to CORS on a node fetch");
 });

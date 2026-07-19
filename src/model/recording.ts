@@ -207,6 +207,7 @@ export interface RecordingWindow {
 export type SourceMapFailure =
   | /** the script carries neither a sourceMappingURL comment nor a SourceMap header */ "no-sourcemap-url"
   | /** the script itself could not be fetched/read */ "script-fetch-failed"
+  | /** the script or its map answered 401/403: it is behind authentication wpd's fetches do not carry */ "auth-required"
   | /** the script named a map, but it could not be fetched/read */ "map-fetch-failed"
   | /** the map was fetched but is not valid JSON/not a sourcemap */ "map-parse-failed"
   | /** the script body exceeded the remote-fetch size cap */ "script-too-large"

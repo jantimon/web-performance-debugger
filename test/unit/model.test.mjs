@@ -56,6 +56,20 @@ test("package exports map points at files that exist", () => {
   }
 });
 
+// S09: `changeset version` bumps package.json, but `npm ci` never rewrites the lockfile, so the
+// lock's own version field drifts behind the manifest until someone runs a plain `npm install`. A
+// published tarball whose lock says an old version is confusing at best. Guard the two together.
+test("package-lock version tracks package.json version", () => {
+  const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+  const lock = JSON.parse(readFileSync(new URL("../../package-lock.json", import.meta.url), "utf8"));
+  assert.equal(lock.version, pkg.version, "package-lock.json root version is stale; run `npm install`");
+  assert.equal(
+    lock.packages[""].version,
+    pkg.version,
+    'package-lock.json packages[""] version is stale; run `npm install`',
+  );
+});
+
 test("published types declare the documented public shapes", () => {
   const dts = readFileSync(new URL("../../dist/index.d.ts", import.meta.url), "utf8");
   // StepTiming is the element type of the public RecordingSummary.perStep: without it a consumer
@@ -246,13 +260,43 @@ test("cpu-diff: --fail-on-regression REFUSES across a workload/browser/runtime m
   assert.ok(errs.some((line) => /workload: a\.mjs → b\.mjs/.test(line)));
 });
 
-test("cpu-diff: a rung/throttle mismatch WARNS but still compares (not a cpu-diff blocker) (R05)", async () => {
-  const base = writeCpuModel("cpudiff-warn-base.cpu.json", { passes: ["default"], throttle: { cpuRate: 1 } }, 10);
-  const current = writeCpuModel("cpudiff-warn-cur.cpu.json", { passes: ["breakdown"], throttle: { cpuRate: 4 } }, 10);
+test("cpu-diff: a rung mismatch WARNS but still compares (not a cpu-diff blocker) (R05)", async () => {
+  const base = writeCpuModel("cpudiff-warn-base.cpu.json", { passes: ["default"] }, 10);
+  const current = writeCpuModel("cpudiff-warn-cur.cpu.json", { passes: ["breakdown"] }, 10);
   const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
   assert.ok(errs.some((line) => /captured differently/.test(line)), "the mismatch is disclosed");
-  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "rung/throttle do not block cpu-diff");
-  assert.equal(code, undefined, "equal self-time, and these axes do not refuse the gate");
+  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "the rung does not block cpu-diff");
+  assert.equal(code, undefined, "equal self-time, and the rung does not refuse the gate");
+});
+
+// F02: CPU self-time TOTALS across every sampled iteration and STRETCHES under cpu-throttle, so a
+// same-workload pair differing only on those axes would fabricate a self-time "regression". Both
+// must REFUSE a cpu-diff gate, not merely warn.
+test("cpu-diff: an iterations mismatch REFUSES the gate (F02)", async () => {
+  const base = writeCpuModel("cpudiff-iter-base.cpu.json", { iterations: 1 }, 58);
+  const current = writeCpuModel("cpudiff-iter-cur.cpu.json", { iterations: 4 }, 165);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.equal(code, 1, "self-time totals across iterations, so gating across a mismatch refuses");
+  assert.ok(errs.some((line) => /Refusing to gate/.test(line)));
+  assert.ok(errs.some((line) => /iterations: 1 → 4/.test(line)), "the iterations mismatch is disclosed");
+});
+
+test("cpu-diff: a cpu-throttle mismatch REFUSES the gate (F02)", async () => {
+  const base = writeCpuModel("cpudiff-thr-base.cpu.json", { throttle: { cpuRate: 1 } }, 10);
+  const current = writeCpuModel("cpudiff-thr-cur.cpu.json", { throttle: { cpuRate: 4 } }, 30);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.equal(code, 1, "throttling stretches the self-time clock, so gating across it refuses");
+  assert.ok(errs.some((line) => /Refusing to gate/.test(line)));
+  assert.ok(errs.some((line) => /cpu-throttle: 1x → 4x/.test(line)), "the throttle mismatch is disclosed");
+});
+
+test("cpu-diff: an iterations/throttle mismatch WARNS but exits 0 without the gate flag (F02)", async () => {
+  const base = writeCpuModel("cpudiff-nogate-base.cpu.json", { iterations: 1, throttle: { cpuRate: 1 } }, 58);
+  const current = writeCpuModel("cpudiff-nogate-cur.cpu.json", { iterations: 4, throttle: { cpuRate: 4 } }, 165);
+  const { code, errs } = await runCpuDiffCapture(base, current, {});
+  assert.ok(errs.some((line) => /captured differently/.test(line)), "the mismatch is still disclosed");
+  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "no gate flag, so nothing to refuse");
+  assert.equal(code, undefined, "without --fail-on-regression the mismatch only warns");
 });
 
 test("diff: advisory wall/INP/scripting deltas do NOT fail the gate (H1)", async () => {
