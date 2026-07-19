@@ -31,7 +31,7 @@ export function isSandboxLaunchError(error: Error): boolean {
 }
 
 /**
- * A top-level navigation failure worth ONE bounded retry (on a fresh browser), vs a permanent one.
+ * A top-level navigation failure worth bounded retries (on a fresh browser each attempt), vs a permanent one.
  *
  * A cross-process boot (a --url navigation that swaps the renderer process) can reject with a
  * Chromium network-stack `net::ERR_INVALID_HANDLE`, a `net::ERR_ABORTED`, or a target/frame swapped
