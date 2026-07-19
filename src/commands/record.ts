@@ -33,6 +33,7 @@ import { writePointer } from "./resolve.js";
 import { extFor, type Format } from "../output/format.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
+import { stableWorkloadPath } from "../model/compat.js";
 import type {
   CpuModel,
   Recording,
@@ -66,6 +67,9 @@ export interface RecordOptions {
   headlessMode?: HeadlessMode;
   /** persistent Chrome profile dir (resolved absolute); reuse one login across passes/runs */
   userDataDir?: string;
+  /** chrome only: launch with --no-sandbox (reduced containment). Off by default; opt in only in a
+   * trusted, isolated environment. */
+  disableSandbox?: boolean;
   /** ms to wait after run() for async paints to flush; internal default 200 (no user flag) */
   settleMs: number;
   format: Format;
@@ -130,6 +134,12 @@ const SOURCEMAP_REMEDY: Record<SourceMapFailure, string> = {
   "script-fetch-failed": "the script could not be fetched (auth, CORS, or it is no longer served)",
   "map-fetch-failed": "the .map it names could not be fetched (commonly not deployed alongside it)",
   "map-parse-failed": "the .map it names is not a readable sourcemap",
+  "script-too-large": "the script exceeded the remote-fetch size cap and was not read",
+  "map-too-large": "the .map it names exceeded the remote-fetch size cap and was not read",
+  "fetch-budget-exhausted":
+    "the per-run remote-sourcemap time budget ran out before this script (heavy site with many scripts)",
+  "blocked-fetch":
+    "the fetch was refused by policy (a non-http(s) scheme, or a private host reached from a public page)",
 };
 
 /**
@@ -246,7 +256,9 @@ export async function record(opts: RecordOptions): Promise<{
   // One resolver for the whole run: stack resolution and the CPU model share its cache (a remote
   // script + map is fetched once) and its diagnostics, so `maps.diagnostics()` below sees every
   // script the run tried to map.
-  const maps = new SourceMapResolver();
+  // pageUrl (--url) tells the resolver whether the profiled page is public: a public page's bundle
+  // may not make wpd fetch a private/internal host for a sourcemap.
+  const maps = new SourceMapResolver({ pageUrl: opts.url });
   let pass: PassResult;
   try {
     pass = await runPass(server, root, capture, opts, mode, absModule, maps);
@@ -360,6 +372,13 @@ export async function record(opts: RecordOptions): Promise<{
   if (opts.cpuThrottle) {
     notes.push(notesCatalog.artificialSlowdown(opts.cpuThrottle));
   }
+  if (opts.disableSandbox && browserName === "chrome") {
+    const sandboxNote = notesCatalog.browserSandboxDisabled();
+    notes.push(sandboxNote);
+    // Loud on stderr too: a reduced-containment launch should not be silent even when the reader
+    // never opens meta.notes.
+    console.error(sandboxNote);
+  }
   if (traceWindowMissing) notes.push(notesCatalog.traceWindowMissing());
   // The run window opened (start mark found) but never closed (run:end lost). traceWindowMissing only
   // fires on a missing START, so without this the bar goes silently absent (buildBreakdowns needs both
@@ -386,11 +405,18 @@ export async function record(opts: RecordOptions): Promise<{
     schemaVersion: SCHEMA_VERSION,
     createdAt: new Date().toISOString(),
     mode,
-    target: mode === "url" ? opts.url! : mode === "html" ? opts.html! : opts.module!,
+    target:
+      mode === "url"
+        ? opts.url!
+        : stableWorkloadPath(root, mode === "html" ? opts.html! : opts.module!),
     fn: opts.fn,
     iterations: opts.iterations,
     warmup: opts.warmup,
     headless: opts.headless,
+    // Flavour only when headless and on chrome (firefox/headed have no shell/new distinction).
+    headlessMode:
+      opts.headless && browserName === "chrome" ? (opts.headlessMode ?? "shell") : undefined,
+    cpuIntervalUs: opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
     userDataDir: shorterPath(root, opts.userDataDir),
     lifecycle: detail.lifecycle,
     // The one capture that ran, by rung name (there is no multi-pass plan).

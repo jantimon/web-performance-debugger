@@ -21,6 +21,28 @@ export const GECKO_MIN_INTERVAL_MS = 1;
  * survives until the shutdown dump, which is the whole point of the startup profiler. */
 const GECKO_PROFILER_ENTRIES = 16_000_000;
 
+/** Chrome's own sandbox error shapes, on the launch that failed to bring up a renderer. Matches
+ * the "No usable sandbox" kernel message and the SUID helper's setuid/ownership complaints; used
+ * only to turn a sandbox failure into a message that names the opt-out, never to retry unsandboxed. */
+export function isSandboxLaunchError(error: Error): boolean {
+  return /no usable sandbox|suid sandbox|sandbox helper|setuid sandbox|--no-sandbox is not supported/i.test(
+    error.message,
+  );
+}
+
+/** A sandbox launch failure re-thrown as guidance: name the opt-in flag, do NOT silently retry
+ * unsandboxed. Constrained environments (containers, some CI) cannot start Chrome's sandbox; the
+ * user decides whether to trade containment for a run. */
+export function sandboxLaunchError(error: Error): Error {
+  return new Error(
+    `Chrome could not start under its sandbox:\n\n  ${error.message}\n\n` +
+      `Some environments (containers, restricted CI) cannot run the Chrome sandbox. To launch anyway ` +
+      `with it disabled, re-record with --disable-browser-sandbox.\n\n` +
+      `WARNING: that reduces process containment. Only do it in a trusted, isolated environment, and ` +
+      `do not combine it with --user-data-dir or a non-loopback --url.`,
+  );
+}
+
 /** Gecko profiler options for the Firefox CPU pass (dumped to `dumpPath` on browser exit). */
 export interface GeckoLaunch {
   dumpPath: string;
@@ -102,6 +124,8 @@ export async function launchBrowser(opts: {
    * including `session.new`, which is a BiDi-only command with no CDP counterpart.
    */
   protocolTimeoutMs?: number;
+  /** chrome only: pass --no-sandbox/--disable-setuid-sandbox (reduced containment). Off by default. */
+  disableSandbox?: boolean;
   /** Firefox only: start the Gecko profiler and dump it on exit. */
   gecko?: GeckoLaunch;
 }): Promise<BrowserHandle> {
@@ -118,6 +142,7 @@ async function launchOrThrow(opts: {
   headlessMode?: HeadlessMode;
   userDataDir?: string;
   protocolTimeoutMs?: number;
+  disableSandbox?: boolean;
   gecko?: GeckoLaunch;
 }): Promise<BrowserHandle> {
   if (opts.browser === "firefox") {
@@ -151,25 +176,43 @@ async function launchOrThrow(opts: {
   }
 }
 
+/**
+ * Chrome launch args. The renderer runs in its OS sandbox by DEFAULT (neither --no-sandbox nor
+ * --disable-setuid-sandbox is present); `disableSandbox` opts back into both for environments that
+ * cannot start the sandbox (containers, restricted CI), trading process containment for a run.
+ */
+export function chromeArgs(disableSandbox: boolean): string[] {
+  const sandboxArgs = disableSandbox ? ["--no-sandbox", "--disable-setuid-sandbox"] : [];
+  return [
+    ...sandboxArgs,
+    "--enable-precise-memory-info",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+  ];
+}
+
 async function launchChrome(
   headless: boolean | "shell",
-  opts: { userDataDir?: string; protocolTimeoutMs?: number },
+  opts: { userDataDir?: string; protocolTimeoutMs?: number; disableSandbox?: boolean },
 ): Promise<BrowserHandle> {
-  const browser = await puppeteer.launch({
-    headless,
-    // Persistent profile dir: reuses cookies/session across passes and runs (puppeteer
-    // ignores undefined, so this is a no-op when the flag is absent).
-    userDataDir: opts.userDataDir,
-    // puppeteer ignores undefined and falls back to its 180000ms default.
-    protocolTimeout: opts.protocolTimeoutMs,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--enable-precise-memory-info",
-      "--disable-backgrounding-occluded-windows",
-      "--disable-renderer-backgrounding",
-    ],
-  });
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless,
+      // Persistent profile dir: reuses cookies/session across passes and runs (puppeteer
+      // ignores undefined, so this is a no-op when the flag is absent).
+      userDataDir: opts.userDataDir,
+      // puppeteer ignores undefined and falls back to its 180000ms default.
+      protocolTimeout: opts.protocolTimeoutMs,
+      args: chromeArgs(!!opts.disableSandbox),
+    });
+  } catch (error) {
+    // A sandbox that cannot start is a distinct, actionable failure: name the opt-out rather than
+    // silently retrying unsandboxed (which would defeat the default the user did not override).
+    if (!opts.disableSandbox && isSandboxLaunchError(error as Error))
+      throw sandboxLaunchError(error as Error);
+    throw error;
+  }
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
   const client = await page.createCDPSession();

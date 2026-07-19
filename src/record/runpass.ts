@@ -169,6 +169,7 @@ export async function runPass(
     headlessMode: opts.headlessMode,
     userDataDir: opts.userDataDir,
     protocolTimeoutMs: opts.protocolTimeoutMs,
+    disableSandbox: opts.disableSandbox,
     gecko: geckoDumpPath
       ? { dumpPath: geckoDumpPath, intervalMs: geckoIntervalMs(opts) }
       : undefined,

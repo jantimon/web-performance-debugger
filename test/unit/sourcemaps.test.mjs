@@ -12,7 +12,13 @@ import {
   loadCpuModel,
   DEFAULT_CPU_INTERVAL_US,
 } from "../../dist/profile/cpuprofile.js";
-import { SourceMapResolver } from "../../dist/trace/sourcemap.js";
+import {
+  SourceMapResolver,
+  fetchBlockReason,
+  isPrivateHostname,
+  boundedFetch,
+} from "../../dist/trace/sourcemap.js";
+import http from "node:http";
 import { cpuDiffCmd } from "../../dist/commands/cpudiff.js";
 import {
   syntheticProfile,
@@ -22,6 +28,7 @@ import {
   startBundleServer,
   remoteBundleProfile,
   remoteProfile,
+  closeServer,
 } from "./helpers.mjs";
 
 test("buildCpuModel: self/total time, recursion-safe totals, system buckets, edges", async () => {
@@ -639,4 +646,148 @@ test("SourceMapResolver: plain local source with no map is not an unmapped bundl
   const diagnostics = maps.diagnostics();
   assert.equal(diagnostics.resolved, 0, "there is no map, and none is needed");
   assert.equal(diagnostics.unmappedBundles, 0, "hand-written source must not trip the warning");
+});
+
+// R20: the remote sourcemap fetcher is bounded on every axis a hostile or slow --url site can abuse.
+
+// (d) private-network + scheme policy. The rule turns on whether the PROFILED PAGE is public: a
+// public page's bundle may not steer wpd into the operator's private network, while a served fixture
+// or localhost dev server (private page) is expected to reference private hosts.
+test("fetchBlockReason: a public page cannot fetch a private host; a private page can", () => {
+  // public page (pagePrivate=false)
+  assert.equal(fetchBlockReason("http://10.0.0.5/app.js.map", false), "private");
+  assert.equal(fetchBlockReason("http://127.0.0.1:8080/app.js.map", false), "private");
+  assert.equal(fetchBlockReason("http://192.168.1.9/x.map", false), "private");
+  assert.equal(fetchBlockReason("http://cdn.example.com/app.js.map", false), null, "public target ok");
+  // private page (pagePrivate=true): the served-fixture / localhost-dev case stays working
+  assert.equal(fetchBlockReason("http://127.0.0.1:3000/app.js.map", true), null);
+  assert.equal(fetchBlockReason("http://localhost:5173/x.map", true), null);
+  // scheme guard is independent of pagePrivate: only http(s) is ever fetched
+  assert.equal(fetchBlockReason("file:///etc/passwd", true), "scheme");
+  assert.equal(fetchBlockReason("data:text/plain,hi", false), "scheme");
+});
+
+test("isPrivateHostname: matches loopback/RFC1918/link-local literals, not public hosts", () => {
+  for (const host of [
+    "localhost", "app.localhost", "127.0.0.1", "127.5.6.7", "10.1.2.3",
+    "172.16.0.1", "172.31.255.255", "192.168.0.1", "169.254.1.1", "0.0.0.0", "::1",
+  ]) {
+    assert.ok(isPrivateHostname(host), `${host} should be private`);
+  }
+  for (const host of ["cdn.example.com", "8.8.8.8", "172.32.0.1", "192.169.0.1"]) {
+    assert.ok(!isPrivateHostname(host), `${host} should be public`);
+  }
+});
+
+// (b) the per-run time budget: once the deadline is in the past, a lookup records
+// fetch-budget-exhausted without touching the network (the frame keeps its minified name).
+test("boundedFetch: an exhausted deadline short-circuits to fetch-budget-exhausted", async () => {
+  const result = await boundedFetch("http://cdn.example.com/app.js", "script", false, Date.now() - 1);
+  assert.deepEqual(result, { ok: false, failure: "fetch-budget-exhausted" });
+});
+
+// (d) a blocked target never connects: the policy is checked before fetch.
+test("boundedFetch: a public page's fetch of a private host is blocked before connecting", async () => {
+  const result = await boundedFetch("http://10.0.0.1/app.js.map", "map", false, Date.now() + 10_000);
+  assert.deepEqual(result, { ok: false, failure: "blocked-fetch" });
+});
+
+// (a) response-size cap via content-length: an over-cap script is refused without downloading it.
+test("boundedFetch: a content-length over the script cap yields script-too-large", async () => {
+  const server = http.createServer((req, res) => {
+    res.setHeader("content-length", String(25 * 1024 * 1024)); // > 20MB script cap
+    res.end("x");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const result = await boundedFetch(
+      `http://127.0.0.1:${port}/big.js`, "script", true, Date.now() + 10_000,
+    );
+    assert.deepEqual(result, { ok: false, failure: "script-too-large" });
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// (a) response-size cap via STREAMING: a body that lies about (omits) its length is still aborted
+// once it crosses the cap, so an absent content-length cannot smuggle an over-cap body through.
+test("boundedFetch: a chunked body over the map cap is aborted mid-stream (map-too-large)", async () => {
+  const chunk = Buffer.alloc(1024 * 1024, 0x61); // 1MB of 'a'
+  const server = http.createServer(async (req, res) => {
+    res.setHeader("content-type", "application/json");
+    // No content-length => chunked. Stream past the 50MB map cap; the reader aborts before the end.
+    for (let sent = 0; sent < 60; sent++) {
+      if (!res.write(chunk)) await new Promise((resolve) => res.once("drain", resolve));
+    }
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const result = await boundedFetch(
+      `http://127.0.0.1:${port}/big.map`, "map", true, Date.now() + 20_000,
+    );
+    assert.deepEqual(result, { ok: false, failure: "map-too-large" });
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// (d) redirects are followed manually and re-checked: a 302 to a non-http(s) scheme is blocked,
+// so a redirect cannot escape the fetch policy.
+test("boundedFetch: a redirect to a non-http scheme is blocked", async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(302, { location: "file:///etc/passwd" });
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    // private page so the initial 127.0.0.1 hop is allowed; the redirect target is what trips it.
+    const result = await boundedFetch(
+      `http://127.0.0.1:${port}/redir.js`, "script", true, Date.now() + 10_000,
+    );
+    assert.deepEqual(result, { ok: false, failure: "blocked-fetch" });
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// (c) concurrency: many distinct scripts are fetched at once (not strictly serial) while the
+// per-script cache keeps it one fetch each. A serial resolver would take ~N*delay; the bounded-
+// concurrency one finishes in a fraction of that.
+test("SourceMapResolver.warm: distinct scripts resolve concurrently, each fetched once", async () => {
+  const hitsByPath = new Map();
+  // The script names its map inline (data URI), so a resolved script is exactly ONE server hit.
+  const inlineMap =
+    "data:application/json," +
+    encodeURIComponent(JSON.stringify({ version: 3, sources: ["s.ts"], names: [], mappings: "AAAA" }));
+  const server = http.createServer((req, res) => {
+    hitsByPath.set(req.url, (hitsByPath.get(req.url) ?? 0) + 1);
+    setTimeout(() => {
+      res.setHeader("sourcemap", inlineMap);
+      res.end("function a(){}\n");
+    }, 60);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const origin = `http://127.0.0.1:${port}`;
+    const maps = new SourceMapResolver({ pageUrl: origin }); // private page: fetches allowed
+    const targets = Array.from({ length: 8 }, (unused, index) => `${origin}/s${index}.js`);
+    const start = Date.now();
+    await maps.warm(targets);
+    const elapsed = Date.now() - start;
+    // 8 scripts * 60ms serial = 480ms; concurrency 4 => ~120ms. Assert well under the serial time.
+    assert.ok(elapsed < 400, `expected concurrent (<400ms), took ${elapsed}ms`);
+    // Warming twice must not refetch: the cache/in-flight dedup keeps it one fetch per script.
+    await maps.warm(targets);
+    for (const target of targets) {
+      const jsPath = new URL(target).pathname;
+      assert.equal(hitsByPath.get(jsPath), 1, `${jsPath} fetched exactly once`);
+    }
+  } finally {
+    await closeServer(server);
+  }
 });

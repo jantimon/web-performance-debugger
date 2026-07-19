@@ -208,7 +208,11 @@ export type SourceMapFailure =
   | /** the script carries neither a sourceMappingURL comment nor a SourceMap header */ "no-sourcemap-url"
   | /** the script itself could not be fetched/read */ "script-fetch-failed"
   | /** the script named a map, but it could not be fetched/read */ "map-fetch-failed"
-  | /** the map was fetched but is not valid JSON/not a sourcemap */ "map-parse-failed";
+  | /** the map was fetched but is not valid JSON/not a sourcemap */ "map-parse-failed"
+  | /** the script body exceeded the remote-fetch size cap */ "script-too-large"
+  | /** the map body exceeded the remote-fetch size cap */ "map-too-large"
+  | /** the per-run remote-sourcemap time budget was spent before this fetch */ "fetch-budget-exhausted"
+  | /** the fetch was refused: a non-http(s) scheme, or a private host reached from a public page */ "blocked-fetch";
 
 /**
  * What happened to every script a run tried to map. Failure is otherwise invisible: frames keep
@@ -311,6 +315,12 @@ export interface RecordingMeta {
   iterations: number;
   warmup: number;
   headless: boolean;
+  /** chrome headless flavour when headless: "shell" (~120Hz) or "new" (~60Hz). Absent => headed, or
+   * an older recording / a lane where it does not apply. Frame cadence sets the wall/INP floor, so a
+   * diff across flavours is not comparable (docs/dev/frame-floor.md). */
+  headlessMode?: "shell" | "new";
+  /** CPU sampler interval (microseconds) this run requested. Absent on older recordings. */
+  cpuIntervalUs?: number;
   /** persistent Chrome profile reused across passes/runs (shorter of relative|absolute), or null */
   userDataDir: string | null;
   /** lifecycle hooks found and called */

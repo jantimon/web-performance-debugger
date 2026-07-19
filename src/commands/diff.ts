@@ -6,8 +6,9 @@ import { num, table } from "../output/ascii.js";
 import { resolveTarget } from "./resolve.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
 import { diffSpanSlices, type SpanSliceDiff } from "../model/spans.js";
+import { comparabilityMismatches } from "../model/compat.js";
 import { loadSpanEntries } from "./spanSource.js";
-import type { Recording, RecordingMeta, RecordingSummary } from "../model/recording.js";
+import type { Recording, RecordingSummary } from "../model/recording.js";
 
 // `gated` metrics participate in --fail-on-regression; `advisory` ones are printed but never
 // fail the build. A metric gates only if it is REPRODUCIBLE on unchanged code, which is not the
@@ -55,49 +56,6 @@ async function loadRecording(file: string): Promise<Recording> {
   ) as Recording;
   assertRecordingArtifact(rec, abs);
   return rec;
-}
-
-/** One capture axis that differs between the two recordings; `blocksGating` axes make a
- * --fail-on-regression comparison meaningless (a delta reflects the config, not the code). */
-interface CompatMismatch {
-  axis: string;
-  base: string;
-  current: string;
-  blocksGating: boolean;
-}
-
-/**
- * Which capture axes differ between two recordings. A diff subtracts summary fields as if the two
- * captures measured the same thing; they do not when the lane, rung, or iteration count differ
- * (firefox Gecko-marker counts vs chrome trace counts; a --deep exact count vs a --breakdown null;
- * a sum over more iterations). browser/runtime/rung block a --fail-on-regression gate, because a
- * "regression" there is an artifact of the config change. iterations only warns (counts do not scale
- * with --iterations; wall/scripting are advisory anyway).
- */
-function comparabilityMismatches(base: RecordingMeta, current: RecordingMeta): CompatMismatch[] {
-  const rungOf = (meta: RecordingMeta): string => [...(meta.passes ?? [])].sort().join("+");
-  const axes: CompatMismatch[] = [
-    {
-      axis: "browser",
-      base: base.browser ?? "chrome",
-      current: current.browser ?? "chrome",
-      blocksGating: true,
-    },
-    {
-      axis: "runtime",
-      base: base.runtime ?? "chrome",
-      current: current.runtime ?? "chrome",
-      blocksGating: true,
-    },
-    { axis: "rung", base: rungOf(base), current: rungOf(current), blocksGating: true },
-    {
-      axis: "iterations",
-      base: String(base.iterations ?? "?"),
-      current: String(current.iterations ?? "?"),
-      blocksGating: false,
-    },
-  ];
-  return axes.filter((entry) => entry.base !== entry.current);
 }
 
 /**
