@@ -74,7 +74,10 @@ profiling are out of scope; state the boundary.
 ## 3. The reconciling breakdown bar: best in class (narrow, precise claim)
 
 **What.** `js · style · layout · paint · gc · other · idle = wall`, exactly, per span: the run,
-each driver step, every user `performance.measure`. Idle is the honest remainder; residual zero.
+each driver step, every user `performance.measure`. Idle is the honest remainder; residual zero. A
+`measure` label that repeats across `--iterations` reports its lower-median-by-wall occurrence
+verbatim (a real reconciling sample, so residual zero survives the merge), disclosed as
+`aggregation: "median"` with the sample count and wall spread.
 
 **Why it wins.** The concept is not novel: DevTools' Summary donut reconciles a selected range
 with idle, in a GUI, manually. No tool products the combination of engine-work slices tiling an
@@ -189,7 +192,12 @@ rendering pipeline).
 ## 8. Real-interaction measurement (driver steps + lab INP + iterations): okayish
 
 **What.** A user module drives the page (`measureStep(label, action)`); each step gets its own
-window, in-page Event Timing INP, rendering counts, and median-of-iterations statistics.
+window, in-page Event Timing INP, rendering counts, and median-of-iterations statistics. Median
+sampling is uniform across the surface: driver steps median via `mergeSteps`, and a
+`performance.measure` label repeated across iterations medians via `mergeSpanOccurrences` (the
+lower-median-by-wall occurrence, verbatim), so a repeated interaction and a repeated in-`run()` phase
+both report a median, not iteration 1 (the span path keeps a real reconciling sample; step
+medians interpolate on even counts).
 
 **Where the bar sits.** The INP era (Core Web Vital since March 2024) created real lab-INP
 demand, and Lighthouse's lab score still proxies INP with TBT, so scripted lab INP fills an
@@ -197,10 +205,11 @@ acknowledged hole, and people hand-roll it today (Puppeteer + pasted web-vitals 
 run-10-take-P75). wpd's per-step structure with counts is competitive-to-ahead, and its
 frame-floor disclosure is unique: every other tool silently ships frame-floored numbers.
 
-**Why okayish anyway.** The statistical footing is the soft underbelly. tachometer's 95%
-confidence intervals with auto-sampling-until-significant and A/B round-robin is the bar;
-median-of-iterations is the hand-rolled tier. Nobody asks for sub-frame INP precision, so demand
-is for confidence in comparisons, which is reachable.
+**Why okayish anyway.** The statistical footing is the soft underbelly, and median sampling being
+uniform across steps and measure spans does not close it: a lower-median point estimate is still not
+an interval. tachometer's 95% confidence intervals with auto-sampling-until-significant and A/B
+round-robin is the bar; median-of-iterations is the hand-rolled tier. Nobody asks for sub-frame INP
+precision, so demand is for confidence in comparisons, which is reachable.
 
 **Use cases:** interaction benchmarking, INP debugging in CI, step-level regressions.
 
