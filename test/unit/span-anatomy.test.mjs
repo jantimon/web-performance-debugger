@@ -297,6 +297,103 @@ test("query span <measure>: a suppressed hot tally reports the floor honestly, n
   assert.equal(anatomy.hot.suppressed, true, "below the pooled floor: suppressed, never a top-N from noise");
   assert.equal(anatomy.hot.functions, undefined, "no functions when suppressed");
   assert.equal(anatomy.hot.pooledSamples, 4, "the floor's evidence is disclosed for the raise-iterations hint");
+  assert.equal(anatomy.hot.suppressionReason, "below-floor", "a thin-but-nonzero pool: raise --iterations is the honest fix");
+});
+
+// A step window with real JS in its bar but ZERO pooled samples is the navigation coverage gap: the
+// V8 sampler reset on a cross-document navigation, so this pre-navigation window carries no samples.
+// The suppressed tally must say `not-covered`, NEVER "below-floor"/raise-iterations (which cannot help).
+test("query span <step>: a zero-pool tally over a JS-bearing window reports not-covered, not raise-iterations", async () => {
+  const file = writeRec("anatomy-uncovered.json", {
+    meta: { schemaVersion: "3", target: "chrome", iterations: 3, passes: ["breakdown"] },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      { label: "run", kind: "run", aggregation: "sum", wallMs: 7, counts: measuredCounts, breakdown: breakdown(7) },
+      {
+        label: "search",
+        kind: "step",
+        index: 0,
+        aggregation: "first",
+        wallMs: 60,
+        counts: measuredCounts,
+        // 40 ms of JS in the bar, but the sampler covered none of it.
+        breakdown: {
+          wallMs: 60,
+          slices: {
+            js: { ms: 40, byPackage: {} },
+            style: { ms: 1 }, layout: { ms: 1 }, paint: { ms: 1 },
+            gc: { ms: 0 }, other: { ms: 6 }, idle: { ms: 11 },
+          },
+        },
+        hot: { scope: "step-window", pooledSamples: 0, occurrences: 1, suppressed: true },
+      },
+    ],
+  });
+  writeFileSync(
+    path.join(tmpDir, "anatomy-uncovered.cpu.json"),
+    JSON.stringify({
+      meta: { schemaVersion: "3", iterations: 3 },
+      sampleCount: 300,
+      scriptingMs: 60,
+      sampleIntervalUs: 200,
+      functions: [{ id: 0, fn: "render", package: "app", selfMs: 60, selfPct: 100, totalMs: 60 }],
+      breakdown: breakdown(7),
+    }),
+    "utf8",
+  );
+  const anatomy = await captureJson(() => querySpan(file, "step:search", { json: true }));
+  assert.equal(anatomy.hot.suppressed, true);
+  assert.equal(anatomy.hot.pooledSamples, 0);
+  assert.equal(
+    anatomy.hot.suppressionReason,
+    "not-covered",
+    "40 ms of JS with zero samples is a sampler coverage gap, not a thin pool",
+  );
+});
+
+// The other zero-pool case: a window that genuinely ran no JS. Nothing to rank, and NOT a coverage
+// gap, so the reason is `no-js` (never "below-floor", never "not-covered").
+test("query span <measure>: a zero-pool tally over an idle window reports no-js", async () => {
+  const file = writeRec("anatomy-idle.json", {
+    meta: { schemaVersion: "3", target: "chrome", iterations: 3, passes: ["breakdown"] },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      { label: "run", kind: "run", aggregation: "sum", wallMs: 7, counts: measuredCounts, breakdown: breakdown(7) },
+      {
+        label: "wait",
+        kind: "measure",
+        aggregation: "median",
+        wallMs: 50,
+        samples: 3,
+        counts: nullCounts,
+        breakdown: {
+          wallMs: 50,
+          slices: {
+            js: { ms: 0, byPackage: {} },
+            style: { ms: 0 }, layout: { ms: 0 }, paint: { ms: 0 },
+            gc: { ms: 0 }, other: { ms: 0 }, idle: { ms: 50 },
+          },
+        },
+        hot: { scope: "measure-pooled", pooledSamples: 0, occurrences: 3, suppressed: true },
+      },
+    ],
+  });
+  writeFileSync(
+    path.join(tmpDir, "anatomy-idle.cpu.json"),
+    JSON.stringify({
+      meta: { schemaVersion: "3", iterations: 3 },
+      sampleCount: 300,
+      scriptingMs: 60,
+      sampleIntervalUs: 200,
+      functions: [{ id: 0, fn: "render", package: "app", selfMs: 60, selfPct: 100, totalMs: 60 }],
+      breakdown: breakdown(7),
+    }),
+    "utf8",
+  );
+  const anatomy = await captureJson(() => querySpan(file, "measure:wait", { json: true }));
+  assert.equal(anatomy.hot.suppressionReason, "no-js", "an idle window ran nothing to rank");
 });
 
 // --- kind collision: a bare label matching more than one kind is refused, the qualified form works ---

@@ -210,8 +210,20 @@ export interface SpanHotFunctions {
   pooledSamples: number;
   /** occurrences pooled: N for a repeated measure, 1 for run/step */
   occurrences: number;
-  /** true when below the pooled-sample floor: `functions` omitted, raise --iterations */
+  /** true when no ranking was emitted: `functions` omitted. `suppressionReason` says why. */
   suppressed?: boolean;
+  /**
+   * Why a suppressed tally carries no `functions`, so the reader gets the right next step instead of a
+   * blanket "raise --iterations":
+   *  - `below-floor`: 0 < `pooledSamples` < the floor. A thin-but-real pool; raise --iterations.
+   *  - `no-js`: `pooledSamples` 0 and the window ran essentially no JS. Nothing to rank, not an error.
+   *  - `not-covered`: `pooledSamples` 0 but the bar attributes real JS to this window, so the sampler
+   *    missed it. In driver mode the V8 CPU profiler resets on each cross-document navigation, so a
+   *    window that ran before the run's last navigation carries no samples; raising --iterations
+   *    cannot recover them.
+   * Present only when `suppressed`.
+   */
+  suppressionReason?: "below-floor" | "no-js" | "not-covered";
   /** top functions by self time, length bounded by `--top`; absent when suppressed. Stored
    * per-span rows carry span-local selfMs/selfPct and no totalMs (a run-wide total beside a
    * span-local self would read as the span's own); the run-window list keeps CpuFunction whole. */

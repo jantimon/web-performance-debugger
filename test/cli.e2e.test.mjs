@@ -349,6 +349,66 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
   assert.equal(rec.summary.forcedLayoutCount, null, "forced is reported as not-measured, not 0");
 });
 
+// Per-driver-step CPU attribution: a measureStep that runs real in-page JS must carry a non-empty
+// js-by-package split AND an unsuppressed hot-function list on the CPU-sampler scripting axis, with
+// real sample counts. The regression: without the sampler covering the step's iteration-0 window,
+// steps report js ms with an empty package split and hot "suppressed" (the journey-profiling gap).
+e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed hot list", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  // Committed host page with a heavy JS click handler (a temp-dir file could not be served: the
+  // static server is rooted at the repo cwd). The driver module is import()ed in Node, so it can
+  // live in the temp dir.
+  const html = path.join(repoRoot, "test", "fixtures", "driver-cpu-probe.html");
+  assert.ok(existsSync(html), "driver-cpu-probe.html is committed, so this test cannot silently skip");
+  const flow = path.join(dir, "cpu-flow.mjs");
+  writeFileSync(
+    flow,
+    `export async function run({ page, measureStep }) {
+       await page.waitForSelector("#work");
+       await measureStep("compute", async () => {
+         await page.click("#work");
+         await page.waitForFunction(() => (window.__done || 0) >= 1, { timeout: 20000 });
+       });
+     }`,
+  );
+  const out = path.join(dir, "bd-step-cpu");
+  runCli(["record", flow, "--html", html, "--breakdown", "--iterations", "3", "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+
+  const step = rec.spans.find((span) => span.kind === "step" && span.label === "compute");
+  assert.ok(step, "the compute step span exists");
+  assert.ok(step.breakdown.slices.js.ms > 5, `the step ran real JS, got ${step.breakdown.slices.js.ms} ms`);
+
+  // The js slice must split by package (the flagship per-step signal), and the split must reconcile
+  // to the slice ms rather than being a fabricated or empty map.
+  const byPackage = step.breakdown.slices.js.byPackage;
+  const packages = Object.keys(byPackage);
+  assert.ok(packages.length > 0, "the step's js slice carries a non-empty by-package split");
+  const packageSum = packages.reduce((total, name) => total + byPackage[name], 0);
+  assert.ok(
+    Math.abs(packageSum - step.breakdown.slices.js.ms) < 0.01,
+    `by-package split sums to js ms: ${packageSum} vs ${step.breakdown.slices.js.ms}`,
+  );
+
+  // The hot list must be present, unsuppressed, and backed by real sample counts (above the floor).
+  assert.ok(step.hot, "the step span stores a hot tally");
+  assert.notEqual(step.hot.suppressed, true, "the hot list is not suppressed on a JS-heavy step");
+  assert.ok(step.hot.pooledSamples >= 10, `the step pooled real samples, got ${step.hot.pooledSamples}`);
+  assert.ok(step.hot.functions.length > 0, "the step names at least one hot function");
+  assert.ok(step.hot.functions[0].samples > 0, "a hot ref carries a real sample count");
+
+  // The full anatomy resolves the same unsuppressed hot list (names via the sibling CpuModel).
+  const anatomy = JSON.parse(runCli(["query", "span", out, "step:compute", "--json"]));
+  assert.notEqual(anatomy.hot.suppressed, true, "query span shows the step's hot list, unsuppressed");
+  assert.ok(anatomy.hot.functions.length > 0, "and it resolves to named functions");
+
+  // No sampler-coverage-gap note on a non-navigating flow: the sampler covered every step.
+  assert.ok(
+    !(rec.meta.notes || []).some((note) => /Per-span CPU attribution.*empty/.test(note)),
+    "a non-navigating flow raises no coverage-gap note",
+  );
+});
+
 // The idle edge probe C left untested: a run() that only awaits is ~pure waiting, so idle must
 // dominate the window and the sum must still close.
 e2e("record --breakdown: a waiting-dominated span is mostly idle and still closes", { timeout: TIMEOUT_MS }, () => {
