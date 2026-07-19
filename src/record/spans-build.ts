@@ -98,6 +98,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       perIteration: step.perIteration,
       stats: stepSummary.stats,
       ...(stepBar?.frames ? { frames: stepBar.frames } : {}),
+      ...(stepBar?.hot ? { hot: stepBar.hot } : {}),
     });
   }
 
@@ -116,6 +117,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       ...(bar.wallMinMs != null ? { wallMinMs: bar.wallMinMs } : {}),
       ...(bar.wallMaxMs != null ? { wallMaxMs: bar.wallMaxMs } : {}),
       ...(bar.frames ? { frames: bar.frames } : {}),
+      ...(bar.hot ? { hot: bar.hot } : {}),
     });
   }
 

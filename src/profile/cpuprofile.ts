@@ -71,6 +71,34 @@ function frameKey(callFrame: RawCallFrame): string {
   );
 }
 
+/**
+ * A rankable user function, i.e. one that earns an id in `CpuModel.functions[]`. Excludes V8's
+ * pseudo-frames ((idle)/(program)/(garbage collector)/(root)) and the tool's own harness frames. The
+ * ONE predicate the ranked model and the per-span `functionIdByNode` join both use, so they assign
+ * identical ids and a per-span sample cannot land on a phantom function.
+ */
+function isRankableFrame(callFrame: RawCallFrame): boolean {
+  if (SYSTEM_FRAMES.has(callFrame.functionName) && !callFrame.url) return false;
+  return !isToolFrameUrl(callFrame.url);
+}
+
+/**
+ * The one ranking both CpuModel.functions[] and the per-span hot refs share: rankable frames by
+ * self-time descending, key as the tie-break. Function ids ARE positions in this order, so any
+ * consumer deriving ids must call this rather than re-sorting.
+ */
+function rankedFrameKeys(
+  callFrameByKey: Map<string, RawCallFrame>,
+  selfUsByKey: Map<string, number>,
+): string[] {
+  return [...callFrameByKey.keys()]
+    .filter((key) => isRankableFrame(callFrameByKey.get(key)!))
+    .sort(
+      (left, right) =>
+        (selfUsByKey.get(right) ?? 0) - (selfUsByKey.get(left) ?? 0) || left.localeCompare(right),
+    );
+}
+
 /** Trim a pseudo-URL for display: inline data:/blob: payloads can be tens of KB, so keep
  * only a short head. (A base64 ESM module URL would otherwise blow out table widths.) */
 function shortPseudoLabel(url: string): string {
@@ -638,27 +666,19 @@ export async function buildCpuModel(
   const idleUs = msToUs(system.idleMs);
   const scriptingMs = Math.max(0, usToMs(sampledUs - idleUs));
 
-  const ranked = [...callFrameByKey.keys()]
-    .filter((key) => {
-      const callFrame = callFrameByKey.get(key)!;
-      // exclude V8 pseudo-frames and puppeteer's own harness frames (not user code)
-      if (SYSTEM_FRAMES.has(callFrame.functionName) && !callFrame.url) return false;
-      return !isToolFrameUrl(callFrame.url);
-    })
-    .map((key) => {
-      const resolved = resolvedByKey.get(key)!;
-      return {
-        key,
-        fn: resolved.fn,
-        minified: resolved.minified,
-        source: resolved.source,
-        file: resolved.file,
-        package: resolved.package,
-        selfMs: usToMs(selfUsByKey.get(key) ?? 0),
-        totalMs: usToMs(totalUsByKey.get(key) ?? 0),
-      };
-    })
-    .sort((left, right) => right.selfMs - left.selfMs || left.key.localeCompare(right.key));
+  const ranked = rankedFrameKeys(callFrameByKey, selfUsByKey).map((key) => {
+    const resolved = resolvedByKey.get(key)!;
+    return {
+      key,
+      fn: resolved.fn,
+      minified: resolved.minified,
+      source: resolved.source,
+      file: resolved.file,
+      package: resolved.package,
+      selfMs: usToMs(selfUsByKey.get(key) ?? 0),
+      totalMs: usToMs(totalUsByKey.get(key) ?? 0),
+    };
+  });
 
   const idByKey = new Map<string, number>();
   const functions: CpuFunction[] = ranked.map((entry, index) => {
@@ -757,8 +777,7 @@ export async function packagesByProfileNode(
   const packageByKey = new Map<string, string | null>();
   const byNode = new Map<number, string | null>();
   for (const node of raw.nodes) {
-    const { functionName, url } = node.callFrame;
-    if ((!url && SYSTEM_FRAMES.has(functionName)) || isToolFrameUrl(url)) {
+    if (!isRankableFrame(node.callFrame)) {
       byNode.set(node.id, null);
       continue;
     }
@@ -775,6 +794,44 @@ export async function packagesByProfileNode(
       packageByKey.set(key, resolved.package);
     }
     byNode.set(node.id, packageByKey.get(key) ?? null);
+  }
+  return byNode;
+}
+
+/**
+ * Owning `CpuModel.functions[]` id per cpuprofile node, for the per-span hot tally. The id is the
+ * node's frame rank by self time, computed the SAME way `buildCpuModel` ranks (`isRankableFrame`
+ * filter, then self-time descending with a frameKey tiebreak), so a per-span sample joins to the
+ * EXACT function `query cpu`/`query frame` show. A node whose frame is not a rankable user function
+ * (V8 pseudo-frame, tool harness) has no id: it is absent from the map, never a phantom.
+ *
+ * Pure over `raw`: the rank depends only on sample self-time and the frame key, not on source
+ * resolution, so this needs neither the sourcemap resolver nor the built model. It re-derives
+ * self-time per key rather than sharing `buildCpuModel`'s (both are cheap node walks over the same
+ * `raw`), so the join stays a standalone function the record-time projection loop can call directly.
+ */
+export function functionIdByNode(raw: RawCpuProfile): Map<number, number> {
+  const selfUsByNode = new Map<number, number>();
+  for (let index = 0; index < raw.samples.length; index++) {
+    const nodeId = raw.samples[index];
+    selfUsByNode.set(
+      nodeId,
+      (selfUsByNode.get(nodeId) ?? 0) + Math.max(0, raw.timeDeltas[index] ?? 0),
+    );
+  }
+  const selfUsByKey = new Map<string, number>();
+  const callFrameByKey = new Map<string, RawCallFrame>();
+  for (const node of raw.nodes) {
+    const key = frameKey(node.callFrame);
+    callFrameByKey.set(key, node.callFrame);
+    selfUsByKey.set(key, (selfUsByKey.get(key) ?? 0) + (selfUsByNode.get(node.id) ?? 0));
+  }
+  const idByKey = new Map<string, number>();
+  rankedFrameKeys(callFrameByKey, selfUsByKey).forEach((key, index) => idByKey.set(key, index));
+  const byNode = new Map<number, number>();
+  for (const node of raw.nodes) {
+    const id = idByKey.get(frameKey(node.callFrame));
+    if (id != null) byNode.set(node.id, id);
   }
   return byNode;
 }

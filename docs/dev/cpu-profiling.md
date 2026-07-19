@@ -282,6 +282,44 @@ what the one-frame `wall`/`INP` floor hides.
   ENTRIES: undersizing silently overwrites (drops) the window's *earliest* samples. `stackwalk`
   stays off (zero signal on shallow JIT stacks, +0.7 MB).
 
+## Per-span hot functions
+
+`query span <label>` shows a per-span hot list on the sampler rungs: the run span reads it from the
+CpuModel at query time; a `--breakdown` chrome step/measure span and a firefox measure span carry
+stored top-K refs (`SpanHot`, `profile/span-hot.ts`), joined to `CpuModel.functions[]` by id. The
+join is `functionIdByNode`, which reproduces the model's rank purely from the raw profile (same
+`isRankableFrame` filter, same self-time-desc + frameKey tiebreak), so a per-span sample lands on the
+exact function `query cpu` names.
+
+Four constraints are load-bearing (**[measured]**, probe on a forced-layout driver flow + a repeated
+`performance.measure`):
+
+- **The hot list is a separate panel on the CPU-sampler SCRIPTING axis, never the bar's `js` slice.**
+  The two are different axes: the sampler bills a forced layout to the JS frame that forced it, so on
+  a layout-forcing span the list exceeds the bar's `js.ms` by ~1000x, and even a pure-JS loop exceeds
+  it. Reconciling the list to `js.ms` is therefore wrong; the invariant is **`Σ per-function selfMs <=
+  the span's window wall`**, not `<= js.ms`.
+- **Display unit is the SHARE of the span's pooled JS samples**, with `selfMs = samples * interval`
+  only as a secondary figure. The panel discloses `pooledSamples` and `occurrences`, because a pooled
+  measure's `scriptingMs` sums every occurrence and can dwarf the median-occurrence bar wall the span
+  header shows (measured: pooled 20.4 ms JS over 6 occurrences beside a 3.9 ms median bar) -- the
+  disclosure is what stops a reader dividing a pooled ms by one iteration.
+- **Pooling is MEASURE-only.** A step tallies its single iteration-0 window (already how step windows
+  work); a measure label pools across all its occurrences. Pooling a step across iterations would let
+  a trivial click step clear the floor on puppeteer-frame samples alone (below), so steps stay
+  single-window.
+- **Floors, not fabrication.** Below ~10 pooled JS samples the ranked list is suppressed
+  (`suppressed: true` + a raise-`--iterations` hint), never a top-N invented from noise; a function
+  below ~3 pooled samples is dropped from the list.
+
+**Caveat (pre-existing, inherited, not widened here):** puppeteer's own `page.click` machinery injects
+`pptr:evaluate;<method>` frames (`isIntersectingViewport`, `visibleRatio`, ...) whose call-site file
+is `puppeteer-core`, not one of wpd's four injection sites in `WPD_EVALUATE_SITES`, so `isToolFrameUrl`
+does not drop them and they rank like user code (they already appear in `query cpu`). Negligible on a
+heavy step (a handful of samples), but they are the ENTIRE ranked set on a click-only step -- which is
+exactly the case the 10-sample suppression floor covers. Widening the tool-frame filter is its own
+risky change and is deliberately NOT done for this feature.
+
 ## Sourcemap note gating
 
 The note answers "can the package rollup be believed?", which is a **different question** from "did

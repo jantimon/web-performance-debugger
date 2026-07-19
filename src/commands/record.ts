@@ -610,6 +610,10 @@ export async function record(opts: RecordOptions): Promise<{
   // samples, sharing the run's one resolver so a sample's package matches `query cpu --by package`.
   // Firefox: the mark-bridge measure bars from the Gecko sample slices. Every other rung leaves it
   // empty (no bar), so a span's `breakdown` is simply absent there.
+  // The sampler interval a per-span hot ref's selfMs is priced in (firefox reports what it actually
+  // ran at; V8 honours the request). The model exists on any rung that built bars, so this is set.
+  const sampleIntervalUs =
+    cpuModel?.sampleIntervalUs ?? opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
   let bars: SpanBreakdown[] = [];
   if (opts.breakdown && cpuPass?.cpuProfile) {
     bars = await buildBreakdowns(
@@ -617,7 +621,7 @@ export async function record(opts: RecordOptions): Promise<{
       cpuPass.cpuProfile,
       { startTs: detail.windowStart, endTs: detail.windowEnd },
       mergedSteps,
-      { serverUrl: server.url, root, maps, notes },
+      { serverUrl: server.url, root, maps, notes, sampleIntervalUs },
     );
   } else if (
     browserName === "firefox" &&
@@ -630,10 +634,13 @@ export async function record(opts: RecordOptions): Promise<{
       root,
       maps,
     });
-    bars = buildGeckoSpanBreakdowns(cpuPass.cpuProfile, packageByNode, cpuPass.geckoMeasures, {
-      startTs: detail.windowStart,
-      endTs: detail.windowEnd,
-    });
+    bars = buildGeckoSpanBreakdowns(
+      cpuPass.cpuProfile,
+      packageByNode,
+      cpuPass.geckoMeasures,
+      { startTs: detail.windowStart, endTs: detail.windowEnd },
+      sampleIntervalUs,
+    );
   }
 
   // Collapse the run, every driver step, and every user measure into the stored Span[]. Steps carry

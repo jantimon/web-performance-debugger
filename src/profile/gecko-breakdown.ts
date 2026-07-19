@@ -8,8 +8,9 @@
  * package from the sample's node, reusing the run's resolver via `packagesByProfileNode`.
  */
 
-import type { RawCpuProfile } from "./cpuprofile.js";
-import type { Breakdown, CpuBreakdown, SpanBreakdown } from "../model/recording.js";
+import { functionIdByNode, type RawCpuProfile } from "./cpuprofile.js";
+import type { Breakdown, CpuBreakdown, SpanBreakdown, SpanHot } from "../model/recording.js";
+import { tallySpanHot, type SpanHotSample, type SpanHotWindow } from "./span-hot.js";
 import { usToMs } from "../model/time.js";
 import { reconcileResidual } from "../model/reconcile.js";
 import { mergeSpanOccurrences } from "../model/span-merge.js";
@@ -207,6 +208,7 @@ export function buildGeckoSpanBreakdowns(
   packageByNode: Map<number, string | null>,
   measures: GeckoMeasureWindow[],
   runWindow: { startTs: number | null; endTs: number | null },
+  sampleIntervalUs: number,
 ): SpanBreakdown[] {
   if (!raw.gecko || measures.length === 0) return [];
   const spans: SpanBreakdown[] = [];
@@ -225,7 +227,34 @@ export function buildGeckoSpanBreakdowns(
       breakdown: spanBreakdown(raw, packageByNode, bounds.from, bounds.to),
     });
   }
+
+  // Per-measure hot functions, POOLED across every occurrence of a label (mirrors the chrome lane).
+  // Samples ride the profiler clock the same way windowBounds reconstructs it (sample 0 at startTime,
+  // sample i at startTime + Σ_{1..i} timeDeltas), so a hot sample and the bar's windowing agree.
+  const functionByNode = functionIdByNode(raw);
+  const hotSamples: SpanHotSample[] = [];
+  let clock = raw.startTime;
+  for (let index = 0; index < raw.samples.length; index++) {
+    if (index > 0) clock += raw.timeDeltas[index] ?? 0;
+    hotSamples.push({ ts: clock, functionId: functionByNode.get(raw.samples[index]) ?? null });
+  }
+  const hotByLabel = new Map<string, SpanHot>();
+  const windowsByLabel = new Map<string, SpanHotWindow[]>();
+  for (const measure of measures) {
+    const windows = windowsByLabel.get(measure.label) ?? [];
+    windows.push({ startTs: measure.startTs, endTs: measure.endTs });
+    windowsByLabel.set(measure.label, windows);
+  }
+  for (const [label, windows] of windowsByLabel)
+    hotByLabel.set(label, tallySpanHot(hotSamples, windows, "measure-pooled", sampleIntervalUs));
+
   // A measure label repeated once per --iteration produced one bar per occurrence above; collapse
   // each label to its lower-median-by-wall real sample. The run span has a unique label -> unchanged.
-  return mergeSpanOccurrences(spans);
+  const merged = mergeSpanOccurrences(spans);
+  for (const bar of merged) {
+    if (bar.kind !== "measure") continue;
+    const hot = hotByLabel.get(bar.label);
+    if (hot) bar.hot = hot;
+  }
+  return merged;
 }
