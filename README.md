@@ -599,9 +599,10 @@ gated exact-count deltas, and warns when a metric is comparable on one side only
 joins two CPU models per function and per package, noise-filtered. Only the exact counts gate
 `--fail-on-regression`; wall, INP and scripting ms are directional, so they print but never fail the
 build. And a gate **refuses** across an incompatible capture rather than fabricate a regression: a
-`diff` across a different browser/runtime/rung/workload/`--iterations`/headless flavour/
+`diff` across a different browser/runtime/rung/workload/`--iterations`/`--warmup`/headless flavour/
 `--cpu-throttle`, or a `cpu-diff` across a different
-browser/runtime/workload/`--iterations`/`--cpu-throttle`, names the mismatch and declines to gate.
+browser/runtime/workload/`--iterations`/`--warmup`/`--cpu-throttle`, names the mismatch and declines
+to gate.
 
 ## Reference
 

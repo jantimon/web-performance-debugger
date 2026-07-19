@@ -57,9 +57,13 @@ function throttleOf(meta: RecordingMeta): string {
  *     5 makes every count 5x and manufactures "regressions".
  *   - headless flavour / throttle: the frame cadence and the artificial slowdown both shift the
  *     numbers the gate reads (wall/INP floor; slice and paint cadence).
+ *   - warmup: the untimed runs before the timed window carry workload state (cache priming, JIT
+ *     tiers, lazy CSS, memoization, first-render code). Moving a call across that boundary changes
+ *     which counts land in the timed window, so a first-call layout can read as 0 -> 1 from a
+ *     `--warmup` change alone. It is workload state, not sampling noise, so it blocks the gate.
  *
- * warmup and the sampler interval only WARN: they move sampling noise and steady-state, not the
- * gated exact counts.
+ * The sampler interval only WARNS: it moves sampling density and steady-state, not the gated exact
+ * counts.
  */
 export function comparabilityMismatches(
   base: RecordingMeta,
@@ -102,7 +106,7 @@ export function comparabilityMismatches(
       axis: "warmup",
       base: String(base.warmup ?? "?"),
       current: String(current.warmup ?? "?"),
-      blocksGating: false,
+      blocksGating: true,
     },
     {
       axis: "sampler-interval",
@@ -118,13 +122,16 @@ export function comparabilityMismatches(
  * config, not code, when they differ. Lane (browser/runtime) and workload change WHAT is sampled;
  * `iterations` and `cpu-throttle` change its SCALE. CPU self-time totals across every sampled
  * iteration (one pass runs them all), so iters 1 vs 4 roughly quadruples the summed ms; CPU
- * throttling stretches the same self-time clock. Either fabricates a self-time "regression" from
- * pure config. Rung and headless move rendering counts and the wall/INP floor, not the profiler's
- * own self-time clock, so cpu-diff only WARNS on those. */
+ * throttling stretches the same self-time clock. `warmup` moves the workload's first-call state
+ * (JIT tiers, caches, first-render code) into or out of the timed window, so an expensive first call
+ * lands in the samples under `--warmup 0` and not under `--warmup 1` though the code is identical.
+ * Each fabricates a self-time "regression" from pure config. Rung and headless move rendering counts
+ * and the wall/INP floor, not the profiler's own self-time clock, so cpu-diff only WARNS on those. */
 export const CPU_DIFF_BLOCKING_AXES = new Set([
   "browser",
   "runtime",
   "workload",
   "iterations",
+  "warmup",
   "cpu-throttle",
 ]);

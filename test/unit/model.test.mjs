@@ -204,15 +204,21 @@ test("diff: headless-flavour and cpu-throttle mismatches REFUSE the gate (R05)",
   assert.equal(throttle.code, 1, "an artificial slowdown change refuses");
 });
 
-// R05: warmup and the sampler interval move sampling noise / steady-state, not the gated exact
-// counts, so they WARN but still compare.
-test("diff: warmup and sampler-interval mismatches WARN but still compare (R05)", async () => {
+// T03: warmup carries workload state (cache priming, JIT tiers, first-render code). Moving a call
+// across the warmup boundary changes which counts land in the timed window, so a --warmup change
+// alone can read as a count regression. It REFUSES the gate.
+test("diff: a warmup mismatch REFUSES the gate (T03)", async () => {
   const warmupBase = writeRecMeta("r05-warm-base.json", { warmup: 0 }, { layoutCount: 1 });
   const warmupCur = writeRecMeta("r05-warm-cur.json", { warmup: 3 }, { layoutCount: 1 });
   const warmup = await runDiffCapture(warmupBase, warmupCur, { failOnRegression: true });
   assert.ok(warmup.logs.some((line) => /warmup: 0 → 3/.test(line)), "the warmup mismatch is disclosed");
-  assert.equal(warmup.code, undefined, "warmup alone does not refuse the gate");
+  assert.ok(warmup.logs.some((line) => /Refusing to gate/.test(line)));
+  assert.equal(warmup.code, 1, "warmup carries workload state, so gating across it refuses");
+});
 
+// R05: the sampler interval moves sampling density / steady-state, not the gated exact counts, so it
+// WARNS but still compares.
+test("diff: a sampler-interval mismatch WARNS but still compares (R05)", async () => {
   const intervalBase = writeRecMeta("r05-int-base.json", { cpuIntervalUs: 200 }, { layoutCount: 1 });
   const intervalCur = writeRecMeta("r05-int-cur.json", { cpuIntervalUs: 50 }, { layoutCount: 1 });
   const interval = await runDiffCapture(intervalBase, intervalCur, { failOnRegression: true });
@@ -301,6 +307,18 @@ test("cpu-diff: a cpu-throttle mismatch REFUSES the gate (F02)", async () => {
   assert.equal(code, 1, "throttling stretches the self-time clock, so gating across it refuses");
   assert.ok(errs.some((line) => /Refusing to gate/.test(line)));
   assert.ok(errs.some((line) => /cpu-throttle: 1x → 4x/.test(line)), "the throttle mismatch is disclosed");
+});
+
+// T03: warmup moves the workload's first-call state (JIT tiers, caches, first-render code) into or
+// out of the sampled window, so an expensive first call lands under --warmup 0 and not under
+// --warmup 1 though the code is identical. It must REFUSE a cpu-diff gate, not merely warn.
+test("cpu-diff: a warmup mismatch REFUSES the gate (T03)", async () => {
+  const base = writeCpuModel("cpudiff-warm-base.cpu.json", { warmup: 1 }, 26);
+  const current = writeCpuModel("cpudiff-warm-cur.cpu.json", { warmup: 0 }, 257);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.equal(code, 1, "warmup moves first-call state into the samples, so gating across it refuses");
+  assert.ok(errs.some((line) => /Refusing to gate/.test(line)));
+  assert.ok(errs.some((line) => /warmup: 1 → 0/.test(line)), "the warmup mismatch is disclosed");
 });
 
 test("cpu-diff: an iterations/throttle mismatch WARNS but exits 0 without the gate flag (F02)", async () => {
