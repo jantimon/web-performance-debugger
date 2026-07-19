@@ -174,6 +174,11 @@ export interface SpansResult {
   target: string;
   source: "breakdowns" | "cpu-model";
   spans: SpanEntry[];
+  /** how many spans the `query spans` flood filter (--min-wall/--filter) hid; 0 when no filter was
+   * passed. Always present on the emitted view, so a filtered result is never a silent cut. */
+  hidden?: number;
+  /** the flood filter that produced `spans`; `{}` when none was passed. */
+  filter?: { minWallMs?: number; labelIncludes?: string };
 }
 
 /** One forced (synchronous) layout/style read-site within a span, with the write(s) that dirtied it. */

@@ -13,7 +13,13 @@ import type {
 } from "../model/recording.js";
 import type { BlameEntry, SpanAnatomy, SpanForced, SpanHotFunctions } from "../model/query.js";
 import { MIN_POOLED_HOT_SAMPLES } from "../profile/span-hot.js";
-import { buildSpans, recordingLane, parseSpanKindLabel } from "../model/spans.js";
+import {
+  buildSpans,
+  recordingLane,
+  parseSpanKindLabel,
+  filterSpanEntries,
+  spanPassesFilter,
+} from "../model/spans.js";
 import { isFirefoxDeep, isGeckoRung } from "../model/rung.js";
 import { bold, cyan, dim } from "../output/color.js";
 import { num, table } from "../output/ascii.js";
@@ -508,14 +514,27 @@ function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | un
 export interface SpansQuery extends OutOpts {
   /** exact span label to keep (case-sensitive, like a performance.measure name) */
   label?: string;
+  /** hide spans below this wall (ms); cuts the sub-N-ms tracking noise */
+  minWall?: number;
+  /** keep only spans whose label contains this text (case-insensitive substring) */
+  filter?: string;
+}
+
+/** One dim line disclosing how many spans --min-wall/--filter hid, so a filtered view is never
+ * mistaken for the whole recording. Silent when the filter hid nothing. */
+function printSpanFilterNote(hidden: number): void {
+  if (hidden > 0)
+    console.log(dim(`\n  ${hidden} span(s) hidden by --min-wall/--filter (drop them to see all).`));
 }
 
 /**
  * `query spans`: ONE unified per-span breakdown across chrome/firefox/node -- the run window, each
  * driver step, and every user `performance.measure`, each in the same slice shape. Sources the
  * recording's stored per-span bars when present, else synthesizes the `run` span from
- * `CpuModel.breakdown`, so a recording carrying any bar is never empty. `--label` filters by exact
- * label.
+ * `CpuModel.breakdown`, so a recording carrying any bar is never empty. `--label` keeps one exact
+ * label; `--min-wall <ms>` hides spans below a wall threshold and `--filter <text>` keeps only labels
+ * containing <text> (case-insensitive), for cutting a tag manager's flood of tiny measures. The
+ * hidden count is always disclosed.
  */
 export async function querySpans(file: string, query: SpansQuery): Promise<void> {
   const abs = await resolveTarget(file, "recording");
@@ -546,25 +565,46 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     );
 
   const label = query.label;
-  const spans = label ? result.spans.filter((span) => span.label === label) : result.spans;
+  // --label is an exact targeted selector; --min-wall/--filter cut the flood. Apply the selector
+  // first, then the flood filter, so `hidden` counts only what the filter removed, never the
+  // targeting. spanPassesFilter is shared with the human bar table below so both hide the same spans.
+  const spanFilter = { minWallMs: query.minWall, labelIncludes: query.filter };
+  const selected = label ? result.spans.filter((span) => span.label === label) : result.spans;
+  const { spans, hidden } = filterSpanEntries(selected, spanFilter);
 
   const fmt = structuredFormat(query);
-  if (fmt) return emit({ ...result, spans }, fmt);
+  // Disclose the filter and how many spans it hid in the structured output too, never a silent cut.
+  if (fmt) return emit({ ...result, spans, hidden, filter: spanFilter }, fmt);
 
   // Human output reuses the existing bar renderers. The stored-bars path prints the seven-slice
   // per-span table; the synthesized run bar prints the CpuModel bar, which already labels
   // style/layout and browser/native honestly for its lane.
   if (result.source === "breakdowns") {
     const barSpans = rec.spans.filter((span) => span.breakdown);
-    const bars = label ? barSpans.filter((span) => span.label === label) : barSpans;
-    if (!bars.length) return void console.log(`No span labelled '${label}' in ${file}.`);
+    const selectedBars = label ? barSpans.filter((span) => span.label === label) : barSpans;
+    const bars = selectedBars.filter((span) =>
+      spanPassesFilter(span.label, span.breakdown!.wallMs, spanFilter),
+    );
+    if (!bars.length) {
+      if (label) return void console.log(`No span labelled '${label}' in ${file}.`);
+      return void console.log(
+        `No spans matched the filter in ${file} (${hidden} hidden by --min-wall/--filter).`,
+      );
+    }
     printSpanBreakdowns(bars, iterations);
+    printSpanFilterNote(hidden);
   } else if (label && label !== "run") {
     return void console.log(
       `No span labelled '${label}' in ${file} (this lane carries only the 'run' bar).`,
     );
+  } else if (!spans.length) {
+    // The single run bar this lane carries was hidden by --min-wall/--filter.
+    return void console.log(
+      `No spans matched the filter in ${file} (${hidden} hidden by --min-wall/--filter).`,
+    );
   } else {
     printCpuBreakdown(model!, iterations);
+    printSpanFilterNote(hidden);
   }
   // Point drill-down at one span's full anatomy (bar + counts + forced/dirtied + hot functions) and
   // at the event log, where one exists.

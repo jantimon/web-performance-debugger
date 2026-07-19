@@ -77,6 +77,8 @@ export interface RecordOptions {
   format: Format;
   /** driver (puppeteer) mode: run executes in Node and receives { page, ctx } */
   driver: boolean;
+  /** keep the iterations that completed when a later iteration fails, with a loud note (driver mode) */
+  keepPartial?: boolean;
   /** artificial slowdown: CPU throttling multiplier (e.g. 4 = 4x slower) */
   cpuThrottle?: number;
   /** capture a CPU sampling profile (writes .cpuprofile + .cpu model); on by default, off on --deep
@@ -300,7 +302,11 @@ export async function record(opts: RecordOptions): Promise<{
   // which would read as divergence.
   const mergedSteps =
     opts.driver && timing.driverSteps?.length
-      ? mergeSteps(timing.driverSteps, detail.windowStart == null ? undefined : detail.stepWindows)
+      ? mergeSteps(
+          timing.driverSteps,
+          detail.windowStart == null ? undefined : detail.stepWindows,
+          detail.traceDataLoss,
+        )
       : undefined;
 
   // The pass's profile feeds the CPU model AND (in breakdown mode) the per-span bars.
@@ -424,6 +430,27 @@ export async function record(opts: RecordOptions): Promise<{
     console.error(sandboxNote);
   }
   if (traceWindowMissing) notes.push(notesCatalog.traceWindowMissing());
+  // Chrome reported the trace buffer overflowed and dropped events (even recordAsMuchAsPossible has a
+  // ceiling on a very heavy --deep page). Trace-derived counts can undercount, so disclose it loudly
+  // in the recording AND on stderr: a dropped event silently turns an exact count into a wrong one.
+  if (detail.traceDataLoss) {
+    const dataLossNote = notesCatalog.traceDataLoss();
+    notes.push(dataLossNote);
+    console.error(dataLossNote);
+  }
+  // --keep-partial salvaged a run whose later iteration failed. Loud in the recording AND on stderr:
+  // a salvaged run must never be read as a clean full run.
+  if (pass.partial) {
+    const partialNote = notesCatalog.partialIterations(
+      pass.partial.requested,
+      pass.partial.completed,
+      pass.partial.failedIteration,
+      pass.partial.failedStep,
+      pass.partial.reason,
+    );
+    notes.push(partialNote);
+    console.error(partialNote);
+  }
   // The run window opened (start mark found) but never closed (run:end lost). traceWindowMissing only
   // fires on a missing START, so without this the bar goes silently absent (buildBreakdowns needs both
   // bounds) while counts stay valid (start-onward). Disclose it; no capability downgrade.
@@ -454,7 +481,10 @@ export async function record(opts: RecordOptions): Promise<{
         ? opts.url!
         : stableWorkloadPath(root, mode === "html" ? opts.html! : opts.module!),
     fn: opts.fn,
-    iterations: opts.iterations,
+    // --keep-partial salvaged a run whose later iteration failed: the recording covers only the
+    // iterations that completed, so meta.iterations is that count, not the requested one (the note
+    // below discloses the failure). Otherwise the requested count.
+    iterations: pass.partial ? pass.partial.completed : opts.iterations,
     warmup: opts.warmup,
     headless: opts.headless,
     // Flavour only when headless and on chrome (firefox/headed have no shell/new distinction).

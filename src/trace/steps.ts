@@ -179,6 +179,9 @@ function describeDivergence(timingLabels: string[], tracedLabels: string[]): str
 export function mergeSteps(
   timingSteps: DriverStep[],
   tracedWindows: LabelledWindow[] | undefined,
+  /** Chrome reported the trace buffer dropped events. When set, a step/window mismatch is KNOWN to be
+   * an overflow, so the message says so outright instead of also offering the idempotency cause. */
+  traceDataLoss = false,
 ): MergedStep[] {
   assertUniqueLabels(timingSteps);
   assertSameLabelsEachIteration(timingSteps);
@@ -203,11 +206,18 @@ export function mergeSteps(
       timingLabels.length !== tracedLabels.length ||
       timingLabels.some((label) => !windowByLabel.has(label));
     if (diverged) {
+      const divergence = describeDivergence(timingLabels, tracedLabels);
       throw new Error(
-        `The step timings and trace windows recorded different steps (${describeDivergence(timingLabels, tracedLabels)}). ` +
-          `With --iterations, run() must take the same path every time: make the flow idempotent (no ` +
-          `conditional or randomised measureStep calls). Otherwise the trace lost some wpd:step markers ` +
-          `(an overflowing trace buffer drops events) -- reduce the work in the run.`,
+        traceDataLoss
+          ? `The trace buffer overflowed and dropped wpd:step markers (Chrome reported data loss), so the ` +
+              `trace and the step timings recorded different steps (${divergence}). The counts cannot be ` +
+              `trusted here (dropped events undercount), so this is a hard error, not a degraded recording. ` +
+              `--deep is the heaviest trace; reduce the measured work in the run (fewer steps per run, or ` +
+              `scope the flow), or use --breakdown if you do not need forced-layout blame.`
+          : `The step timings and trace windows recorded different steps (${divergence}). ` +
+              `With --iterations, run() must take the same path every time: make the flow idempotent (no ` +
+              `conditional or randomised measureStep calls). Otherwise the trace lost some wpd:step markers ` +
+              `(an overflowing trace buffer drops events) -- reduce the work in the run.`,
       );
     }
   }

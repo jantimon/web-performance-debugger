@@ -69,6 +69,13 @@ const toInt = (value: string) => {
   return parseInt(value, 10);
 };
 
+/** A non-negative ms threshold (fractional allowed): --min-wall is a wall-tier ms, not a count. */
+const toFloat = (value: string) => {
+  if (!/^\d+(\.\d+)?$/.test(value.trim()))
+    throw new InvalidArgumentError(`'${value}' is not a non-negative number.`);
+  return parseFloat(value);
+};
+
 program
   .command("record")
   // Both modes have a real page and a live DOM; they differ in WHERE run() executes, and therefore
@@ -108,6 +115,10 @@ program
     1,
   )
   .option("--warmup <n>", "untimed repetitions of run() before the timed ones", toInt, 0)
+  .option(
+    "--keep-partial",
+    "driver mode: if a later iteration fails (a flaky nav on a production site), keep the iterations that completed instead of aborting the whole run. A failure in the first iteration still errors; the salvaged recording carries a loud note naming the failed iteration and step",
+  )
   .option("--out <file>", "output recording path (default recordings/<timestamp>.json)")
   .option("--no-headless", "run with a visible browser window")
   .option(
@@ -286,6 +297,7 @@ program
       settleMs: 200,
       format: cmdOpts.format,
       driver: !bench && !node,
+      keepPartial: !!cmdOpts.keepPartial,
       runtime: node ? "node" : "chrome",
       cpuThrottle: cmdOpts.cpuThrottle,
       // On by default; captureFor turns it off on --deep (the sampler cannot ride a .stack trace)
@@ -321,7 +333,16 @@ fmtOpts(
     .description(
       "compact overview: per-span time breakdown (run + steps + performance.measure), one shape across targets",
     )
-    .option("--label <label>", "keep only the span with this exact label (case-sensitive)"),
+    .option("--label <label>", "keep only the span with this exact label (case-sensitive)")
+    .option(
+      "--min-wall <ms>",
+      "hide spans below this wall (ms); cuts a tag manager's flood of sub-N-ms measures. The hidden count is disclosed",
+      toFloat,
+    )
+    .option(
+      "--filter <text>",
+      "keep only spans whose label contains <text> (case-insensitive substring). The hidden count is disclosed",
+    ),
 ).action((file, opts) => run(querySpans(file, opts)));
 fmtOpts(
   query
