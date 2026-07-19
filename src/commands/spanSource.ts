@@ -23,8 +23,9 @@ export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null>
     path.extname(abs).toLowerCase(),
   ) as Recording;
   assertSchemaVersion(rec.meta?.schemaVersion, abs);
+  const hasBar = rec.spans?.some((span) => span.breakdown);
   let cpuBreakdown: CpuBreakdown | undefined;
-  if (!rec.breakdowns?.length) {
+  if (!hasBar) {
     try {
       cpuBreakdown = (await loadCpuModel(abs)).breakdown;
     } catch (error) {
@@ -34,13 +35,7 @@ export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null>
       if ((error as NodeJS.ErrnoException)?.code !== "ENOCPUMODEL") throw error;
     }
   }
-  // An older recording may predate `meta`; it also has no bar, so buildSpans returns null anyway.
   const meta = rec.meta ?? {};
-  const result = buildSpans(
-    rec.breakdowns,
-    cpuBreakdown,
-    recordingLane(meta),
-    meta.iterations ?? 1,
-  );
+  const result = buildSpans(rec.spans, cpuBreakdown, recordingLane(meta), meta.iterations ?? 1);
   return result?.spans ?? null;
 }

@@ -175,8 +175,8 @@ e2e(
     runCli(["record", path.join(examples, "measure-span.mjs"), "--bench", "--target", "firefox", "--iterations", "5", "--out", out]);
 
     const digest = JSON.parse(runCli(["query", "digest", out, "--json"]));
-    assert.ok(Array.isArray(digest.breakdowns), "breakdowns present");
-    const bars = digest.breakdowns.filter((entry) => entry.kind === "measure" && entry.label === "work");
+    assert.ok(Array.isArray(digest.spans), "spans present");
+    const bars = digest.spans.filter((entry) => entry.kind === "measure" && entry.label === "work");
     assert.equal(bars.length, 1, "the repeated 'work' label collapses to ONE stored bar");
     const span = bars[0];
     // Repeated once per --iteration: the bar is the lower-median-by-wall occurrence, samples == iterations.

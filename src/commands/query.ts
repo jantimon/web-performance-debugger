@@ -7,10 +7,10 @@ import type {
   EventKind,
   NormalizedEvent,
   Recording,
-  StepIndex,
 } from "../model/recording.js";
 import type { BlameEntry } from "../model/query.js";
 import { buildSpans, recordingLane } from "../model/spans.js";
+import { isSteppedRecording, stepIndexView } from "../model/step-view.js";
 import { num, table } from "../output/ascii.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
 import { assertSchemaVersion } from "../model/artifact.js";
@@ -53,6 +53,22 @@ function eventsInWindow(rec: Recording): NormalizedEvent[] {
   return rec.events.filter((event) => start == null || event.ts >= start);
 }
 
+/**
+ * The deep event log (`rec.events`) is stored only where a reader consumes it: --deep (chrome) and
+ * firefox. On every other rung it is empty by design, so `query events`/`get`/`blame` say "not
+ * captured at this rung" rather than reporting an empty result as if the page did nothing. A --deep
+ * run that genuinely observed nothing still has the log (it just came back empty), so the rung, not
+ * the array length, is the test.
+ */
+function requireEventLog(rec: Recording, file: string): void {
+  if (rec.meta.passes.includes("deep") || rec.meta.passes.includes("gecko")) return;
+  throw new Error(
+    `${file}: the event log was not captured at this rung (${rec.meta.passes.join("+")}). Events, ` +
+      `forced-layout blame, and invalidation records are stored only under --deep (chrome) or ` +
+      `--target firefox. Re-record with --deep.`,
+  );
+}
+
 export async function queryDigest(file: string, opts: OutOpts): Promise<void> {
   const abs = await resolveTarget(file, "recording");
   const rec = await load(abs);
@@ -61,9 +77,9 @@ export async function queryDigest(file: string, opts: OutOpts): Promise<void> {
   if (fmt) return emit(digest, fmt);
 
   printSummary(rec);
-  // --breakdown recordings carry per-span seven-slice bars; print them here so `query digest`
-  // matches the `record` report. Absent on every other mode, so this is a no-op there.
-  if (digest.breakdowns?.length) printSpanBreakdowns(digest.breakdowns, digest.meta.iterations);
+  // Spans carrying a reconciling bar (--breakdown / firefox measures) print here so `query digest`
+  // matches the `record` report; a no-op when no span has a bar.
+  printSpanBreakdowns(digest.spans, digest.meta.iterations);
   if (digest.forced.length) {
     console.log(
       "\nLayout thrashing — forced layout/style by source (run `query blame --forced` for all):",
@@ -114,12 +130,13 @@ export interface SpansQuery extends OutOpts {
 export async function querySpans(file: string, query: SpansQuery): Promise<void> {
   const abs = await resolveTarget(file, "recording");
   const rec = await load(abs);
-  // Prefer the recording's stored per-span bars; reach for the sibling CPU model only when there are
-  // none (firefox/node without measures, or a rung-1 chrome run), where the run bar lives on
-  // CpuModel.breakdown instead of Recording.breakdowns.
+  // Prefer the recording's spans that carry a bar; reach for the sibling CPU model only when none do
+  // (firefox/node without measures, or a rung-1 chrome run), where the run bar lives on
+  // CpuModel.breakdown instead of on the stored spans.
+  const hasBar = rec.spans?.some((span) => span.breakdown);
   let model: CpuModel | undefined;
   let cpuBreakdown: CpuBreakdown | undefined;
-  if (!rec.breakdowns?.length) {
+  if (!hasBar) {
     try {
       model = await loadCpuModel(abs);
       cpuBreakdown = model.breakdown;
@@ -128,7 +145,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     }
   }
   const iterations = rec.meta.iterations ?? 1;
-  const result = buildSpans(rec.breakdowns, cpuBreakdown, recordingLane(rec.meta), iterations);
+  const result = buildSpans(rec.spans, cpuBreakdown, recordingLane(rec.meta), iterations);
   if (!result)
     throw new Error(
       `${file} carries no per-span breakdown. Record with \`--breakdown\` (chrome), \`--target ` +
@@ -146,7 +163,8 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   // per-span table; the synthesized run bar prints the CpuModel bar, which already labels
   // style/layout and browser/native honestly for its lane.
   if (result.source === "breakdowns") {
-    const bars = label ? rec.breakdowns!.filter((span) => span.label === label) : rec.breakdowns!;
+    const barSpans = rec.spans.filter((span) => span.breakdown);
+    const bars = label ? barSpans.filter((span) => span.label === label) : barSpans;
     if (!bars.length) return void console.log(`No span labelled '${label}' in ${file}.`);
     printSpanBreakdowns(bars, iterations);
     return;
@@ -160,19 +178,16 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
 
 export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
   const abs = await resolveTarget(file, "index");
-  const raw = await fs.readFile(abs, "utf8");
-  const idx = deserialize(raw, path.extname(abs).toLowerCase()) as StepIndex;
-  assertSchemaVersion(idx.meta?.schemaVersion, abs);
-  // `latest` resolves to the index via the pointer, but an explicit path is taken as given, so
-  // `query index <recording>` would otherwise read a Recording as a StepIndex and die on
-  // `Cannot read properties of undefined (reading 'length')`, naming neither the file nor the fix.
-  if (!Array.isArray(idx.steps)) {
+  const rec = await load(abs);
+  // The step index is a VIEW over the recording's step spans now, not a stored file. A run with no
+  // step spans (a --bench or --target node run) is not stepped: say so, and name the fix.
+  if (!isSteppedRecording(rec)) {
     throw new Error(
-      `${abs} has no steps: this is a recording, not a step index. A stepped (driver) run writes ` +
-        `its index beside the recording as <name>.index.json -- pass that file, or 'latest'. ` +
-        `A --bench or --target node run has no steps at all.`,
+      `${abs} is not a stepped run: it has no step spans. Only a driver run (measureStep) has ` +
+        `steps; a --bench or --target node run has none. Use \`query digest\`/\`query spans\` instead.`,
     );
   }
+  const idx = stepIndexView(rec, abs);
   const fmt = structuredFormat(opts);
   if (fmt) return emit(idx, fmt);
 
@@ -199,7 +214,6 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
         "layoutInval",
         "longTasks",
         "wall ms*",
-        "file",
       ],
       idx.steps.map((step) => [
         step.index,
@@ -214,7 +228,6 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
         formatMeasured(step.headline.layoutInvalidations, (count) => String(count)),
         formatMeasured(step.headline.longTaskCount, (count) => String(count)),
         step.wallMs == null ? "—" : num(step.wallMs, 1),
-        path.basename(step.recording),
       ]),
     ),
   );
@@ -225,11 +238,12 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
       "JS.\n  inp/processing are measured in-page; 'processing ms' is first handler start to last " +
       "handler end. A '—' in inp/processing means no interaction crossed the 16 ms Event Timing floor.",
   );
-  console.log("\nInspect a step:  wpd query digest <file above>");
+  console.log(`\nInspect a step's bar:  wpd query spans "${idx.recording}" --label <label>`);
 }
 
 export async function queryGet(file: string, id: number, opts: OutOpts): Promise<void> {
   const rec = await load(file);
+  requireEventLog(rec, file);
   const event = rec.events.find((candidate) => candidate.id === id);
   if (!event) throw new Error(`No event with id ${id} in ${file}`);
   emit(event, structuredFormat(opts) ?? "json");
@@ -247,6 +261,7 @@ export async function queryEvents(file: string, query: EventsQuery): Promise<voi
   if (query.kind && !isEventKind(query.kind))
     throw new Error(`Unknown --kind '${query.kind}'. Valid kinds: ${EVENT_KINDS.join(", ")}`);
   const rec = await load(file);
+  requireEventLog(rec, file);
   let events = eventsInWindow(rec);
   if (query.kind) events = events.filter((event) => event.kind === query.kind);
   if (query.name)
@@ -286,6 +301,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   if (query.kind && !isEventKind(query.kind))
     throw new Error(`Unknown --kind '${query.kind}'. Valid kinds: ${EVENT_KINDS.join(", ")}`);
   const rec = await load(file);
+  requireEventLog(rec, file);
   let events = eventsInWindow(rec).filter((event) => event.at);
   // --forced narrows to thrashing; --all keeps everything (and reports forced=0 lines)
   if (query.forced && !query.all) events = events.filter((event) => event.forced);

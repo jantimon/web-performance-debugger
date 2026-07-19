@@ -8,8 +8,8 @@ import {
   DEFAULT_CPU_INTERVAL_US,
   type RawCpuProfile,
 } from "../profile/cpuprofile.js";
-import { buildSummary } from "../metrics/summarize.js";
-import { buildDigest } from "../commands/digest.js";
+import { buildSummary, NO_RENDERING_CAPTURE } from "../metrics/summarize.js";
+import { buildRecordingSpans } from "../record/spans-build.js";
 import { writePointer } from "../commands/resolve.js";
 import { serialize, extFor } from "../output/format.js";
 import type { CpuModel, Recording, RecordingMeta } from "../model/recording.js";
@@ -43,7 +43,6 @@ function profilerSession() {
 export async function recordNode(opts: RecordOptions): Promise<{
   recording: Recording;
   outPath: string;
-  digestPath: string;
   cpuProfilePath: string;
   cpuModelPath: string;
   cpuModel: CpuModel;
@@ -146,38 +145,38 @@ export async function recordNode(opts: RecordOptions): Promise<{
   const cpuModelPath = path.join(outDir, `${base}.cpu${extFor(opts.format)}`);
   await fs.writeFile(cpuModelPath, serialize(cpuModel, opts.format), "utf8");
 
+  const summary = buildSummary({
+    perIteration,
+    wallMs,
+    inpMs: null,
+    detailEvents: [],
+    detailWindowStart: null,
+    // No DOM: every rendering count is not-measured (NO_RENDERING_CAPTURE default). scriptingMs is
+    // the in-process V8 profile's JS self-time.
+    scriptingMs: cpuModel.scriptingMs,
+  });
   const recording: Recording = {
     meta,
     window: { measure: RUN_MEASURE, startTs: null, endTs: null, wallMs },
     marks: [],
-    metrics: { before: {}, after: {}, delta: {} },
     events: [],
-    summary: buildSummary({
-      perIteration,
-      wallMs,
-      inpMs: null,
+    summary,
+    // One run span; its reconciling bar lives on CpuModel.breakdown (js/native/gc/idle), which
+    // `query spans` synthesizes the run entry from, so no bar is stored on the span itself.
+    spans: buildRecordingSpans({
+      summary,
       detailEvents: [],
-      detailWindowStart: null,
-      // No DOM: every rendering count is not-measured (NO_RENDERING_CAPTURE default). scriptingMs is
-      // the in-process V8 profile's JS self-time.
-      scriptingMs: cpuModel.scriptingMs,
+      capabilities: NO_RENDERING_CAPTURE,
+      bars: [],
     }),
   };
   await fs.writeFile(outPath, serialize(recording, opts.format), "utf8");
 
-  const digestPath = path.join(outDir, `${base}.digest${extFor(opts.format)}`);
-  await fs.writeFile(
-    digestPath,
-    serialize(buildDigest(recording, outPath, 20), opts.format),
-    "utf8",
-  );
-
   await writePointer({
     recording: outPath,
-    digest: digestPath,
     cpuProfile: cpuProfilePath,
     cpuModel: cpuModelPath,
   });
 
-  return { recording, outPath, digestPath, cpuProfilePath, cpuModelPath, cpuModel };
+  return { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel };
 }

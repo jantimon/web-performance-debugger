@@ -448,6 +448,88 @@ export interface FrameSideTrack {
   frames: FrameRecord[];
 }
 
+/**
+ * Exact rendering counts windowed to ONE span's representative occurrence (the run window; a step's
+ * first timed iteration). Each field is `Measured` (model/measured.ts): a rung that cannot observe a
+ * count reports null, never a fake 0 (the default rung has no trace; --breakdown drops the `.stack`
+ * category forced detection needs). A forced flush is already inside `layoutCount`/`styleCount`
+ * (`forcedLayoutCount` re-reports the JS-triggered SUBSET), so a reader must never sum forced onto
+ * layout + style.
+ */
+export interface SpanCounts {
+  layoutCount: Measured<number>;
+  styleCount: Measured<number>;
+  paintCount: Measured<number>;
+  /** the JS-forced SUBSET of `layoutCount`/`styleCount`, never a separate addend */
+  forcedLayoutCount: Measured<number>;
+  layoutInvalidations: Measured<number>;
+  styleInvalidations: Measured<number>;
+  /** tasks >= 50ms ("long tasks") within this span's window */
+  longTaskCount: Measured<number>;
+}
+
+/**
+ * The one labelled unit of measured work in a recording -- the run window (`kind: "run"`), a driver
+ * step (`"step"`), or a user `performance.measure` (`"measure"`). Everything the recording used to
+ * model as separate artifacts (the run, the step index, the per-span bars) is one `Span[]`.
+ *
+ * `aggregation` says how the numbers combine the timed iterations (see SpanAggregation). Fields are
+ * populated by what the rung measured: `breakdown` (the reconciling seven-slice bar) only under
+ * --breakdown / firefox / node; `counts` exactly under --breakdown/--deep/firefox and not-measured on
+ * the default rung; INP/interaction only on a driver step that observed one. Not-measured is an
+ * explicit null, never a fabricated 0.
+ */
+export interface Span {
+  label: string;
+  kind: SpanKind;
+  aggregation: SpanAggregation;
+  /** a step's position within its iteration; absent on run/measure spans */
+  index?: number;
+  /**
+   * Headline wall (ms) on the page's own clock: the trace-clock window between the span's marks
+   * (--breakdown/--deep), else the page's performance.now delta (a driver step on the default rung),
+   * else the summed timed samples (a bench run). Null when unmeasured (a step that navigated on a
+   * no-trace rung; see docs/dev/driver-timing.md).
+   */
+  wallMs: number | null;
+  /**
+   * The reconciling seven-slice bar (`Σ slices + idle = wallMs`), when the rung built one
+   * (--breakdown / firefox / node). Absent on the default and --deep rungs, which report identities
+   * and counts but no bar. When `aggregation` is `"median"` this is the lower-median-by-wall
+   * occurrence VERBATIM (a real reconciling sample, not per-slice averages).
+   */
+  breakdown?: Breakdown;
+  /** exact rendering counts windowed to this span's representative occurrence; Measured throughout */
+  counts: SpanCounts;
+  /** worst-interaction INP (ms) for a driver step; null when no interaction crossed the 16ms floor */
+  inpMs?: number | null;
+  /** in-page CWV split of `inpMs` (a driver step); absent when no interaction was observed */
+  interaction?: InteractionTiming | null;
+  /**
+   * Per-iteration wall samples in run order (a driver step under --iterations, or a bench run). Raw,
+   * not just the aggregate: a median hides the bimodality that says "the first iteration was cold".
+   * Absent for a single-sample span.
+   */
+  perIteration?: number[];
+  /** min/median/mean/max over `perIteration`; null below 2 samples */
+  stats?: BenchStats | null;
+  /**
+   * How many real occurrences were merged into `breakdown` (a `measure` label recurring once per
+   * --iteration, and/or within one). Absent means a single occurrence -- the run, a step, an
+   * unrepeated measure. When present (> 1), `aggregation` is `"median"`.
+   */
+  samples?: number;
+  /** wall (ms) of the shortest merged occurrence; disclosed with `samples` (`wallMinMs <= wallMs <= wallMaxMs`) */
+  wallMinMs?: number;
+  /** wall (ms) of the longest merged occurrence; disclosed with `samples` */
+  wallMaxMs?: number;
+  /**
+   * Off-thread compositor frame side track for this span (Chrome --breakdown only). DISPLAY-ONLY:
+   * never summed into `breakdown`, never gated (its counts are scheduler noise). See FrameSideTrack.
+   */
+  frames?: FrameSideTrack;
+}
+
 /** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure). */
 export interface SpanBreakdown {
   label: string;
@@ -474,19 +556,30 @@ export interface SpanBreakdown {
   wallMaxMs?: number;
 }
 
+/**
+ * The one small default artifact a run writes (schema 3): the run summary, the collapsed `Span[]`
+ * (run + steps + user measures), and meta. The raw `.cpuprofile` and the resolved `.cpu.json` model
+ * are separate siblings; the `events[]` DEEP EVENT LOG is written into this file ONLY under --deep
+ * (chrome) and firefox, where blame/`query get`/`query events` read it -- every other rung leaves it
+ * empty, which keeps the default artifact digest-sized.
+ */
 export interface Recording {
   meta: RecordingMeta;
   window: RecordingWindow;
   marks: TimingEntry[];
-  metrics: MetricsBlock;
+  /**
+   * The deep event log: resolved trace events with `.stack` frames and invalidation records. Present
+   * only on a rung that captured one (--deep, firefox); an EMPTY array on the default/--breakdown/
+   * --precise-wall rungs, where `query events`/`get`/`blame` report "not captured at this rung".
+   */
   events: NormalizedEvent[];
   summary: RecordingSummary;
   /**
-   * Per-span seven-slice time breakdowns (--breakdown mode only). Absent otherwise, so existing
-   * recordings are unchanged and every reader that predates the field keeps working. Additive: no
-   * schema major bump.
+   * Every labelled unit of measured work: the run window, each driver step, and every user
+   * `performance.measure`. Always present (at least the run span). Replaces the separate Recording /
+   * Digest / StepIndex artifacts -- steps are spans of `kind: "step"`.
    */
-  breakdowns?: SpanBreakdown[];
+  spans: Span[];
 }
 
 /**
@@ -509,12 +602,16 @@ export interface Digest {
   /** longest tasks (>= threshold) as drill-in entry points */
   longTasks: { id: number; ts: number; durMs: number; dominantKind?: string; at?: string }[];
   invalidationsByReason: { kind: string; reason: string; count: number; sampleAt?: string }[];
-  /** per-span seven-slice time breakdowns (--breakdown mode only); absent otherwise */
-  breakdowns?: SpanBreakdown[];
+  /** the recording's spans (run + steps + measures), carried through so `query digest` exposes them */
+  spans: Span[];
   hints: string[];
 }
 
-/** Entry-point file for a stepped (driver) run; points at per-step files. */
+/**
+ * One row of the `query index` VIEW of a stepped run. Derived from the recording's step spans at read
+ * time (there is no stored index artifact after the collapse), so it carries no per-step file
+ * pointers -- the whole run is one recording.
+ */
 export interface StepIndexEntry {
   index: number;
   label: string;
@@ -535,12 +632,11 @@ export interface StepIndexEntry {
     styleInvalidations: Measured<number>;
     longTaskCount: Measured<number>;
   };
-  recording: string;
-  digest: string;
 }
 
 export interface StepIndex {
   meta: RecordingMeta;
+  /** the one recording this view was derived from */
   recording: string;
   steps: StepIndexEntry[];
   hints: string[];

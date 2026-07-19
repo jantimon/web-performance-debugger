@@ -8,8 +8,8 @@ import type {
   Breakdown,
   CpuBreakdown,
   RecordingMeta,
+  Span,
   SpanAggregation,
-  SpanBreakdown,
   SpanKind,
 } from "./recording.js";
 import type { SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
@@ -65,11 +65,16 @@ function slicesFromCpuBreakdown(cpu: CpuBreakdown): UnifiedSlices {
   };
 }
 
-function entryFromBreakdown(span: SpanBreakdown, iterations: number): SpanEntry {
+/** A stored span that carries a reconciling bar (its `breakdown` is present). */
+type BarSpan = Span & { breakdown: NonNullable<Span["breakdown"]> };
+
+function entryFromSpan(span: BarSpan, iterations: number): SpanEntry {
   return {
     label: span.label,
     kind: span.kind,
     wallMs: span.breakdown.wallMs,
+    // Derived from kind + occurrence count, identical to the `aggregation` buildRecordingSpans stored;
+    // deriving here keeps a hand-built bar (no stored aggregation) legible too.
     aggregation: spanAggregation(span.kind, span.samples),
     iterations,
     slices: slicesFromBreakdown(span.breakdown),
@@ -95,24 +100,29 @@ function runEntryFromCpuBreakdown(cpu: CpuBreakdown, iterations: number): SpanEn
 }
 
 /**
- * Build the unified `query spans` result. Prefers the recording's stored per-span bars
- * (`recording.breakdowns`); falls back to synthesizing a single `run` span from a
+ * Build the unified `query spans` result. Prefers the recording's spans that carry a reconciling bar
+ * (`span.breakdown`); falls back to synthesizing a single `run` span from a
  * `CpuModel.breakdown` so the verb never comes back empty when any bar exists. Returns null when the
  * recording holds neither (an old recording, or a sampler-off rung like --deep/--precise-wall), which
  * the caller turns into a non-zero error. `iterations` (the recording's `meta.iterations`) is stamped on
  * every entry alongside its `aggregation`, so a consumer can read what a span's numbers represent.
  */
 export function buildSpans(
-  breakdowns: SpanBreakdown[] | undefined,
+  spans: Span[] | undefined,
   cpuBreakdown: CpuBreakdown | undefined,
   target: string,
   iterations = 1,
 ): SpansResult | null {
-  if (breakdowns?.length)
+  // Only spans the rung built a reconciling bar for carry slices; a step/run on the default or --deep
+  // rung has counts but no bar, so it is not a `query spans` entry (the CpuModel run bar is the
+  // fallback below). buildRecordingSpans always emits at least the run span, so `spans.length` alone
+  // is not the test -- a bar must be present.
+  const barSpans = (spans ?? []).filter((span): span is BarSpan => span.breakdown != null);
+  if (barSpans.length)
     return {
       target,
       source: "breakdowns",
-      spans: breakdowns.map((span) => entryFromBreakdown(span, iterations)),
+      spans: barSpans.map((span) => entryFromSpan(span, iterations)),
     };
   if (cpuBreakdown)
     return {

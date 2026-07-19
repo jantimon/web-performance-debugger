@@ -205,13 +205,13 @@ function writeBreakdownRecording(name, breakdowns) {
   const file = path.join(tmpDir, name);
   writeFileSync(
     file,
-    JSON.stringify({ meta: { schemaVersion: "3", target: "chrome", iterations: 1 }, summary: emptySummary, breakdowns }),
+    JSON.stringify({ meta: { schemaVersion: "3", target: "chrome", iterations: 1 }, summary: emptySummary, spans: breakdowns }),
     "utf8",
   );
   return file;
 }
 
-// Stored SpanBreakdown shape (Recording.breakdowns): the run bar buildSpans folds to the run span.
+// A stored run span carrying a bar (Recording.spans): buildSpans folds it to the run span entry.
 const storedRun = (slices) => ({
   label: "run",
   kind: "run",
@@ -242,31 +242,13 @@ test("assertCmd: --max-slice on an exceeded slice fails the gate (exit 1)", asyn
   assert.equal(code, 1);
 });
 
-test("assertCmd: --max-slice on a step-index file reads the recording it points at", async () => {
-  const recording = writeBreakdownRecording("slice-index-rec.json", [storedRun()]);
-  const indexFile = path.join(tmpDir, "slice-index.index.json");
-  writeFileSync(
-    indexFile,
-    JSON.stringify({
-      meta: { schemaVersion: "3", iterations: 1 },
-      recording,
-      steps: [
-        {
-          index: 0,
-          label: "click",
-          headline: {
-            forcedLayoutCount: 0, layoutCount: 0, paintCount: 0,
-            layoutInvalidations: 0, styleInvalidations: 0, longTaskCount: 0,
-          },
-          inpMs: null,
-          wallMs: null,
-        },
-      ],
-    }),
-    "utf8",
-  );
-  const code = await captureExitCode(() => assertCmd(indexFile, {}, { js: 6 }));
-  assert.equal(code, undefined, "slice data comes from the recording behind the index");
+// After the collapse there is no separate step-index file: a stepped run is one recording, and
+// `--max-slice` reads its spans (the run bar by default). This pins that the slice path finds the bar
+// on the single artifact.
+test("assertCmd: --max-slice reads the run bar off the (single) recording", async () => {
+  const recording = writeBreakdownRecording("slice-single-rec.json", [storedRun()]);
+  const code = await captureExitCode(() => assertCmd(recording, {}, { js: 6 }));
+  assert.equal(code, undefined, "slice data comes from the recording's run span");
 });
 
 test("assertCmd: a corrupt sibling CPU model surfaces instead of reading as no slice data", async () => {

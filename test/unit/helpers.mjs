@@ -372,7 +372,8 @@ export function writeSchemaArtifact(name, schemaVersion, summaryOverrides) {
   };
   const meta = { schemaVersion, passes: ["default"], driver: false };
   const file = path.join(tmpDir, name);
-  writeFileSync(file, JSON.stringify({ meta, summary }), "utf8");
+  // A minimal non-stepped recording: the run span only (no bar), so assert gates the run summary.
+  writeFileSync(file, JSON.stringify({ meta, summary, spans: [] }), "utf8");
   return file;
 }
 

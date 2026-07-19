@@ -176,10 +176,10 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
       "record", flow,
       "--html", html, "--deep", "--iterations", String(iterations), "--out", out,
     ]);
-    return {
-      recording: JSON.parse(readFileSync(out, "utf8")),
-      index: JSON.parse(readFileSync(`${out}.index.json`, "utf8")),
-    };
+    // The collapse: one artifact. Steps are spans of kind "step" on the recording -- there is no
+    // separate index file to read.
+    const recording = JSON.parse(readFileSync(out, "utf8"));
+    return { recording, steps: recording.spans.filter((span) => span.kind === "step") };
   };
 
   const one = read(1);
@@ -204,19 +204,19 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
   // Per-step counts are the axis that must hold still: they window to the first timed iteration's
   // trace window, so they never scale with --iterations. Guard non-vacuity first: every equality
   // below would hold at 0 === 0 on a page that did nothing.
-  assert.ok(one.index.steps[0].headline.layoutCount > 0, "the fixture actually causes layout");
-  assert.ok(one.index.steps[0].headline.forcedLayoutCount > 0, "and forces it synchronously");
+  assert.ok(one.steps[0].counts.layoutCount > 0, "the fixture actually causes layout");
+  assert.ok(one.steps[0].counts.forcedLayoutCount > 0, "and forces it synchronously");
   assert.equal(
-    many.index.steps[0].headline.layoutCount,
-    one.index.steps[0].headline.layoutCount,
+    many.steps[0].counts.layoutCount,
+    one.steps[0].counts.layoutCount,
     "per-step layoutCount must not scale with --iterations (windowed to iteration 0)",
   );
   assert.equal(
-    many.index.steps[0].headline.forcedLayoutCount,
-    one.index.steps[0].headline.forcedLayoutCount,
+    many.steps[0].counts.forcedLayoutCount,
+    one.steps[0].counts.forcedLayoutCount,
     "per-step forcedLayoutCount must not scale with --iterations",
   );
-  assert.ok(many.index.steps[0].stats?.samples === 5, "the step index exposes the spread");
+  assert.ok(many.steps[0].stats?.samples === 5, "the step span exposes the spread");
 });
 
 // --- the fused --breakdown pass and the reconciling seven-slice bar ---
@@ -238,11 +238,12 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
-  assert.ok(Array.isArray(rec.breakdowns) && rec.breakdowns.length > 0, "breakdowns present");
-  const runSpan = rec.breakdowns.find((span) => span.kind === "run");
+  const bars = rec.spans.filter((span) => span.breakdown);
+  assert.ok(bars.length > 0, "spans carrying a reconciling bar present");
+  const runSpan = bars.find((span) => span.kind === "run");
   assert.ok(runSpan, "a run span exists");
 
-  for (const span of rec.breakdowns) {
+  for (const span of bars) {
     const breakdown = span.breakdown;
     const sum = sliceSum(breakdown);
     assert.ok(
@@ -271,7 +272,7 @@ e2e("record --breakdown: a waiting-dominated span is mostly idle and still close
     "--bench", "--breakdown", "--iterations", "3", "--out", out,
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
-  const runSpan = rec.breakdowns.find((span) => span.kind === "run");
+  const runSpan = rec.spans.find((span) => span.kind === "run");
   assert.ok(runSpan, "a run span exists");
 
   const { wallMs, slices } = runSpan.breakdown;
@@ -293,7 +294,7 @@ e2e("record --breakdown: a repeated performance.measure merges to a median bar (
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
-  const measureBars = rec.breakdowns.filter((span) => span.kind === "measure" && span.label === "user-span");
+  const measureBars = rec.spans.filter((span) => span.kind === "measure" && span.label === "user-span");
   assert.equal(measureBars.length, 1, "the repeated label collapses to ONE stored bar, not one per iteration");
   const measureSpan = measureBars[0];
   assert.equal(measureSpan.samples, 3, "samples == iterations (one occurrence per iteration, all merged)");
@@ -364,7 +365,7 @@ e2e("record --breakdown: a per-span frame side track is recorded and printed", {
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
-  const runSpan = rec.breakdowns.find((span) => span.kind === "run");
+  const runSpan = rec.spans.find((span) => span.kind === "run");
   assert.ok(runSpan?.frames, "the run span carries a frame side track");
   const frames = runSpan.frames;
   // A painting workload produces at least one compositor frame in the run window (start-onward,

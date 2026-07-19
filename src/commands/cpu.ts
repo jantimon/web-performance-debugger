@@ -1,4 +1,4 @@
-import type { CpuModel, FrameSideTrack, SpanBreakdown } from "../model/recording.js";
+import type { CpuModel, FrameSideTrack, Span, SpanKind } from "../model/recording.js";
 import type { CpuOverview, FrameQueryResult } from "../model/query.js";
 import { num, table } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
@@ -12,11 +12,7 @@ import { spanAggregation } from "../model/spans.js";
  * iteration count; otherwise the suffix is empty at N<=1 (nothing to disambiguate) or when the caller
  * passes no iteration count (the single profile-only `printCpuBreakdown` bar, called without one).
  */
-function aggregationSuffix(
-  kind: SpanBreakdown["kind"],
-  iterations?: number,
-  samples?: number,
-): string {
+function aggregationSuffix(kind: SpanKind, iterations?: number, samples?: number): string {
   const aggregation = spanAggregation(kind, samples);
   if (aggregation === "median") return `, median of ${samples} samples`;
   if (iterations == null || iterations <= 1) return "";
@@ -122,11 +118,12 @@ export function printCpuBreakdown(model: CpuModel, iterations?: number): void {
  * visible and `idle` is annotated; the js slice carries a compact by-package annotation. In
  * --breakdown mode this replaces the single js/browser/gc/idle profile bar (printCpuBreakdown).
  */
-export function printSpanBreakdowns(breakdowns: SpanBreakdown[], iterations?: number): void {
-  if (!breakdowns.length) return;
+export function printSpanBreakdowns(spans: Span[], iterations?: number): void {
+  const bars = spans.filter((span) => span.breakdown);
+  if (!bars.length) return;
   console.log(`\nCPU time breakdown ${dim("(per span: Σ slices + idle = wall)")}`);
-  for (const span of breakdowns) {
-    const { wallMs, slices, residualMs } = span.breakdown;
+  for (const span of bars) {
+    const { wallMs, slices, residualMs } = span.breakdown!;
     const label = `${span.label} ${dim(`(${span.kind}, ${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)})`)}`;
     console.log(`\n${bold(label)}`);
     if (wallMs <= 0) {

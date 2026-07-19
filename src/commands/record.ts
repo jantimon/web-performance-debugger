@@ -21,7 +21,8 @@ import {
 } from "../record/capture.js";
 import { runPass, type PassResult } from "../record/runpass.js";
 import { buildBreakdowns, userMeasureSpans } from "../record/breakdown-spans.js";
-import { writeRecording, writeDigest, writeCpuModel, writeStepIndex } from "../record/artifacts.js";
+import { buildRecordingSpans } from "../record/spans-build.js";
+import { writeRecording, writeCpuModel } from "../record/artifacts.js";
 import * as notesCatalog from "../record/notes.js";
 import { RUN_START_MARK, RUN_END_MARK, RUN_MEASURE } from "../model/marks.js";
 import { printCpuHeadline, printCpuBreakdown, printSpanBreakdowns } from "./cpu.js";
@@ -38,6 +39,7 @@ import type {
   RecordingMeta,
   SourceMapDiagnostics,
   SourceMapFailure,
+  SpanBreakdown,
 } from "../model/recording.js";
 
 // The capture ladder, the seven-slice span builder, and the artifact writers live in src/record/.
@@ -198,8 +200,6 @@ export function positionMissNote(diagnostics: SourceMapDiagnostics): string | nu
 export async function record(opts: RecordOptions): Promise<{
   recording: Recording;
   outPath: string;
-  digestPath: string;
-  indexPath?: string;
   cpuProfilePath?: string;
   cpuModelPath?: string;
   cpuModel?: CpuModel;
@@ -400,6 +400,12 @@ export async function record(opts: RecordOptions): Promise<{
   // delay from one step and processing from another would describe an interaction nobody had.
   const overallInteraction = worstStep?.interaction ?? null;
 
+  // The deep event log is stored ONLY where a reader consumes it: --deep (`.stack` + invalidation
+  // records for blame/dirtied-by) and firefox (gecko rendering events with sampled blame). Every
+  // other rung leaves it empty, which keeps the default artifact digest-sized; `query events`/`get`/
+  // `blame` there report "not captured at this rung". buildBreakdowns and per-step counts still read
+  // the full `detail.events` at record time regardless -- this gates only what is STORED.
+  const storeEventLog = opts.deep || browserName === "firefox";
   const recording: Recording = {
     meta,
     window: {
@@ -409,10 +415,9 @@ export async function record(opts: RecordOptions): Promise<{
       wallMs: runWallMs,
     },
     marks: timing.marks,
-    // The CDP getMetrics counter path is gone; counts come from the trace (summary). Kept as an
-    // empty block so the schema shape is unchanged for readers that predate the deletion.
-    metrics: { before: {}, after: {}, delta: {} },
-    events: detail.events,
+    events: storeEventLog ? detail.events : [],
+    // Assembled below, once the summary is finalized and any per-span bars are built.
+    spans: [],
     summary: buildSummary({
       // perIteration is bench-only: it feeds computeStats, which is only meaningful over
       // repetitions of the SAME work. Driver steps are heterogeneous ("mount" vs "inp"), so
@@ -485,24 +490,21 @@ export async function record(opts: RecordOptions): Promise<{
     );
   }
 
-  // --breakdown: one reconciling seven-slice breakdown per span (run, driver steps, user measures).
-  // Built here because it needs both the trace events (with pid/tid) and the raw CPU samples, and
-  // it shares the run's one resolver so a sample's package matches `query cpu --by package`.
+  // The reconciling per-span bars (run + driver steps + user measures), when the rung built any.
+  // --breakdown: built here because it needs both the trace events (with pid/tid) and the raw CPU
+  // samples, sharing the run's one resolver so a sample's package matches `query cpu --by package`.
+  // Firefox: the mark-bridge measure bars from the Gecko sample slices. Every other rung leaves it
+  // empty (no bar), so a span's `breakdown` is simply absent there.
+  let bars: SpanBreakdown[] = [];
   if (opts.breakdown && cpuPass?.cpuProfile) {
-    recording.breakdowns = await buildBreakdowns(
+    bars = await buildBreakdowns(
       detail.events,
       cpuPass.cpuProfile,
       { startTs: detail.windowStart, endTs: detail.windowEnd },
       mergedSteps,
       { serverUrl: server.url, root, maps, notes },
     );
-  }
-
-  // Firefox mark bridge: a per-span breakdown for each user performance.measure inside the run
-  // window, built from the same Gecko sample slices as CpuModel.breakdown (run bar). Only when the
-  // CPU signal produced a reconciling breakdown (cpuPass.cpuProfile.gecko) and the flow made
-  // measures; otherwise Recording.breakdowns stays unset and the run bar shows via CpuModel.breakdown.
-  if (
+  } else if (
     browserName === "firefox" &&
     cpuPass?.cpuProfile?.gecko &&
     cpuPass.geckoMeasures?.length &&
@@ -513,16 +515,21 @@ export async function record(opts: RecordOptions): Promise<{
       root,
       maps,
     });
-    recording.breakdowns = buildGeckoSpanBreakdowns(
-      cpuPass.cpuProfile,
-      packageByNode,
-      cpuPass.geckoMeasures,
-      {
-        startTs: detail.windowStart,
-        endTs: detail.windowEnd,
-      },
-    );
+    bars = buildGeckoSpanBreakdowns(cpuPass.cpuProfile, packageByNode, cpuPass.geckoMeasures, {
+      startTs: detail.windowStart,
+      endTs: detail.windowEnd,
+    });
   }
+
+  // Collapse the run, every driver step, and every user measure into the stored Span[]. Steps carry
+  // their windowed counts (from detail.events, iteration 0); bars attach where the rung built one.
+  recording.spans = buildRecordingSpans({
+    summary: recording.summary,
+    mergedSteps,
+    detailEvents: detail.events,
+    capabilities: effectiveCapabilities,
+    bars,
+  });
 
   // Every frame the run will ever resolve has now been resolved, so the tally is final. A failed
   // map is otherwise silent: frames keep their minified names and bundle path, and per-package CPU
@@ -547,49 +554,31 @@ export async function record(opts: RecordOptions): Promise<{
     if (missNote) notes.push(missNote);
   }
 
-  // Artifact writes, kept together in one visual field and AFTER the meta mutation above: `meta` is
-  // shared by reference with every file below, so its sourcemap verdict has to be final before the
-  // first serialize. The writers themselves are pure (src/record/artifacts.ts); their ORDER, and
-  // that it follows the mutation, is the load-bearing part and stays here.
+  // Artifact writes, kept together and AFTER the meta mutation above: `meta` is shared by reference
+  // with every file below, so its sourcemap verdict has to be final before the first serialize. The
+  // collapse leaves at most three files: the one default artifact (Span[] + summary + meta, plus the
+  // deep event log under --deep/firefox), the raw profile, and the resolved CPU model. There is no
+  // separate digest or step-index file -- `query digest`/`index` derive those views from the spans.
   await writeRecording(outPath, recording, opts.format);
   if (cpuModel && cpuProfilePath) {
     cpuModelPath = path.join(outDir, `${base}.cpu${extFor(opts.format)}`);
     await writeCpuModel(cpuModelPath, cpuModel, opts.format);
   }
-  // Small, context-friendly entry point that points back into the big file by id.
-  const digestPath = path.join(outDir, `${base}.digest${extFor(opts.format)}`);
-  await writeDigest(digestPath, recording, outPath, opts.format, 20);
-  // Driver/stepped runs: split the report into one file per step + an index.
-  let indexPath: string | undefined;
-  if (mergedSteps) {
-    indexPath = await writeStepIndex({
-      outDir,
-      base,
-      format: opts.format,
-      meta,
-      recordingPath: outPath,
-      detailEvents: detail.events,
-      mergedSteps,
-      capabilities: effectiveCapabilities,
-    });
-  }
-  // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime).
+  // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime). One artifact kind now,
+  // so digest/index resolve to the same recording, from which their views are built.
   await writePointer({
     recording: outPath,
-    digest: digestPath,
-    index: indexPath,
     cpuProfile: cpuProfilePath,
     cpuModel: cpuModelPath,
   });
 
-  return { recording, outPath, digestPath, indexPath, cpuProfilePath, cpuModelPath, cpuModel };
+  return { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel };
 }
 
 /** Terminal report for a --target node run: CPU headline + per-iteration timing, no DOM tables. */
 function printNodeReport(result: {
   recording: Recording;
   outPath: string;
-  digestPath: string;
   cpuProfilePath: string;
   cpuModelPath: string;
   cpuModel: CpuModel;
@@ -615,9 +604,8 @@ function printNodeReport(result: {
     console.log(`trend  ${cyan(sparkline(perIteration))}`);
   }
 
-  console.log(`\nRecording:  ${dim(displayPath(result.outPath))}`);
   console.log(
-    `Digest:     ${dim(`${displayPath(result.digestPath)}  ← CPU-only run; rendering metrics are not collected`)}`,
+    `\nRecording:  ${dim(`${displayPath(result.outPath)}  ← CPU-only run; rendering metrics are not collected`)}`,
   );
   console.log(
     `CPU model:  ${dim(`${displayPath(result.cpuModelPath)}  ← 'query cpu latest' for the hot-function overview`)}`,
@@ -656,8 +644,7 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     printNodeReport(result);
     return;
   }
-  const { recording, outPath, digestPath, indexPath, cpuProfilePath, cpuModelPath, cpuModel } =
-    await record(opts);
+  const { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel } = await record(opts);
   printSummary(recording);
   // When CPU profiling was requested, lead with its headline; the layout/paint summary
   // above is not the signal the user asked for (and its scripting-ms can read 0).
@@ -666,22 +653,16 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     // Directly under the package table, because it says whether that table can be believed.
     printSourcemapLine(recording.meta.sourcemaps, cpuModel.unmappedFrames ?? 0);
     // In --breakdown mode the seven-slice per-span bars replace the single profile-only bar.
-    if (recording.breakdowns?.length)
-      printSpanBreakdowns(recording.breakdowns, recording.meta.iterations);
+    const barSpans = recording.spans.filter((span) => span.breakdown);
+    if (barSpans.length) printSpanBreakdowns(barSpans, recording.meta.iterations);
     else printCpuBreakdown(cpuModel);
   }
   if (recording.meta.throttle?.cpuRate) {
     console.log(`\nslowdown: cpu ${recording.meta.throttle.cpuRate}x`);
   }
-  console.log(`\nRecording:  ${dim(displayPath(outPath))}`);
   console.log(
-    `Digest:     ${dim(`${displayPath(digestPath)}  ← small entry point; start here, then drill with 'query get'`)}`,
+    `\nRecording:  ${dim(`${displayPath(outPath)}  ← the run's spans + summary; 'query digest'/'spans'/'index' read it`)}`,
   );
-  if (indexPath) {
-    console.log(
-      `Step index: ${dim(`${displayPath(indexPath)}  ← stepped run; one file per step listed here`)}`,
-    );
-  }
   // Both are written together (record() only sets cpuModelPath when it wrote a profile), but say so
   // rather than guarding on one and interpolating the other: that form prints the string
   // "undefined" if the invariant ever breaks, which is how a template literal hides a missing value.

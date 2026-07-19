@@ -172,7 +172,7 @@ program
       // --protocol-timeout is deliberately allowed: puppeteer threads it into the BiDi connection.
       const unsupported = [
         cmdOpts.breakdown &&
-          "--breakdown (firefox's reconciling bar comes from the Gecko profile automatically; your performance.measure() spans surface in recording.breakdowns without a flag)",
+          "--breakdown (firefox's reconciling bar comes from the Gecko profile automatically; your performance.measure() spans surface in recording.spans without a flag)",
         cmdOpts.deep && "--deep (no .stack / invalidationTracking on Gecko)",
         cmdOpts.preciseWall && "--precise-wall (the gecko pass IS the firefox lane)",
         cmdOpts.cpuThrottle && "--cpu-throttle (needs CDP)",

@@ -275,7 +275,7 @@ async function captureJson(runner) {
 test("query spans --label keeps the exact match; a miss is an empty array, not an error", async () => {
   const file = writeRec("spans-chrome.json", {
     meta: { schemaVersion: "3", target: "chrome", iterations: 4 },
-    breakdowns: chromeBreakdowns,
+    spans: chromeBreakdowns,
   });
 
   const hit = JSON.parse(await captureJson(() => querySpans(file, { json: true, label: "inp" })));
