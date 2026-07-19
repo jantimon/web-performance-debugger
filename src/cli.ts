@@ -13,6 +13,7 @@ import {
 import { queryCpu, queryFrame } from "./commands/cpu.js";
 import { assertCmd, type Thresholds } from "./commands/assert.js";
 import { diffCmd } from "./commands/diff.js";
+import { parseSliceBudgets, SLICE_NAMES, type SliceBudgets } from "./model/spans.js";
 import { cpuDiffCmd } from "./commands/cpudiff.js";
 import { setColorEnabled } from "./output/color.js";
 import { VERSION, TOOL } from "./version.js";
@@ -356,7 +357,21 @@ program
   .option("--max-long-tasks <n>", "max tasks >=50ms", toInt)
   .option("--max-inp <ms>", "max INP (worst interaction) ms", toInt)
   .option("--max-wall <ms>", "max wall ms", toInt)
+  .option(
+    "--max-slice <name=ms>",
+    `max ms for a breakdown slice (${SLICE_NAMES.join("|")}); repeatable, e.g. --max-slice js=5 ` +
+      "--max-slice layout=2. Slice ms is directional, never count-exact: trace wall-tier (~1%) on --breakdown bars, the profiler's own clock on CPU-only bars",
+    (value: string, previous: string[]) => [...previous, value],
+    [] as string[],
+  )
+  .option("--label <label>", "span the --max-slice budgets gate, by label (default the run span)")
   .action((file, opts) => {
+    let sliceBudgets: SliceBudgets;
+    try {
+      sliceBudgets = parseSliceBudgets(opts.maxSlice ?? []);
+    } catch (error) {
+      return program.error((error as Error).message);
+    }
     const thresholds: Thresholds = {
       forced: opts.maxForced,
       layouts: opts.maxLayouts,
@@ -367,7 +382,9 @@ program
       inp: opts.maxInp,
       wall: opts.maxWall,
     };
-    return assertCmd(file, thresholds).catch((error) => program.error(error.message));
+    return assertCmd(file, thresholds, sliceBudgets, opts.label).catch((error) =>
+      program.error(error.message),
+    );
   });
 
 program
