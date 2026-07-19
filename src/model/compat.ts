@@ -115,6 +115,16 @@ export function comparabilityMismatches(
 }
 
 /** The axes that make a `cpu-diff --fail-on-regression` gate meaningless: a JS self-time delta is
- * config, not code, when the lane or the recorded workload differ. (Rung/headless/throttle move
- * rendering counts, not the profiler's own self-time clock, so cpu-diff only WARNS on those.) */
-export const CPU_DIFF_BLOCKING_AXES = new Set(["browser", "runtime", "workload"]);
+ * config, not code, when they differ. Lane (browser/runtime) and workload change WHAT is sampled;
+ * `iterations` and `cpu-throttle` change its SCALE. CPU self-time totals across every sampled
+ * iteration (one pass runs them all), so iters 1 vs 4 roughly quadruples the summed ms; CPU
+ * throttling stretches the same self-time clock. Either fabricates a self-time "regression" from
+ * pure config. Rung and headless move rendering counts and the wall/INP floor, not the profiler's
+ * own self-time clock, so cpu-diff only WARNS on those. */
+export const CPU_DIFF_BLOCKING_AXES = new Set([
+  "browser",
+  "runtime",
+  "workload",
+  "iterations",
+  "cpu-throttle",
+]);
