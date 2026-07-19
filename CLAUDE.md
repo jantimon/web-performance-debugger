@@ -340,6 +340,10 @@ all live there with the probes that establish them.
 - **No em-dashes or AI-prose in comments.** Use ASCII punctuation (`:`, `;`, `()`, `.`) and keep
   comments terse and technical; drop chatty tells (`à la`, `Best-guess`, `Nudge the engine`).
   The standalone `"—"` used as a missing-value placeholder in table *output* is allowed.
+- **No hedging endcaps.** Do not append an unrequested caveat, counterargument, or moralizing endcap
+  to a sharp claim in a comment or doc merely to demonstrate balance. If a boundary condition changes
+  the truth of the claim, put it in the mechanism or scope the claim correctly. If it does not, cut
+  it. Accuracy belongs in the argument; model self-protection does not.
 - **No archeology.** Comments and docs describe the code as it is now, never how it used to be.
   Cut past-tense narration ("used to", "was null before", "until 0.5.0", "the bug this fixes",
   "measured before this was fixed"), version/PR numbers used as rationale, and incident logs.
@@ -351,6 +355,10 @@ all live there with the probes that establish them.
   which is where history lives. This applies to `docs/dev/` too: state the finding, not its
   discovery story.
 - Per the user's global rule: use `trash`, never `rm -rf`.
+- **Commit messages carry no tooling attribution.** Do NOT append a `Co-Authored-By:` trailer, a
+  `🤖 Generated with Claude Code` line, a `claude.ai/code/...` session link, or any similar
+  advertisement to commit messages or PR bodies. Write the message as the change itself, nothing
+  more.
 - **Changesets are release notes, not design docs.** A changeset becomes a `CHANGELOG.md` entry read
   by someone deciding whether to upgrade: say what changed, what breaks, and what to do about it.
   Budget **~5 lines, ~15 for a breaking change**. The reasoning (why the bug existed, what was
