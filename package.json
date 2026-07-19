@@ -37,7 +37,7 @@
     "pretest:e2e:firefox": "npm run build",
     "test:e2e:firefox": "node --test test/firefox.e2e.test.mjs",
     "changeset": "changeset",
-    "version": "changeset version",
+    "version": "changeset version && npm install --package-lock-only",
     "release": "npm run build && changeset publish",
     "prepublishOnly": "npm run build",
     "start": "node dist/cli.js"
