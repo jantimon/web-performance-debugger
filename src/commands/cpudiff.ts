@@ -8,6 +8,7 @@ import {
   loadCpuModel,
   shortSource,
 } from "../profile/cpuprofile.js";
+import { comparabilityMismatches, CPU_DIFF_BLOCKING_AXES } from "../model/compat.js";
 
 /** Self-time deltas below this are treated as sampling noise. */
 const NOISE_MS = 0.5;
@@ -56,6 +57,28 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
     loadCpuModel(baseline),
     loadCpuModel(current),
   ]);
+
+  // Comparability: a cpu-diff joins per-function self-time across two models as if they measured the
+  // same JS on the same lane. Warn on every capture axis that differs (to stderr, so structured
+  // output stays clean), and REFUSE to gate across an incompatible browser/runtime/workload, where a
+  // self-time "regression" would be an artifact of the config, not the code.
+  const mismatches = comparabilityMismatches(baseModel.meta, currentModel.meta);
+  if (mismatches.length) {
+    console.error("\n⚠ WARNING: baseline and current were captured differently:");
+    for (const mismatch of mismatches)
+      console.error(`    ${mismatch.axis}: ${mismatch.base} → ${mismatch.current}`);
+    console.error("  Treat this cpu-diff as directional, not a like-for-like comparison.");
+  }
+  const blocking = mismatches.filter((mismatch) => CPU_DIFF_BLOCKING_AXES.has(mismatch.axis));
+  if (opts.failOnRegression && blocking.length) {
+    console.error(
+      `\nRefusing to gate (--fail-on-regression) across an incompatible capture (` +
+        `${blocking.map((mismatch) => mismatch.axis).join(", ")} differ): a self-time delta would ` +
+        `reflect the capture change, not a code regression. Re-record both sides the same way to gate.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   const basePackages = new Map(packageRollup(baseModel).map((entry) => [entry.key, entry.selfMs]));
   const currentPackages = new Map(

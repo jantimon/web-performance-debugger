@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serialize, deserialize } from "../../dist/output/format.js";
 import { diffCmd } from "../../dist/commands/diff.js";
+import { cpuDiffCmd } from "../../dist/commands/cpudiff.js";
 import { assertCmd } from "../../dist/commands/assert.js";
 import { countProvenance } from "../../dist/commands/summaryView.js";
 import * as notesCatalog from "../../dist/record/notes.js";
@@ -138,13 +139,57 @@ test("diff: matched captures compare cleanly and gate a real count regression (F
   assert.ok(!logs.some((line) => /captured differently/.test(line)), "no comparability warning when matched");
 });
 
-test("diff: an iterations mismatch WARNS but still compares (F31)", async () => {
-  const base = writeRecMeta("f31-iter-base.json", { iterations: 5 }, { layoutCount: 1 });
-  const current = writeRecMeta("f31-iter-cur.json", { iterations: 50 }, { layoutCount: 1 });
+// R04: run counts TOTAL across iterations (one pass runs every iteration), so iters 1 vs 5 makes
+// every count differ by the iteration factor. Gating across that fabricates "regressions", so an
+// iterations mismatch now REFUSES the gate rather than warning-and-comparing.
+test("diff: an iterations mismatch REFUSES the gate (R04)", async () => {
+  const base = writeRecMeta("r04-iter-base.json", { iterations: 5 }, { layoutCount: 1 });
+  const current = writeRecMeta("r04-iter-cur.json", { iterations: 50 }, { layoutCount: 1 });
   const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
-  assert.ok(logs.some((line) => /captured differently/.test(line)), "the iterations mismatch is disclosed");
-  assert.ok(logs.some((line) => /iterations: 5 → 50/.test(line)));
-  assert.equal(code, undefined, "iterations alone does not refuse the gate (counts do not scale with it)");
+  assert.ok(logs.some((line) => /iterations: 5 → 50/.test(line)), "the iterations mismatch is disclosed");
+  assert.ok(logs.some((line) => /Refusing to gate/.test(line)));
+  assert.equal(code, 1, "counts total across iterations, so gating across a count mismatch refuses");
+});
+
+// R05: the compat signature also covers workload (the recorded module/page), headless flavour, and
+// cpu-throttle, all of which shift the numbers the gate reads.
+test("diff: a workload (target) mismatch REFUSES the gate (R05)", async () => {
+  const base = writeRecMeta("r05-work-base.json", { target: "a.mjs" }, { layoutCount: 1 });
+  const current = writeRecMeta("r05-work-cur.json", { target: "b.mjs" }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /workload: a\.mjs → b\.mjs/.test(line)), "the workload mismatch is disclosed");
+  assert.ok(logs.some((line) => /Refusing to gate/.test(line)));
+  assert.equal(code, 1, "diffing two different flows must not gate silently");
+});
+
+test("diff: headless-flavour and cpu-throttle mismatches REFUSE the gate (R05)", async () => {
+  const headlessBase = writeRecMeta("r05-hl-base.json", { headless: true, headlessMode: "shell" }, { layoutCount: 1 });
+  const headlessCur = writeRecMeta("r05-hl-cur.json", { headless: true, headlessMode: "new" }, { layoutCount: 1 });
+  const headless = await runDiffCapture(headlessBase, headlessCur, { failOnRegression: true });
+  assert.ok(headless.logs.some((line) => /headless: shell → new/.test(line)));
+  assert.equal(headless.code, 1, "a frame-cadence flavour change refuses (frame-floor)");
+
+  const throttleBase = writeRecMeta("r05-thr-base.json", { throttle: { cpuRate: 1 } }, { layoutCount: 1 });
+  const throttleCur = writeRecMeta("r05-thr-cur.json", { throttle: { cpuRate: 4 } }, { layoutCount: 1 });
+  const throttle = await runDiffCapture(throttleBase, throttleCur, { failOnRegression: true });
+  assert.ok(throttle.logs.some((line) => /cpu-throttle: 1x → 4x/.test(line)));
+  assert.equal(throttle.code, 1, "an artificial slowdown change refuses");
+});
+
+// R05: warmup and the sampler interval move sampling noise / steady-state, not the gated exact
+// counts, so they WARN but still compare.
+test("diff: warmup and sampler-interval mismatches WARN but still compare (R05)", async () => {
+  const warmupBase = writeRecMeta("r05-warm-base.json", { warmup: 0 }, { layoutCount: 1 });
+  const warmupCur = writeRecMeta("r05-warm-cur.json", { warmup: 3 }, { layoutCount: 1 });
+  const warmup = await runDiffCapture(warmupBase, warmupCur, { failOnRegression: true });
+  assert.ok(warmup.logs.some((line) => /warmup: 0 → 3/.test(line)), "the warmup mismatch is disclosed");
+  assert.equal(warmup.code, undefined, "warmup alone does not refuse the gate");
+
+  const intervalBase = writeRecMeta("r05-int-base.json", { cpuIntervalUs: 200 }, { layoutCount: 1 });
+  const intervalCur = writeRecMeta("r05-int-cur.json", { cpuIntervalUs: 50 }, { layoutCount: 1 });
+  const interval = await runDiffCapture(intervalBase, intervalCur, { failOnRegression: true });
+  assert.ok(interval.logs.some((line) => /sampler-interval: 200us → 50us/.test(line)));
+  assert.equal(interval.code, undefined, "the sampler interval alone does not refuse the gate");
 });
 
 test("diff: --fail-on-regression REFUSES across a mismatched rung/browser (F31)", async () => {
@@ -154,6 +199,59 @@ test("diff: --fail-on-regression REFUSES across a mismatched rung/browser (F31)"
   assert.equal(code, 1, "gating across an incompatible browser/rung refuses");
   assert.ok(logs.some((line) => /Refusing to gate/.test(line)));
   assert.ok(logs.some((line) => /browser/.test(line) && /rung/.test(line)));
+});
+
+// R05: cpu-diff had NO comparability check. It joins per-function self-time across two models as if
+// they measured the same JS; a workload/lane mismatch makes that a fabricated delta. It now warns
+// always and REFUSES a --fail-on-regression gate across browser/runtime/workload.
+function writeCpuModel(name, metaOverrides, scriptingMs) {
+  const meta = { schemaVersion: "3", passes: ["default"], iterations: 1, target: "a.mjs", ...metaOverrides };
+  const model = {
+    profile: "x.cpuprofile", meta, scriptingMs, totalMs: scriptingMs,
+    sampleCount: 1, sampleIntervalUs: 200, system: { idleMs: 0, gcMs: 0, programMs: 0 },
+    functions: [{ id: 0, fn: "run", source: "a.mjs:1", file: "a.mjs", package: "app", selfMs: scriptingMs, totalMs: scriptingMs, selfPct: 100 }],
+    edges: [],
+  };
+  const file = path.join(tmpDir, name);
+  writeFileSync(file, JSON.stringify(model), "utf8");
+  return file;
+}
+
+async function runCpuDiffCapture(base, current, opts) {
+  const priorExit = process.exitCode;
+  const priorLog = console.log;
+  const priorErr = console.error;
+  const logs = [];
+  const errs = [];
+  process.exitCode = undefined;
+  console.log = (...args) => logs.push(args.join(" "));
+  console.error = (...args) => errs.push(args.join(" "));
+  try {
+    await cpuDiffCmd(base, current, opts);
+    return { code: process.exitCode, logs, errs };
+  } finally {
+    console.log = priorLog;
+    console.error = priorErr;
+    process.exitCode = priorExit;
+  }
+}
+
+test("cpu-diff: --fail-on-regression REFUSES across a workload/browser/runtime mismatch (R05)", async () => {
+  const base = writeCpuModel("cpudiff-work-base.cpu.json", { target: "a.mjs" }, 10);
+  const current = writeCpuModel("cpudiff-work-cur.cpu.json", { target: "b.mjs" }, 10);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.equal(code, 1, "gating two different workloads refuses");
+  assert.ok(errs.some((line) => /Refusing to gate/.test(line)));
+  assert.ok(errs.some((line) => /workload: a\.mjs → b\.mjs/.test(line)));
+});
+
+test("cpu-diff: a rung/throttle mismatch WARNS but still compares (not a cpu-diff blocker) (R05)", async () => {
+  const base = writeCpuModel("cpudiff-warn-base.cpu.json", { passes: ["default"], throttle: { cpuRate: 1 } }, 10);
+  const current = writeCpuModel("cpudiff-warn-cur.cpu.json", { passes: ["breakdown"], throttle: { cpuRate: 4 } }, 10);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(errs.some((line) => /captured differently/.test(line)), "the mismatch is disclosed");
+  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "rung/throttle do not block cpu-diff");
+  assert.equal(code, undefined, "equal self-time, and these axes do not refuse the gate");
 });
 
 test("diff: advisory wall/INP/scripting deltas do NOT fail the gate (H1)", async () => {

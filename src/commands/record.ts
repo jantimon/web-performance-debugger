@@ -387,6 +387,10 @@ export async function record(opts: RecordOptions): Promise<{
     iterations: opts.iterations,
     warmup: opts.warmup,
     headless: opts.headless,
+    // Flavour only when headless and on chrome (firefox/headed have no shell/new distinction).
+    headlessMode:
+      opts.headless && browserName === "chrome" ? (opts.headlessMode ?? "shell") : undefined,
+    cpuIntervalUs: opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
     userDataDir: shorterPath(root, opts.userDataDir),
     lifecycle: detail.lifecycle,
     // The one capture that ran, by rung name (there is no multi-pass plan).

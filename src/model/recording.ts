@@ -315,6 +315,12 @@ export interface RecordingMeta {
   iterations: number;
   warmup: number;
   headless: boolean;
+  /** chrome headless flavour when headless: "shell" (~120Hz) or "new" (~60Hz). Absent => headed, or
+   * an older recording / a lane where it does not apply. Frame cadence sets the wall/INP floor, so a
+   * diff across flavours is not comparable (docs/dev/frame-floor.md). */
+  headlessMode?: "shell" | "new";
+  /** CPU sampler interval (microseconds) this run requested. Absent on older recordings. */
+  cpuIntervalUs?: number;
   /** persistent Chrome profile reused across passes/runs (shorter of relative|absolute), or null */
   userDataDir: string | null;
   /** lifecycle hooks found and called */

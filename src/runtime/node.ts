@@ -125,6 +125,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     iterations: opts.iterations,
     warmup: opts.warmup,
     headless: true,
+    cpuIntervalUs: intervalUs,
     userDataDir: null,
     lifecycle,
     passes: ["node-cpu"],
