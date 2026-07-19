@@ -195,7 +195,10 @@ export async function buildBreakdowns(
       bar.breakdown.slices.js.ms / intervalMs >= 2,
   );
   if (uncoveredJsSpans.length > 0) {
-    const firstSampleTs = samples.length > 0 ? samples[0].traceTs : runWindow.startTs;
+    // When the whole run recorded zero samples, the profiler's own origin (raw.startTime) is the
+    // earliest a sample could have landed; runWindow.startTs would force gapMs to 0 and misreport
+    // "about 0 ms into the run window".
+    const firstSampleTs = samples.length > 0 ? samples[0].traceTs : raw.startTime;
     const gapMs = usToMs(Math.max(0, firstSampleTs - runWindow.startTs));
     context.notes.push(samplerCoverageGap(uncoveredJsSpans.length, gapMs));
   }

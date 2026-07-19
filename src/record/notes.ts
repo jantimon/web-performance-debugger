@@ -33,7 +33,7 @@ export function breakdownHeuristicMainThread(): string {
   return "WARNING: the wpd:run:start marker was not found, so the breakdown's main thread was picked by layout/paint activity (heuristic). Per-span breakdown attribution may be on the wrong thread.";
 }
 
-/** Some step/measure span attributes JS its window the CPU sampler never covered: the V8 profiler
+/** Some step/measure span attributes JS to a window the CPU sampler never covered: the V8 profiler
  * resets on each cross-document navigation, so only samples since the run's LAST navigation survive.
  * Pushed from buildBreakdowns when the symptom is present (a step/measure bar with real js ms but zero
  * pooled samples), so an empty per-span package split and hot list are read correctly. */

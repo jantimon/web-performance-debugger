@@ -98,6 +98,28 @@ test("buildBreakdowns: a step the sampler never reached pushes exactly one sampl
   assert.match(gapNotes[0], /1 step\/measure span/, "and it names the one affected span");
 });
 
+test("buildBreakdowns: zero recorded samples still fires the note and prices the gap off the profiler origin", async () => {
+  // No samples at all (an extreme reset): every span has 0 pooled samples while the step bar still
+  // shows 10ms of trace-measured js. The gap must be priced off the profiler's origin (startTime
+  // 40ms => ~40ms into the [0,100ms] run window), not clamped to ~0 by using the run window start.
+  const notes = [];
+  const emptyProfile = { ...rawProfile(40000), samples: [], timeDeltas: [] };
+  const breakdowns = await buildBreakdowns(
+    stepEvents(),
+    emptyProfile,
+    RUN_WINDOW,
+    [bootStep],
+    contextWith(notes),
+  );
+
+  const step = breakdowns.find((bar) => bar.kind === "step" && bar.label === "boot");
+  assert.equal(step.hot.pooledSamples, 0, "no samples landed anywhere");
+
+  const gapNotes = notes.filter(isCoverageGap);
+  assert.equal(gapNotes.length, 1, "exactly one samplerCoverageGap note");
+  assert.match(gapNotes[0], /about 40 ms into the run window/, "gap priced off the profiler origin, not ~0");
+});
+
 test("buildBreakdowns: a step the sampler DID cover pushes no samplerCoverageGap note", async () => {
   // Same profile, startTime 0: the 12 samples now fall at 1..12ms, inside the step's [0,30ms] window,
   // so the sampler covered it and there is no gap to disclose.
