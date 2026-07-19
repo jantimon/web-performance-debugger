@@ -87,6 +87,27 @@ never records it. Chrome folds stylist-rebuild cost invisibly into one "Recalcul
 So a Gecko profile showing this frame under JS tells you something Chrome actively hides: the
 flush also had to rebuild cascade data, which is the expensive variant.
 
+### Style vs layout in the reconciling bar (`layoutSlice`)
+
+Both style recalc and reflow carry the single **Layout** category, so `profile/gecko.ts`'s
+`layoutSlice` splits the six-slice bar's `style` from `layout` by the frame label. Style labels, all
+anchored (prefix/suffix/exact) so a bare `Style` substring never mis-buckets the
+`CTFontFamily::FindStyleVariations` font-matching frame (Graphics work, not style):
+
+- servo recalc scopes: `Styles`, `Style computation`, `CSS parsing`, `Container Query...`
+- restyle-pass / style-diff wrappers: `RestyleManager::...`, `ComputedStyle::CalcStyleDifference`
+- `Update stylesheet information` (the stylist rebuild above) is bucketed **style**: it is cascade-data
+  rebuild Chrome folds invisibly into "Recalculate style", so leaning style matches Chrome's rollup.
+- the ` Style`-suffixed flush wrapper `PresShell::DoFlushPendingNotifications Style` (its ` Layout`
+  sibling stays layout).
+
+**[measured]** Without the wrapper/diff/stylist labels ~10-25% of style recalc on a style-bound
+workload buckets to `layout`; on a pure-style workload Chrome reports `layout 0%` while the un-widened
+Firefox bar reports `layout 6-10%`, all of it misclassified style. A firefox `style: 0` on a
+layout/JS-dominated (or idle-dominated) workload is a **genuine zero**: the servo recalc labels
+(`Styles`/`Style computation`) always catch real style work, so the split cannot zero a style
+workload — a zero means the workload did ~no in-window style recalc.
+
 ## Chrome cannot name the property
 
 The single largest asymmetry, and it favours Firefox.
@@ -204,9 +225,14 @@ gap is what lets the thrash detector run.
   emits no style-kind write at all, making it that case's only write signal); `reason="Added to
   layout"` and `"Style changed"` stamp at the forced recalc and name the **read**. So the detector
   reads dirtied-by off the style-kind mutation records plus layout-kind `"Removed from layout"`
-  records, and trusts no other layout-kind stack. **[unprobed]**: `display:none`-via-class removal
-  may emit `"Removed from layout"` at recalc time; a leak there would mislabel one dirtied-by line,
-  never a count.
+  records, and trusts no other layout-kind stack. **[measured]** `display:none` removal (class-toggled
+  and inline, 3 runs each, byte-stable) also emits `"Removed from layout"`, but stamped at **recalc**
+  time with the geometry read on the stack, so its `at` is byte-equal (line AND column) to the flush's
+  own read-site. The detector drops a `"Removed from layout"` dirtied-by entry whose `at` equals the
+  flush read: a synchronous detach names a distinct write line, so a position-equal entry is the
+  recalc-time stamp naming the read, not a write. The genuine mutation survives on the co-emitted
+  style-kind record (`"Related style rule"` / `"Inline CSS ... mutated"`) at the real toggle line, and
+  the thrash count (read from `gapLayoutWrites` before the filter) is untouched.
 
 - **The thrash rule matches by kind.** A forced flush is a thrash step iff a write of *its own* kind
   (a layout write for a `Layout` flush, a style write for an `UpdateLayoutTree`) sat in the gap since
