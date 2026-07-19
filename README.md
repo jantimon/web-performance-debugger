@@ -1,5 +1,10 @@
 # @jantimon/web-performance-debugger
 
+[![npm version](https://img.shields.io/npm/v/@jantimon/web-performance-debugger)](https://www.npmjs.com/package/@jantimon/web-performance-debugger)
+[![CI](https://github.com/jantimon/web-performance-debugger/actions/workflows/ci.yml/badge.svg)](https://github.com/jantimon/web-performance-debugger/actions/workflows/ci.yml)
+[![node](https://img.shields.io/node/v/@jantimon/web-performance-debugger)](https://www.npmjs.com/package/@jantimon/web-performance-debugger)
+[![license](https://img.shields.io/npm/l/@jantimon/web-performance-debugger)](https://github.com/jantimon/web-performance-debugger/blob/main/LICENSE)
+
 <p align="center">
   <img
     src="https://github.com/user-attachments/assets/0619a085-de4f-49bd-8a62-5c9d5aff4705"
