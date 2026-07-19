@@ -4,6 +4,8 @@ import type { HeadlessMode } from "../browser/launch.js";
 import type { BrowserName } from "../browser/backend.js";
 import { startStaticServer } from "../browser/server.js";
 import { mergeSteps, type MergedStep } from "../trace/steps.js";
+import { mainThread } from "../trace/main-thread.js";
+import { retryTransientNav } from "../browser/launch.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { buildSummary } from "../metrics/summarize.js";
 import {
@@ -101,6 +103,9 @@ export interface RecordOptions {
   /** Rung 1 minus the sampler: a pristine benchmark wall, no profiler, no counts. */
   preciseWall?: boolean;
 }
+
+/** Bounded retries for a transient cross-process navigation failure (fresh browser each attempt). */
+const NAV_RETRY_LIMIT = 2;
 
 /** Persistent-profile path for meta: shorter of relative-to-root vs absolute, or null if unused. */
 function shorterPath(root: string, absPath: string | undefined): string | null {
@@ -265,8 +270,19 @@ export async function record(opts: RecordOptions): Promise<{
   // may not make wpd fetch a private/internal host for a sourcemap.
   const maps = new SourceMapResolver({ pageUrl: opts.url });
   let pass: PassResult;
+  // A cross-process --url boot can fail the top-level navigation with a transient error
+  // (net::ERR_INVALID_HANDLE and friends; the renderer process swaps mid-navigation). Retry it a
+  // bounded number of times on a fresh browser (runPass launches its own) before giving up, and
+  // disclose it in a note when it fired -- never a silent infinite retry, never a swallowed permanent
+  // failure (a bad host still fails immediately). See browser/launch.ts isTransientNavError.
+  let navRetries = 0;
   try {
-    pass = await runPass(server, root, capture, opts, mode, absModule, maps);
+    const outcome = await retryTransientNav(
+      () => runPass(server, root, capture, opts, mode, absModule, maps),
+      NAV_RETRY_LIMIT,
+    );
+    pass = outcome.value;
+    navRetries = outcome.retries;
   } finally {
     await server.close();
   }
@@ -346,10 +362,19 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(notesCatalog.cpuSamplerOnDefaultRung());
   }
   // The built-in on-ramp flow: disclose what the single "load" step measures, and (when repeated)
-  // that only iteration 1 is a cold boot -- later iterations reuse the one browser and hit its cache.
+  // either the warm/cold caveat on the resulting wall median, or -- when this rung priced no wall at
+  // all (the navigating load step resets the page clock and the default/precise-wall rung has no trace
+  // clock to span it) -- that there IS no median here and --breakdown is what produces one. Emitting
+  // the warm/cold note on the no-wall rung would promise a median (`stats`) the recording does not carry.
   if (isOnramp) {
     notes.push(notesCatalog.onrampBuiltinFlow());
-    if (opts.iterations > 1) notes.push(notesCatalog.onrampWarmVsCold(opts.iterations));
+    if (opts.iterations > 1) {
+      notes.push(
+        pass.stepWallClock === "none"
+          ? notesCatalog.onrampIterationsNoMedian(opts.iterations)
+          : notesCatalog.onrampWarmVsCold(opts.iterations),
+      );
+    }
   }
   // --url named a host with no scheme (localhost:5173): http:// was assumed to reach it. Disclose
   // the target the run actually navigated to, whether or not a module drove it.
@@ -362,6 +387,8 @@ export async function record(opts: RecordOptions): Promise<{
     if (clock === "none") notes.push(notesCatalog.driverStepWallUnmeasured());
     else notes.push(notesCatalog.driverStepWallClock(clock));
   }
+  // The navigation hit a transient cross-process error and a fresh-browser retry recovered it.
+  if (navRetries > 0) notes.push(notesCatalog.navRetried(navRetries));
   // chrome-headless-shell was missing, so the launch fell back to new-headless.
   if (pass.headlessFallback) notes.push(pass.headlessFallback);
   // A trace ran but its run-window markers are absent (truncated/overflowed trace buffer, or the
@@ -374,6 +401,18 @@ export async function record(opts: RecordOptions): Promise<{
   const effectiveCapabilities = capabilitiesAfterParse(capabilities, !traceWindowMissing);
   const countScope = countScopeNote(effectiveCapabilities, opts);
   if (countScope) notes.push(countScope);
+  // A top-level cross-process navigation (typical of a --url boot) marks wpd:run:start on the
+  // pre-navigation renderer while the window's rendering work lands on the process the page navigated
+  // into. mainThread re-anchors the counts/bar to that thread; disclose it so a reader knows the
+  // numbers describe the loaded page, not the blank host it started on. Fires for any counting chrome
+  // rung (--breakdown/--deep); firefox is single-process (no CDP trace) and the no-trace rungs count
+  // nothing. Skipped when the window was lost (counts already downgraded to not-measured).
+  if (
+    effectiveCapabilities.counts &&
+    browserName !== "firefox" &&
+    mainThread(detail.events)?.via === "reanchored"
+  )
+    notes.push(notesCatalog.reanchoredMainThread());
   if (opts.cpuThrottle) {
     notes.push(notesCatalog.artificialSlowdown(opts.cpuThrottle));
   }

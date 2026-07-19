@@ -493,6 +493,15 @@ export class SourceMapResolver {
     const target = frame.source ?? (frame.remote ? frame.url : undefined);
     if (!target || frame.line == null) return;
     if (!/\.(c|m)?js$/.test(target.split("?")[0])) return;
+    // trace-mapping requires a 1-based line >= 1 and THROWS ("`line` must be greater than 0")
+    // otherwise. A positionless V8 frame (lineNumber -1) can reach here as line 0; skip it and record
+    // the miss so the unmapped frame stays visible, rather than crashing the whole run.
+    if (frame.line < 1) {
+      const skipped = this.positionCounts.get(target) ?? { misses: 0, hits: 0 };
+      skipped.misses++;
+      this.positionCounts.set(target, skipped);
+      return;
+    }
     const map = await this.loadMap(target);
     if (!map) return;
     // trace stack lines are 1-based; trace-mapping wants 1-based line, 0-based column.

@@ -33,6 +33,13 @@ export function breakdownHeuristicMainThread(): string {
   return "WARNING: the wpd:run:start marker was not found, so the breakdown's main thread was picked by layout/paint activity (heuristic). Per-span breakdown attribution may be on the wrong thread.";
 }
 
+/** The run window's rendering work landed on a different renderer process than the one wpd:run:start
+ * was marked on: a top-level cross-process navigation (typical of a --url boot). Counts and the bar
+ * follow the page to its new process. Pushed from record() for any counting rung (--breakdown/--deep). */
+export function reanchoredMainThread(): string {
+  return "The run navigated to a new renderer process (a top-level cross-process navigation, typical of a --url boot): wpd:run:start was marked on the pre-navigation renderer, but the window's layout/paint/style work ran on the process the page navigated INTO. Counts and the breakdown bar are scoped to that post-navigation renderer main thread, so they describe the page you loaded, not the blank host page it started on.";
+}
+
 // --- Firefox lane ---
 
 export function firefoxBackend(): string {
@@ -114,9 +121,22 @@ export function onrampBuiltinFlow(): string {
   return "Built-in load flow (no module): one step labeled 'load' navigates to the target (meta.target) inside the run window and settles, so the measured window is the page's own boot. INP is null — a page load has no interaction; pass a module that drives one (measureStep) to measure interactions.";
 }
 
+/** The initial navigation failed with a transient cross-process error and was retried on a fresh
+ * browser; disclose it so a reader knows the numbers are from a later attempt. */
+export function navRetried(retries: number): string {
+  const attempts = retries === 1 ? "1 retry" : `${retries} retries`;
+  return `NOTE: the navigation failed with a transient cross-process error (e.g. net::ERR_INVALID_HANDLE, common on a heavy cross-origin --url boot) and was retried on a fresh browser (succeeded after ${attempts}). The recorded numbers are from the successful attempt. If this recurs, the target may be rate-limiting or blocking automated loads.`;
+}
+
 /** --url named a host with no scheme (localhost:5173); http:// was assumed to reach it. */
 export function pageSchemeAssumed(url: string): string {
   return `--url named a host with no scheme, so http:// was assumed: the target is ${url}. Pass an explicit https:// URL if the server is TLS.`;
+}
+
+/** Repeated on-ramp on a no-trace rung: the navigating load step has no wall, so --iterations makes
+ * no median. Point to --breakdown, whose trace clock spans the navigation. */
+export function onrampIterationsNoMedian(iterations: number): string {
+  return `--iterations ${iterations} produced no per-iteration wall or median on this rung: the built-in 'load' step navigates, which resets the page clock, and this rung has no trace clock to span the navigation, so every iteration's wall is not measured (—, never 0) and there is no distribution to take a median of. Re-record with --breakdown (or --deep): the trace clock spans the navigation, so the load step gets a real per-iteration wall and median.`;
 }
 
 /** Repeated on-ramp: only iteration 1 boots cold, the rest reuse the one browser's caches. */

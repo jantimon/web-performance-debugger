@@ -222,6 +222,134 @@ test("remote sourcemaps resolve packages via comment AND SourceMap header; failu
   }
 });
 
+// F3: a positionless V8 frame (native/builtin call that still carries a script url) reports
+// lineNumber -1. The 0-based -> 1-based shift made it line 0, which trace-mapping rejects by THROWING
+// ("`line` must be greater than 0"), crashing the whole run. It must be treated as "no position", not
+// mapped, so buildCpuModel resolves the profile without throwing.
+test("buildCpuModel: a lineNumber -1 frame with a resolvable map does not crash the run (F3)", async () => {
+  const server = await startBundleServer();
+  try {
+    const maps = new SourceMapResolver();
+    // comment.js has a real sourcemap, so the OLD code loaded it and threw on the line-0 lookup.
+    const profile = {
+      startTime: 0,
+      endTime: 2000,
+      nodes: [
+        {
+          id: 1,
+          callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+          children: [2],
+        },
+        {
+          id: 2,
+          callFrame: {
+            functionName: "native",
+            scriptId: "1",
+            url: `${server.origin}/comment.js`,
+            lineNumber: -1,
+            columnNumber: -1,
+          },
+          children: [],
+        },
+      ],
+      samples: [2, 2],
+      timeDeltas: [1000, 1000],
+    };
+    const model = await buildCpuModel(profile, {
+      profilePath: "line0.cpuprofile",
+      meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+      sampleIntervalUs: 50,
+      serverUrl: "http://127.0.0.1:1",
+      root: os.tmpdir(),
+      maps,
+    });
+    // No throw: the positionless frame kept its identity and bucketed by origin rather than mapping.
+    const fn = model.functions.find((entry) => entry.fn === "native");
+    assert.ok(fn, "the positionless frame is still present in the model");
+    assert.ok(fn.package.startsWith("("), `bucketed by origin, not app (got ${fn.package})`);
+  } finally {
+    await server.close();
+  }
+});
+
+// The defensive guard in SourceMapResolver.resolveFrame: even when the map DID load, a frame whose
+// line is < 1 must be skipped (and recorded as a miss), never passed to originalPositionFor.
+test("SourceMapResolver.resolveFrame skips a line-0 frame instead of throwing (F3 guard)", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-line0-"));
+  const jsPath = path.join(dir, "bundle.js");
+  writeFileSync(jsPath, "function a(){}\n//# sourceMappingURL=bundle.js.map");
+  writeFileSync(path.join(dir, "bundle.js.map"), sourcemapFor("src/App.tsx", "AppRoot"));
+  const maps = new SourceMapResolver();
+  const frame = { source: jsPath, line: 0, column: 1 };
+  await maps.resolveFrame(frame); // must not throw
+  assert.equal(frame.line, 0, "the unmappable frame is left untouched");
+  const misses = maps.diagnostics().positionMisses?.[jsPath]?.misses;
+  assert.equal(misses, 1, "the skipped line-0 frame is recorded as a position miss");
+});
+
+// F6: webpack's module-loader runtime (webpack/bootstrap, webpack/runtime/*, (webpack)/buildin/*) is
+// named by the sourcemap's `sources` but has no real file. Left as `app` it inflates the user's own
+// bucket (~20% on a real production boot). It must bucket as (webpack); a genuine mapped module
+// (src/*, node_modules/*) must still resolve to its real owner.
+test("webpack runtime frames bucket as (webpack), real modules still resolve (F6)", async () => {
+  const routes = {
+    "/bootstrap.js": ["function o(){}\n//# sourceMappingURL=bootstrap.js.map", {}],
+    "/bootstrap.js.map": [sourcemapFor("webpack://myapp/webpack/bootstrap", "o"), {}],
+    "/rt.js": ["function j(){}\n//# sourceMappingURL=rt.js.map", {}],
+    "/rt.js.map": [sourcemapFor("webpack://myapp/webpack/runtime/jsonp chunk loading", "jsonp"), {}],
+    "/buildin.js": ["function g(){}\n//# sourceMappingURL=buildin.js.map", {}],
+    "/buildin.js.map": [sourcemapFor("webpack://myapp/(webpack)/buildin/global.js", "glob"), {}],
+    "/appcode.js": ["function r(){}\n//# sourceMappingURL=appcode.js.map", {}],
+    "/appcode.js.map": [sourcemapFor("webpack://myapp/./src/index.js", "AppRoot"), {}],
+    "/dep.js": ["function d(){}\n//# sourceMappingURL=dep.js.map", {}],
+    "/dep.js.map": [sourcemapFor("webpack://myapp/./node_modules/react-dom/index.js", "reactRender"), {}],
+  };
+  const server = http.createServer((request, response) => {
+    const route = routes[request.url];
+    if (!route) return void (response.writeHead(404), response.end("not found"));
+    const [body, headers] = route;
+    response.writeHead(200, { "content-type": "application/javascript", ...headers });
+    response.end(body);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const remoteFrame = (functionName, file) => ({ functionName, scriptId: "1", url: `${origin}/${file}`, lineNumber: 0, columnNumber: 0 });
+  try {
+    const model = await buildCpuModel(
+      {
+        startTime: 0,
+        endTime: 5000,
+        nodes: [
+          { id: 1, callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 }, children: [2, 3, 4, 5, 6] },
+          { id: 2, callFrame: remoteFrame("o", "bootstrap.js"), children: [] },
+          { id: 3, callFrame: remoteFrame("j", "rt.js"), children: [] },
+          { id: 4, callFrame: remoteFrame("g", "buildin.js"), children: [] },
+          { id: 5, callFrame: remoteFrame("r", "appcode.js"), children: [] },
+          { id: 6, callFrame: remoteFrame("d", "dep.js"), children: [] },
+        ],
+        samples: [2, 3, 4, 5, 6],
+        timeDeltas: [1000, 1000, 1000, 1000, 1000],
+      },
+      {
+        profilePath: "webpack.cpuprofile",
+        meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
+        sampleIntervalUs: 50,
+        serverUrl: "http://127.0.0.1:1", // not the serving origin: force the remote path
+        root: os.tmpdir(),
+        maps: new SourceMapResolver(),
+      },
+    );
+    const pkgOf = (fnName) => model.functions.find((entry) => entry.fn === fnName)?.package;
+    assert.equal(pkgOf("o"), "(webpack)", "webpack/bootstrap is webpack runtime, not app");
+    assert.equal(pkgOf("jsonp"), "(webpack)", "webpack/runtime/* is webpack runtime, not app");
+    assert.equal(pkgOf("glob"), "(webpack)", "(webpack)/buildin/* is webpack runtime, not app");
+    assert.equal(pkgOf("AppRoot"), "app", "a real mapped src/* module stays the user's app");
+    assert.equal(pkgOf("reactRender"), "react-dom", "a real mapped dependency resolves to its package");
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test("one shared resolver fetches each script once across passes", async () => {
   const server = await startBundleServer();
   try {

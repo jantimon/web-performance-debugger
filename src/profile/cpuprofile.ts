@@ -103,6 +103,32 @@ function classifyPseudoUrl(url: string | undefined): { package: string; label: s
   ) {
     return { package: "(native)", label: shortPseudoLabel(url) };
   }
+  const webpack = classifyWebpackRuntime(url);
+  if (webpack) return webpack;
+  return null;
+}
+
+/**
+ * Webpack's own module-loader RUNTIME (the `webpack/bootstrap` entry, the `webpack/runtime/*`
+ * helpers, and the older `(webpack)/buildin/*` polyfills) has no real source on disk: a sourcemap's
+ * `sources` array names it with those synthetic paths, optionally behind a `webpack://host/` or
+ * `webpack-internal://` scheme. Left alone it has `frame.source` set but is in no node_modules, so
+ * resolveCallFrame calls it `app` and inflates the user's own cost by tens of ms (~20% on a real
+ * production boot). Bucket it as `(webpack)`, a not-a-real-package bucket like the others.
+ *
+ * A GENUINE mapped module does NOT match: `webpack://app/./src/index.js` cleans to `src/index.js`,
+ * `webpack://app/./node_modules/react/index.js` to `node_modules/react/index.js` -- neither begins
+ * with the runtime markers, so both resolve to their real owner. Accepts both the raw scheme URL and
+ * the already-cleaned source (cleanRemoteSource strips the scheme+host), so it matches at either call
+ * site.
+ */
+function classifyWebpackRuntime(url: string): { package: string; label: string } | null {
+  const withoutScheme = url.replace(/^webpack(-internal)?:\/\/[^/]*\//i, "").replace(/^\.?\//, "");
+  if (
+    /^webpack\/(bootstrap|runtime)(\/|\s|$)/.test(withoutScheme) ||
+    withoutScheme.startsWith("(webpack)/")
+  )
+    return { package: "(webpack)", label: shortPseudoLabel(withoutScheme) };
   return null;
 }
 
@@ -284,11 +310,16 @@ async function resolveCallFrame(
   servedOrigin: string,
 ): Promise<ResolvedFrame> {
   const minifiedName = callFrame.functionName || "(anonymous)";
+  // CDP callFrame line/column are 0-based; +1 makes them 1-based (the trace-stack convention). V8
+  // reports a positionless frame (a native/builtin call that still carries a script url) as
+  // lineNumber/columnNumber -1, which would shift to 0 -- an invalid line that makes the sourcemap
+  // lookup throw. Treat a negative source position as "no position" (undefined) instead.
+  const hasPosition = callFrame.url != null && callFrame.url !== "" && callFrame.lineNumber >= 0;
   const frame: StackFrame = {
     functionName: callFrame.functionName || undefined,
     url: callFrame.url || undefined,
-    line: callFrame.url ? callFrame.lineNumber + 1 : undefined,
-    column: callFrame.url ? callFrame.columnNumber + 1 : undefined,
+    line: hasPosition ? callFrame.lineNumber + 1 : undefined,
+    column: hasPosition ? callFrame.columnNumber + 1 : undefined,
   };
   rewriteToLocal(frame);
   await maps.resolveFrame(frame);

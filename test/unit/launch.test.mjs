@@ -4,8 +4,10 @@ import {
   chromeArgs,
   isSandboxLaunchError,
   sandboxLaunchError,
+  isTransientNavError,
+  retryTransientNav,
 } from "../../dist/browser/launch.js";
-import { browserSandboxDisabled } from "../../dist/record/notes.js";
+import { browserSandboxDisabled, navRetried } from "../../dist/record/notes.js";
 
 // S11: Chrome must launch sandboxed by DEFAULT. Neither sandbox-disabling flag may appear unless
 // --disable-browser-sandbox was explicitly requested.
@@ -47,4 +49,69 @@ test("browserSandboxDisabled note warns about reduced containment", () => {
   const note = browserSandboxDisabled();
   assert.match(note, /WARNING/);
   assert.match(note, /--no-sandbox/);
+});
+
+// F3: a cross-process --url boot can fail the top-level navigation transiently. Those errors earn a
+// bounded retry; a permanent failure (bad host, refused connection) does not.
+test("isTransientNavError: retries the swap-race shapes, not a permanent failure", () => {
+  for (const message of [
+    "net::ERR_INVALID_HANDLE at https://www.example.com",
+    "net::ERR_ABORTED at https://www.example.com",
+    "Navigation failed because browser has disconnected: net::ERR_NETWORK_CHANGED",
+    "Navigating frame was detached",
+    "Protocol error (Page.navigate): Target closed",
+  ]) {
+    assert.ok(isTransientNavError(new Error(message)), `should retry: ${message}`);
+  }
+  for (const message of [
+    "net::ERR_NAME_NOT_RESOLVED at https://nope.invalid",
+    "net::ERR_CONNECTION_REFUSED at http://127.0.0.1:1",
+    "net::ERR_CERT_AUTHORITY_INVALID",
+  ]) {
+    assert.ok(!isTransientNavError(new Error(message)), `must NOT retry: ${message}`);
+  }
+});
+
+test("retryTransientNav: retries a transient failure then reports the retry count", async () => {
+  let calls = 0;
+  const { value, retries } = await retryTransientNav(async () => {
+    calls++;
+    if (calls < 3) throw new Error("net::ERR_INVALID_HANDLE at https://x");
+    return "ok";
+  }, 2);
+  assert.equal(value, "ok");
+  assert.equal(retries, 2, "two retries were needed (third attempt succeeded)");
+  assert.equal(calls, 3);
+});
+
+test("retryTransientNav: exhausting the limit re-throws the transient error (no infinite loop)", async () => {
+  let calls = 0;
+  await assert.rejects(
+    retryTransientNav(async () => {
+      calls++;
+      throw new Error("net::ERR_INVALID_HANDLE at https://x");
+    }, 2),
+    /ERR_INVALID_HANDLE/,
+  );
+  assert.equal(calls, 3, "one initial attempt + two retries, then it gives up");
+});
+
+test("retryTransientNav: a permanent error is re-thrown immediately, not retried", async () => {
+  let calls = 0;
+  await assert.rejects(
+    retryTransientNav(async () => {
+      calls++;
+      throw new Error("net::ERR_NAME_NOT_RESOLVED at https://nope.invalid");
+    }, 2),
+    /ERR_NAME_NOT_RESOLVED/,
+  );
+  assert.equal(calls, 1, "a permanent failure surfaces on the first attempt");
+});
+
+test("navRetried note names the transient error and that a fresh browser recovered it", () => {
+  const note = navRetried(1);
+  assert.match(note, /net::ERR_INVALID_HANDLE/);
+  assert.match(note, /fresh browser/);
+  assert.match(note, /1 retry/);
+  assert.match(navRetried(2), /2 retries/);
 });

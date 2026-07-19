@@ -52,7 +52,12 @@ function runCli(args) {
 // never answer the child's request. The child writes its assigned port to a file once listening; we
 // poll it with a synchronous Atomics.wait sleep (no event loop needed). No external network: CI serves
 // itself.
-function startOnrampServer(html) {
+// `host` binds AND is the returned hostname. Default "127.0.0.1" (an IP is its own isolation site).
+// Pass "localhost" to make the navigation from wpd's 127.0.0.1 blank host cross-SITE, which swaps the
+// renderer process (127.0.0.1 and localhost are different sites; a mere port change is not): that is
+// the cross-process boot the F1 re-anchor exists for. Binding and connecting on the same name avoids
+// an IPv4/IPv6 localhost-resolution mismatch.
+function startOnrampServer(html, host = "127.0.0.1") {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-srv-"));
   const portFile = path.join(dir, "port");
   const script = `import http from "node:http";
@@ -62,7 +67,7 @@ const server = http.createServer((_req, res) => {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.end(body);
 });
-server.listen(0, "127.0.0.1", () => writeFileSync(${JSON.stringify(portFile)}, String(server.address().port)));
+server.listen(0, ${JSON.stringify(host)}, () => writeFileSync(${JSON.stringify(portFile)}, String(server.address().port)));
 `;
   const scriptFile = path.join(dir, "server.mjs");
   writeFileSync(scriptFile, script);
@@ -77,8 +82,20 @@ server.listen(0, "127.0.0.1", () => writeFileSync(${JSON.stringify(portFile)}, S
     child.kill();
     throw new Error("on-ramp test server did not start within 5s");
   }
-  return { url: `http://127.0.0.1:${port}/`, close: () => child.kill() };
+  return { url: `http://${host}:${port}/`, close: () => child.kill() };
 }
+
+// A boot that does real, countable rendering work: 200 absolutely-positioned boxes appended with a
+// forced synchronous layout read (offsetWidth while dirty) and a per-box background, so the load
+// window carries layout + style + paint the counts and bar must report.
+const BOOT_WORK_HTML =
+  "<!doctype html><meta charset=utf-8><title>boot</title>" +
+  "<style>.box{position:absolute;width:40px;height:40px}</style><div id=root></div>" +
+  "<script>const root=document.getElementById('root');" +
+  "for(let index=0;index<200;index++){const box=document.createElement('div');box.className='box';" +
+  "box.style.left=(index*7%800)+'px';box.style.top=(index*11%500)+'px';" +
+  "box.style.background='hsl('+(index*9%360)+',70%,50%)';root.appendChild(box);" +
+  "box.style.width=(box.offsetWidth>0?41:40)+'px';}<\/script>";
 
 // Forced-layout blame is a --deep (rung 3) product: it needs the `.stack` trace category, which
 // only --deep captures (the default rung has no trace; --breakdown drops .stack).
@@ -576,6 +593,60 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
     assert.equal(bdLoad.wallClock, "trace", "the navigating load step is priced on the trace clock");
     assert.ok(bd.summary.paintCount >= 1, "the boot painted at least once, counted on --breakdown");
     assert.equal(bd.summary.forcedLayoutCount, null, "forced is not-measured on --breakdown (no .stack)");
+
+    // F4: --iterations on the default (no-trace) rung yields no wall and no median, because the
+    // navigating load step resets the page clock and there is no trace clock to span it. The note must
+    // say so and steer to --breakdown, NOT the warm/cold note that would promise a median.
+    const iterOut = path.join(dir, "onramp-iter-default");
+    runCli(["record", "--url", server.url, "--iterations", "2", "--out", iterOut]);
+    const iter = JSON.parse(readFileSync(iterOut, "utf8"));
+    const iterLoad = iter.spans.find((span) => span.kind === "step" && span.label === "load");
+    assert.equal(iterLoad.stats, null, "no median on the no-trace rung: the navigating step has no wall");
+    assert.ok(
+      iter.meta.notes.some((note) => /no per-iteration wall or median/.test(note)),
+      "the no-median note fires and points to --breakdown",
+    );
+    assert.ok(
+      !iter.meta.notes.some((note) => /boots cold, but/.test(note)),
+      "the warm/cold note (which promises a median) does NOT fire where there is no wall",
+    );
+  } finally {
+    server.close();
+  }
+});
+
+// F1/F2 regression: a --url boot navigates the blank host page (wpd serves it on 127.0.0.1) to the
+// target on a DIFFERENT SITE ("localhost"), which swaps the renderer process. wpd:run:start is marked
+// on the pre-navigation renderer; all the boot's layout/style/paint runs on the process the page
+// navigated INTO. The counts and the reconciling bar must FOLLOW the page to that process, not report
+// the pre-nav blank thread as ~100% idle with zero counts. The outcome (non-zero counts, a bar that is
+// not almost-all idle) holds whether or not a given CI actually swaps, so the test is not flaky: it
+// fails only on the bug it guards (counts wrongly 0).
+e2e("record --url boot: counts/bar follow a cross-process navigation, not the blank host thread (F1/F2)", { timeout: TIMEOUT_MS }, () => {
+  const server = startOnrampServer(BOOT_WORK_HTML, "localhost");
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  try {
+    // --breakdown: the run bar tiles the post-navigation renderer, so layout/style are real and the
+    // bar is not the ~100% idle F1 produced. Both the run span and the load step carry the counts.
+    const bdOut = path.join(dir, "boot-breakdown");
+    runCli(["record", "--url", server.url, "--breakdown", "--out", bdOut]);
+    const bd = JSON.parse(readFileSync(bdOut, "utf8"));
+    assert.ok(bd.summary.layoutCount > 0, `layoutCount must be non-zero on a laying-out boot (got ${bd.summary.layoutCount})`);
+    assert.ok(bd.summary.styleCount > 0, `styleCount must be non-zero on a laying-out boot (got ${bd.summary.styleCount})`);
+    const runSpan = bd.spans.find((span) => span.kind === "run");
+    const bdLoad = bd.spans.find((span) => span.kind === "step" && span.label === "load");
+    assert.ok(runSpan?.breakdown, "the run span carries a reconciling bar");
+    const idleFraction = runSpan.breakdown.slices.idle.ms / runSpan.breakdown.wallMs;
+    assert.ok(idleFraction < 0.95, `the run bar is not almost-all idle (idle was ${(idleFraction * 100).toFixed(1)}%)`);
+    assert.ok(bdLoad.counts.layoutCount > 0, "the load step's counts also follow the navigated process");
+
+    // --deep: exact counts on the same cross-process boot must be > 0 (the F2 consequence: a real
+    // laying-out page must not pass a --max-layouts gate at 0).
+    const deepOut = path.join(dir, "boot-deep");
+    runCli(["record", "--url", server.url, "--deep", "--out", deepOut]);
+    const deep = JSON.parse(readFileSync(deepOut, "utf8"));
+    assert.ok(deep.summary.layoutCount > 0, `--deep layoutCount must be non-zero (got ${deep.summary.layoutCount})`);
+    assert.ok(deep.summary.forcedLayoutCount > 0, "the forced-layout reads at boot are counted on --deep");
   } finally {
     server.close();
   }
