@@ -5,8 +5,8 @@
  * one file, and an e2e test matching a note substring has one place the text can change.
  *
  * The two algorithmic notes -- count scope (capture.ts `countScopeNote`) and sourcemap resolution
- * (record.ts `sourcemapNote`) -- are not here: their text is assembled from the pass plan and the
- * diagnostics, so wording and logic are inseparable and already live in their own generators.
+ * (record.ts `sourcemapNote`) -- are not here: their text is assembled from the rung's capabilities
+ * and the diagnostics, so wording and logic are inseparable and already live in their own generators.
  */
 
 // --- --breakdown lane ---
@@ -16,11 +16,11 @@ export function breakdownNoProfile(): string {
 }
 
 export function breakdownShape(): string {
-  return "Breakdown mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (Σ slices + idle = wall). Timing rides this pass, so per-iteration wall is ~2-5% above a pristine timing pass.";
+  return "Breakdown mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (Σ slices + idle = wall). The light trace rides the same pass as the timing, so per-iteration wall is ~2-5% above a sampler-off wall (--precise-wall).";
 }
 
 export function breakdownForcedNotMeasured(): string {
-  return "NOT measured in breakdown mode: forced-layout count and forced-layout blame (they need the `.stack` trace category, which this mode drops); reported as 'not measured', never 0. Run the default mode (no --breakdown) for forced-layout blame.";
+  return "NOT measured in breakdown mode: forced-layout count and forced-layout blame (they need the `.stack` trace category, which this mode drops); reported as 'not measured', never 0. Run --deep for forced-layout blame and the dirtied-by/thrash report.";
 }
 
 export function breakdownInvalidationNotMeasured(): string {

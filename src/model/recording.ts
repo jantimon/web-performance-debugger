@@ -489,6 +489,13 @@ export interface SpanCounts {
 export interface Span {
   label: string;
   kind: SpanKind;
+  /**
+   * How this span's numbers combine the timed iterations (see SpanAggregation). A `"first"` STEP span
+   * is aggregated PER FIELD, not uniformly: `wallMs` and `inpMs`/`interaction` are the MEDIAN of the
+   * step's `--iterations` samples (with `perIteration`/`stats` the raw spread), while `counts` and
+   * `breakdown` come from the FIRST timed iteration (counts never scale with --iterations). So a step
+   * reports a median latency over iteration-0 counts, disclosed here rather than implied.
+   */
   aggregation: SpanAggregation;
   /** a step's position within its iteration; absent on run/measure spans */
   index?: number;

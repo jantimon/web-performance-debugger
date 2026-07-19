@@ -26,12 +26,13 @@ regenerate a full one, launch Firefox via Puppeteer with the `MOZ_PROFILER_*` en
   `"CDP support is required for this feature. The current browser does not support CDP."`
   So: no CDP counters, no DevTools trace, no CPU/network throttling, no invalidationTracking.
   Every CDP touchpoint is capability-gated behind `capsFor(browser).cdpCounts/trace/throttle`.
-- **"We reach it through CDP" is not the same claim as "Gecko cannot do it", and the CLI's reject
-  list conflates the two.** Two [measured] counter-examples worth knowing before adding a third:
-  - `--network offline` **works** over BiDi (`browsingContext.setOfflineMode`, via
-    `page.emulateNetworkConditions`). It is rejected only because `throttle.ts` takes a raw
-    `CDPSession`. The throughput presets (slow-3g and friends) genuinely do throw
-    `UnsupportedOperation`.
+- **"We reach it through CDP" is not the same claim as "Gecko cannot do it", and a reject
+  list conflates the two.** Two [measured] counter-examples worth knowing before adding a CDP-gated
+  feature:
+  - **Offline mode works over BiDi** (`browsingContext.setOfflineMode`, via
+    `page.emulateNetworkConditions`); only the throughput presets (slow-3g and friends) throw
+    `UnsupportedOperation`. So a network-emulation feature would not need CDP for the offline case even
+    though a `CDPSession`-shaped `throttle.ts` reads as if it does.
   - `--protocol-timeout` is **not a CDP knob at all**, despite puppeteer's own docstring
     ("individual protocol (CDP) calls"). Puppeteer threads it into the BiDi connection
     (`BrowserLauncher` -> `BrowserConnector` -> `Connection`), where it bounds every `send()`,
@@ -166,9 +167,10 @@ modes (both already emit those marks).
   [engine-mapping.md](./engine-mapping.md#forced-layout-blame-differs-by-engine) before touching or
   trusting this path.
 - This lane runs inside the gecko pass (one browser launch yields both the CPU samples and the
-  markers), which is **not opt-in**: without it a Firefox recording would report every rendering
-  count as 0 — indistinguishable from a clean run — so the CLI refuses
-  `--target firefox --no-cpu-profile`. Both `query cpu` (self-time on the forcing frame) and
+  markers), which is **not optional**: without it a Firefox recording would report every rendering
+  count as 0 — indistinguishable from a clean run — so there is no flag to turn the gecko pass off on
+  this lane (the CLI keeps the profiler on for every firefox rung). Both `query cpu` (self-time on the
+  forcing frame) and
   `query blame --forced` (the read-site samples) now name the read on this lane; see
   [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
 

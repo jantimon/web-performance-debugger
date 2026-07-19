@@ -1,31 +1,31 @@
-# CPU profiling: passes, contamination, and what self-time means (internal)
+# CPU profiling: rungs, contamination, and what self-time means (internal)
 
 > **Developer notes, not user documentation.** Read the [README](../../README.md) to use wpd. This
-> file records why the pass plan is shaped the way it is, with the measurements behind it, so the
+> file records why the rung ladder is shaped the way it is, with the measurements behind it, so the
 > next person does not "optimise" the structure into a wrong number.
 
 Related: [engine-mapping.md](./engine-mapping.md) (Gecko <-> Blink names and semantics),
 [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas).
 
-**Provenance.** Pass-structure numbers are 5 interleaved runs per arm, after a discarded warmup, of
+**Provenance.** Rung-structure numbers are 5 interleaved runs per arm, after a discarded warmup, of
 `examples/forces-layout.mjs --bench` on chrome 150 / firefox 152; interval numbers are 3 runs per arm
 of `examples/cpu-busywork.mjs --target node`. First-run numbers are cold-start outliers by a wide
 margin (a single un-warmed run reads 18ms against a 7ms median, enough to "prove" the wrong
-conclusion) — **always warm up and interleave** before believing a pass-structure A/B.
+conclusion) — **always warm up and interleave** before believing a rung A/B.
 
 ## What self-time actually includes
 
 **[measured]** The headline fact, and it is not what "CPU profile" suggests.
 
 On the browser lanes, `selfMs` is **JS plus the synchronous engine work that JS triggered** — not
-pure JS. The CPU pass (tracing off) on the forced-layout probe:
+pure JS. The default rung (sampler, tracing off) on the forced-layout probe:
 
 ```
 8.41 ms   fn=run    examples/forces-layout.mjs:24
 0.20 ms   fn=elementFromPoint   (native)
 ```
 
-The probe's actual JavaScript is a couple dozen property reads — microseconds. But the trace pass
+The probe's actual JavaScript is a couple dozen property reads — microseconds. But a `.stack` trace
 independently measures **7.17ms of forced layout**, and `run()`'s wall is 8.3ms. So ~85% of that
 "JS self-time" **is the reflow**, attributed to the JS frame that forced it. The V8 sampler walks
 the JS stack; time spent in Blink C++ under a DOM accessor lands on the calling JS frame.
@@ -44,59 +44,75 @@ But it constrains what may be claimed:
 - **browser lanes** (`--bench`, driver): self-time is JS + synchronous engine work. Do not describe
   it as "pure JS cost".
 
-## The pass plan
+## The rung ladder
+
+Every invocation is exactly ONE capture pass: one browser launch, one run of the flow, one recording.
+A rung picks WHAT that pass captures, never how many passes run. `captureFor()` in
+`src/record/capture.ts` is the authority.
 
 ```
-chrome:              [timing+sampler] [trace]
-chrome --breakdown:  [light-trace+sampler]      (one fused pass)
-firefox:             [timing]          [gecko]
-node:                [node-cpu]
+chrome default:        [sampler]                     four-slice CPU bar; no rendering counts
+chrome --breakdown:    [light-trace + sampler]       seven-slice reconciling bar + exact counts
+chrome --deep:         [full trace, sampler OFF]     forced-layout blame + exact counts, no bar
+chrome --precise-wall: [no trace, no sampler]        pristine benchmark wall, nothing else
+firefox:               [gecko]                        one pass; every rung is a reporting tier over it
+node:                  [node-cpu]                     in-process V8, four-slice bar (engine slice "native")
 ```
 
-- **timing** — `categories: null`, tracing off. Clean wall/per-iteration times + CDP counters, and
-  **the CPU sampler rides here** (see below). `--no-cpu-profile` takes the sampler back off.
-- **trace** — full DevTools timeline incl. `invalidationTracking`. Counts, events, attribution.
-  Durations here are distorted by instrumentation **by design**; timing comes from the timing pass.
-  **The sampler must never run in this pass** (see below).
-- **gecko** — firefox only; one Gecko-profiler run yields CPU samples *and* layout/style markers.
-- **breakdown** — chrome `--breakdown` only; ONE fused pass: a light trace (the shipped categories
-  MINUS `disabled-by-default-devtools.timeline.stack` and MINUS `invalidationTracking`, plus gc
-  events) with the sampler riding it. Trace events and samples share a clock, so the seven-slice bar
-  reconciles. **[measured]** the light trace leaves self-time clean (**+0-1%** vs the sampler-only
-  baseline, no invented functions) and costs **~2-5%** wall (probes A-C); dropping `.stack` is what
-  removes the +21% contamination below. It carries wall AND counts (like `--no-isolate`), so counts
-  total across `--iterations`; forced counts and blame need `.stack`, so this mode reports them
-  `null`, never 0.
+- **default**: the CPU sampler alone, no DevTools trace, for the cleanest wall (~1%). Reports the
+  four-slice CPU bar (`js · browser · gc · idle`) and no rendering counts, so
+  layout/style/paint/forced are `Measured` null, never 0.
+- **--breakdown**: ONE fused pass: a light trace (the shipped categories MINUS
+  `disabled-by-default-devtools.timeline.stack` and MINUS `invalidationTracking`, plus gc events)
+  with the sampler riding it. Trace events and samples share a clock, so the seven-slice
+  `js · style · layout · paint · gc · other · idle` bar reconciles, and it carries exact
+  layout/style/paint counts. **[measured]** the light trace leaves self-time clean (**+0-1%** vs the
+  sampler-only baseline, no invented functions) and costs **~2-5%** wall (probes A-C); dropping
+  `.stack` is what removes the +21% contamination below. Being one pass it runs every iteration, so
+  counts total across `--iterations`; forced counts and blame need `.stack`, so this rung reports
+  them `null`, never 0.
+- **--deep**: ONE full trace (`.stack` + `invalidationTracking`) with the sampler OFF: forced-layout
+  blame (read-site), dirtied-by writes, the thrash detector, invalidation rollup, exact counts and
+  long tasks. No CPU model and no reconciling bar. Slice durations are suppressed (`.stack` inflates
+  them, style up to +38% below); the span's wall (window width) is still reported.
+- **--precise-wall**: the default rung minus the sampler: a pristine benchmark wall, no sampler
+  perturbation, no counts, no CPU model.
+- **gecko**: firefox only; one Gecko-profiler run yields CPU samples *and* layout/style markers. It
+  is the firefox lane at every rung (the profiler is a whole-browser-lifetime startup feature), so
+  the rungs are reporting tiers over this one capture. `--deep` adds a dirtied-by write report from
+  Gecko's native cause stacks; `meta.passes` is `gecko` or `gecko-deep`.
+- **node**: `--target node`; the in-process V8 sampler (`runtime/node.ts`), CPU-only, four-slice bar
+  with the engine slice labeled `native`.
 
-CPU profiling is **on by default on every target** and costs no extra pass. Opting out is only
-meaningful on chrome: node has nothing left to measure without it, and firefox without it reports
-every rendering count as 0, so the CLI refuses `--no-cpu-profile` on both.
+CPU profiling is **on by default** wherever a rung samples (chrome default and `--breakdown`, firefox,
+node) and costs no extra pass. The sampler-free rungs are chrome's `--precise-wall` and `--deep`;
+node and firefox have none, because node would measure nothing without the sampler and firefox
+without the gecko pass reports every rendering count as 0.
 
-`--no-isolate` collapses to the single trace pass, which the sampler cannot ride, so that
-combination yields no CPU model and says so in `meta.notes`.
+### Why the sampler never rides a `.stack` trace
 
-### Why the CPU pass is separate: tracing contaminates sampling
+**[measured]** Sampling is cheap; that is not why the sampler needs a trace it can avoid.
+**The `.stack` category contaminating the sampler is.** The load-bearing property of any pass the
+sampler rides is that `.stack` is off it: the default rung has no trace at all, and the `--breakdown`
+light trace drops `.stack`. `--deep`, which needs `.stack`, runs the sampler **OFF** for exactly this
+reason.
 
-**[measured]** Sampling is cheap; it is not the reason the sampler needs an untraced pass.
-**Tracing contaminating the sampler is.** The load-bearing property of the pass the sampler rides is
-that tracing is off in it.
+Running the sampler on a `.stack` trace ("trace pass" below), against a no-`.stack` baseline:
 
-Folding the sampler into the trace pass:
-
-| sampler runs in | passes | CPU self ms | CPU fns | perIteration ms |
+| sampler runs on | passes | CPU self ms | CPU fns | perIteration ms |
 | --- | --- | --- | --- | --- |
 | a pass of its own | 3 | **8.67** (8.2–11.4) | 7 | **8.3** (8.0–8.7) |
 | **trace pass** (never do this) | 2 | **10.4** (10.0–11.2) | **10** | 8.3 |
-| timing pass (**shipped**) | 2 | 8.99 (8.3–13.3) | 7 | 9.1 (8.3–13.4) |
+| no-`.stack` pass (**shipped**) | 2 | 8.99 (8.3–13.3) | 7 | 9.1 (8.3–13.4) |
 
-Trace-folding inflates CPU self-time **+21% with non-overlapping ranges** and invents functions.
+A `.stack` trace inflates CPU self-time **+21% with non-overlapping ranges** and invents functions.
 The mechanism is our own trace config: `disabled-by-default-devtools.timeline.stack` makes Blink
 capture a JS stack on every Layout/UpdateLayoutTree — *while JS is on the stack* — so the sampler
 attributes trace-emission cost to the JS function that forced the layout. It is **not uniform**
 (top fn +4%, total +21%), so `--by package` proportions shift too.
 
 The insidious part: this lands on the **same frame** as the real forced-layout time described
-above. From inside the folded pass the two are indistinguishable. One is production cost; the other
+above. From inside a `.stack` pass the two are indistinguishable. One is production cost; the other
 is measurement apparatus that exists only because we asked for it. Reporting 10.4ms for a line that
 costs 8.4ms in production is precisely the fake number this project refuses elsewhere.
 
@@ -106,21 +122,25 @@ with `.stack` on vs **~51 ms** without, for identical work, and the trace agrees
 sides (0% apart each). So the category does not merely change the sampler's *view* of recalc time; it
 slows the page itself, and CDP's own counter sees the inflation too. Two measurements that share no
 apparatus — sampler self-time +21% and real recalc duration ~4.6x — land on the same rule: **never
-run the sampler on the trace pass, and never read a style duration off a `.stack` trace.**
+run the sampler on a `.stack` trace, and never read a style duration off a `.stack` trace.**
 
 Counts are never at risk: `layoutCount`/`styleCount`/`forcedLayoutCount` are byte-identical
 (22/23/43) across all 20 runs of the A/B.
 
-### CDP durations share the trace clock, so they are not a more trustworthy source
+### `layoutMs`/`styleMs`/`paintMs` are trace durations, and CDP would be no finer
 
-**[measured]** CDP `LayoutDuration`/`RecalcStyleDuration` measure the **same `base::TimeTicks` code
-region** the `Layout`/`UpdateLayoutTree` trace events do — the same clock, and the same `.stack`
-inflation above. On the light (no-`.stack`) set, the trace-summed `Σ dur` tracks the CDP deltas
-closely: layout to **-0.3..-1.0%** (systematic, trace slightly under, non-compounding with event
-count) and style to **~0.01 ms** absolute (the relative % is large only where style work is itself
-sub-0.1 ms). There is **no accuracy tier between the two sources**: both are wall-tier
+`layoutMs`/`styleMs`/`paintMs` are summed from the `Layout`/`UpdateLayoutTree`/`Paint` trace events on
+the light (`--breakdown`) trace, windowed to the main thread. They are **wall-tier**, not the exact
+count tier: `base::TimeTicks` ms, directional at ~1%.
+
+**[measured]** A CDP `LayoutDuration`/`RecalcStyleDuration` counter would be no more trustworthy: it
+measures the **same `base::TimeTicks` code region** the trace events do — the same clock, and the same
+`.stack` inflation above. On the light (no-`.stack`) set, the trace-summed `Σ dur` tracks the CDP
+deltas closely: layout to **-0.3..-1.0%** (systematic, trace slightly under, non-compounding with
+event count) and style to **~0.01 ms** absolute (the relative % is large only where style work is
+itself sub-0.1 ms). There is **no accuracy tier between the two sources**: both are wall-tier
 `base::TimeTicks` ms (directional, ~1%) of the same region — not the exact count tier, and not the
-profiler's own clock. Read `layoutMs`/`styleMs` off the light trace; a `.stack` trace inflates the
+profiler's own clock. A `.stack` trace inflates the
 style duration and must never feed a duration compared against a no-`.stack` one. The **+38%** here
 and the **~4.6x** above are different workloads, not a contradiction: this is a layout-dominated
 comparison set where style is sub-0.1 ms absolute, so a few-microsecond `.stack` delta reads as a
@@ -129,28 +149,24 @@ Same direction — `.stack` slows recalc — with magnitude that scales with how
 
 ### Do not "correct" the contamination arithmetically
 
-It is tempting: the trace pass knows exactly which forced events fired on which source line, so a
+It is tempting: a `.stack` trace knows exactly which forced events fired on which source line, so a
 per-line subtraction (~1.7ms / 43 events ~= 40us each) looks derivable. Don't. That constant is
 **fitted, not measured** — it varies with stack depth — and it would inject a modeled correction
-into the one signal the trust table calls "real: trustworthy in aggregate". Folding into the
-**timing** pass removes the error instead of modelling it. Prefer the design where the number is
+into the one signal the trust table calls "real: trustworthy in aggregate". Running the sampler off
+a `.stack` trace removes the error instead of modelling it. Prefer the design where the number is
 measured.
 
-### Why it rides the timing pass
+### The sampler costs wall, and `--precise-wall` reclaims it
 
-**[measured]** A cpu spec and the timing spec would be *the same pass* (`categories: null`),
-differing only by the sampler. A pass of its own therefore buys isolation from the **timing** pass,
-which is not what matters — isolation from **tracing** is, and the timing pass has that for free.
-
-Riding there: 2 passes, **record wall 2.48s vs 3.68s (-33%)** against a separate cpu pass, CPU model
-intact (+4%, overlapping ranges, same function count). The cost lands on wall instead:
-**perIteration +10% median and ~3x the variance** at a 50us interval — most of which the 200us
-default below buys back.
+**[measured]** The sampler adds no pass (it is on or off the one capture), but it does cost wall on
+the rung it rides: **perIteration +10% median and ~3x the variance** at a 50us interval, most of
+which the 200us default below buys back. The CPU model itself is intact (+4%, overlapping ranges,
+same function count).
 
 That trade respects the existing trust hierarchy — wall is declared *directional*, CPU self-time is
-declared *real* — and systematic inflation cancels in `diff`, where both sides carry it. The timing
-pass is therefore not pristine, which is what `--no-cpu-profile` is for: clean-wall and
-`--iterations` benchmarking work.
+declared *real* — and systematic inflation cancels in `diff`, where both sides carry it. So the
+sampled rungs (default, `--breakdown`) are not pristine on wall, which is what `--precise-wall` is
+for: clean-wall and `--iterations` benchmarking work.
 
 ### The sampler interval: why 200us
 
@@ -191,7 +207,7 @@ The gecko pass collects markers *and* samples together — structurally the thin
 above, since `profiler_capture_backtrace()` fires on every invalidation. It cannot be separated:
 the Gecko profiler is started via `MOZ_PROFILER_STARTUP*` env vars for the whole browser lifetime,
 and the `js` feature that yields JS stacks for cause chains is the same feature that yields
-samples. So Firefox's CPU model may carry contamination of the same shape as Chrome's trace-fold.
+samples. So Firefox's CPU model may carry contamination of the same shape as Chrome's `.stack`.
 
 **This has not been measured.** It should be, before Firefox CPU numbers are described as clean.
 The one data point that argues against a large effect: firefox `run()` = 8.79ms vs chrome's

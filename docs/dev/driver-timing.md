@@ -10,28 +10,38 @@ Every wall/settle number below is measured under **new-headless** (`--headless-m
 Chrome, ~60 Hz cadence). On the default shell mode (chrome-headless-shell, ~120 Hz) the settle floor
 is ~half of these figures; the drive-independent counts and self-time are unchanged.
 
-## `wallMs` is a bound on the step, not the cost of the page
+## A driver step's `wallMs` is the page's own clock, not a node-side bound
 
-A step's wall is measured **node-side** (`node:perf_hooks`), around `await action()` **plus**
-`waitDone(until)`:
+A step's stored wall (`Span.wallMs`) is measured on **the page's own clock**, between the step's two
+`wpd:step:N` marks (placed in-page around `await action()` + `waitDone(until)`):
 
-```js
-const t0 = performance.now();   // node
-await action();                 // e.g. () => page.click('#x')
-await waitDone(until);          // settle, or the until-condition
-const wallMs = performance.now() - t0;
-```
+- on `--breakdown` / `--deep`, where a trace is captured, it is the **trace-clock window** between
+  those marks (`t1 - t0`, in `applyTraceWall`), so it shares the clock the breakdown bar tiles and
+  `Σ slices + idle = wall` holds;
+- on the default rung, where there is no trace, it is the page's **`performance.now()` delta** between
+  the marks.
 
-So it carries the driver's own cost. The same 40-row forced-layout work, driven three ways:
+`Span.wallClock` records which clock priced it: `"trace"` or `"page"`. A step that navigated on a
+no-trace rung reports `wallMs` null: the two marks sit on documents with different `timeOrigin`s, so
+their `performance.now()` delta is not one interval; on a trace rung the trace-clock window spans the
+navigation and prices it.
 
-| how it was driven | action | settle | wall |
+### Why not the node-side bound
+
+The obvious measurement is node-side (`node:perf_hooks`) around `await action()` **plus**
+`waitDone(until)`. It is **not** the step wall, because it carries the tool's own input dispatch and
+settle in **no renderer timeline**, so it cannot reconcile against the breakdown bar. The same 40-row
+forced-layout work, driven three ways, is what that node-side bound *would* read:
+
+| how it was driven | action | settle | node-side wall |
 | --- | --- | --- | --- |
 | nothing at all (empty action) | 0.00 | ~31 | **31.6** |
 | `page.evaluate(() => el.click())` | ~2 | ~29 | **31.9** |
 | `page.click('#inc')` | **~20** | ~20 | **40.5** |
 | `--bench` (timed in-page) | | | **1.1** |
 
-Three things follow, and all three are counter-intuitive enough to be worth stating outright:
+Three things that bound shows, and all three are why the step wall is priced on the page clock
+instead:
 
 - **The page ran 1.1 ms of JS in the 40.5.** The rest is the tool: input dispatch, plus a frame wait
   the tool performs on purpose. "The rest is overhead" is the wrong reading of that -- the two
@@ -39,20 +49,26 @@ Three things follow, and all three are counter-intuitive enough to be worth stat
   subtract.
 - **`page.click` alone costs ~20 ms** of Puppeteer/CDP input dispatch (mouse move, hit test,
   dispatch). It is not a round-trip cost: an empty `page.evaluate` round trip is **~0.5 ms**, i.e.
-  noise. Driving identical work two ways moves the wall by 8 ms.
+  noise. Driving identical work two ways moves that bound by 8 ms.
 - **The settle floor is ~31 ms**, two animation frames, and it is *deliberate* (`inWindow` is
   start-onward by design; async paints land after `run:end`). It is most of a fast step's wall.
 
-Therefore a 15% regression in 9 ms of real work moves a 40 ms wall by ~3%. `--iterations` makes that
-number *stable*, which makes it more dangerous rather than less: a low-variance median invites the
-trust its sensitivity does not earn. Wall answers **"how long until the page settled"**. It does not
-answer "what did this cost".
+Even on the page clock the step wall is not the render cost: the window between the marks still
+includes that deliberate settle (the input-dispatch wait lands in it as idle, which is why the bar
+reconciles). So wall answers **"how long until the page settled"**, not "what did this cost".
+`--iterations` makes that number *stable*, which makes it more dangerous rather than less: a
+low-variance median invites the trust its sensitivity does not earn.
 
-**Do not try to subtract the overhead back out.** It is not a constant: it depends on how the step
+**Do not try to subtract the settle back out.** It is not a constant: it depends on how the step
 is driven (20 ms vs 2 ms above), and the settle partly absorbs the action (`page.click`'s settle
 measures ~20 ms where an empty action's measures ~31 ms, because the handler ate into the frame).
 Same rule as the sampler contamination in [cpu-profiling.md](./cpu-profiling.md): a measured
 constant is not a correction factor.
+
+**A step whose end mark was lost falls back to the page clock** (`wallClock: "page"` beside a
+`breakdown` bar), and then it does not reconcile: the bar tiles the trace window, while the wall came
+from `performance.now()`, so `Σ slices + idle = wall` no longer holds for that step. The mismatch is
+the tell that a mark went missing.
 
 ## What *does* describe the page
 
@@ -61,12 +77,11 @@ All of these are drive-independent. Measured, identical work via `page.click` vs
 | signal | via click | via evaluate | |
 | --- | --- | --- | --- |
 | `interaction.processingMs` | 1.70 | n/a | in-page, the handlers themselves |
-| `ScriptDuration` (per-step CDP) | 0.27 | 0.26 | identical |
 | `layoutCount` / `forcedLayoutCount` | 41 / 80 | 41 / 80 | identical |
 | `wallMs` | 40.5 | 31.9 | **not** |
 
-The per-step CDP counters are bracketed around each `measureStep`, so they never carried the
-driver's overhead in the first place. Only the wall did.
+The per-step counts are trace-derived, windowed to the step's own trace window (on a trace rung), so
+they never carried the driver's overhead in the first place. Only the wall does.
 
 ## The CWV split, and why it needs `interactionId`
 

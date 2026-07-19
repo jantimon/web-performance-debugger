@@ -122,6 +122,13 @@ export interface UnifiedSlices {
 export interface SpanEntry {
   label: string;
   kind: SpanKind;
+  /**
+   * Headline wall (ms). On a stored per-span bar it is the trace-clock window the slices tile. On a
+   * run span SYNTHESIZED from `CpuModel.breakdown` (`SpansResult.source === "cpu-model"`: default-rung
+   * chrome, node, firefox without user measures) it is the profiler's own sampled window, which
+   * brackets the whole timed loop INCLUDING the settle wait -- so it can exceed `summary.wallMs` (the
+   * sum of the timed `run()` samples). The human header labels that case `sampled window`.
+   */
   wallMs: number;
   /**
    * How this span's numbers combine the recording's timed iterations -- the one contract a consumer

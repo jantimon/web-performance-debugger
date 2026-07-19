@@ -19,7 +19,7 @@ export const TRACE_CATEGORIES: string[] = [
 /**
  * The light category set for the fused --breakdown pass: the shipped list MINUS the `.stack`
  * category (whose stack walk on every Layout inflates sampled self-time +21% [measured], the whole
- * reason the sampler cannot ride the default trace pass) and MINUS invalidationTracking (heaviest
+ * reason the sampler cannot ride a `.stack` trace) and MINUS invalidationTracking (heaviest
  * category, and the breakdown does not use invalidation events). `MinorGC`/`MajorGC` stay -- they
  * come from `devtools.timeline`, which is kept, so no gc-specific category is needed. Dropping
  * `.stack` is why this mode cannot report forced-layout counts or blame.

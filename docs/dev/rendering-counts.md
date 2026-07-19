@@ -44,28 +44,30 @@ incrementing `RecalcStyleCount`. Inline `<style>`, `CSSStyleSheet.insertRule`, a
 mutations never emit it, so on the common interaction (mutate DOM -> recalc -> layout -> paint) trace
 and CDP are bit-identical.
 
-The shipped `styleCount` is CDP `RecalcStyleCount` (the merge prefers it), which Blink increments
-without ever counting the parse, so it is already parse-free with no filtering needed.
-`ParseAuthorStyleSheet`'s time is real main-thread style work, so `taxonomy.ts` keeps it mapped to the
-`style` slice (the breakdown bar bills it). The exclusion matters for a *trace-derived* count only:
-summing every `style` event gives recalc + parses, so the trace fallback (used when a CDP delta is
-absent, e.g. per-step summaries and `--no-isolate`) sums `UpdateLayoutTree` alone — `summarize` skips
-`STYLE_PARSE_NAMES` — to match `RecalcStyleCount`.
+The shipped `styleCount` is the trace `UpdateLayoutTree` count with `ParseAuthorStyleSheet`
+**excluded**: summing every `style` event gives recalc + parses, so `summarize` skips
+`STYLE_PARSE_NAMES` to match what Blink's `RecalcStyleCount` reports (Blink increments that counter
+without ever counting the parse). `ParseAuthorStyleSheet`'s time is real main-thread style work, so
+`taxonomy.ts` keeps it mapped to the `style` slice (the breakdown bar bills it); only the *count*
+drops it.
 
 **No-op mutations** (a write that sets the same value) increment **neither** the counters nor the
 events — both correctly skip them.
 
 This is the exact trust tier, not "close enough": the single divergence between a raw trace-`style`
-sum and the CDP counter is name-identifiable and deterministic (one event name), not statistical
-noise — and the shipped CDP-preferred count never sees it.
+sum and Blink's `RecalcStyleCount` is name-identifiable and deterministic (one event name), not
+statistical noise — and the shipped parse-excluded count never sees it.
 
-## `getMetrics` is top-process-scoped; the trace is browser-wide
+## The count is main-thread-windowed; the trace is browser-wide
+
+wpd derives counts from the trace and windows them to the main-thread `pid`/`tid`. The ground truth
+that scope is validated against is CDP `getMetrics`, which is top-process-scoped:
 
 **[measured]** `getMetrics` aggregates only the render process of the target it is called on. The top
 page's counters count the **top process** — same-origin (same-process) iframes are inside it, since
 they share that render process. A `page.tracing` trace, by contrast, captures **every** renderer
 process. So a cross-origin **out-of-process iframe** (OOPIF), which runs in its own render process,
-has its layout/style work in the trace (on its own `pid`) but **never** in the top page's CDP
+has its layout/style work in the trace (on its own `pid`) but **never** in the top page's `getMetrics`
 counters.
 
 Measured under `--site-per-process`, a top page doing 6 counted flushes with an OOPIF doing 12:
@@ -79,9 +81,9 @@ Measured under `--site-per-process`, a top page doing 6 counted flushes with an 
 
 The all-pids trace sum is 18 = 6 + 12; filtering the trace to the top pid reproduces the top
 `getMetrics` exactly (6 = 6). The frame boundary alone does not split the count (same-origin iframes
-sit inside both sides); only the **process** boundary does. wpd's merge prefers CDP counts, so today's layout/style counts are
-**top-process-scoped**, and the breakdown bar filters to one main thread and shares that scope — count
-and bar agree.
+sit inside both sides); only the **process** boundary does. So windowing the trace to the main-thread
+`pid`/`tid` reproduces `getMetrics`'s **top-process scope** without reading a CDP counter, and the
+breakdown bar filters to that same main thread — count and bar agree.
 
 ## `Paint` is exact, and it is per-chunk
 
@@ -95,7 +97,7 @@ compositor layer) does not move it: 2 vs 2 at N=1, 21 vs 21 at N=20. It counts *
 chunks, not layers and not frames** -- all 21 `Paint` events at N=20 span 0.056 ms with no `Commit`
 interleaved, i.e. they are one frame.
 
-There is no CDP paint counter to prefer, so `paintCount` is trace-only. The trace is browser-wide, so
+There is no CDP paint counter at all, so `paintCount` is trace-only. The trace is browser-wide, so
 the count is scoped to the selected main thread (the same thread the breakdown bar tiles and the
 layout/style counts window), which puts it in the top-process scope layout/style share -- an OOPIF's
 own-process paints are filtered out, never summed in. Within that scope it is exact and reproducible
@@ -117,9 +119,9 @@ They are just not a count anyone should gate on.
 ## There is no composite count, deliberately
 
 `UpdateLayer` + `Commit` measure **elapsed time, not work**. Same workload (`Paint` = 21 in all 12
-runs), varying only `--settle`:
+runs), varying only the settle-window length:
 
-| `--settle` | 50 ms | 200 ms | 800 ms | 1600 ms |
+| settle window | 50 ms | 200 ms | 800 ms | 1600 ms |
 | --- | --- | --- | --- | --- |
 | `UpdateLayer` + `Commit` | 58, 60, 70 | 178, 220, 231 | 293, 401, 412 | 38, 227, 262 |
 | `Paint` | 21, 21, 21 | 21, 21, 21 | 21, 21, 21 | 21, 21, 21 |
@@ -182,7 +184,8 @@ start-onward. Gecko paints on the next refresh tick *after* `run:end`, so the bo
 
 ## Settle does not explain count instability
 
-Worth knowing before blaming the settle window for a noisy count: at `--settle 0`, **zero** events
-land after `run:end`, and a raster-inclusive count still swings 103->173 *inside* the run window.
+Worth knowing before blaming the settle window for a noisy count: with the settle window at zero,
+**zero** events land after `run:end`, and a raster-inclusive count still swings 103->173 *inside* the
+run window.
 The settle window does admit frames that belong to no iteration (`inWindow` is start-onward with no
 upper bound, by design), but that is a scope question, not a stability one.
