@@ -3,36 +3,11 @@ import { computeSpanBreakdown, type BreakdownSample } from "../trace/breakdown.j
 import { parseFrames, windowFrames, summarizeFrames } from "../trace/frames.js";
 import type { MergedStep } from "../trace/steps.js";
 import type { SourceMapResolver } from "../trace/sourcemap.js";
-import { RUN_START_MARK, WPD_MARK_PREFIX } from "../model/marks.js";
+import { WPD_MARK_PREFIX } from "../model/marks.js";
 import { breakdownHeuristicMainThread } from "./notes.js";
+import { mainThread } from "../trace/main-thread.js";
 import { mergeSpanOccurrences } from "../model/span-merge.js";
 import type { NormalizedEvent, SpanBreakdown } from "../model/recording.js";
-
-/**
- * The renderer main thread's pid/tid, plus how it was picked: `marker` when `wpd:run:start` (the
- * mark the page makes on its own main thread) named the thread, `heuristic` when that marker was
- * missing and the thread carrying the most layout/paint work stood in. A lost marker degrades to a
- * heuristic rather than to nothing; null when no candidate exists at all.
- */
-function mainThread(
-  events: NormalizedEvent[],
-): { pid: number; tid: number; via: "marker" | "heuristic" } | null {
-  const start = events.find((event) => event.name === RUN_START_MARK);
-  if (start?.pid != null && start.tid != null)
-    return { pid: start.pid, tid: start.tid, via: "marker" };
-  const activity = new Map<string, { pid: number; tid: number; count: number }>();
-  for (const event of events) {
-    if (event.pid == null || event.tid == null) continue;
-    if (event.kind !== "layout" && event.kind !== "paint") continue;
-    const key = `${event.pid}/${event.tid}`;
-    const entry = activity.get(key) ?? { pid: event.pid, tid: event.tid, count: 0 };
-    entry.count++;
-    activity.set(key, entry);
-  }
-  let best: { pid: number; tid: number; count: number } | null = null;
-  for (const entry of activity.values()) if (!best || entry.count > best.count) best = entry;
-  return best ? { pid: best.pid, tid: best.tid, via: "heuristic" } : null;
-}
 
 /** Pair user `performance.measure` async begin/end trace events (blink.user_timing, ph b/e) into
  * named windows. wpd's own `wpd:*` measures are excluded -- the run/step spans come from marks, not
