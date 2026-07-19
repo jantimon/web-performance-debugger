@@ -174,6 +174,10 @@ newest run, so every `query` verb accepts `latest` instead of a file path.
 - A `--url` local HTML file, and `--bench` modules, must live **under the current working directory**
   (they are served to the browser from there). Driver and `--target node` modules are imported in Node
   and can live anywhere.
+- **Chrome launches sandboxed.** Some environments (containers, restricted CI) cannot start Chrome's
+  sandbox; there wpd fails with a message naming the opt-in, `--disable-browser-sandbox`, rather than
+  silently dropping the sandbox. Only pass it in a trusted, isolated environment (and never together
+  with `--user-data-dir` or a non-loopback `--url`).
 
 ## Your `run` module
 
@@ -463,23 +467,35 @@ esbuild src/pages/Product.tsx --bundle --packages=external --platform=node \
 
 ```bash
 wpd record render.entry.js --target node --iterations 50
-# hot functions + by-package rollup, plus the four-slice CPU bar
-wpd query cpu   latest
-# drill one function; 0 = the id column of `query cpu`
-wpd query frame latest 0
 ```
 
+The `record` report leads with the CPU headline and the by-package rollup (the same rollup `query cpu`
+prints on demand):
+
 ```
-CPU profile: 268.4 ms JS self-time, sampled · 5360 samples
+CPU profile: 268.4 ms JS self-time, sampled · 5360 samples (run 'query cpu latest' to drill):
 
 package    self ms  self %  fns
 ─────────  ───────  ──────  ───
 react-dom  171.2    63.8%   38
 next-yak   31.7     11.8%   9
 app        24.1     9.0%    12
+```
 
+```bash
+# the by-package rollup on demand, plus the four-slice CPU bar, the per-iteration divisor,
+# and the per-function table whose `id` column feeds `query frame`:
+wpd query cpu   latest
+```
+
+```
 id  self ms  self %  total ms  package    function (source)
 0   88.4     32.9%   96.8      react-dom  renderToString (react-dom-server.js:4123)
+```
+
+```bash
+# drill one function into its callers and callees; 0 = the id column above
+wpd query frame latest 0
 ```
 
 The headline (`268.4 ms JS self-time`) is the **total** JS self-time across all sampled iterations
@@ -529,8 +545,15 @@ rather than blamed on your `app`.
 | --- | --- |
 | `no-sourcemap-url` | The bundle has no `sourceMappingURL` comment and no `SourceMap` header. Turn sourcemaps on in your production build, or serve the header |
 | `map-fetch-failed` | It names a `.map` that isn't deployed (commonly uploaded to an error tracker instead). Serve it, even if only on a preview deploy |
-| `script-fetch-failed` | wpd couldn't fetch the script itself: auth, CORS, or bot protection. Profile a preview deploy without the gate |
+| `script-fetch-failed` | wpd couldn't fetch the script itself: CORS or bot protection. Profile a preview deploy without the gate |
 | `map-parse-failed` | The `.map` isn't a readable sourcemap |
+| `auth-required` | The script or map returned 401/403 (a gated deploy). Profile a preview build served without the gate |
+| `script-too-large` / `map-too-large` | The script (over 20 MB) or map (over 50 MB) exceeded the fetch cap. Serve a smaller/split bundle, or profile that package locally |
+| `blocked-fetch` | The URL failed the fetch policy: a non-http(s) scheme, or a private/loopback host reached from a public page (a redirect cannot escape it either). Not fetched, by design |
+| `fetch-budget-exhausted` | The run's 30 s total budget for all remote sourcemap work ran out before this lookup (a site with hundreds of scripts). Remaining frames keep minified names; re-run to resolve more |
+
+Remote fetching is bounded on purpose: up to 4 concurrent fetches, a 20 MB script / 50 MB map size cap,
+and a 30 s per-run budget for all remote sourcemap work, so a heavy site cannot stall the profile.
 
 A partial failure is normal and healthy: third-party scripts (analytics, chat widgets) rarely ship
 maps, and bucketing them by origin is the honest answer — their cost is real, but it is not yours. Only
@@ -573,7 +596,11 @@ run     layout  2.39   2    FAIL
 
 `diff` matches spans by label and reports per-slice ms deltas (advisory, directional) alongside the
 gated exact-count deltas, and warns when a metric is comparable on one side only (`n/a`). `cpu-diff`
-joins two CPU models per function and per package, noise-filtered.
+joins two CPU models per function and per package, noise-filtered. Only the exact counts gate
+`--fail-on-regression`; wall, INP and scripting ms are directional, so they print but never fail the
+build. And a gate **refuses** across an incompatible capture rather than fabricate a regression: a
+`diff` across a different browser/runtime/rung, or a `cpu-diff` across a different
+browser/runtime/workload/`--iterations`/`--cpu-throttle`, names the mismatch and declines to gate.
 
 ## Reference
 
@@ -606,6 +633,10 @@ stored per-span bar, so `query spans` synthesizes the run span from the CPU mode
 That window is the profiler's bracket around the whole timed loop and **includes the settle wait**, so
 its `wallMs` differs from `summary.wallMs` (the sum of the timed `run()` samples); the human header
 labels it `sampled window`, and the JSON marks it `source: "cpu-model"`.
+
+Not every span carries a CPU/hot-functions number: the run span does on every sampler rung, steps only
+under chrome `--breakdown`, measures under chrome `--breakdown` and firefox, and none under `--deep`/
+`--precise-wall` (see [docs/dev/cpu-profiling.md](docs/dev/cpu-profiling.md#which-spans-get-cpu-attribution)).
 
 #### What a span's numbers represent
 
