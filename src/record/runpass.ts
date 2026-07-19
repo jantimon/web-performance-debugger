@@ -14,7 +14,7 @@ import type { GeckoMeasureWindow } from "../profile/gecko-breakdown.js";
 import { runHarness } from "../browser/harness.js";
 import { runDriver, type DriverStep } from "../browser/driver.js";
 import { applyCpuThrottle } from "../browser/throttle.js";
-import { parseTrace, findWindow, findSteps } from "../trace/parse.js";
+import { parseTrace, findWindow, findSteps, type StepWindow } from "../trace/parse.js";
 import { labelWindows, type LabelledWindow } from "../trace/steps.js";
 import { attachStacks } from "../trace/stacks.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
@@ -39,6 +39,12 @@ export interface PassResult {
   driverSteps?: DriverStep[];
   /** driver mode: this pass's own trace windows, already re-keyed from index to label */
   stepWindows?: LabelledWindow[];
+  /**
+   * Which clock priced the driver steps' walls: "trace" (t1-t0 on the trace clock between the step
+   * marks, --breakdown/--deep), "page" (the page's own performance.now() delta, the no-trace default
+   * rung), or "none" (driver ran but no step produced a wall). Absent on non-driver passes.
+   */
+  stepWallClock?: "trace" | "page" | "none";
   /** raw V8 CPU sampling profile (only on the cpu pass) */
   cpuProfile?: RawCpuProfile;
   /** Firefox: temp path of the raw Gecko shutdown dump, copied verbatim to the
@@ -110,6 +116,26 @@ async function waitForGeckoDump(
   );
 }
 
+/**
+ * Upgrade each driver step's wall to the trace-clock window between its marks: `t1 - t0` on the
+ * trace clock, which spans navigation and reconciles with the breakdown bar. Keyed by markIndex (the
+ * step's `wpd:step:N` marks), the same join `labelWindows` uses. A step with no closed trace window
+ * keeps whatever wall it had (its page-clock value). Mutates the steps in place.
+ */
+function applyTraceWall(driverSteps: DriverStep[], stepTraceWindows: StepWindow[]): void {
+  const windowByMark = new Map(stepTraceWindows.map((window) => [window.index, window]));
+  for (const step of driverSteps) {
+    const window = windowByMark.get(step.markIndex ?? step.index);
+    if (window && window.endTs != null) step.wallMs = usToMs(window.endTs - window.startTs);
+  }
+}
+
+/** Whether any step carries a wall (a page-clock value, or a trace upgrade); "none" earns the note. */
+function stepWallClockFor(driverSteps: DriverStep[], traced: boolean): "trace" | "page" | "none" {
+  if (traced) return "trace";
+  return driverSteps.some((step) => step.wallMs != null) ? "page" : "none";
+}
+
 export async function runPass(
   server: StaticServer,
   root: string,
@@ -176,7 +202,11 @@ export async function runPass(
       });
       driverSteps = driverResult.steps;
       lifecycle = driverResult.lifecycle;
-      perIteration = driverResult.steps.map((step) => step.wallMs);
+      // Driver pass-level perIteration is unused (record.ts sums step samples instead), but keep it
+      // a clean number[]: an unpriced (navigated) step contributes no sample.
+      perIteration = driverResult.steps
+        .map((step) => step.wallMs)
+        .filter((wallMs): wallMs is number => wallMs != null);
       runCleanup = driverResult.cleanup;
     } else {
       const harnessArg = {
@@ -212,6 +242,7 @@ export async function runPass(
     let windowStart: number | null = null;
     let windowEnd: number | null = null;
     let stepWindows: LabelledWindow[] | undefined;
+    let stepWallClock: "trace" | "page" | "none" | undefined;
     if (spec.categories && caps.trace) {
       const buf = await page.tracing.stop();
       events = parseTrace(buf ? new TextDecoder("utf-8").decode(buf) : "[]", {
@@ -225,7 +256,17 @@ export async function runPass(
       windowStart = runWindow.startTs;
       windowEnd = runWindow.endTs;
       // Re-key this pass's step windows from index to label; both sides come from this one pass.
-      if (opts.driver && driverSteps) stepWindows = labelWindows(driverSteps, findSteps(events));
+      // The trace clock also prices each step's wall (t1-t0 between its marks): the honest window,
+      // in place of the page-clock value the driver captured.
+      if (opts.driver && driverSteps) {
+        const stepTraceWindows = findSteps(events);
+        applyTraceWall(driverSteps, stepTraceWindows);
+        stepWindows = labelWindows(driverSteps, stepTraceWindows);
+        stepWallClock = stepWallClockFor(driverSteps, true);
+      }
+    } else if (opts.driver && driverSteps) {
+      // No trace on this rung: the step wall stays the page-clock delta the driver measured.
+      stepWallClock = stepWallClockFor(driverSteps, false);
     }
 
     // Teardown now; tracing is stopped, so cleanup work stays out of the measured window.
@@ -254,6 +295,7 @@ export async function runPass(
       measures: entries.measures,
       driverSteps,
       stepWindows,
+      stepWallClock,
       cpuProfile,
       headlessFallback,
     };
@@ -282,8 +324,14 @@ export async function runPass(
     const geckoWindow = findWindow(renderingEvents);
     result.windowStart = geckoWindow.startTs;
     result.windowEnd = geckoWindow.endTs;
-    if (opts.driver && result.driverSteps)
-      result.stepWindows = labelWindows(result.driverSteps, findSteps(renderingEvents));
+    // Gecko's Reflow/Styles markers carry the wpd:step windows too, on the profiler clock; price the
+    // step walls off them, the same trace-clock upgrade the Chrome branch applies.
+    if (opts.driver && result.driverSteps) {
+      const stepTraceWindows = findSteps(renderingEvents);
+      applyTraceWall(result.driverSteps, stepTraceWindows);
+      result.stepWindows = labelWindows(result.driverSteps, stepTraceWindows);
+      result.stepWallClock = stepWallClockFor(result.driverSteps, true);
+    }
   }
   return result;
 }

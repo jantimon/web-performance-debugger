@@ -1,5 +1,4 @@
 import { pathToFileURL } from "node:url";
-import { performance } from "node:perf_hooks";
 import type { Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
 import { duplicateLabelError } from "../trace/steps.js";
@@ -30,13 +29,21 @@ export interface DriverStep {
   markIndex?: number;
   label: string;
   /**
-   * Node-side elapsed time around the action plus its settle. This is a BOUND on the step, not the
-   * page's cost: it carries the driver's own overhead. Measured on identical 40-row forced-layout
-   * work, `page.click` reports 40.5ms and `page.evaluate` 31.9ms, of which the page did 1.1ms; the
-   * settle floor alone is ~31ms (two frames). Use `interaction.processingMs` or the per-step counts
-   * for what the page actually did. See docs/dev/driver-timing.md.
+   * The step's wall on the clock the rung has: the page's own `performance.now()` delta between the
+   * step's marks (this field, `pageWallMs`), overridden by the trace-clock window between the same
+   * marks when a trace was captured (--breakdown/--deep). Never the node-side `performance.now()`
+   * around `page.click`, which measures the tool process: ~20ms of that is input dispatch in no
+   * renderer timeline (docs/dev/driver-timing.md). Null when neither clock can price the step (a
+   * navigating step on the no-trace default rung: a new document resets the page clock, so the two
+   * marks no longer share one, and there is no trace to span it).
    */
-  wallMs: number;
+  wallMs: number | null;
+  /**
+   * The page-side `performance.now()` delta between this step's marks, measured in-page. Null when
+   * the step navigated (the marks land on documents with different `timeOrigin`, so their delta is
+   * meaningless). `wallMs` starts here and is upgraded to the trace-clock window when a trace exists.
+   */
+  pageWallMs: number | null;
   inpMs: number | null;
   /** in-page CWV split of `inpMs`; null when no interaction crossed the 16ms Event Timing floor */
   interaction: InteractionTiming | null;
@@ -167,6 +174,14 @@ export async function runDriver(
   if (cleanup) lifecycle.push("cleanup");
 
   const mark = (markName: string) => page.evaluate((name) => performance.mark(name), markName);
+  // Emit a step's edge mark AND read the page's own clock at that instant: `now` is
+  // `performance.now()` (the page-clock timestamp of the mark) and `origin` is `timeOrigin` (which
+  // changes on navigation, so a step that navigated is detectable and its page-clock wall refused).
+  const stepClock = (markName: string) =>
+    page.evaluate((name) => {
+      performance.mark(name);
+      return { now: performance.now(), origin: performance.timeOrigin };
+    }, markName) as Promise<{ now: number; origin: number }>;
   const settle = () => page.evaluate(SETTLE_SOURCE);
   const paintFlush = () =>
     page.evaluate(
@@ -256,12 +271,14 @@ export async function runDriver(
     const index = indexInIteration++;
     const stepMark = markIndex++;
     await page.evaluate(() => ((window as any).__cpInp = []));
-    await mark(`wpd:step:${stepMark}:start`);
-    const t0 = performance.now();
+    const startClock = await stepClock(`wpd:step:${stepMark}:start`);
     await action();
     await waitDone(until);
-    const wallMs = performance.now() - t0;
-    await mark(`wpd:step:${stepMark}:end`);
+    const endClock = await stepClock(`wpd:step:${stepMark}:end`);
+    // The page's own view of [start mark, end mark]. Null across a navigation (the two marks are on
+    // documents with different timeOrigins, so their performance.now() delta is not one interval);
+    // record.ts upgrades this to the trace-clock window when a trace was captured.
+    const pageWallMs = startClock.origin === endClock.origin ? endClock.now - startClock.now : null;
     // Event-Timing entries reach the observer on a later task, after the frame is
     // presented. Flush a frame + a macrotask so a slow interaction's entry lands before
     // we read it, rather than being dropped or misattributed to the next step. null
@@ -288,7 +305,8 @@ export async function runDriver(
       phase,
       markIndex: stepMark,
       label,
-      wallMs,
+      wallMs: pageWallMs,
+      pageWallMs,
       inpMs: inp,
       interaction,
     });

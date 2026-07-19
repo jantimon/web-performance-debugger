@@ -84,6 +84,25 @@ export function preciseWall(): string {
   return "Precise-wall mode: the CPU sampler is OFF for a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts — the wall is the only product. Drop --precise-wall for the four-slice CPU bar.";
 }
 
+// --- Driver step wall ---
+
+/**
+ * Which clock priced a driver run's step walls. Never the node-side driver clock: ~20ms of a
+ * `page.click` is input dispatch in the tool process, in no renderer timeline (docs/dev/driver-timing.md).
+ * "page" is the page's own performance.now() delta between the step marks; "trace" is the trace-clock
+ * window between the same marks, which spans navigation and reconciles with the breakdown bar.
+ */
+export function driverStepWallClock(clock: "trace" | "page"): string {
+  return clock === "trace"
+    ? "Driver step walls are the trace-clock window between each step's marks (t1-t0 on the renderer's clock), so they price the page's own window and reconcile with the breakdown bar, not the node-side page.click bound."
+    : "Driver step walls are the page's own performance.now() delta between each step's marks (no trace on this rung), not the node-side page.click bound (~20ms of which is input dispatch in the tool process; docs/dev/driver-timing.md). A step that navigated cannot be priced this way and reports its wall as not measured — record with --breakdown or --deep for a trace-clock wall that spans navigation.";
+}
+
+/** A driver run on the no-trace rung whose steps all navigated: no step wall could be priced. */
+export function driverStepWallUnmeasured(): string {
+  return "Driver step walls are NOT measured on this run: every step navigated, which resets the page clock, and there is no trace to span it. Record with --breakdown or --deep for a trace-clock wall that survives navigation. See docs/dev/driver-timing.md.";
+}
+
 // --- Cross-lane ---
 
 export function traceWindowMissing(): string {

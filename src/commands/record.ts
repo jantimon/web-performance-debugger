@@ -308,6 +308,14 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(notesCatalog.defaultRung());
     notes.push(notesCatalog.cpuSamplerOnDefaultRung());
   }
+  // Which clock priced the driver step walls (§17.3.1): the trace clock under --breakdown/--deep, the
+  // page's own performance.now on the no-trace rung, never the node-side page.click bound. "none"
+  // means every step navigated on a no-trace rung, so no wall could be priced.
+  if (opts.driver && pass.stepWallClock) {
+    const clock = pass.stepWallClock;
+    if (clock === "none") notes.push(notesCatalog.driverStepWallUnmeasured());
+    else notes.push(notesCatalog.driverStepWallClock(clock));
+  }
   // chrome-headless-shell was missing, so the launch fell back to new-headless.
   if (pass.headlessFallback) notes.push(pass.headlessFallback);
   // A trace ran but its run-window markers are absent (truncated/overflowed trace buffer, or the

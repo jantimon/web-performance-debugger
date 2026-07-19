@@ -180,11 +180,12 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
   if (idx.meta.throttle?.cpuRate) {
     console.log(`slowdown: cpu ${idx.meta.throttle.cpuRate}x`);
   }
-  // `inp` and `handler` come first because they describe the PAGE. `wall` is last and labelled as
-  // a bound: it is measured node-side around the action plus its settle, so it carries the driver's
-  // own cost (measured: ~31ms of settle floor, and page.click alone ~20ms) and can differ by 8ms
-  // between two ways of driving identical work. Leading with it would invite reading tool overhead
-  // as the page's cost. See docs/dev/driver-timing.md.
+  // `inp` and `handler` come first because they describe the PAGE. `wall` is last and labelled with
+  // a `*`: it is the page's own window between the step marks (the trace clock under --breakdown/--deep,
+  // else the page's performance.now), not the node-side page.click bound (~20ms of which is input
+  // dispatch in the tool process, in no renderer timeline). It still spans the settle the step waits
+  // for (~31ms floor new-headless), so it bounds the interaction's window rather than pricing the JS.
+  // A '—' means the wall was not measured (a step that navigated on a no-trace rung). See docs/dev/driver-timing.md.
   console.log(
     table(
       [
@@ -212,17 +213,17 @@ export async function queryIndex(file: string, opts: OutOpts): Promise<void> {
         formatMeasured(step.headline.paintCount, (count) => String(count)),
         formatMeasured(step.headline.layoutInvalidations, (count) => String(count)),
         formatMeasured(step.headline.longTaskCount, (count) => String(count)),
-        num(step.wallMs ?? 0, 1),
+        step.wallMs == null ? "—" : num(step.wallMs, 1),
         path.basename(step.recording),
       ]),
     ),
   );
   console.log(
-    "\n* wall includes the driver's own overhead (dispatching the action, then waiting for the page " +
-      "to settle); it bounds the step\n  rather than pricing it. inp/processing are measured in-page. " +
-      "'processing ms' is first handler start to last handler end,\n  so it also covers any gap " +
-      "between the events of one interaction. A '—' means no interaction crossed the 16 ms " +
-      "Event Timing floor.",
+    "\n* wall is the page's own window between the step marks (trace clock under --breakdown/--deep, " +
+      "else the page's performance.now),\n  not the node-side page.click bound. It still spans the " +
+      "step's settle (~31ms floor new-headless), so it bounds the interaction rather than pricing the " +
+      "JS.\n  inp/processing are measured in-page; 'processing ms' is first handler start to last " +
+      "handler end. A '—' in inp/processing means no interaction crossed the 16 ms Event Timing floor.",
   );
   console.log("\nInspect a step:  wpd query digest <file above>");
 }

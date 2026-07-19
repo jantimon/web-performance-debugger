@@ -16,7 +16,7 @@ listed here), and only list a file that genuinely contains the string.
 | Folded reflow in browser-lane self-time | ~85% of the layout probe's "JS" is reflow | 85% | docs/dev/cpu-profiling.md (what self-time includes) | src/model/recording.ts, docs/dev/cpu-profiling.md, docs/dev/README.md, CLAUDE.md |
 | Frame cadence, new-headless (~60 Hz) | 16.6 ms one-frame floor | 16.6 | docs/dev/frame-floor.md | src/record/notes.ts, src/browser/launch.ts, docs/dev/frame-floor.md |
 | Frame cadence, shell-headless (~120 Hz) | 8.3 ms one-frame floor | 8.3 | docs/dev/frame-floor.md | src/record/notes.ts, src/browser/launch.ts, docs/dev/frame-floor.md, docs/dev/cpu-profiling.md |
-| Driver settle floor | ~31 ms new-headless (~half on shell) | ~31 | docs/dev/driver-timing.md | src/browser/driver.ts, src/commands/query.ts, docs/dev/driver-timing.md, docs/dev/README.md, docs/dev/frame-floor.md |
+| Driver settle floor | ~31 ms new-headless (~half on shell) | ~31 | docs/dev/driver-timing.md | src/commands/query.ts, docs/dev/driver-timing.md, docs/dev/README.md, docs/dev/frame-floor.md |
 | Firefox forced-layout ms under-report | ~7x low vs Chrome | 7x | docs/dev/engine-mapping.md (forced-layout blame) | docs/dev/engine-mapping.md, CLAUDE.md |
 | Paint count exactness | exactly N+1 for N dirtied regions | N+1 | docs/dev/rendering-counts.md | src/trace/taxonomy.ts, src/model/recording.ts, src/commands/diff.ts, docs/dev/rendering-counts.md |
 | Default CPU sampler interval | 200 us | 200 | docs/dev/cpu-profiling.md (why 200) | src/profile/cpuprofile.ts, docs/dev/cpu-profiling.md |

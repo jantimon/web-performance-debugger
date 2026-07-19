@@ -28,8 +28,9 @@ export interface MergedStep {
    * says "the first iteration was cold", which is usually the finding.
    */
   perIteration: number[];
-  /** the median of `perIteration`; identical to the single sample when there is only one */
-  wallMs: number;
+  /** the median of `perIteration`; identical to the single sample when there is only one. Null when
+   * no iteration could be priced (a navigating step on the no-trace rung; see DriverStep.wallMs). */
+  wallMs: number | null;
   inpMs: number | null;
   /** each part medianed across the iterations that measured an interaction; null if none did */
   interaction: InteractionTiming | null;
@@ -223,7 +224,11 @@ export function mergeSteps(
     );
     const first = ordered[0];
     const window = tracedWindows == null ? undefined : windowByLabel.get(label);
-    const perIteration = ordered.map((step) => step.wallMs);
+    // A step whose wall could not be priced (navigation on the no-trace rung) contributes no sample,
+    // rather than a fabricated 0 or a null poisoning the median.
+    const perIteration = ordered
+      .map((step) => step.wallMs)
+      .filter((wallMs): wallMs is number => wallMs != null);
     // INP is the median across iterations, not the worst: the worst would climb with --iterations
     // (more samples, more chances at a slow one), so raising --iterations to gain confidence would
     // report a worse INP for unchanged code. Counts stay per-iteration for the same reason.
@@ -248,7 +253,7 @@ export function mergeSteps(
       index: first.index,
       label,
       perIteration,
-      wallMs: median(perIteration),
+      wallMs: perIteration.length ? median(perIteration) : null,
       inpMs: inpSamples.length ? median(inpSamples) : null,
       interaction,
       startTs: window?.startTs ?? null,
