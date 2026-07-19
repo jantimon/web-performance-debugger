@@ -28,6 +28,7 @@ import {
   startBundleServer,
   remoteBundleProfile,
   remoteProfile,
+  closeServer,
 } from "./helpers.mjs";
 
 test("buildCpuModel: self/total time, recursion-safe totals, system buckets, edges", async () => {
@@ -705,7 +706,7 @@ test("boundedFetch: a content-length over the script cap yields script-too-large
     );
     assert.deepEqual(result, { ok: false, failure: "script-too-large" });
   } finally {
-    server.close();
+    await closeServer(server);
   }
 });
 
@@ -729,7 +730,7 @@ test("boundedFetch: a chunked body over the map cap is aborted mid-stream (map-t
     );
     assert.deepEqual(result, { ok: false, failure: "map-too-large" });
   } finally {
-    server.close();
+    await closeServer(server);
   }
 });
 
@@ -749,7 +750,7 @@ test("boundedFetch: a redirect to a non-http scheme is blocked", async () => {
     );
     assert.deepEqual(result, { ok: false, failure: "blocked-fetch" });
   } finally {
-    server.close();
+    await closeServer(server);
   }
 });
 
@@ -787,6 +788,6 @@ test("SourceMapResolver.warm: distinct scripts resolve concurrently, each fetche
       assert.equal(hitsByPath.get(jsPath), 1, `${jsPath} fetched exactly once`);
     }
   } finally {
-    server.close();
+    await closeServer(server);
   }
 });

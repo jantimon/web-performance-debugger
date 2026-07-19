@@ -161,6 +161,12 @@ export function sourcemapFor(source, name) {
   });
 }
 
+// server.close is callback-based; wrap it so a finally block can await the shutdown and not leak
+// the listener into the next test.
+export function closeServer(server) {
+  return new Promise((resolve) => server.close(resolve));
+}
+
 /** Five bundles, each a different sourcemap-acquisition story. */
 export async function startBundleServer() {
   const routes = {
@@ -193,7 +199,7 @@ export async function startBundleServer() {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   return {
     origin: `http://127.0.0.1:${server.address().port}`,
-    close: () => new Promise((resolve) => server.close(resolve)),
+    close: () => closeServer(server),
   };
 }
 
