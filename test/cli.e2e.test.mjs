@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -45,6 +45,39 @@ function runCli(args) {
   if (result.status !== 0)
     throw new Error(`cli ${args.join(" ")} exited ${result.status}\n${result.stderr}`);
   return result.stdout;
+}
+
+// A local HTTP origin for the --url on-ramp, served from a SEPARATE process: the test drives the CLI
+// with a blocking spawnSync, which pins this process's event loop, so an in-process http.server could
+// never answer the child's request. The child writes its assigned port to a file once listening; we
+// poll it with a synchronous Atomics.wait sleep (no event loop needed). No external network: CI serves
+// itself.
+function startOnrampServer(html) {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-srv-"));
+  const portFile = path.join(dir, "port");
+  const script = `import http from "node:http";
+import { writeFileSync } from "node:fs";
+const body = ${JSON.stringify(html)};
+const server = http.createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+  res.end(body);
+});
+server.listen(0, "127.0.0.1", () => writeFileSync(${JSON.stringify(portFile)}, String(server.address().port)));
+`;
+  const scriptFile = path.join(dir, "server.mjs");
+  writeFileSync(scriptFile, script);
+  const child = spawn(process.execPath, [scriptFile], { stdio: "ignore" });
+  const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  let port;
+  for (let attempt = 0; attempt < 100 && !port; attempt++) {
+    if (existsSync(portFile)) port = readFileSync(portFile, "utf8").trim() || undefined;
+    if (!port) sleep(50);
+  }
+  if (!port) {
+    child.kill();
+    throw new Error("on-ramp test server did not start within 5s");
+  }
+  return { url: `http://127.0.0.1:${port}/`, close: () => child.kill() };
 }
 
 // Forced-layout blame is a --deep (rung 3) product: it needs the `.stack` trace category, which
@@ -496,6 +529,56 @@ e2e("record --breakdown: a per-span frame side track is recorded and printed", {
   );
   // ...and it is printed alongside the bar.
   assert.match(stdout, /frames: \d+ presented · \d+ partial · \d+ dropped/);
+});
+
+// The zero-authoring on-ramp: `record --url` with NO module runs a built-in driver flow that
+// navigates to the url inside one "load" step and settles, so the boot lands in the run window. Every
+// rung works unchanged over it. Served from a local origin (no external network), on the default rung
+// and --breakdown.
+e2e("record --url with no module runs the built-in load flow (default + --breakdown)", { timeout: TIMEOUT_MS }, () => {
+  const html = "<!doctype html><meta charset=utf-8><title>onramp</title><body><h1>hello</h1><p>on-ramp</p></body>";
+  const server = startOnrampServer(html);
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  try {
+    // Default rung: the built-in "load" step span exists, INP is null (a load has no interaction), and
+    // the no-trace rung reports no rendering counts (null, never a fake 0). The CPU model still runs.
+    const dfltOut = path.join(dir, "onramp-default");
+    runCli(["record", "--url", server.url, "--out", dfltOut]);
+    const dflt = JSON.parse(readFileSync(dfltOut, "utf8"));
+    assert.equal(dflt.meta.mode, "url", "the on-ramp records the url mode");
+    assert.equal(dflt.meta.driver, true, "the built-in flow is a driver flow");
+    const loadStep = dflt.spans.find((span) => span.kind === "step" && span.label === "load");
+    assert.ok(loadStep, "a 'load' step span is recorded");
+    assert.equal(dflt.summary.inpMs, null, "a page load has no interaction, so INP is null");
+    assert.equal(loadStep.counts.layoutCount, null, "default rung measures no counts (—, never 0)");
+    assert.ok(
+      dflt.meta.notes.some((note) => /Built-in load flow/.test(note)),
+      "the built-in flow is disclosed in the notes",
+    );
+    assert.ok(dflt.summary.scriptingMs != null, "the CPU model still measures JS self-time on the boot");
+
+    // --breakdown: the run span AND the load step carry a reconciling bar (Σ slices + idle == wall),
+    // counts are measured, and the navigating load step is priced on the trace clock (spans the nav).
+    const bdOut = path.join(dir, "onramp-breakdown");
+    runCli(["record", "--url", server.url, "--breakdown", "--out", bdOut]);
+    const bd = JSON.parse(readFileSync(bdOut, "utf8"));
+    const runSpan = bd.spans.find((span) => span.kind === "run");
+    const bdLoad = bd.spans.find((span) => span.kind === "step" && span.label === "load");
+    assert.ok(runSpan?.breakdown, "the run span carries a reconciling bar");
+    assert.ok(bdLoad?.breakdown, "the load step carries a reconciling bar");
+    for (const span of [runSpan, bdLoad]) {
+      const sum = sliceSum(span.breakdown);
+      assert.ok(
+        Math.abs(sum - span.breakdown.wallMs) < 0.01,
+        `${span.label}: slices+idle ${sum} must equal wall ${span.breakdown.wallMs}`,
+      );
+    }
+    assert.equal(bdLoad.wallClock, "trace", "the navigating load step is priced on the trace clock");
+    assert.ok(bd.summary.paintCount >= 1, "the boot painted at least once, counted on --breakdown");
+    assert.equal(bd.summary.forcedLayoutCount, null, "forced is not-measured on --breakdown (no .stack)");
+  } finally {
+    server.close();
+  }
 });
 
 // The flag guards reject before any browser launches, so this runs everywhere (not gated on Chrome).

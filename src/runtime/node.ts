@@ -49,6 +49,9 @@ export async function recordNode(opts: RecordOptions): Promise<{
   cpuModel: CpuModel;
 }> {
   const root = process.cwd();
+  // --target node always has a module (the CLI rejects a bare `record --target node`); the built-in
+  // on-ramp is driver-only, so there is nothing to synthesize here.
+  if (!opts.module) throw new Error("--target node needs a module to import and profile.");
   const absModule = path.resolve(opts.module);
   await fs.access(absModule).catch(() => {
     throw new Error(`Module not found: ${absModule}`);

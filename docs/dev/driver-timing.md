@@ -141,14 +141,14 @@ to round the parts to whole ms where Chrome does not.
 
 - **Untrusted events produce nothing.** `page.evaluate(() => el.click())` fires a synthetic click,
   which Event Timing does not observe: measured **0 entries**. A programmatic step therefore has no
-  INP and no breakdown, and that is not a bug to fix. Time programmatic work with `--bench --html`
+  INP and no breakdown, and that is not a bug to fix. Time programmatic work with `--bench --url`
   instead, which runs in-page with full DOM.
 - **The 16 ms floor is the spec's.** `durationThreshold` below 16 is clamped, so an interaction
   faster than a frame produces no entry at all. A `null` INP means "nothing crossed 16 ms", not
   "the engine cannot measure it".
 - **`--bench` has a DOM.** `run(ctx)` is imported *inside* the page and uses live
-  `document`/`window`; it simply has no Puppeteer `page` handle to drive with, and `--html`/`--url`
-  still give it a host page. It is the in-page-timed lane (1.1 ms vs the driver's 40.5 on identical
+  `document`/`window`; it simply has no Puppeteer `page` handle to drive with, and `--url`
+  still gives it a host page. It is the in-page-timed lane (1.1 ms vs the driver's 40.5 on identical
   work), and it is the right tool for a programmatic measurement that wants a real number.
 
   **Bench and the driver do not time the same window, so the gap between them is not overhead.**

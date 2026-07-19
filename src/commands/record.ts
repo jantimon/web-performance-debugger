@@ -50,12 +50,15 @@ import type {
 export { blameSemanticFor, countScopeNote, userMeasureSpans };
 
 export interface RecordOptions {
-  module: string;
+  /** the user's driver/bench/node module; omitted for the built-in on-ramp flow (--url/--html only) */
+  module?: string;
   fn: string;
   /** browser backend: "chrome" (default, full CDP) or "firefox" (BiDi + Gecko profiler) */
   browser?: BrowserName;
   html?: string;
   url?: string;
+  /** --url named a host with no scheme, so http:// was assumed for `url`; a note discloses it. */
+  urlSchemeAssumed?: boolean;
   iterations: number;
   warmup: number;
   out?: string;
@@ -215,10 +218,20 @@ export async function record(opts: RecordOptions): Promise<{
   cpuModel?: CpuModel;
 }> {
   const root = process.cwd();
-  const absModule = path.resolve(opts.module);
-  await fs.access(absModule).catch(() => {
-    throw new Error(`Module not found: ${absModule}`);
-  });
+  // No module = the built-in on-ramp: a driver flow that loads --url/--html and settles, so a first
+  // run needs zero authoring. runPass/runDriver synthesize the single "load" step from the target.
+  const isOnramp = !opts.module;
+  // The CLI guards this, but record() is also a programmatic API: without a module there is
+  // nothing to run unless a host page names the built-in load flow.
+  if (isOnramp && !opts.url && !opts.html)
+    throw new Error(
+      "record() needs a module to run, or url/html so the built-in load flow has a page to load.",
+    );
+  const absModule = opts.module ? path.resolve(opts.module) : undefined;
+  if (absModule)
+    await fs.access(absModule).catch(() => {
+      throw new Error(`Module not found: ${absModule}`);
+    });
 
   const browserName: BrowserName = opts.browser ?? "chrome";
   const mode: "module" | "html" | "url" = opts.url ? "url" : opts.html ? "html" : "module";
@@ -327,6 +340,15 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(notesCatalog.defaultRung());
     notes.push(notesCatalog.cpuSamplerOnDefaultRung());
   }
+  // The built-in on-ramp flow: disclose what the single "load" step measures, and (when repeated)
+  // that only iteration 1 is a cold boot -- later iterations reuse the one browser and hit its cache.
+  if (isOnramp) {
+    notes.push(notesCatalog.onrampBuiltinFlow());
+    if (opts.iterations > 1) notes.push(notesCatalog.onrampWarmVsCold(opts.iterations));
+  }
+  // --url named a host with no scheme (localhost:5173): http:// was assumed to reach it. Disclose
+  // the target the run actually navigated to, whether or not a module drove it.
+  if (opts.urlSchemeAssumed && opts.url) notes.push(notesCatalog.pageSchemeAssumed(opts.url));
   // Which clock priced the driver step walls (§17.3.1): the trace clock under --breakdown/--deep, the
   // page's own performance.now on the no-trace rung, never the node-side page.click bound. "none"
   // means every step navigated on a no-trace rung, so no wall could be priced.
@@ -386,7 +408,7 @@ export async function record(opts: RecordOptions): Promise<{
     target:
       mode === "url"
         ? opts.url!
-        : stableWorkloadPath(root, mode === "html" ? opts.html! : opts.module),
+        : stableWorkloadPath(root, mode === "html" ? opts.html! : opts.module!),
     fn: opts.fn,
     iterations: opts.iterations,
     warmup: opts.warmup,

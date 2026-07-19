@@ -107,6 +107,25 @@ export function driverStepWallUnmeasured(): string {
   return "Driver step walls are NOT measured on this run: every step navigated, which resets the page clock, and there is no trace to span it. Record with --breakdown or --deep for a trace-clock wall that survives navigation. See docs/dev/driver-timing.md.";
 }
 
+// --- Built-in on-ramp flow (no module) ---
+
+/** No module given: the built-in load flow ran. Names what the single "load" step measures. */
+export function onrampBuiltinFlow(): string {
+  return "Built-in load flow (no module): one step labeled 'load' navigates to the target (meta.target) inside the run window and settles, so the measured window is the page's own boot. INP is null — a page load has no interaction; pass a module that drives one (measureStep) to measure interactions.";
+}
+
+/** --url named a host with no scheme (localhost:5173); http:// was assumed to reach it. */
+export function pageSchemeAssumed(url: string): string {
+  return `--url named a host with no scheme, so http:// was assumed: the target is ${url}. Pass an explicit https:// URL if the server is TLS.`;
+}
+
+/** Repeated on-ramp: only iteration 1 boots cold, the rest reuse the one browser's caches. */
+export function onrampWarmVsCold(iterations: number): string {
+  const laterIterations =
+    iterations === 2 ? "iteration 2 reuses" : `iterations 2..${iterations} reuse`;
+  return `Iteration 1 boots cold, but ${laterIterations} the same browser (one launch per run), so they hit its HTTP/disk cache and warm JIT: the 'load' step's wall median mixes the cold first load with warm reloads. Per-step counts describe iteration 1 (the cold boot). Use --iterations 1 for a purely cold boot.`;
+}
+
 // --- Cross-lane ---
 
 export function traceWindowMissing(): string {

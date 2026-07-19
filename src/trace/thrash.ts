@@ -134,10 +134,18 @@ function annotateForcedFlushes(events: NormalizedEvent[], start: number | null):
       if ((event.kind === "layout" || event.kind === "style") && event.forced) {
         if (inWindow(event, start)) {
           const matching = event.kind === "layout" ? gapLayoutWrites : gapStyleWrites;
+          // A synchronous detach cannot occupy the same source position as the read it forced, so a
+          // "Removed from layout" entry whose `at` equals this flush's read-site is not a write: it
+          // is the recalc-time stamp of a display:none removal, named at the read line. Drop it; a
+          // genuine removeChild names a distinct write line and stays. The thrash count is read from
+          // gapLayoutWrites above and untouched. See docs/dev/engine-mapping.md.
+          const dirtiedBy = dedupeWrites(gapDirtiedBy).filter(
+            (write) => !(write.reason === LAYOUT_WRITE_REASON && write.at === event.at),
+          );
           annotations.push({
             kind: event.kind,
             read: event.at,
-            dirtiedBy: dedupeWrites(gapDirtiedBy),
+            dirtiedBy,
             thrash: matching >= 1,
           });
         }

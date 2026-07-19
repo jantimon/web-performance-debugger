@@ -100,6 +100,29 @@ test('a removeChild detach ("Removed from layout") names the write from the layo
   assert.deepEqual(report.steps[0].dirtiedBy, [{ at: "app.js:7", reason: "Removed from layout" }]);
 });
 
+// A display:none removal removes the element from the layout tree lazily, DURING the forced recalc,
+// so its "Removed from layout" record is stamped with the geometry read on the stack and its `at` is
+// byte-equal (line:col) to the flush's own read-site. That self-referential entry is not a write, so
+// it is dropped from dirtied-by; the co-emitted style mutation (the genuine toggle) survives, and the
+// layout write still counts the thrash step.
+test('display:none "Removed from layout" at the flush read-site is dropped from dirtied-by, count unchanged', () => {
+  nextId = 0;
+  const events = [
+    task(0, 1000),
+    styleWrite(10, "app.js:29", "Related style rule"),
+    layoutWrite(15, "app.js:30", "Removed from layout"),
+    layoutFlush(20, "app.js:30"),
+  ];
+  const { report, dirtiedByReadSite } = analyzeThrash(events, 0);
+  assert.equal(report.count, 1, "the layout write still counts the thrash step");
+  assert.deepEqual(
+    report.steps[0].dirtiedBy,
+    [{ at: "app.js:29", reason: "Related style rule" }],
+    "the self-referential Removed-from-layout entry is filtered; the genuine style write survives",
+  );
+  assert.deepEqual(dirtiedByReadSite["app.js:30"], [{ at: "app.js:29", reason: "Related style rule" }]);
+});
+
 // The classic style->layout thrash the probe produces: one write, then BOTH a forced style recalc
 // and a forced layout, both read at the same line. Both count; the read-site's dirtied-by rolls up
 // to the one genuine write, ignoring the layout record that names the read.
