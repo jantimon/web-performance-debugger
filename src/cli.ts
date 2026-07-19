@@ -435,7 +435,10 @@ program
 program
   .command("diff <baseline> <current>")
   .description("compare two recordings field-by-field (counts/INP/wall)")
-  .option("--fail-on-regression", "exit 1 if any count/INP increased")
+  .option(
+    "--fail-on-regression",
+    "exit 1 if a gated exact count increased (INP and other wall-tier numbers stay advisory)",
+  )
   .action((baseline, current, opts) =>
     diffCmd(baseline, current, { failOnRegression: !!opts.failOnRegression }).catch((error) =>
       program.error(error.message),
