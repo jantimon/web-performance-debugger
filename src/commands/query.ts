@@ -465,11 +465,11 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   // at the event log, where one exists.
   console.log(
     dim(
-      `\n  • One span's anatomy (counts, forced, hot functions): wpd query span "${abs}" <label>`,
+      `\n  • One span's anatomy (counts, forced, hot functions): wpd query span "${file}" <label>`,
     ),
   );
   if (rec.meta.passes.includes("deep") || isGeckoRung(rec.meta.passes))
-    console.log(dim(`  • The classified event log: wpd query events "${abs}" (drill: query get)`));
+    console.log(dim(`  • The classified event log: wpd query events "${file}" (drill: query get)`));
 }
 
 export async function queryGet(file: string, id: number, opts: OutOpts): Promise<void> {

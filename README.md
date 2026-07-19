@@ -37,17 +37,77 @@ The same tool attributes rendering and JS cost back to the **source line** that 
 headless, and gates in CI. Run it with `npx @jantimon/web-performance-debugger ...`, or install it and
 use the short `wpd`.
 
-## Which problem do you have?
+## Start from your symptom
 
-| Symptom | Start here |
-| --- | --- |
-| Where did this interaction's time actually go | `record --breakdown`, then `query spans` |
-| A line forces synchronous layout (thrashing) | `record --deep`, then `query blame --forced` |
-| SSR or a hot JS loop is slow | `record --target node`, then `query cpu` |
-| Which dependency dominates CPU time | `query cpu --by package` |
-| Did my change regress a budget | `assert`, `diff`, `cpu-diff` |
+Match what you are seeing to a starting command, run it against your own code, and read the result.
+Every command below runs against a committed example, so each shot reproduces from a clean checkout;
+each block links to its full section.
 
-Each section below is one of these: reproduce it, read the result, fix the line.
+### An operation is slow and you can't see where the time went
+
+The reconciling bar tiles any measured span (the `run` window, a driver step, or a
+`performance.measure`) into `js · style · layout · paint · gc · other · idle` that sum to the wall
+exactly, so no millisecond hides in a vague "browser" bucket.
+
+```bash
+wpd record examples/measure-span.mjs --bench --breakdown --iterations 5
+wpd query spans latest --label run
+```
+
+![The reconciling breakdown bar: js, style, layout, paint, gc, other and idle slices that tile one span and sum to its wall time exactly.](examples/demo-gif/shots/reconciling-bar.png)
+
+Full section: [Where did this interaction's time go](#where-did-this-interactions-time-go).
+
+### A line forces synchronous layout
+
+Reading geometry (`offsetTop`, `getBoundingClientRect`, ...) right after a DOM write forces a
+synchronous layout flush (a forced reflow). `--deep` names the read that forced the flush and the writes that dirtied it.
+
+```bash
+wpd record examples/forces-layout.mjs --bench --deep --iterations 5
+wpd query blame latest --forced
+```
+
+![Forced-layout blame: a source line that forced ten style plus layout flushes, with the writes that dirtied it listed underneath.](examples/demo-gif/shots/forced-blame.png)
+
+Full section: [A line forces synchronous layout](#a-line-forces-synchronous-layout).
+
+### SSR or a hot JS loop is slow
+
+`--target node` profiles pure JS with no browser at all, attributing self-time to the source line,
+file, and owning package. That is where SSR runs in production.
+
+```bash
+wpd record examples/ssr-demo/demo.mjs --target node --iterations 250
+wpd query cpu latest
+```
+
+![Node CPU rollup: the four-slice bar splits self-time across react-dom, tailwind-merge and your app, with tailwind-merge's LRU-cache lookup the single hottest function.](examples/demo-gif/shots/cpu-rollup.png)
+
+Full section: [SSR or a hot JS loop is slow](#ssr-or-a-hot-js-loop-is-slow).
+
+### One dependency dominates your CPU time
+
+The same CPU model, rolled up by package instead of by function. The bar above already names the
+split, and `--by package` ranks it.
+
+```bash
+wpd query cpu latest --by package
+```
+
+Full section: [SSR or a hot JS loop is slow](#ssr-or-a-hot-js-loop-is-slow).
+
+### A change might have regressed a budget
+
+`assert` fails the build when a budget is blown; `diff` and `cpu-diff` compare two recordings.
+
+```bash
+wpd assert latest --max-forced 0 --max-layouts 50
+```
+
+![A failing assert gate: forced layout/style 203 over its budget of 0 and layouts 102 over 50, both marked FAIL, exit 1.](examples/demo-gif/shots/regression-gate.png)
+
+Full section: [Did my change regress a budget](#did-my-change-regress-a-budget).
 
 ## 30-second quickstart
 
@@ -241,7 +301,7 @@ report forced-layout counts or blame — those need the `.stack` trace category,
 ## A line forces synchronous layout
 
 Reading geometry (`offsetTop`, `getBoundingClientRect`, ...) right after a DOM write forces a
-synchronous reflow. `--deep` captures the full trace (`.stack` + invalidation tracking) with the
+synchronous layout flush (a forced reflow). `--deep` captures the full trace (`.stack` + invalidation tracking) with the
 sampler off, and reports who read, who wrote, and whether the two interleaved into thrashing:
 
 ```bash
