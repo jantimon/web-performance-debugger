@@ -39,7 +39,7 @@ export const THRASH_SEQUENCE_CAP = 12;
 /** The full detector result over a window: the rollup plus dirtied-by writes keyed by read-site. */
 export interface ThrashAnalysis {
   report: ThrashReport;
-  /** dirtied-by writes per forced read-site (source line), the dual annotation for blame/digest. */
+  /** dirtied-by writes per forced read-site (source line), the dual annotation for blame and the span anatomy. */
   dirtiedByReadSite: Record<string, DirtiedByWrite[]>;
 }
 

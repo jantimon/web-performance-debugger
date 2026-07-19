@@ -125,7 +125,7 @@ honesty a sharper wedge for wpd than the incumbents' indifference suggests.
 where wpd's number disagrees with DevTools/Lighthouse: explaining why the other number is
 optimistic is the moment latent demand becomes articulated.
 
-## 5. Record-once artifacts + query surface (`digest`/`spans`/`blame`/`cpu`/`get`, `diff`, `assert`): good
+## 5. Record-once artifacts + query surface (`spans`/`span`/`blame`/`cpu`/`get`, `diff`, `assert`): good
 
 **What.** A recording is a portable JSON/TOON artifact; query it later by verb and id, diff two
 runs, gate CI on thresholds. The digest is deliberately small; drilldown is by id.

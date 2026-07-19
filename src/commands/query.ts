@@ -397,9 +397,10 @@ function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | un
       ),
     );
   } else if (span.kind !== "run") {
+    const pointer = model ? " Use `query cpu` for the run-window hot list." : "";
     console.log(
       dim(
-        "\nHot functions: not available for a step/measure span (per-span CPU windowing is not reconstructed post-hoc). Use `query cpu` for the run-window hot list.",
+        `\nHot functions: not available for a step/measure span (per-span CPU windowing is not reconstructed post-hoc).${pointer}`,
       ),
     );
   }
@@ -749,8 +750,8 @@ function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
  * One line saying what the `source` column of the FORCED rows points at. Without it the table
  * invites the one comparison it cannot support: the same probe blamed in both engines shares zero
  * lines, because each engine answers a different question (see BlameSemantic). Human output only --
- * structured consumers read `meta.blameSemantic` off the recording or digest, which is durable and
- * does not depend on having run this verb.
+ * structured consumers read `meta.blameSemantic` off the recording, which is durable and does not
+ * depend on having run this verb.
  */
 function blameSemanticLine(
   semantic: BlameSemantic | undefined,
