@@ -163,6 +163,10 @@ program
         program.error(
           "record needs a module path, or --url/--html to run the built-in load flow. Try: wpd record --url https://example.com",
         );
+      if (cmdOpts.preciseWall)
+        program.error(
+          "record --precise-wall needs a module: the built-in load flow's only step is a navigation, whose wall the page clock cannot price on a no-trace rung (nothing would be measured). Drop --precise-wall, or pass a module.",
+        );
     }
     // undefined = flag not passed; the flavour then defaults to shell in launchBrowser. The two
     // guards below fire only on an EXPLICIT --headless-mode, so plain --no-headless stays headed

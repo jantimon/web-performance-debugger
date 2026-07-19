@@ -116,7 +116,9 @@ export function onrampBuiltinFlow(): string {
 
 /** Repeated on-ramp: only iteration 1 boots cold, the rest reuse the one browser's caches. */
 export function onrampWarmVsCold(iterations: number): string {
-  return `Iteration 1 boots cold, but iterations 2..${iterations} reuse the same browser (one launch per run), so they hit its HTTP/disk cache and warm JIT: the 'load' step's wall median mixes the cold first load with warm reloads. Per-step counts describe iteration 1 (the cold boot). Use --iterations 1 for a purely cold boot.`;
+  const laterIterations =
+    iterations === 2 ? "iteration 2 reuses" : `iterations 2..${iterations} reuse`;
+  return `Iteration 1 boots cold, but ${laterIterations} the same browser (one launch per run), so they hit its HTTP/disk cache and warm JIT: the 'load' step's wall median mixes the cold first load with warm reloads. Per-step counts describe iteration 1 (the cold boot). Use --iterations 1 for a purely cold boot.`;
 }
 
 // --- Cross-lane ---

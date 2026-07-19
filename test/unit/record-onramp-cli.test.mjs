@@ -37,3 +37,9 @@ test("record --target node with no module errors (node imports and profiles run(
   assert.equal(result.status, 1, "exits non-zero");
   assert.match(result.stderr, /--target node needs a module/, "explains node needs a module");
 });
+
+test("record --precise-wall without a module is refused (nothing would be measured)", () => {
+  const result = runCli(["record", "--url", "http://127.0.0.1:1/x", "--precise-wall"]);
+  assert.equal(result.status, 1, "exits non-zero");
+  assert.match(result.stderr, /--precise-wall needs a module/, "explains why nothing would be measured");
+});
