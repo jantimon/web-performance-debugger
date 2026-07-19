@@ -5,6 +5,7 @@
 // bar from `bars` when the rung built one.
 
 import { buildSummary, type CaptureCapabilities } from "../metrics/summarize.js";
+import { mainThread } from "../trace/main-thread.js";
 import { countsFromSummary, notMeasuredSpanCounts } from "../model/span.js";
 import { spanAggregation } from "../model/spans.js";
 import type { MergedStep } from "../trace/steps.js";
@@ -21,6 +22,9 @@ export interface SpansBuildInput {
   capabilities: CaptureCapabilities;
   /** the reconciling per-span bars (run/step/measure) the rung built, or [] when it built none */
   bars: SpanBreakdown[];
+  /** the run window's end (trace clock), so a step whose end mark was lost windows its counts to the
+   * run end exactly like its bar. null on rungs with no trace / an unclosed run window. */
+  runWindowEnd: number | null;
 }
 
 /**
@@ -30,9 +34,15 @@ export interface SpansBuildInput {
  * (already median-merged) measure bars. Always returns at least the run span.
  */
 export function buildRecordingSpans(input: SpansBuildInput): Span[] {
-  const { summary, mergedSteps, detailEvents, capabilities, bars } = input;
+  const { summary, mergedSteps, detailEvents, capabilities, bars, runWindowEnd } = input;
   const barByKey = new Map(bars.map((bar) => [`${bar.kind}:${bar.label}`, bar]));
   const spans: Span[] = [];
+
+  // The run's main-thread selection, from the full event log (which carries the run:start marker).
+  // Each step's counts are scoped to THIS thread instead of re-selecting from the step's own
+  // marker-less window (where the heuristic could land on the OOPIF thread), so a step's counts sit on
+  // the same thread as its bar -- buildBreakdowns scopes the step bar to this same selection.
+  const runThread = mainThread(detailEvents);
 
   // Run span: the whole-run window. Its counts, wall, INP and per-iteration stats are the run summary.
   const runBar = barByKey.get("run:run");
@@ -53,11 +63,15 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
   // Step spans: each step's counts come from buildSummary over its own trace window (the same
   // windowing the old per-step recording used, so the numbers are identical), gated to iteration 0.
   for (const step of mergedSteps ?? []) {
+    // A step whose end mark was lost (endTs null) windows to the run end, matching its bar
+    // (breakdown-spans.ts uses the same `step.endTs ?? runWindow.endTs`), so counts and bar cover the
+    // same events rather than the counts running open to trace end.
+    const stepEnd = step.endTs ?? runWindowEnd;
     const windowEvents = detailEvents.filter(
       (event) =>
         step.startTs != null &&
         event.ts >= step.startTs &&
-        (step.endTs == null || event.ts <= step.endTs),
+        (stepEnd == null || event.ts <= stepEnd),
     );
     const stepSummary = buildSummary({
       wallMs: step.wallMs,
@@ -67,6 +81,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       detailWindowStart: step.startTs,
       perIteration: step.perIteration,
       capabilities,
+      thread: runThread,
     });
     const stepBar = barByKey.get(`step:${step.label}`);
     spans.push({

@@ -108,20 +108,50 @@ export function makeNodeSourceResolver() {
   };
 }
 
-/** True for urls injected by the tool itself (puppeteer harness or node-runtime runner). */
+/**
+ * The wpd source files whose `page.evaluate` calls inject wpd's OWN page-side helpers: the driver's
+ * step marks / INP observer / settle, and the bench harness runner. Puppeteer stamps an evaluated
+ * function's sourceURL as `pptr:<fn>;<encoded call site>`, so a frame from one of these files is
+ * wpd's own, not the user's. A driver-mode USER `page.evaluate` callback carries the same `pptr:`
+ * scheme but a call site inside the user's module, so it is NOT one of these and must survive.
+ */
+const WPD_EVALUATE_SITES = [
+  "/browser/driver.",
+  "/browser/settle.",
+  "/browser/harness.",
+  "/record/runpass.",
+];
+
+/** True for urls injected by the tool itself (puppeteer internals/harness or node-runtime runner). */
 export function isToolFrameUrl(url: string | undefined): boolean {
   if (!url) return false;
-  return (
-    url.startsWith("pptr:") ||
-    url.startsWith("debugger://") ||
-    // page.evaluate'd code (our harness, incl. the post-run layout flush)
+  if (url.startsWith("debugger://")) return true;
+  if (
+    // page.evaluate'd code under older puppeteer (its legacy evaluation sourceURL)
     url.includes("__puppeteer_evaluation_script__") ||
     // Firefox/BiDi attributes page.evaluate code to the served host page url, so the
     // bench harness loop lands on the blank host page; drop it (not user code).
     url.includes("/__wpd_blank__") ||
     // the in-process node-runtime driver loop (not user code)
     url.includes("/runtime/node.")
-  );
+  )
+    return true;
+  if (url.startsWith("pptr:")) {
+    // Puppeteer's own internal frames.
+    if (url.startsWith("pptr:internal")) return true;
+    // A `pptr:<fn>;<encoded call site>` frame: drop it ONLY when the call site is one of wpd's own
+    // injection points. A user's driver-mode page.evaluate callback gets the same scheme, and its
+    // frames are real user code that must reach blame/cpu. The site is percent-encoded in the url,
+    // so decode before matching (the `/` separators would otherwise read as `%2F`).
+    let site = url;
+    try {
+      site = decodeURIComponent(url);
+    } catch {
+      // malformed percent-encoding: match against the raw url instead
+    }
+    return WPD_EVALUATE_SITES.some((fragment) => site.includes(fragment));
+  }
+  return false;
 }
 
 /** Frames injected by puppeteer itself (our harness), not user source. */

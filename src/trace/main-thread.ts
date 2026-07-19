@@ -9,8 +9,11 @@ import { RUN_START_MARK } from "../model/marks.js";
  * capture keeps pid/tid, so every other mode yields null here and its consumers count the single
  * thread they were given.
  *
- * The breakdown bar and the trace-derived rendering counts read the SAME thread from this one
- * selector, so a per-span count can never scope to a different thread than the bar it sits under.
+ * buildSummary scopes every trace-derived count (layout/style AND paint/forced/invalidation/
+ * long-task/total) to the thread this selector returns, and the breakdown bar (trace/breakdown.ts)
+ * tiles that same thread. The run selects here from its own event log; a per-step summary is handed
+ * the run's selection (buildRecordingSpans) rather than re-running this heuristic on a step window
+ * with no run:start marker, so a step's counts sit on the same thread as the bar it sits under.
  */
 export function mainThread(
   events: NormalizedEvent[],

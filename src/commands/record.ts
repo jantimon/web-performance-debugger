@@ -339,6 +339,22 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(notesCatalog.artificialSlowdown(opts.cpuThrottle));
   }
   if (traceWindowMissing) notes.push(notesCatalog.traceWindowMissing());
+  // The run window opened (start mark found) but never closed (run:end lost). traceWindowMissing only
+  // fires on a missing START, so without this the bar goes silently absent (buildBreakdowns needs both
+  // bounds) while counts stay valid (start-onward). Disclose it; no capability downgrade.
+  const runEndMarkLost =
+    !traceWindowMissing &&
+    detail.windowStart != null &&
+    detail.windowEnd == null &&
+    browserName !== "firefox" &&
+    wantTrace;
+  if (runEndMarkLost) notes.push(notesCatalog.runEndMarkLost());
+  // A driver step's end mark was lost (start present, end null): its counts + bar window to the run
+  // end (an over-estimate) and its wall stays page-clock, so it does not reconcile with its bar.
+  const stepEndMarkLost = (mergedSteps ?? []).some(
+    (step) => step.startTs != null && step.endTs == null,
+  );
+  if (stepEndMarkLost) notes.push(notesCatalog.stepEndMarkLost());
 
   const throttle = opts.cpuThrottle ? { cpuRate: opts.cpuThrottle } : undefined;
 
@@ -536,6 +552,7 @@ export async function record(opts: RecordOptions): Promise<{
     detailEvents: detail.events,
     capabilities: effectiveCapabilities,
     bars,
+    runWindowEnd: detail.windowEnd,
   });
 
   // Every frame the run will ever resolve has now been resolved, so the tally is final. A failed

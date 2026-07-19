@@ -95,8 +95,12 @@ compositor layer) does not move it: 2 vs 2 at N=1, 21 vs 21 at N=20. It counts *
 chunks, not layers and not frames** -- all 21 `Paint` events at N=20 span 0.056 ms with no `Commit`
 interleaved, i.e. they are one frame.
 
-So `paintCount` is in the same trust tier as the CDP layout/style counters, and `assert
---max-paints` / `diff` gate it.
+There is no CDP paint counter to prefer, so `paintCount` is trace-only. The trace is browser-wide, so
+the count is scoped to the selected main thread (the same thread the breakdown bar tiles and the
+layout/style counts window), which puts it in the top-process scope layout/style share -- an OOPIF's
+own-process paints are filtered out, never summed in. Within that scope it is exact and reproducible
+(N+1, zero variance), so `assert --max-paints` / `diff` gate it; the tier is earned by
+reproducibility, not by a CDP provenance it does not have.
 
 ## Why `PAINT` is only `{Paint}`
 

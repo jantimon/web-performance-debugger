@@ -1,4 +1,5 @@
 import type { CpuDiffResult, CpuFunctionDelta, CpuPackageDelta } from "../model/query.js";
+import type { CpuFunction } from "../model/recording.js";
 import { num, table } from "../output/ascii.js";
 import { serialize, isFormat, type Format } from "../output/format.js";
 import {
@@ -11,6 +12,29 @@ import {
 /** Self-time deltas below this are treated as sampling noise. */
 const NOISE_MS = 0.5;
 const TOP_FUNCTIONS = 25;
+
+/**
+ * Index a model's functions by their cross-run join key, SUMMING self/total time on a collision. Two
+ * functions can share a key (same name in the same file: overloads, or a name reused at two lines --
+ * `functionJoinKey` joins on the bare file, not the line, so a line shift does not split the join).
+ * A plain `new Map(...)` would keep only the last, silently dropping the other's self-time from the
+ * delta; summing makes the row reflect the whole line. The first entry is copied so the loaded model
+ * is never mutated.
+ */
+function functionsByJoinKey(functions: CpuFunction[]): Map<string, CpuFunction> {
+  const byKey = new Map<string, CpuFunction>();
+  for (const fn of functions) {
+    const key = functionJoinKey(fn);
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.selfMs += fn.selfMs;
+      existing.totalMs += fn.totalMs;
+    } else {
+      byKey.set(key, { ...fn });
+    }
+  }
+  return byKey;
+}
 
 interface DiffOpts {
   failOnRegression?: boolean;
@@ -48,8 +72,8 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
     .filter((row) => Math.abs(row.delta) >= NOISE_MS)
     .sort((left, right) => Math.abs(right.delta) - Math.abs(left.delta));
 
-  const baseFunctions = new Map(baseModel.functions.map((fn) => [functionJoinKey(fn), fn]));
-  const currentFunctions = new Map(currentModel.functions.map((fn) => [functionJoinKey(fn), fn]));
+  const baseFunctions = functionsByJoinKey(baseModel.functions);
+  const currentFunctions = functionsByJoinKey(currentModel.functions);
   const functionRows: CpuFunctionDelta[] = [
     ...new Set([...baseFunctions.keys(), ...currentFunctions.keys()]),
   ]

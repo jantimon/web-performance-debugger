@@ -13,6 +13,7 @@ import {
   DEFAULT_CPU_INTERVAL_US,
 } from "../../dist/profile/cpuprofile.js";
 import { SourceMapResolver } from "../../dist/trace/sourcemap.js";
+import { cpuDiffCmd } from "../../dist/commands/cpudiff.js";
 import {
   syntheticProfile,
   breakdownProfile,
@@ -241,6 +242,44 @@ test("functionJoinKey joins on file, not source line (cpu-diff stays stable acro
   assert.equal(functionJoinKey(before), "render src/app.js");
 });
 
+// F33: two functions sharing a join key (same name in the same file) must be SUMMED, not last-wins.
+// functionJoinKey joins on the bare file (so a line shift does not split it), so a name reused at two
+// lines collides; a plain Map would silently drop one side's self-time from the delta.
+test("cpu-diff sums self-time on a join-key collision instead of dropping one (F33)", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-cpudiff-"));
+  const cpuFn = (fn, file, source, selfMs) => ({
+    id: 0, fn, file, source, package: "app", selfMs, totalMs: selfMs, selfPct: 0, callers: [], callees: [],
+  });
+  const model = (functions, scriptingMs) => ({
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "3", iterations: 1 },
+    profile: "x.cpuprofile", scriptingMs, totalMs: scriptingMs, sampleCount: 1, sampleIntervalUs: 200,
+    system: { idleMs: 0, gcMs: 0, programMs: 0 }, functions,
+  });
+  // baseline has the line once (3ms); current has the SAME name+file at two lines (3 + 4 = 7ms).
+  const baseFile = path.join(dir, "base.cpu.json");
+  const curFile = path.join(dir, "cur.cpu.json");
+  writeFileSync(baseFile, JSON.stringify(model([cpuFn("get", "lib/cache.ts", "lib/cache.ts:35", 3)], 3)));
+  writeFileSync(curFile, JSON.stringify(model(
+    [cpuFn("get", "lib/cache.ts", "lib/cache.ts:35", 3), cpuFn("get", "lib/cache.ts", "lib/cache.ts:42", 4)],
+    7,
+  )));
+
+  const logs = [];
+  const priorLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    await cpuDiffCmd(baseFile, curFile, { json: true });
+  } finally {
+    console.log = priorLog;
+  }
+  const result = JSON.parse(logs.join("\n"));
+  const row = result.functions.find((entry) => entry.fn === "get");
+  assert.ok(row, "the colliding function is present");
+  assert.equal(row.baseMs, 3, "baseline self-time (one occurrence)");
+  assert.equal(row.currentMs, 7, "current self-time SUMMED across both occurrences, not last-wins (4)");
+  assert.equal(row.delta, 4, "delta reflects the whole line (7 - 3), not a dropped 4 - 3 = 1");
+});
+
 // Regression: DEFAULT_CPU_INTERVAL_US was duplicated in commands/record.ts and runtime/node.ts, so
 // the 50 -> 200 change landed on the browser lanes only. The node lane -- the very lane the
 // interval was measured on -- kept sampling at 50us while --help and the changelog said 200. The
@@ -314,6 +353,28 @@ test("served-origin frames with an off-disk source get the local package, or (se
 // elsewhere, or a stale map). frame.source is then not on disk, so the local branch cannot answer;
 // the served pathname is re-derived to the real package via packageForFile. A regression that makes
 // the helper always return `(served)` would pass the fallback-only assertions above but fail here.
+// F22: a local bundle whose `//# sourceMappingURL` names a map in a SIBLING directory (e.g.
+// `maps/bundle.js.map`). The adjacent `${jsFile}.map` read misses it, so before the fix it returned
+// map-fetch-failed and the frame stayed minified. The reference must resolve against the JS file's
+// own directory and be read from disk, exactly as the remote branch resolves relative references.
+test("a local sourceMappingURL pointing at a sibling directory resolves off disk (F22)", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-relmap-"));
+  mkdirSync(path.join(dir, "maps"));
+  const bundle = path.join(dir, "bundle.js");
+  writeFileSync(bundle, "function Bh(){}\n//# sourceMappingURL=maps/bundle.js.map\n");
+  writeFileSync(path.join(dir, "maps", "bundle.js.map"), sourcemapFor("src/original.ts", "realName"));
+
+  const maps = new SourceMapResolver();
+  const frame = { source: bundle, line: 1, column: 1 };
+  await maps.resolveFrame(frame);
+
+  const diagnostics = maps.diagnostics();
+  assert.equal(diagnostics.resolved, 1, "the sibling-directory map resolved (not map-fetch-failed)");
+  assert.equal(diagnostics.failed, undefined, "no failure recorded");
+  assert.equal(frame.originalName, "realName", "the frame carries the map's original identifier");
+  assert.ok(frame.source.endsWith(path.join("src", "original.ts")), "source re-pointed at the original");
+});
+
 test("served frame with an on-disk bundle but off-disk sourcemap source gets the real served package", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wpd-served-map-"));
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "my-served-app" }));

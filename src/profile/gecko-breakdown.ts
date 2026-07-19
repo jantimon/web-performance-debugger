@@ -151,7 +151,7 @@ function windowBounds(
   return from <= to ? { from, to } : { from: 0, to: 0 };
 }
 
-/** One seven-slice `Breakdown` (paint is always 0 on Firefox: main-thread paint is off on the
+/** One seven-slice `Breakdown` (paint is not-measured on Firefox: main-thread paint is off on the
  * compositor, a side track, never summed into the wall) for the samples in `[from, to)`. */
 function spanBreakdown(
   raw: RawCpuProfile,
@@ -167,7 +167,7 @@ function spanBreakdown(
       js: { ms: usToMs(sums.js), byPackage: byPackageMs(sums.byPackageUs) },
       style: { ms: usToMs(sums.style) },
       layout: { ms: usToMs(sums.layout) },
-      paint: { ms: 0 },
+      paint: null,
       gc: { ms: usToMs(sums.gc) },
       // DOM-accessor time + Profiler self-overhead + everything non-work-classified.
       other: { ms: usToMs(sums.browser) },
@@ -175,12 +175,12 @@ function spanBreakdown(
     },
   };
   // Every in-window delta lands in one slice, so this closes; the valve only catches float dust.
+  // paint is not-measured on firefox and contributes nothing to the sum.
   const residual = reconcileResidual(
     breakdown.wallMs,
     breakdown.slices.js.ms +
       breakdown.slices.style.ms +
       breakdown.slices.layout.ms +
-      breakdown.slices.paint.ms +
       breakdown.slices.gc.ms +
       breakdown.slices.other.ms +
       breakdown.slices.idle.ms,

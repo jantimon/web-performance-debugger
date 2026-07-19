@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildSummary, traceRenderingWork } from "../../dist/metrics/summarize.js";
+import { buildRecordingSpans } from "../../dist/record/spans-build.js";
 import { mainThread } from "../../dist/trace/main-thread.js";
 import { classify } from "../../dist/trace/classify.js";
 
@@ -142,4 +143,94 @@ test("buildSummary sources counts/durations from the trace; --deep refuses the d
   assert.equal(deep.layoutCount, 1, "counts stay exact on a .stack trace");
   assert.equal(deep.layoutMs, null, "durations are refused on a .stack trace");
   assert.equal(deep.styleMs, null);
+});
+
+// F28: the GENERAL count loop (paint/forced/invalidation/long-task/total) scoped to the same main
+// thread as layout/style, so an OOPIF's own-process paint/forced work is filtered out, never summed
+// into the main-thread window.
+const paint = (id, dur, pid, tid) => ({ id, name: "Paint", ts: id, dur, ph: "X", kind: "paint", pid, tid });
+const forcedLayout = (id, dur, pid, tid) => ({ ...layout(id, dur, pid, tid), forced: true });
+test("buildSummary scopes paint/forced/total to the main thread, excluding an OOPIF process (F28)", () => {
+  const events = [marker(1, 1)];
+  // top process (the selected main thread): 2 paints, 1 forced layout
+  events.push(paint(10, 500, 1, 1), paint(11, 500, 1, 1), forcedLayout(12, 500, 1, 1));
+  // OOPIF process: 5 paints, 3 forced layouts -- must NOT count toward the main-thread window
+  for (let index = 0; index < 5; index++) events.push(paint(index + 100, 500, 2, 1));
+  for (let index = 0; index < 3; index++) events.push(forcedLayout(index + 200, 500, 2, 1));
+
+  const summary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
+  assert.equal(summary.paintCount, 2, "only the top-process paints count, not the OOPIF's 5");
+  assert.equal(summary.forcedLayoutCount, 1, "only the top-process forced layout counts, not the OOPIF's 3");
+  // totalEvents is main-thread scoped too: marker + 2 paint + 1 forced = 4, never the OOPIF's 8 mixed in.
+  assert.equal(summary.totalEvents, 4, "totalEvents excludes the OOPIF process (would be 12 unfiltered)");
+});
+
+// F29: a step's counts are scoped to the RUN-selected thread, not re-picked by the heuristic on the
+// step's own marker-less window. Here the OOPIF thread does more layout inside the step window, so a
+// per-step heuristic would pick it; the run's marker selection (top process) must win, so the step's
+// counts match the thread its bar sits on.
+test("buildRecordingSpans: a step's counts follow the run-selected thread, not the step heuristic (F29)", () => {
+  const events = [marker(1, 1)]; // run:start on the top process (main thread)
+  events.push(layout(10, 500, 1, 1)); // 1 layout on the main thread inside the step window
+  for (let index = 0; index < 5; index++) events.push(layout(index + 100, 500, 2, 1)); // 5 on the OOPIF
+
+  // Sanity: on the step window alone (no marker) the heuristic picks the busier OOPIF thread.
+  const stepWindowEvents = events.filter((event) => event.name !== "wpd:run:start");
+  assert.equal(mainThread(stepWindowEvents).pid, 2, "heuristic alone would pick the OOPIF thread");
+
+  const runSummary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
+  const spans = buildRecordingSpans({
+    summary: runSummary,
+    mergedSteps: [
+      {
+        index: 0,
+        label: "mount",
+        perIteration: [10],
+        wallMs: 10,
+        inpMs: null,
+        interaction: null,
+        startTs: 5,
+        endTs: 300,
+      },
+    ],
+    detailEvents: events,
+    capabilities: TRACE_CAP,
+    bars: [],
+    runWindowEnd: 400,
+  });
+  const step = spans.find((span) => span.kind === "step");
+  assert.ok(step, "the step span is present");
+  assert.equal(step.counts.layoutCount, 1, "step counts on the run's main thread (1), not the OOPIF's 5");
+});
+
+// F27: a step whose end marker was lost (endTs null) must window its counts to the run end -- the
+// same bound its bar uses (breakdown-spans.ts `step.endTs ?? runWindow.endTs`) -- rather than running
+// open to trace end, which would fold settle-tail work after the run window into the step.
+test("buildRecordingSpans: a start-only step windows counts to the run end, not trace end (F27)", () => {
+  const events = [marker(1, 1)];
+  events.push(layout(50, 500, 1, 1)); // inside the run window [5, 100]
+  events.push(layout(150, 500, 1, 1)); // settle-tail layout AFTER run end: must not count for the step
+
+  const runSummary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
+  const spans = buildRecordingSpans({
+    summary: runSummary,
+    mergedSteps: [
+      {
+        index: 0,
+        label: "mount",
+        perIteration: [10],
+        wallMs: 10,
+        inpMs: null,
+        interaction: null,
+        startTs: 5,
+        endTs: null, // the wpd:step:0:end mark was lost from the trace
+      },
+    ],
+    detailEvents: events,
+    capabilities: TRACE_CAP,
+    bars: [],
+    runWindowEnd: 100,
+  });
+  const step = spans.find((span) => span.kind === "step");
+  assert.equal(step.counts.layoutCount, 1, "bounded to the run end (1), not open to trace end (2)");
 });

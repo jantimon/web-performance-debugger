@@ -32,6 +32,44 @@ export function spanAggregation(kind: SpanKind, samples?: number): SpanAggregati
 }
 
 /**
+ * Split a `kind:label` qualifier (`run:`, `step:`, `measure:`) off a span selector, or null for a
+ * bare label. Only the three span kinds qualify; a label that itself begins `foo:` is not one and
+ * stays a bare label. Span identity is kind+label, so this is how a caller disambiguates a bare label
+ * that collides across kinds (e.g. a user `performance.measure` literally named "run").
+ */
+export function parseSpanKindLabel(raw: string): { kind: SpanKind; label: string } | null {
+  const colon = raw.indexOf(":");
+  if (colon <= 0) return null;
+  const prefix = raw.slice(0, colon);
+  if (prefix === "run" || prefix === "step" || prefix === "measure")
+    return { kind: prefix, label: raw.slice(colon + 1) };
+  return null;
+}
+
+/**
+ * Resolve a span selector -- a `kind:label` qualifier or a bare label -- to ONE span, honoring span
+ * identity = kind+label. A bare label matching more than one kind throws, listing the qualified
+ * forms, rather than silently joining whichever comes first (the collision a user measure named "run"
+ * would otherwise cause with the run span). Returns null when nothing matches.
+ */
+export function resolveSpanSelector(spans: SpanEntry[], selector: string): SpanEntry | null {
+  const qualifier = parseSpanKindLabel(selector);
+  const wantedLabel = qualifier?.label ?? selector;
+  const wantedKind = qualifier?.kind;
+  const matches = spans.filter(
+    (span) => span.label === wantedLabel && (wantedKind == null || span.kind === wantedKind),
+  );
+  if (matches.length > 1) {
+    const forms = matches.map((span) => `${span.kind}:${span.label}`).join(", ");
+    throw new Error(
+      `'${selector}' matches ${matches.length} spans of different kinds: ${forms}. Re-run with the ` +
+        `qualified form, e.g. ${matches[0].kind}:${wantedLabel}.`,
+    );
+  }
+  return matches[0] ?? null;
+}
+
+/**
  * The engine lane a recording was produced on -- the `--target` axis, "chrome" | "firefox" |
  * "node". Derived from `meta.browser`/`meta.runtime`, NOT from `meta.target` (which holds the
  * recorded module/url/html path, a different thing). Absent browser/runtime => the chrome default,
@@ -207,7 +245,9 @@ export function gateSliceBudgets(
   budgets: SliceBudgets,
   label: string,
 ): SliceGateResult[] {
-  const span = spans?.find((candidate) => candidate.label === label) ?? null;
+  // Span identity is kind+label: resolve on both, so a `--label` collision (a user measure named
+  // "run" alongside the run span) is a loud error listing the qualified forms, never a silent join.
+  const span = spans ? resolveSpanSelector(spans, label) : null;
   const results: SliceGateResult[] = [];
   for (const [sliceKey, max] of Object.entries(budgets) as [SliceName, number][]) {
     if (!span) {
@@ -280,11 +320,14 @@ export function diffSpanSlices(
 ): SpanSliceDiff {
   const base = baseSpans ?? [];
   const current = currentSpans ?? [];
-  const currentByLabel = new Map(current.map((span) => [span.label, span]));
-  const baseLabels = new Set(base.map((span) => span.label));
+  // Join on kind+label, span identity: a user `performance.measure` named "run" must not collide with
+  // the run span. The displayed label is the qualified `kind:label` so a collision is visible.
+  const spanKey = (span: SpanEntry): string => `${span.kind}:${span.label}`;
+  const currentByKey = new Map(current.map((span) => [spanKey(span), span]));
+  const baseKeys = new Set(base.map(spanKey));
   const spans: SpanSliceDiff["spans"] = [];
   for (const baseSpan of base) {
-    const currentSpan = currentByLabel.get(baseSpan.label);
+    const currentSpan = currentByKey.get(spanKey(baseSpan));
     if (!currentSpan) continue;
     const slices: SliceDelta[] = SLICE_NAMES.map((slice) => {
       const baseValue = sliceMs(baseSpan.slices, slice);
@@ -292,15 +335,11 @@ export function diffSpanSlices(
       const delta = baseValue != null && currentValue != null ? currentValue - baseValue : null;
       return { slice, base: baseValue, current: currentValue, delta };
     });
-    spans.push({ label: baseSpan.label, slices });
+    spans.push({ label: spanKey(baseSpan), slices });
   }
   return {
     spans,
-    unmatchedBaseline: base
-      .filter((span) => !currentByLabel.has(span.label))
-      .map((span) => span.label),
-    unmatchedCurrent: current
-      .filter((span) => !baseLabels.has(span.label))
-      .map((span) => span.label),
+    unmatchedBaseline: base.filter((span) => !currentByKey.has(spanKey(span))).map(spanKey),
+    unmatchedCurrent: current.filter((span) => !baseKeys.has(spanKey(span))).map(spanKey),
   };
 }

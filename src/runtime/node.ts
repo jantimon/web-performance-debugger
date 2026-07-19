@@ -168,6 +168,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
       detailEvents: [],
       capabilities: NO_RENDERING_CAPTURE,
       bars: [],
+      runWindowEnd: null,
     }),
   };
   await fs.writeFile(outPath, serialize(recording, opts.format), "utf8");

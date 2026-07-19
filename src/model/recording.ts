@@ -363,8 +363,12 @@ export interface BreakdownSlices {
   style: CpuSlice;
   /** layout (reflow) */
   layout: CpuSlice;
-  /** main-thread paint record */
-  paint: CpuSlice;
+  /**
+   * Main-thread paint record. `Measured` (model/measured.ts): a chrome seven-slice bar always
+   * measures it; null on firefox, where paint is off-main-thread (a compositor side track, never
+   * summed into the wall), so the bar says not-measured rather than a fake 0.
+   */
+  paint: Measured<CpuSlice>;
   /** garbage collection (MinorGC/MajorGC) */
   gc: CpuSlice;
   /** task remainder + anything unclassified (composite/invalidation/user-timing/other) */

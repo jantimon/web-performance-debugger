@@ -254,9 +254,11 @@ e2e(
     );
     const slices = span.breakdown.slices;
     const sum =
-      slices.js.ms + slices.style.ms + slices.layout.ms + slices.paint.ms + slices.gc.ms + slices.other.ms + slices.idle.ms;
+      slices.js.ms + slices.style.ms + slices.layout.ms + slices.gc.ms + slices.other.ms + slices.idle.ms;
     assert.ok(Math.abs(sum - span.breakdown.wallMs) < 0.01, "the median bar tiles its own window (a real sample reconciles)");
-    assert.equal(slices.paint.ms, 0, "paint is 0 on firefox (off-main-thread)");
+    // Firefox paint is off-main-thread, so the stored bar reports it not-measured (null), never a
+    // fake 0 that a --max-slice paint gate would silently pass on (F04).
+    assert.equal(slices.paint, null, "paint is not-measured (null) on firefox stored bars");
   },
 );
 

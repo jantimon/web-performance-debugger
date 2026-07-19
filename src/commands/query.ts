@@ -8,10 +8,9 @@ import type {
   NormalizedEvent,
   Recording,
   Span,
-  SpanKind,
 } from "../model/recording.js";
 import type { BlameEntry, SpanAnatomy, SpanForced, SpanHotFunctions } from "../model/query.js";
-import { buildSpans, recordingLane } from "../model/spans.js";
+import { buildSpans, recordingLane, parseSpanKindLabel } from "../model/spans.js";
 import { isFirefoxDeep, isGeckoRung } from "../model/rung.js";
 import { bold, cyan, dim } from "../output/color.js";
 import { num, table } from "../output/ascii.js";
@@ -85,21 +84,6 @@ export interface SpanQuery extends OutOpts {
 }
 
 /**
- * Split a `kind:label` qualifier (`run:`, `step:`, `measure:`) off a span argument, or null for a
- * bare label. Only the three span kinds qualify; a label that itself begins `foo:` is not one and
- * stays a bare label. Span identity is kind+label, so this is how a caller disambiguates a bare label
- * that collides across kinds.
- */
-function parseKindLabel(raw: string): { kind: SpanKind; label: string } | null {
-  const colon = raw.indexOf(":");
-  if (colon <= 0) return null;
-  const prefix = raw.slice(0, colon);
-  if (prefix === "run" || prefix === "step" || prefix === "measure")
-    return { kind: prefix, label: raw.slice(colon + 1) };
-  return null;
-}
-
-/**
  * The trace-clock window of one span, recovered from the stored event log so forced read-sites can be
  * scoped to the span. The run window is `rec.window`; a step's edges are its `wpd:step:N:start|end`
  * marks; a user measure's are its first in-window `performance.measure` begin/end. Falls back to the
@@ -153,7 +137,7 @@ export async function querySpan(file: string, label: string, query: SpanQuery): 
   const abs = await resolveTarget(file, "recording");
   const rec = await load(abs);
 
-  const qualifier = parseKindLabel(label);
+  const qualifier = parseSpanKindLabel(label);
   const wantedLabel = qualifier?.label ?? label;
   const wantedKind = qualifier?.kind;
   const matches = rec.spans.filter(
@@ -185,11 +169,14 @@ export async function querySpan(file: string, label: string, query: SpanQuery): 
   printSpanAnatomy(anatomy, span, model);
 }
 
-/** Load the sibling CPU model if one exists; a missing/absent model is not an error for the anatomy. */
+/** Load the sibling CPU model if one exists; a missing/absent model is not an error for the anatomy.
+ * Only the "no model here" case (ENOCPUMODEL) is swallowed: a corrupt or unreadable sibling surfaces
+ * rather than masquerading as "no CPU model", which would read as a rung that never sampled. */
 async function tryLoadCpuModel(recordingPath: string): Promise<CpuModel | undefined> {
   try {
     return await loadCpuModel(recordingPath);
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOCPUMODEL") throw error;
     return undefined;
   }
 }
@@ -259,7 +246,9 @@ function buildSpanAnatomy(
   }
   if (model && span.kind !== "run")
     hints.push(`Run-window hot functions: wpd query cpu "${recordingPath}"`);
-  hints.push(`All spans at a glance: wpd query spans "${recordingPath}"`);
+  // Only suggest `query spans` when this rung actually has a bar/CpuModel for it to fold; on the
+  // default/--deep rungs it would error, so a not-available hint would send the reader in a circle.
+  if (spansResult) hints.push(`All spans at a glance: wpd query spans "${recordingPath}"`);
 
   const residualMs = entry?.residualMs ?? span.breakdown?.residualMs;
   return {
@@ -436,8 +425,10 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     try {
       model = await loadCpuModel(abs);
       cpuBreakdown = model.breakdown;
-    } catch {
-      // No sibling CPU model: buildSpans returns null below and we report the empty case.
+    } catch (error) {
+      // Only "no model here" (ENOCPUMODEL) is the empty case buildSpans reports below; a corrupt or
+      // unreadable sibling surfaces rather than reading as "no breakdown at this rung".
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOCPUMODEL") throw error;
     }
   }
   const iterations = rec.meta.iterations ?? 1;

@@ -156,7 +156,8 @@ test("diffSpanSlices: matched spans get per-slice ms deltas", () => {
   const current = [chromeRun({ js: jsSlice(7), layout: slice(2) })];
   const diff = diffSpanSlices(base, current);
   assert.equal(diff.spans.length, 1);
-  assert.equal(diff.spans[0].label, "run");
+  // Spans are joined + displayed by kind+label, so a user measure named "run" can never collide (F32).
+  assert.equal(diff.spans[0].label, "run:run");
   const bySlice = Object.fromEntries(diff.spans[0].slices.map((slice) => [slice.slice, slice]));
   assert.equal(bySlice.js.delta, 2, "5 -> 7 is +2");
   assert.equal(bySlice.layout.delta, 0, "2 -> 2 is 0");
@@ -174,9 +175,9 @@ test("diffSpanSlices: labels present on one side only are reported, not errors",
   const base = [chromeRun(), { ...chromeRun(), label: "open", kind: "step" }];
   const current = [chromeRun(), { ...chromeRun(), label: "close", kind: "step" }];
   const diff = diffSpanSlices(base, current);
-  assert.deepEqual(diff.spans.map((span) => span.label), ["run"], "only shared labels are compared");
-  assert.deepEqual(diff.unmatchedBaseline, ["open"]);
-  assert.deepEqual(diff.unmatchedCurrent, ["close"]);
+  assert.deepEqual(diff.spans.map((span) => span.label), ["run:run"], "only shared kind+label are compared");
+  assert.deepEqual(diff.unmatchedBaseline, ["step:open"]);
+  assert.deepEqual(diff.unmatchedCurrent, ["step:close"]);
 });
 
 test("diffSpanSlices: missing breakdowns on either side is empty, not a throw", () => {
@@ -187,7 +188,7 @@ test("diffSpanSlices: missing breakdowns on either side is empty, not a throw", 
   });
   const oneSide = diffSpanSlices(null, [chromeRun()]);
   assert.equal(oneSide.spans.length, 0, "no matches when one side has no spans");
-  assert.deepEqual(oneSide.unmatchedCurrent, ["run"]);
+  assert.deepEqual(oneSide.unmatchedCurrent, ["run:run"]);
 });
 
 // --- End-to-end through the commands, reading a recording with stored breakdowns ---

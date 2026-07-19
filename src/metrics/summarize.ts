@@ -138,6 +138,15 @@ export interface SummaryInputs {
   capabilities?: CaptureCapabilities;
   /** JS self-time from the CPU model, or null (--deep has no sampler, so no CPU model). */
   scriptingMs?: Measured<number>;
+  /**
+   * The renderer main thread to scope EVERY trace-derived count to (layout/style AND
+   * paint/forced/invalidation/long-task/total). Omitted (undefined) => selected from `detailEvents`
+   * via `mainThread` -- the run's own selection. A per-step summary passes the run-selected thread so
+   * its windowed counts sit on the same thread as its bar, rather than re-picking per step from a
+   * window that carries no run:start marker. null means no thread was captured (every non-breakdown/
+   * non-deep rung strips pid/tid), so the single captured thread is counted whole.
+   */
+  thread?: { pid: number; tid: number } | null;
 }
 
 export function buildSummary(input: SummaryInputs): RecordingSummary {
@@ -145,13 +154,14 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
   const perIteration = input.perIteration ?? [];
   const capabilities = input.capabilities ?? NO_RENDERING_CAPTURE;
 
-  // Layout/style counts and durations are windowed on the bar's main thread, so they are sourced
-  // by traceRenderingWork rather than the general loop below (which counts every pid/tid).
-  const renderingWork = traceRenderingWork(
-    detailEvents,
-    detailWindowStart,
-    mainThread(detailEvents),
-  );
+  // Scope every trace-derived count to ONE renderer main thread, so a count never mixes an OOPIF's
+  // own process into the main thread's window. The run selects the thread from its own event log
+  // (marker, or the layout/paint heuristic); a step is handed the run's selection (input.thread) so
+  // its counts share the thread of the bar it sits under. null (no pid/tid captured) admits the
+  // single captured thread whole. This thread scopes BOTH traceRenderingWork (layout/style) and the
+  // general count loop below (paint/forced/invalidation/long-task/total).
+  const thread = input.thread !== undefined ? input.thread : mainThread(detailEvents);
+  const renderingWork = traceRenderingWork(detailEvents, detailWindowStart, thread);
 
   let paintCount = 0;
   let paintUs = 0;
@@ -170,6 +180,9 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     // exist for `query blame --forced` only. Counting them would double-count the Reflow/Styles
     // markers, which are the one-per-flush source of layout/style/forced counts and durations.
     if (event.sampled) continue;
+    // Same main-thread scope as traceRenderingWork/the bar: skip an OOPIF's off-thread events so
+    // paint/forced/invalidation/long-task/total never sum a second process into this window.
+    if (thread && (event.pid !== thread.pid || event.tid !== thread.tid)) continue;
     total++;
     if (event.forced) {
       forcedLayoutCount++;

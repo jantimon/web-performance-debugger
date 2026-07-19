@@ -92,12 +92,10 @@ export interface BlameEntry {
  * Honesty (the Measured<T> contract, see model/measured.ts): a slice a lane could not observe is an
  * explicit `null`, NEVER a fabricated 0. `style`/`layout` are null on the node lane (its four-slice
  * profile has no DOM work to split); `paint` is null whenever the span comes from a
- * `CpuModel.breakdown` (that bar carries no main-thread paint concept at all). A measured 0 (e.g.
- * firefox `paint` in a stored `Breakdown`, genuinely 0 because paint is off the main thread there)
- * stays a 0, distinct from not-measured. This means null-vs-0 is not target-stable: on the SAME
- * firefox target `paint` is null on a run-only recording (the span is CpuModel-synthesized) but a
- * measured 0 once a stored breakdown exists, so a consumer normalizing across recordings should read
- * `paint?.ms ?? 0` rather than treat the distinction as a per-target signal.
+ * `CpuModel.breakdown` (that bar carries no main-thread paint concept at all) AND on firefox stored
+ * breakdowns, where paint is off-main-thread (a compositor side track, never summed into the wall).
+ * So `paint` is null on every firefox span, stored bar or synthesized, and a consumer must treat it
+ * as not-measured, never coerce it to 0.
  */
 export interface UnifiedSlices {
   /** scripting self-time, split by owning package; measured on every lane */

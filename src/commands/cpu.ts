@@ -143,12 +143,17 @@ export function printSpanBreakdowns(spans: Span[], iterations?: number): void {
       .slice(0, BREAKDOWN_TOP_PACKAGES)
       .map(([owner, ms]) => `${owner} ${num(ms, 1)}`)
       .join(" · ");
-    // Fixed order: real work first, idle last, so the eye lands on the cost.
-    const rows: [string, number, string][] = [
+    // Fixed order: real work first, idle last, so the eye lands on the cost. paint is `Measured`:
+    // null on firefox (off-main-thread), where the row prints "—", never a fake 0.
+    const rows: [string, number | null, string][] = [
       ["js", slices.js.ms, topPackages],
       ["style", slices.style.ms, ""],
       ["layout", slices.layout.ms, ""],
-      ["paint", slices.paint.ms, ""],
+      [
+        "paint",
+        slices.paint?.ms ?? null,
+        slices.paint ? "" : dim("(off-main-thread; not measured)"),
+      ],
       ["gc", slices.gc.ms, ""],
       ["other", slices.other.ms, dim("(task remainder + unclassified)")],
       ["idle", slices.idle.ms, dim("(waiting, not work)")],
@@ -158,8 +163,8 @@ export function printSpanBreakdowns(spans: Span[], iterations?: number): void {
         HEAD(["slice", "ms", "%", ""]),
         rows.map(([name, ms, note]) => [
           name,
-          num(ms, 1),
-          heat((ms / wallMs) * 100, pct(ms)),
+          ms == null ? "—" : num(ms, 1),
+          ms == null ? "—" : heat((ms / wallMs) * 100, pct(ms)),
           note,
         ]),
       ),

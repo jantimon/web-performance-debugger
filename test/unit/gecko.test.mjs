@@ -249,7 +249,7 @@ test("mark bridge: user performance.measure spans get their own tiling breakdown
   );
   const raw = geckoToRawCpuProfile(context);
   const packageByNode = await packagesByProfileNode(raw, { serverUrl: FIXTURE_ORIGIN, root: repoRoot });
-  const spans = buildGeckoSpanBreakdowns(raw, packageByNode, measures, { startTs: null, endTs: null });
+  const spans = buildGeckoSpanBreakdowns(raw, packageByNode, measures, { startTs: 10, endTs: 16 });
   const measureSpan = spans.find((span) => span.kind === "measure" && span.label === "paint-phase");
   assert.ok(measureSpan, "measure span produced");
   const slices = measureSpan.breakdown.slices;
@@ -257,10 +257,14 @@ test("mark bridge: user performance.measure spans get their own tiling breakdown
     slices.js.ms +
     slices.style.ms +
     slices.layout.ms +
-    slices.paint.ms +
     slices.gc.ms +
     slices.other.ms +
     slices.idle.ms;
   assert.ok(Math.abs(sum - measureSpan.breakdown.wallMs) < 1e-6, "span breakdown tiles its window");
-  assert.equal(slices.paint.ms, 0, "paint is 0 on firefox (off-main-thread)");
+  // Firefox paint is off-main-thread: the stored bar reports it not-measured (null), never a fake 0.
+  // Adding a user performance.measure must NOT turn paint into a measured 0 (finding F04).
+  assert.equal(slices.paint, null, "paint is not-measured (null) on firefox stored bars");
+  const runSpan = spans.find((span) => span.kind === "run");
+  assert.ok(runSpan, "run span produced alongside the measure");
+  assert.equal(runSpan.breakdown.slices.paint, null, "firefox run stored bar paint is null too");
 });

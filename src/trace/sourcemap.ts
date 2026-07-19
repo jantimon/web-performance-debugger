@@ -141,10 +141,22 @@ export class SourceMapResolver {
     if (looksMinified(js)) this.minified.add(jsFile);
     const reference = sourceMappingURLOf(js);
     if (!reference) return { failure: "no-sourcemap-url" };
-    // A non-data reference here means the sibling read above already missed the file it names.
-    if (!reference.startsWith("data:")) return { failure: "map-fetch-failed" };
-    const decoded = decodeDataUriMap(reference);
-    return decoded ? { raw: decoded } : { failure: "map-parse-failed" };
+    if (reference.startsWith("data:")) {
+      const decoded = decodeDataUriMap(reference);
+      return decoded ? { raw: decoded } : { failure: "map-parse-failed" };
+    }
+    // A non-data reference (e.g. `maps/app.js.map`) resolves against the JS file's own directory,
+    // mirroring the remote branch's `new URL(reference, jsUrl)`. The sibling `${jsFile}.map` read
+    // above only covers the conventional adjacent name, so a map in a sibling directory reaches here.
+    if (isHttpUrl(reference)) {
+      const raw = await fetchText(reference);
+      return raw ? { raw } : { failure: "map-fetch-failed" };
+    }
+    try {
+      return { raw: await fs.readFile(path.resolve(path.dirname(jsFile), reference), "utf8") };
+    } catch {
+      return { failure: "map-fetch-failed" };
+    }
   }
 
   private async loadRemoteMap(jsUrl: string): Promise<RawMap> {

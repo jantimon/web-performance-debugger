@@ -113,6 +113,16 @@ export function traceWindowMissing(): string {
   return "WARNING: trace run-window markers (wpd:run:start/end) were not found, so layout/style/paint/forced-layout/invalidation/long-task counts are NOT measured for this run (reported as not measured, never 0). This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce the measured work if it persists.";
 }
 
+/** The run window opened but never closed: the run:start mark was found, run:end was lost. */
+export function runEndMarkLost(): string {
+  return "WARNING: the run window opened (wpd:run:start) but never closed (wpd:run:end was lost, usually a trace-buffer overflow). Counts remain valid (they window start-onward by design), but the reconciling breakdown bar needs both bounds, so it is absent for this run rather than reported as 0. Re-run, reducing the measured work if it persists.";
+}
+
+/** A driver step's end mark was lost: its window (and bar) run to the run end, its wall stays page-clock. */
+export function stepEndMarkLost(): string {
+  return "WARNING: a driver step's end marker (wpd:step:N:end) was lost from the trace, so that step's counts and breakdown bar window to the run end (an over-estimate of the step), and its wall is the page-clock delta between the step marks rather than the trace-clock window, so it does not reconcile with the step's bar. Usually a trace-buffer overflow; reduce the measured work if it persists.";
+}
+
 /** The one templated note: names the slowdown that was applied. */
 export function artificialSlowdown(cpuThrottle: number | undefined): string {
   return `Artificial slowdown applied (cpu ${cpuThrottle}x); timings are not comparable to an unthrottled run.`;
