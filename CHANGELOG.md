@@ -1,5 +1,58 @@
 # @jantimon/web-performance-debugger
 
+## 0.10.0
+
+### Minor Changes
+
+- f3ebcd9: Chrome now launches with its OS sandbox ENABLED by default; `--no-sandbox`/`--disable-setuid-sandbox`
+  are no longer passed on every run. To launch anyway in an environment that cannot start the sandbox
+  (containers, restricted CI), pass the new `--disable-browser-sandbox` flag, which restores both args
+  with a loud WARNING in `meta.notes` and on stderr. If a sandboxed launch fails, wpd reports the
+  sandbox error and names the flag rather than silently retrying unsandboxed. Firefox is unaffected.
+- f3ebcd9: `diff` and `cpu-diff` now refuse to gate across captures that are not comparable, instead of emitting
+  fabricated regressions. The `diff --fail-on-regression` comparability signature gains workload (the
+  recorded module/page), headless flavour, and cpu-throttle as blocking axes, and iterations now blocks
+  too (run counts total across iterations, so 1 vs 5 makes every count differ); warmup and sampler
+  interval warn. `cpu-diff` gains a comparability check of its own: it warns on any capture-axis
+  difference and refuses `--fail-on-regression` across a browser/runtime/workload mismatch. Two new
+  `meta` fields (`headlessMode`, `cpuIntervalUs`) record the axes needed for the check.
+- 6f69ea1: `record --url <url>` (or `--html <file>`) now works with **no module**: wpd runs a built-in driver
+  flow that navigates to the target inside one `load` step and settles, so a first run needs zero
+  authoring. The boot lands in the standard run window, so every rung works over it — default gives the
+  four-slice CPU bar, `--breakdown` the reconciling bar plus counts, `--deep` forced-layout blame.
+
+  INP stays null (a load has no interaction), and with `--iterations > 1` a note discloses that only
+  iteration 1 is cold — later iterations reuse the one browser's caches. A module still works exactly as
+  before; `--bench` and `--target node` still require one.
+
+  `--url` is now the one documented way to name the host page and accepts a live URL **or** a local HTML
+  file path — wpd tells them apart (a host-only value like `localhost:5173` gets `http://` assumed).
+  `--html` still works as a hidden alias, so existing invocations are unchanged.
+
+### Patch Changes
+
+- 85cfcef: Firefox reconciling bars now split style vs layout more accurately, and Chrome `--deep` dirtied-by no
+  longer stamps a self-referential `display:none` line.
+
+  The Firefox six-slice bar was bucketing style-recalc wrapper/diff/stylist frames
+  (`RestyleManager::...`, `ComputedStyle::CalcStyleDifference`, `Update stylesheet information`,
+  `PresShell::DoFlushPendingNotifications Style`) as `layout`, under-counting `style` by ~10-25% on
+  style-bound workloads. They now classify as `style`, so bars re-split: `style` rises and `layout`
+  drops (to ~0 on pure-style workloads). Matching stays anchored, so the `CTFontFamily::FindStyleVariations`
+  font frame and the ` Layout` flush sibling stay `layout`.
+
+  Chrome `--deep` `query blame --forced` / `query span`: a `display:none` removal emits `"Removed from
+layout"` at recalc time naming the geometry read, which surfaced as a self-referential "dirtied by
+  <the read itself>" entry. That position-equal entry is now dropped; a genuine `removeChild` (a distinct
+  write line) is kept. Thrash counts are unchanged.
+
+- f3ebcd9: Bound the remote sourcemap fetcher for `--url` runs: a per-run 30s budget, per-response size caps
+  (20MB scripts / 50MB maps, enforced by streaming so a missing content-length cannot overrun),
+  bounded-concurrency fetching (4 at a time instead of strictly serial), and a network policy that
+  follows redirects manually and refuses non-http(s) schemes and private/loopback hosts reached from a
+  public page. Refused, oversized, and budget-exhausted lookups each record their own `meta.sourcemaps`
+  diagnostic; localhost dev servers and served fixtures are unaffected.
+
 ## 0.9.0
 
 ### Minor Changes
