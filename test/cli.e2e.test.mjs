@@ -593,6 +593,23 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
     assert.equal(bdLoad.wallClock, "trace", "the navigating load step is priced on the trace clock");
     assert.ok(bd.summary.paintCount >= 1, "the boot painted at least once, counted on --breakdown");
     assert.equal(bd.summary.forcedLayoutCount, null, "forced is not-measured on --breakdown (no .stack)");
+
+    // F4: --iterations on the default (no-trace) rung yields no wall and no median, because the
+    // navigating load step resets the page clock and there is no trace clock to span it. The note must
+    // say so and steer to --breakdown, NOT the warm/cold note that would promise a median.
+    const iterOut = path.join(dir, "onramp-iter-default");
+    runCli(["record", "--url", server.url, "--iterations", "2", "--out", iterOut]);
+    const iter = JSON.parse(readFileSync(iterOut, "utf8"));
+    const iterLoad = iter.spans.find((span) => span.kind === "step" && span.label === "load");
+    assert.equal(iterLoad.stats, null, "no median on the no-trace rung: the navigating step has no wall");
+    assert.ok(
+      iter.meta.notes.some((note) => /no per-iteration wall or median/.test(note)),
+      "the no-median note fires and points to --breakdown",
+    );
+    assert.ok(
+      !iter.meta.notes.some((note) => /boots cold, but/.test(note)),
+      "the warm/cold note (which promises a median) does NOT fire where there is no wall",
+    );
   } finally {
     server.close();
   }

@@ -133,6 +133,12 @@ export function pageSchemeAssumed(url: string): string {
   return `--url named a host with no scheme, so http:// was assumed: the target is ${url}. Pass an explicit https:// URL if the server is TLS.`;
 }
 
+/** Repeated on-ramp on a no-trace rung: the navigating load step has no wall, so --iterations makes
+ * no median. Point to --breakdown, whose trace clock spans the navigation. */
+export function onrampIterationsNoMedian(iterations: number): string {
+  return `--iterations ${iterations} produced no per-iteration wall or median on this rung: the built-in 'load' step navigates, which resets the page clock, and this rung has no trace clock to span the navigation, so every iteration's wall is not measured (—, never 0) and there is no distribution to take a median of. Re-record with --breakdown (or --deep): the trace clock spans the navigation, so the load step gets a real per-iteration wall and median.`;
+}
+
 /** Repeated on-ramp: only iteration 1 boots cold, the rest reuse the one browser's caches. */
 export function onrampWarmVsCold(iterations: number): string {
   const laterIterations =

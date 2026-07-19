@@ -100,6 +100,19 @@ test("notes: a lost run-end / step-end mark is disclosed, not silent (F26/F27)",
   assert.match(stepEnd, /page-clock/); // the wall stayed page-clock, does not reconcile with the bar
 });
 
+// F4: on a no-trace --url boot, --iterations produces no wall and no median (the navigating load step
+// resets the page clock, and the rung has no trace clock to span it). The note must say so plainly and
+// point to --breakdown, rather than the warm/cold note promising a median (`stats`) that is not there.
+test("notes: the no-median on-ramp note names iterations and steers to --breakdown (F4)", () => {
+  const note = notesCatalog.onrampIterationsNoMedian(3);
+  assert.match(note, /--iterations 3/);
+  assert.match(note, /no per-iteration wall or median/);
+  assert.match(note, /--breakdown/);
+  // The warm/cold note, by contrast, DOES describe a wall median, so it must only fire where a wall
+  // exists -- the two are mutually exclusive by rung (record.ts picks by pass.stepWallClock).
+  assert.match(notesCatalog.onrampWarmVsCold(3), /median/);
+});
+
 // F31: a diff across incompatible captures subtracts numbers that do not describe the same thing.
 // Write recordings with explicit meta (browser/passes/iterations) to exercise the comparability gate.
 function writeRecMeta(name, metaOverrides, summaryOverrides = {}) {

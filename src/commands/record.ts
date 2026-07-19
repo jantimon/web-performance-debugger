@@ -357,10 +357,19 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(notesCatalog.cpuSamplerOnDefaultRung());
   }
   // The built-in on-ramp flow: disclose what the single "load" step measures, and (when repeated)
-  // that only iteration 1 is a cold boot -- later iterations reuse the one browser and hit its cache.
+  // either the warm/cold caveat on the resulting wall median, or -- when this rung priced no wall at
+  // all (the navigating load step resets the page clock and the default/precise-wall rung has no trace
+  // clock to span it) -- that there IS no median here and --breakdown is what produces one. Emitting
+  // the warm/cold note on the no-wall rung would promise a median (`stats`) the recording does not carry.
   if (isOnramp) {
     notes.push(notesCatalog.onrampBuiltinFlow());
-    if (opts.iterations > 1) notes.push(notesCatalog.onrampWarmVsCold(opts.iterations));
+    if (opts.iterations > 1) {
+      notes.push(
+        pass.stepWallClock === "none"
+          ? notesCatalog.onrampIterationsNoMedian(opts.iterations)
+          : notesCatalog.onrampWarmVsCold(opts.iterations),
+      );
+    }
   }
   // --url named a host with no scheme (localhost:5173): http:// was assumed to reach it. Disclose
   // the target the run actually navigated to, whether or not a module drove it.
