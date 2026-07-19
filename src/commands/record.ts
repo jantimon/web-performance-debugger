@@ -63,6 +63,9 @@ export interface RecordOptions {
   headlessMode?: HeadlessMode;
   /** persistent Chrome profile dir (resolved absolute); reuse one login across passes/runs */
   userDataDir?: string;
+  /** chrome only: launch with --no-sandbox (reduced containment). Off by default; opt in only in a
+   * trusted, isolated environment. */
+  disableSandbox?: boolean;
   /** ms to wait after run() for async paints to flush; internal default 200 (no user flag) */
   settleMs: number;
   format: Format;
@@ -337,6 +340,13 @@ export async function record(opts: RecordOptions): Promise<{
   if (countScope) notes.push(countScope);
   if (opts.cpuThrottle) {
     notes.push(notesCatalog.artificialSlowdown(opts.cpuThrottle));
+  }
+  if (opts.disableSandbox && browserName === "chrome") {
+    const sandboxNote = notesCatalog.browserSandboxDisabled();
+    notes.push(sandboxNote);
+    // Loud on stderr too: a reduced-containment launch should not be silent even when the reader
+    // never opens meta.notes.
+    console.error(sandboxNote);
   }
   if (traceWindowMissing) notes.push(notesCatalog.traceWindowMissing());
   // The run window opened (start mark found) but never closed (run:end lost). traceWindowMissing only

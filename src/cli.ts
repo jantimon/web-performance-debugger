@@ -101,6 +101,10 @@ program
     "--user-data-dir <path>",
     "reuse a persistent Chrome profile (log in once; shared across passes/runs)",
   )
+  .option(
+    "--disable-browser-sandbox",
+    "chrome only: launch with --no-sandbox for environments that cannot start Chrome's sandbox (containers, restricted CI). WARNING: reduces process containment; only use in a trusted, isolated environment and not with --user-data-dir or a non-loopback --url",
+  )
   .option("--cpu-throttle <rate>", "artificial slowdown: CPU multiplier (4 = 4x slower)", toInt)
   .option(
     "--protocol-timeout <ms>",
@@ -169,6 +173,7 @@ program
           "--breakdown (firefox's reconciling bar comes from the Gecko profile automatically; your performance.measure() spans surface in recording.spans without a flag)",
         cmdOpts.preciseWall && "--precise-wall (the gecko pass IS the firefox lane)",
         cmdOpts.cpuThrottle && "--cpu-throttle (needs CDP)",
+        cmdOpts.disableBrowserSandbox && "--disable-browser-sandbox (chrome-only launch flag)",
       ].filter(Boolean);
       if (unsupported.length) {
         program.error(
@@ -182,6 +187,7 @@ program
         cmdOpts.html && "--html",
         cmdOpts.cpuThrottle && "--cpu-throttle",
         cmdOpts.userDataDir && "--user-data-dir",
+        cmdOpts.disableBrowserSandbox && "--disable-browser-sandbox",
         cmdOpts.breakdown && "--breakdown",
         cmdOpts.deep && "--deep",
         cmdOpts.preciseWall && "--precise-wall",
@@ -216,6 +222,7 @@ program
       headless: cmdOpts.headless,
       headlessMode: cmdOpts.headlessMode,
       userDataDir: cmdOpts.userDataDir ? path.resolve(cmdOpts.userDataDir) : undefined,
+      disableSandbox: !!cmdOpts.disableBrowserSandbox,
       // Internal default (no user flag): async paints flush before tracing stops.
       settleMs: 200,
       format: cmdOpts.format,
