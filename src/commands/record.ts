@@ -211,6 +211,12 @@ export async function record(opts: RecordOptions): Promise<{
   // No module = the built-in on-ramp: a driver flow that loads --url/--html and settles, so a first
   // run needs zero authoring. runPass/runDriver synthesize the single "load" step from the target.
   const isOnramp = !opts.module;
+  // The CLI guards this, but record() is also a programmatic API: without a module there is
+  // nothing to run unless a host page names the built-in load flow.
+  if (isOnramp && !opts.url && !opts.html)
+    throw new Error(
+      "record() needs a module to run, or url/html so the built-in load flow has a page to load.",
+    );
   const absModule = opts.module ? path.resolve(opts.module) : undefined;
   if (absModule)
     await fs.access(absModule).catch(() => {

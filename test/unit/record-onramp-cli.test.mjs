@@ -59,3 +59,8 @@ test("--url is documented, --html is absent from --help", () => {
   assert.match(result.stdout, /--url <url-or-file>/, "the documented option is shown");
   assert.doesNotMatch(result.stdout, /--html <file>/, "the alias is hidden");
 });
+
+test("programmatic record() without module or url/html rejects instead of crashing later", async () => {
+  const { record } = await import("../../dist/commands/record.js");
+  await assert.rejects(() => record({}), /needs a module to run, or url\/html/);
+});
