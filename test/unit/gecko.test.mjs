@@ -6,6 +6,7 @@ import {
   geckoToRawCpuProfile,
   geckoToRenderingEvents,
   geckoUserMeasures,
+  layoutSlice,
 } from "../../dist/profile/gecko.js";
 import {
   buildGeckoSpanBreakdowns,
@@ -108,6 +109,29 @@ test("geckoToRenderingEvents -> attachStacks/markForced yields windowed + forced
   assert.ok(
     (forced[0].kind === "style" || forced[0].kind === "layout") && forced[0].at.length > 0,
   );
+});
+
+// --- Firefox reconciling-bar style/layout label split (layoutSlice) ---
+
+test("layoutSlice: style-wrapper labels bucket to style; the font trap and ` Layout` sibling stay layout", () => {
+  // servo recalc scopes (the labels that always catch real style work)
+  assert.equal(layoutSlice("Styles"), "style");
+  assert.equal(layoutSlice("Style computation"), "style");
+  assert.equal(layoutSlice("CSS parsing"), "style");
+  // widened wrapper / diff / stylist labels that otherwise mis-bucket to layout
+  assert.equal(layoutSlice("RestyleManager::ProcessRestyledFrames"), "style");
+  assert.equal(layoutSlice("RestyleManager::ProcessPendingRestyles"), "style");
+  assert.equal(layoutSlice("ComputedStyle::CalcStyleDifference"), "style");
+  assert.equal(layoutSlice("Update stylesheet information"), "style");
+  // the ` Style`-suffixed flush wrapper is style; its ` Layout` sibling stays layout
+  assert.equal(layoutSlice("PresShell::DoFlushPendingNotifications Style"), "style");
+  assert.equal(layoutSlice("PresShell::DoFlushPendingNotifications Layout"), "layout");
+  // real reflow and frame construction stay layout
+  assert.equal(layoutSlice("Reflow http://h/app.mjs"), "layout");
+  assert.equal(layoutSlice("nsCSSFrameConstructor::ContentRangeInserted"), "layout");
+  // anchoring trap: font matching contains the substring "Style" but is Graphics work, not style.
+  // A bare /Style/ test would wrongly claim it; the anchored prefix/suffix rule must not.
+  assert.equal(layoutSlice("CTFontFamily::FindStyleVariations .SF NS"), "layout");
 });
 
 // --- Firefox read-site forced blame (js,cpu mechanisms) ---

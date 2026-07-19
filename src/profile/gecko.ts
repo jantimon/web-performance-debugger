@@ -278,11 +278,20 @@ function readFrame(context: GeckoContext, frameIndex: number): FrameInfo {
   };
 }
 
-/** Split a Layout-category frame into the style vs layout slice by its label. Gecko emits
- * `Styles`/`Style computation`/`CSS parsing`/`Container Query...` for style recalc and
- * `Reflow ...`/`...Layout` for reflow, all under the one Layout category. */
-function layoutSlice(rawLocation: string): "style" | "layout" {
-  return /^(Styles|Style computation|CSS parsing|Container Query)/.test(rawLocation)
+/** Split a Layout-category frame into the style vs layout slice by its label. Gecko emits both style
+ * recalc and reflow under the one Layout category, so the label decides. Style: the servo recalc
+ * scopes (`Styles`/`Style computation`/`CSS parsing`/`Container Query...`), the restyle-pass and
+ * style-diff wrappers (`RestyleManager::...`/`ComputedStyle::CalcStyleDifference`), the stylist
+ * rebuild (`Update stylesheet information`, cascade-data rebuild Chrome folds into Recalculate
+ * style; see docs/dev/engine-mapping.md), and a ` Style`-suffixed flush wrapper
+ * (`PresShell::DoFlushPendingNotifications Style`). Everything else is layout (`Reflow ...`, the
+ * ` Layout` flush wrapper, frame construction). Without these style wrappers ~10-25% of style recalc
+ * on a style-bound workload buckets to layout. Matching stays anchored (prefix/suffix/exact): a bare
+ * `Style` substring would wrongly claim the `CTFontFamily::FindStyleVariations` font-matching frame. */
+export function layoutSlice(rawLocation: string): "style" | "layout" {
+  return /^(Styles|Style computation|CSS parsing|Container Query|Update stylesheet information|RestyleManager::|ComputedStyle::CalcStyleDifference)/.test(
+    rawLocation,
+  ) || rawLocation.endsWith(" Style")
     ? "style"
     : "layout";
 }

@@ -87,6 +87,27 @@ never records it. Chrome folds stylist-rebuild cost invisibly into one "Recalcul
 So a Gecko profile showing this frame under JS tells you something Chrome actively hides: the
 flush also had to rebuild cascade data, which is the expensive variant.
 
+### Style vs layout in the reconciling bar (`layoutSlice`)
+
+Both style recalc and reflow carry the single **Layout** category, so `profile/gecko.ts`'s
+`layoutSlice` splits the six-slice bar's `style` from `layout` by the frame label. Style labels, all
+anchored (prefix/suffix/exact) so a bare `Style` substring never mis-buckets the
+`CTFontFamily::FindStyleVariations` font-matching frame (Graphics work, not style):
+
+- servo recalc scopes: `Styles`, `Style computation`, `CSS parsing`, `Container Query...`
+- restyle-pass / style-diff wrappers: `RestyleManager::...`, `ComputedStyle::CalcStyleDifference`
+- `Update stylesheet information` (the stylist rebuild above) is bucketed **style**: it is cascade-data
+  rebuild Chrome folds invisibly into "Recalculate style", so leaning style matches Chrome's rollup.
+- the ` Style`-suffixed flush wrapper `PresShell::DoFlushPendingNotifications Style` (its ` Layout`
+  sibling stays layout).
+
+**[measured]** Without the wrapper/diff/stylist labels ~10-25% of style recalc on a style-bound
+workload buckets to `layout`; on a pure-style workload Chrome reports `layout 0%` while the un-widened
+Firefox bar reports `layout 6-10%`, all of it misclassified style. A firefox `style: 0` on a
+layout/JS-dominated (or idle-dominated) workload is a **genuine zero**: the servo recalc labels
+(`Styles`/`Style computation`) always catch real style work, so the split cannot zero a style
+workload — a zero means the workload did ~no in-window style recalc.
+
 ## Chrome cannot name the property
 
 The single largest asymmetry, and it favours Firefox.
