@@ -9,7 +9,8 @@ import { parseFrames, windowFrames, summarizeFrames } from "../trace/frames.js";
 import type { MergedStep } from "../trace/steps.js";
 import type { SourceMapResolver } from "../trace/sourcemap.js";
 import { WPD_MARK_PREFIX } from "../model/marks.js";
-import { breakdownHeuristicMainThread } from "./notes.js";
+import { usToMs } from "../model/time.js";
+import { breakdownHeuristicMainThread, samplerCoverageGap } from "./notes.js";
 import { mainThread } from "../trace/main-thread.js";
 import { mergeSpanOccurrences } from "../model/span-merge.js";
 import type { NormalizedEvent, SpanBreakdown, SpanHot } from "../model/recording.js";
@@ -176,6 +177,27 @@ export async function buildBreakdowns(
   for (const bar of merged) {
     const hot = hotByKey.get(`${bar.kind}:${bar.label}`);
     if (hot) bar.hot = hot;
+  }
+
+  // Disclose the navigation coverage gap. The V8 CPU profiler resets on each cross-document
+  // navigation, so `Profiler.stop` returns only the samples since the run's LAST navigation: every
+  // window before it (iteration-0 steps, early measure occurrences) gets zero samples even though the
+  // trace-measured bar shows real JS there. Push ONE note when that symptom is present -- a step/
+  // measure bar attributing JS the sampler never covered -- so an empty per-span package split and hot
+  // list read as "the sampler could not reach this window", not as "no JS ran" or "raise --iterations".
+  const intervalMs = usToMs(context.sampleIntervalUs);
+  const uncoveredJsSpans = merged.filter(
+    (bar) =>
+      bar.kind !== "run" &&
+      bar.hot?.suppressed === true &&
+      bar.hot.pooledSamples === 0 &&
+      intervalMs > 0 &&
+      bar.breakdown.slices.js.ms / intervalMs >= 2,
+  );
+  if (uncoveredJsSpans.length > 0) {
+    const firstSampleTs = samples.length > 0 ? samples[0].traceTs : runWindow.startTs;
+    const gapMs = usToMs(Math.max(0, firstSampleTs - runWindow.startTs));
+    context.notes.push(samplerCoverageGap(uncoveredJsSpans.length, gapMs));
   }
   return merged;
 }

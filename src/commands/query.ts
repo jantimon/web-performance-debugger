@@ -242,7 +242,8 @@ function buildSpanAnatomy(
       occurrences: 1,
       functions: model.functions.slice(0, topN),
     };
-  else if (span.hot && model) hot = resolveStoredHot(span.hot, model, topN);
+  else if (span.hot && model)
+    hot = resolveStoredHot(span.hot, model, topN, span.breakdown?.slices.js.ms ?? 0);
 
   const hints: string[] = [];
   if (hasEventLog) {
@@ -287,9 +288,36 @@ function buildSpanAnatomy(
  * SPAN-LOCAL (`selfMs` = ref samples * interval, `selfPct` = share of the span's pooled samples), so
  * the panel denominates on the span's own scripting samples, never the run-wide model. `scriptingMs`
  * is the span's pooled scripting self-time (pooledSamples * interval). A suppressed tally yields no
- * `functions`; the reader raises --iterations.
+ * `functions` and carries a `suppressionReason` (see hotSuppressionReason) so the reader knows
+ * whether more iterations help.
  */
-function resolveStoredHot(stored: SpanHot, model: CpuModel, topN: number): SpanHotFunctions {
+/**
+ * Why a `pooledSamples`-below-floor tally names no functions, so the reader is pointed at the right
+ * fix rather than a blanket "raise --iterations". A nonzero-but-thin pool is `below-floor` (more
+ * iterations stabilises it). A ZERO pool is either `no-js` (the window ran essentially no JS, nothing
+ * to rank) or `not-covered` (the bar attributes real JS here but the sampler recorded none of it):
+ * the split is whether the window's js ms could plausibly have landed a sample. `not-covered` is the
+ * navigation gap -- the V8 CPU profiler resets on each cross-document navigation, so a window before
+ * the run's last navigation carries no samples -- where raising --iterations cannot help.
+ */
+export function hotSuppressionReason(
+  pooledSamples: number,
+  jsMs: number,
+  sampleIntervalUs: number,
+): "below-floor" | "no-js" | "not-covered" {
+  if (pooledSamples > 0) return "below-floor";
+  // Expected samples for a window that WAS covered: its js ms over the sampler period. Two or more
+  // expected but none observed means the sampler did not run over this window, not bad luck.
+  const intervalMs = usToMs(sampleIntervalUs);
+  return intervalMs > 0 && jsMs / intervalMs >= 2 ? "not-covered" : "no-js";
+}
+
+function resolveStoredHot(
+  stored: SpanHot,
+  model: CpuModel,
+  topN: number,
+  jsMs: number,
+): SpanHotFunctions {
   const scriptingMs = usToMs(stored.pooledSamples * model.sampleIntervalUs);
   const base: SpanHotFunctions = {
     scope: stored.scope,
@@ -297,7 +325,12 @@ function resolveStoredHot(stored: SpanHot, model: CpuModel, topN: number): SpanH
     pooledSamples: stored.pooledSamples,
     occurrences: stored.occurrences,
   };
-  if (stored.suppressed || !stored.functions) return { ...base, suppressed: true };
+  if (stored.suppressed || !stored.functions)
+    return {
+      ...base,
+      suppressed: true,
+      suppressionReason: hotSuppressionReason(stored.pooledSamples, jsMs, model.sampleIntervalUs),
+    };
   const functions: (Omit<CpuFunction, "totalMs"> & { totalMs?: number })[] = stored.functions
     .slice(0, topN)
     .map((ref) => {
@@ -423,11 +456,15 @@ function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | un
           ? "in the iteration-0 window"
           : "in the run window";
     if (hot.suppressed) {
-      console.log(
-        dim(
-          `\nHot functions: suppressed — only ${hot.pooledSamples} pooled JS sample(s) ${where} (below the ${MIN_POOLED_HOT_SAMPLES}-sample floor). Raise --iterations for a stable ranking.`,
-        ),
-      );
+      // pooledSamples 0 must NOT say "raise --iterations": more iterations of an un-sampled window
+      // stay un-sampled. Split by why the pool is empty (see hotSuppressionReason).
+      const message =
+        hot.suppressionReason === "not-covered"
+          ? `\nHot functions: none — the reconciling bar attributes ${num(anatomy.slices?.js.ms ?? 0, 1)} ms of JS ${where}, but the CPU sampler recorded no samples in it. The V8 profiler resets on each cross-document navigation, so a window that ran before the run's last navigation is not sampled; raising --iterations cannot recover it.`
+          : hot.suppressionReason === "no-js"
+            ? `\nHot functions: none — this window ran no measurable JS ${where}.`
+            : `\nHot functions: suppressed — only ${hot.pooledSamples} pooled JS sample(s) ${where} (below the ${MIN_POOLED_HOT_SAMPLES}-sample floor). Raise --iterations for a stable ranking.`;
+      console.log(dim(message));
     } else if (!hot.functions?.length) {
       console.log(
         dim(

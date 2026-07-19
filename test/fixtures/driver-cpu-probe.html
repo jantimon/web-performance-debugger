@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>wpd driver cpu probe</title>
+<!--
+  Host page for the per-step CPU-attribution e2e. Committed (not generated into a temp dir) because
+  --html is served by a static server rooted at the cwd, so the file has to live under the repo.
+
+  Clicking #work runs a substantial JS hot loop IN THE PAGE (not via page.evaluate, whose injected
+  call the trace files under `other`, not `js`), so each measured step accrues many CPU samples on the
+  scripting axis. That is what lets a step span carry a non-empty js-by-package split and an
+  unsuppressed hot-function list: the regression guard for per-step CPU attribution.
+-->
+<button id="work">work</button>
+<div id="sink"></div>
+<script>
+  function hotLoop(iterations) {
+    let accumulator = 0;
+    for (let inner = 0; inner < iterations; inner++)
+      accumulator += Math.sqrt(inner * 1.7 + 1) * Math.sin(inner) + Math.cos(accumulator);
+    return accumulator;
+  }
+  document.getElementById("work").addEventListener("click", () => {
+    // ~30 ms of scripting: well above the sampler's ~10-sample floor at any reasonable interval.
+    document.getElementById("sink").textContent = String(hotLoop(3_000_000));
+    window.__done = (window.__done || 0) + 1;
+  });
+</script>

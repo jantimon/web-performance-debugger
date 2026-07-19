@@ -33,6 +33,15 @@ export function breakdownHeuristicMainThread(): string {
   return "WARNING: the wpd:run:start marker was not found, so the breakdown's main thread was picked by layout/paint activity (heuristic). Per-span breakdown attribution may be on the wrong thread.";
 }
 
+/** Some step/measure span attributes JS its window the CPU sampler never covered: the V8 profiler
+ * resets on each cross-document navigation, so only samples since the run's LAST navigation survive.
+ * Pushed from buildBreakdowns when the symptom is present (a step/measure bar with real js ms but zero
+ * pooled samples), so an empty per-span package split and hot list are read correctly. */
+export function samplerCoverageGap(spanCount: number, gapMs: number): string {
+  const spans = spanCount === 1 ? "1 step/measure span" : `${spanCount} step/measure spans`;
+  return `Per-span CPU attribution (package split, hot functions) is empty for ${spans} whose window ran before the CPU sampler's first sample (about ${gapMs.toFixed(0)} ms into the run window). The V8 CPU profiler resets on each cross-document navigation, so Profiler.stop returns only the samples since the run's LAST navigation: earlier windows (iteration-0 steps, early measure occurrences) carry no samples even though their reconciling bar shows real JS. The bar ms are trace-measured and correct; only the sample-derived package/hot breakdown of that JS is unavailable there. The run-level CPU model and any post-navigation span are unaffected.`;
+}
+
 /** The run window's rendering work landed on a different renderer process than the one wpd:run:start
  * was marked on: a top-level cross-process navigation (typical of a --url boot). Counts and the bar
  * follow the page to its new process. Pushed from record() for any counting rung (--breakdown/--deep). */
