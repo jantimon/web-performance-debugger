@@ -42,6 +42,11 @@ test("a scheme wins over an existing file (a file:// path never becomes local HT
   );
 });
 
+test("an existing file wins over a host-ish shape (a file literally named localhost:3000)", () => {
+  const resolved = resolvePageOption("localhost:3000", () => true);
+  assert.equal(resolved.kind, "html", "the on-disk file is served, not read as a dev server");
+});
+
 test("localhost:3000 with no scheme resolves to a url with http:// assumed", () => {
   const resolved = resolvePageOption("localhost:3000", noFiles);
   assert.deepEqual(resolved, {
