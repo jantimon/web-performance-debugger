@@ -4,6 +4,8 @@ import { deserialize } from "../output/format.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget } from "./resolve.js";
 import { gateMeasured, type Measured } from "../model/measured.js";
+import { gateSliceBudgets, type SliceBudgets } from "../model/spans.js";
+import { loadSpanEntries } from "./spanSource.js";
 import type { Recording, RecordingSummary, StepIndex } from "../model/recording.js";
 
 // Every threshold gates a `summary` field. The off-thread frame side track
@@ -58,8 +60,17 @@ function fromSummary(summary: RecordingSummary): Metrics {
   };
 }
 
-/** Gate a recording or step-index against thresholds; sets exit code 1 on violation. */
-export async function assertCmd(file: string, thresholds: Thresholds): Promise<void> {
+/**
+ * Gate a recording or step-index against thresholds; sets exit code 1 on violation. Count/timing
+ * thresholds gate the run (or each step); `sliceBudgets` (`--max-slice`) gate the target span's
+ * per-slice ms -- the run span by default, `label` picks another by label.
+ */
+export async function assertCmd(
+  file: string,
+  thresholds: Thresholds,
+  sliceBudgets: SliceBudgets = {},
+  label?: string,
+): Promise<void> {
   const abs = await resolveTarget(file, "auto");
   const obj = deserialize(await fs.readFile(abs, "utf8"), path.extname(abs).toLowerCase()) as any;
 
@@ -70,8 +81,9 @@ export async function assertCmd(file: string, thresholds: Thresholds): Promise<v
   const wallIsPerStep =
     obj?.meta?.driver === true && obj?.meta?.step == null && !Array.isArray(obj.steps);
 
+  const isStepIndex = Array.isArray(obj.steps) && typeof obj.recording === "string";
   const targets: { label: string; m: Metrics }[] = [];
-  if (Array.isArray(obj.steps) && typeof obj.recording === "string") {
+  if (isStepIndex) {
     const idx = obj as StepIndex;
     for (const step of idx.steps) {
       targets.push({
@@ -93,8 +105,11 @@ export async function assertCmd(file: string, thresholds: Thresholds): Promise<v
   }
 
   const active = CHECKS.filter((check) => thresholds[check.opt] != null);
-  if (!active.length)
-    throw new Error("No thresholds given. Try --max-forced 0 --max-layouts 50 etc.");
+  const sliceBudgetKeys = Object.keys(sliceBudgets);
+  if (!active.length && !sliceBudgetKeys.length)
+    throw new Error(
+      "No thresholds given. Try --max-forced 0 --max-layouts 50 --max-slice js=5 etc.",
+    );
 
   const violations: string[] = [];
   const rows: (string | number)[][] = [];
@@ -118,6 +133,27 @@ export async function assertCmd(file: string, thresholds: Thresholds): Promise<v
       }
       if (!gate.ok) violations.push(`${target.label}: ${check.label} ${num(gate.value)} > ${max}`);
       rows.push([target.label, check.label, num(gate.value), max, gate.ok ? "ok" : "FAIL"]);
+    }
+  }
+
+  // Slice budgets gate the target span's per-slice ms, a different axis from the count/timing
+  // targets above: they read the recording's breakdown bar (`query spans` shape), not the summary.
+  if (sliceBudgetKeys.length) {
+    // A step index carries no bars itself; its slice data lives in the recording it points at.
+    const spans = await loadSpanEntries(isStepIndex ? (obj as StepIndex).recording : abs);
+    const targetLabel = label ?? "run";
+    for (const gate of gateSliceBudgets(spans, sliceBudgets, targetLabel)) {
+      rows.push([
+        gate.target,
+        gate.slice,
+        gate.measured ? num(gate.value!) : "n/a",
+        gate.max,
+        gate.ok ? "ok" : "FAIL",
+      ]);
+      if (!gate.measured)
+        violations.push(`${gate.target}: --max-slice ${gate.slice}=${gate.max}: ${gate.reason}`);
+      else if (!gate.ok)
+        violations.push(`${gate.target}: ${gate.slice} slice ${num(gate.value!)} ms > ${gate.max}`);
     }
   }
 
