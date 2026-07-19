@@ -1,28 +1,34 @@
 import type { Recording } from "../model/recording.js";
-import { formatMeasured } from "../model/measured.js";
+import { formatMeasured, type Measured } from "../model/measured.js";
+import { isFirefoxDeep, isGeckoRung } from "../model/rung.js";
 import { kv, num, sparkline, table } from "../output/ascii.js";
-import { dim } from "../output/color.js";
-import { capsFor } from "../browser/backend.js";
+import { bold, dim } from "../output/color.js";
+import { analyzeThrash, renderThrashStep, THRASH_HEADLINE_MIN } from "../trace/thrash.js";
+import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
 
 /**
- * Where the count column came from, which differs by lane and must not be asserted blindly.
+ * Where the count column came from, which differs by rung/lane and must not be asserted blindly.
  *
- * Provenance is not what makes a count trustworthy; reproducibility is (see diff.ts). Chrome's
- * columns are exact whether they come from CDP counters (layout/style) or the trace (paint,
- * forced): all of them are measured bit-identical across repeated runs of the same flow. Firefox
- * counts Gecko Reflow/Styles markers instead: real, but batched by a different engine, so calling
- * them "authoritative" invites diffing them against Chrome's as though the two counted the same
- * thing. With no counting mechanism at all the column is all zeros, and saying so beats letting a
- * reader take them for a clean run.
+ * Provenance is not what makes a count trustworthy; reproducibility is (see diff.ts). Chrome counts
+ * come from the trace, main-thread windowed, and are exact (bit-identical across repeated runs) --
+ * but only a --breakdown/--deep capture has a trace; the default rung has none, so its counts read
+ * as not-measured (—). Firefox counts Gecko Reflow/Styles markers instead: real, but batched by a
+ * different engine, so calling them "authoritative" invites diffing them against Chrome's as though
+ * the two counted the same thing.
  */
 export function countProvenance(rec: Recording): string {
-  if (capsFor(rec.meta.browser ?? "chrome").cdpCounts) {
-    return "counts are authoritative; durations are coarse";
-  }
-  if (rec.meta.passes.includes("gecko")) {
+  if (isGeckoRung(rec.meta.passes)) {
     return "counts come from Gecko markers — approximate, not comparable to Chrome; durations are coarse";
   }
-  return "counts NOT measured on this lane and shown as 0; see notes";
+  // The default/precise-wall rung captures no trace, so it counts nothing: a — is not-measured, not 0.
+  if (rec.summary.layoutCount == null) {
+    return "counts NOT measured on this rung (no trace): shown as —, never 0. Add --breakdown or --deep; see notes";
+  }
+  // --deep has exact counts but suppresses its (.stack-distorted) durations; --breakdown has both.
+  if (rec.summary.layoutMs == null) {
+    return "counts from the trace (main-thread windowed) are exact; slice durations are suppressed on this rung (—) — run --breakdown for the reconciling bar";
+  }
+  return "counts from the trace (main-thread windowed) are exact; durations are wall-tier";
 }
 
 /**
@@ -32,8 +38,8 @@ export function countProvenance(rec: Recording): string {
  *   - run-level driver recording: no wall exists (see runWallMs in record.ts). No row at all: a "—"
  *     would advertise a number as missing when it does not exist, and send a reader off to look for
  *     a flag that would bring it back.
- *   - per-step recording: the MEDIAN of that step's samples (mergeSteps), measured on the clean
- *     timing pass. This is the honest per-interaction wall, so it must print -- note it inherits
+ *   - per-step recording: the MEDIAN of that step's samples (mergeSteps), on the clock the rung
+ *     priced it with (Span.wallClock). The honest per-interaction wall, so it must print -- note it inherits
  *     meta.driver from the parent run, which is why the check above is not on driver alone.
  *   - bench / node: the SUM of the timed iterations.
  */
@@ -52,6 +58,85 @@ function wallRow(rec: Recording): [string, string][] {
   return [[label, `${num(summary.wallMs)} ms`]];
 }
 
+/**
+ * The Chrome `--deep` forced-layout section: the dual annotation (forced-by read + dirtied-by
+ * write) and the thrash-interleave detector, led by identities since a --deep recording
+ * suppresses slice ms. Prints nothing when no forced flush was observed. Chrome --deep only -- the
+ * caller gates on the rung, so Firefox (no invalidation records) never reaches here and reads
+ * "not available" (no thrash section at all), never a fabricated 0.
+ */
+function printForcedAttribution(rec: Recording): void {
+  // The full event log, NOT a window-filtered slice: the enclosing RunTask can begin a hair before
+  // the run:start mark, and analyzeThrash needs it to walk the interleave. It windows internally,
+  // reporting only in-window flushes.
+  const { report } = analyzeThrash(rec.events, rec.window.startTs);
+  if (report.count === 0) {
+    // The rung measured forced flushes but none re-dirtied since the last flush: no thrashing.
+    if (rec.summary.forcedLayoutCount != null && rec.summary.forcedLayoutCount > 0)
+      console.log(
+        `\nForced layout/style: ${rec.summary.forcedLayoutCount} flush(es), none thrashing (no write re-dirtied a cleaned read). ${dim("query blame --forced for the read + dirtied-by lines")}`,
+      );
+    return;
+  }
+  const headline =
+    report.count >= THRASH_HEADLINE_MIN
+      ? `⚠ ${bold(`layout thrashed ${report.count}x during this run`)}`
+      : `layout thrashed ${report.count}x during this run`;
+  console.log(`\n${headline}  ${dim("(a write re-dirtied a just-read layout; forced re-flush)")}`);
+  console.log(dim("  interleave (write → read), the thrashing signature:"));
+  for (const step of report.steps) console.log(`    ${renderThrashStep(step)}`);
+  if (report.omitted > 0) console.log(dim(`    … +${report.omitted} more thrash step(s)`));
+  console.log(dim("  full read + dirtied-by lines: query blame --forced"));
+}
+
+/**
+ * The Firefox `--deep` dirtied-by section: Gecko's native cause-stack write identity, led by the
+ * never-fake-parity disclaimer. Unlike Chrome's forced-attribution section there is no thrash detector
+ * and no forced-by read side here -- Gecko records only the FIRST invalidation since the last flush,
+ * so the write set is partial and the read stays the sampled read-site blame. Prints nothing when no
+ * forced flush carried a resolvable cause. Firefox --deep only (the caller gates on the rung).
+ */
+function printFirefoxDirtiedBy(rec: Recording): void {
+  const report = firefoxDirtiedBy(rec.events, rec.window.startTs);
+  if (rec.summary.forcedLayoutCount != null && rec.summary.forcedLayoutCount > 0 && !report) {
+    // Forced flushes were counted but none carried a JS cause stack to name a write.
+    console.log(
+      `\nForced layout/style: ${rec.summary.forcedLayoutCount} flush(es); no JS cause stack named a write. ${dim("read side: query blame --forced")}`,
+    );
+    return;
+  }
+  if (!report) return;
+  const total = report.writes.reduce((sum, write) => sum + write.count, 0);
+  console.log(`\ndirtied-by (first invalidation only) ${dim(`— ${total} forced flush(es)`)}`);
+  const forcedTotal = rec.summary.forcedLayoutCount;
+  if (forcedTotal != null && forcedTotal > total)
+    console.log(
+      dim(
+        `  ${forcedTotal - total} further forced flush(es) carried no resolvable write and are not listed.`,
+      ),
+    );
+  console.log(
+    dim(
+      "  the write Gecko blames for each forced flush. Gecko records only the FIRST invalidation since",
+    ),
+  );
+  console.log(dim("  the last flush, so this is not Chrome's full write set."));
+  console.log(
+    dim(
+      "  forced-by: n/a (firefox --deep) — the read that forced each flush is the sampled read-site blame: query blame --forced",
+    ),
+  );
+  const shown = report.writes.slice(0, DIRTIED_BY_REPORT_CAP);
+  for (const write of shown)
+    console.log(`    ${write.at}  ${dim(`(${write.kinds.join(",")} ×${write.count})`)}`);
+  const omitted = report.writes.length - shown.length;
+  if (omitted > 0)
+    console.log(dim(`    … +${omitted} more write(s) — query blame --dirtied for the full list`));
+}
+
+/** How many dirtied-by writes the record report names before collapsing the rest (query blame --dirtied has all). */
+const DIRTIED_BY_REPORT_CAP = 8;
+
 export function printSummary(rec: Recording): void {
   const summary = rec.summary;
   const meta = rec.meta;
@@ -63,14 +148,20 @@ export function printSummary(rec: Recording): void {
     `browser: ${meta.browser ?? "chrome"}   passes: ${meta.passes.join(" + ")}   driver: ${meta.driver}   lifecycle: ${meta.lifecycle.join("→") || "run"}`,
   );
 
+  // A Measured count/ms renders as its number, or "—" when the rung did not measure it (never 0).
+  const count = (value: Measured<number>): string =>
+    formatMeasured(value, (measured) => String(measured));
+  const ms = (value: Measured<number>): string =>
+    formatMeasured(value, (measured) => num(measured));
+
   console.log(`\nRendering work (${countProvenance(rec)})\n`);
   console.log(
     table(
       ["metric", "count", "ms"],
       [
-        ["layout", summary.layoutCount, num(summary.layoutMs)],
-        ["style recalc", summary.styleCount, num(summary.styleMs)],
-        ["paint", summary.paintCount, num(summary.paintMs)],
+        ["layout", count(summary.layoutCount), ms(summary.layoutMs)],
+        ["style recalc", count(summary.styleCount), ms(summary.styleMs)],
+        ["paint", count(summary.paintCount), ms(summary.paintMs)],
       ],
     ),
   );
@@ -78,9 +169,9 @@ export function printSummary(rec: Recording): void {
   console.log("\nInvalidations\n");
   console.log(
     kv([
-      ["layout", summary.layoutInvalidations],
-      ["paint", summary.paintInvalidations],
-      ["style/selector", summary.styleInvalidations],
+      ["layout", count(summary.layoutInvalidations)],
+      ["paint", count(summary.paintInvalidations)],
+      ["style/selector", count(summary.styleInvalidations)],
     ]),
   );
 
@@ -88,14 +179,21 @@ export function printSummary(rec: Recording): void {
   // "not measured" and point at the mode that does, never print 0 (which reads as "no thrashing").
   const forcedCell = formatMeasured(
     summary.forcedLayoutCount,
-    (count) => `${count}  (${num(summary.forcedLayoutMs ?? 0)} ms)`,
-    dim("not measured (run the default mode for forced-layout blame)"),
+    (forced) =>
+      `${forced}  (${formatMeasured(summary.forcedLayoutMs, (value) => num(value), "— ms not measured")})`,
+    dim("not measured (run --deep for forced-layout blame)"),
+  );
+  const longTaskCell = formatMeasured(
+    summary.longTaskCount,
+    (tasks) =>
+      `${tasks}  (longest ${formatMeasured(summary.longestTaskMs, (value) => num(value), "—")} ms)`,
+    "—",
   );
   console.log("\nHotspots\n");
   console.log(
     kv([
       ["forced layout/style", forcedCell],
-      ["long tasks ≥50ms", `${summary.longTaskCount}  (longest ${num(summary.longestTaskMs)} ms)`],
+      ["long tasks ≥50ms", longTaskCell],
       ["INP (worst interaction)", summary.inpMs == null ? "—" : `${num(summary.inpMs)} ms`],
       ...wallRow(rec),
     ]),
@@ -120,16 +218,30 @@ export function printSummary(rec: Recording): void {
       ]),
     );
   }
-  if (summary.forcedLayoutCount != null && summary.forcedLayoutCount > 0) {
+  // The identity-led forced-layout section. Chrome --deep: the write side (dirtied-by) is available
+  // AND the interleave detector runs, so lead with both. Firefox --deep: Gecko's cause-stack write
+  // identity, first-invalidation-only, no thrash detector (its partial write set cannot feed one).
+  // Every other lane that measured forced counts (firefox default) can only point at read-site blame.
+  if (isFirefoxDeep(meta.passes)) {
+    printFirefoxDirtiedBy(rec);
+  } else if (meta.passes.includes("deep")) {
+    printForcedAttribution(rec);
+  } else if (summary.forcedLayoutCount != null && summary.forcedLayoutCount > 0) {
     console.log("  ⚠ layout thrashing — run `query blame --forced` to see the source lines");
   }
 
-  // Detect a run that recorded no layout/paint/style/event activity at all. On Firefox without a
-  // Gecko pass, rendering is simply not collected (not a sign of a broken run), so skip the hint.
+  // Detect a run that recorded no layout/paint/style/event activity at all. A null count (the rung
+  // did not measure it) is treated as 0 here -- it contributes no evidence of work either way, and
+  // totalEvents still fires the hint on a genuinely empty trace. On Firefox without a Gecko pass, or
+  // the default rung (no trace), rendering is simply not collected, so skip the hint.
   const didWork =
-    summary.layoutCount + summary.paintCount + summary.styleCount + summary.totalEvents;
-  const firefoxNoDetail = meta.browser === "firefox" && !meta.passes.includes("gecko");
-  if (didWork === 0 && !firefoxNoDetail) {
+    (summary.layoutCount ?? 0) +
+    (summary.paintCount ?? 0) +
+    (summary.styleCount ?? 0) +
+    summary.totalEvents;
+  const firefoxNoDetail = meta.browser === "firefox" && !isGeckoRung(meta.passes);
+  const noTrace = meta.browser !== "firefox" && summary.layoutCount == null;
+  if (didWork === 0 && !firefoxNoDetail && !noTrace) {
     console.log(
       "  ⚠ no rendering work recorded — did your run/step actually do anything (selector correct)?",
     );
@@ -184,7 +296,7 @@ export function printSummary(rec: Recording): void {
   }
 
   console.log(
-    `\nscripting ms: ${num(summary.scriptingMs)}   events in window: ${summary.totalEvents}`,
+    `\nscripting ms: ${ms(summary.scriptingMs)}   events in window: ${summary.totalEvents}`,
   );
   if (meta.notes.length) {
     console.log("\nnotes:");

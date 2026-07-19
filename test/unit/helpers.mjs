@@ -225,14 +225,13 @@ export function remoteBundleProfile(origin) {
   };
 }
 
-// --- Cross-pass step merge (label-keyed; indices are per-pass and not comparable) ---
+// --- Step merge (label-keyed; step timings and trace windows come from the same one pass) ---
 
 export const driverStep = (index, label) => ({
   index,
   label,
   wallMs: 10 + index,
   inpMs: null,
-  cdpDelta: { LayoutCount: index },
 });
 
 export const geckoFixture = JSON.parse(
@@ -355,7 +354,15 @@ export const FIXTURE_ORIGIN = "http://127.0.0.1:60832";
 // --- CI-gating paths: write minimal recordings to a temp dir and drive the real commands. ---
 export const tmpDir = mkdtempSync(path.join(os.tmpdir(), "wpd-test-"));
 
+// A minimal recording carries a meta stamped with the CURRENT schema epoch, so the readers'
+// schema gate (model/artifact.ts) lets it through; the count/timing tests exercise the gate logic,
+// not the schema guard.
 export function writeRecording(name, summaryOverrides) {
+  return writeSchemaArtifact(name, "3", summaryOverrides);
+}
+
+/** Like writeRecording, but the caller pins the schema epoch (to exercise the reject path). */
+export function writeSchemaArtifact(name, schemaVersion, summaryOverrides) {
   const summary = {
     wallMs: null, inpMs: null, scriptingMs: 0,
     layoutCount: 0, styleCount: 0, paintCount: 0,
@@ -363,8 +370,10 @@ export function writeRecording(name, summaryOverrides) {
     longTaskCount: 0, totalEvents: 0, perIteration: [], stats: null,
     ...summaryOverrides,
   };
+  const meta = { schemaVersion, passes: ["default"], driver: false };
   const file = path.join(tmpDir, name);
-  writeFileSync(file, JSON.stringify({ summary }), "utf8");
+  // A minimal non-stepped recording: the run span only (no bar), so assert gates the run summary.
+  writeFileSync(file, JSON.stringify({ meta, summary, spans: [] }), "utf8");
   return file;
 }
 

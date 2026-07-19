@@ -15,7 +15,7 @@ permalink).
 | --- | --- |
 | [engine-mapping.md](./engine-mapping.md) | touching `trace/classify.ts` or `profile/gecko.ts`, or claiming any number is comparable across engines |
 | [gecko-profile-format.md](./gecko-profile-format.md) | touching the Gecko converter, or debugging a Firefox dump that stopped parsing |
-| [cpu-profiling.md](./cpu-profiling.md) | changing the pass plan, the sampler interval, or how `selfMs` is described |
+| [cpu-profiling.md](./cpu-profiling.md) | changing the rung ladder, the sampler interval, or how `selfMs` is described |
 | [driver-timing.md](./driver-timing.md) | touching `browser/driver.ts`, or presenting a step's `wallMs` as a cost |
 | [frame-floor.md](./frame-floor.md) | changing the headless mode, adding a headless flag, or explaining why libraries with different cost report the same `wallMs` |
 | [rendering-counts.md](./rendering-counts.md) | adding a name to `trace/classify.ts`, gating a count in `diff.ts`/`assert.ts`, or calling a count "exact" |
@@ -24,30 +24,32 @@ permalink).
 
 ## The four things most likely to bite you
 
-1. **In `--breakdown` (and `--no-isolate`, and Firefox) counts TOTAL across `--iterations`.** The one
-   fused/single pass carries wall AND counts, so it runs every iteration and `layout/style/paint/
-   forced` are totals, not one iteration's work — `assert --max-layouts` silently scales with
-   `--iterations` (the default two-pass Chrome plan pins its count pass to one iteration and does
-   not). `noteCountScope` says which lane you are on; use `--iterations 1` to assert on counts. And a
-   `Measured<>` field a mode did not measure is `null`, never 0 (`--breakdown` reports
-   `forcedLayoutCount`/`forcedLayoutMs` as `null`): `assert` FAILs on `null`, so `assert
-   --max-forced 0` fails under `--breakdown` by design, rather than passing on a fake 0. Firefox's
-   unmeasured plain-number counts cannot hold `null` — paint reports a literal `0` disclosed by a
-   loud `meta.notes` entry ("A 0 in those means unmeasured, not clean"), which is exactly why that
-   note exists.
+1. **Counts TOTAL across `--iterations` on every counting rung.** Every invocation is exactly ONE
+   pass, which runs every iteration for the wall samples, so `layout/style/paint/forced` are totals,
+   not one iteration's work, so `assert --max-layouts` silently scales with `--iterations`.
+   `countScopeNote` says so; use `--iterations 1` to assert on counts. And a `Measured<>` field a rung
+   did not measure is `null`, never 0 (`--breakdown` reports `forcedLayoutCount`/`forcedLayoutMs` as
+   `null`, since forced needs `.stack`): `assert` FAILs on `null`, so `assert --max-forced 0` fails
+   under `--breakdown` by design, rather than passing on a fake 0. Firefox's unmeasured plain-number
+   counts cannot hold `null` — paint reports a literal `0` disclosed by a loud `meta.notes` entry
+   ("A 0 in those means unmeasured, not clean"), which is exactly why that note exists.
 2. **`selfMs` on the browser lanes is not pure JS.** It is JS *plus the synchronous engine work JS
    triggered* — a forced layout shows up as self-time on the line that forced it (~85% of the
    probe's "JS" time is reflow). Only `--target node` measures pure JS.
    [Details](./cpu-profiling.md#what-self-time-actually-includes).
-3. **The CPU pass is isolated from *tracing*, not from the timing pass.** Sampling during the trace
-   pass inflates self-time +21% because our own `devtools.timeline.stack` category makes Blink walk
-   the JS stack on every Layout. [Details](./cpu-profiling.md#why-the-cpu-pass-is-separate-tracing-contaminates-sampling).
-4. **A driver step's `wallMs` is mostly the driver.** It is measured node-side around the action and
-   its settle, so identical work reads 40.5 ms via `page.click`, 31.9 ms via `page.evaluate` and
-   1.1 ms in `--bench`. `page.click` alone costs ~20 ms; the settle floor is ~31 ms under
-   new-headless (`--headless-mode new`, ~60 Hz), ~half that on the default shell mode. Use
+3. **The sampler never rides a `.stack` trace.** Sampling on a `.stack` trace inflates self-time +21%,
+   because our own `devtools.timeline.stack` category makes Blink walk the JS stack on every Layout and
+   bill it to the forcing JS frame. So the sampler rides only the light `--breakdown` trace or no trace
+   (default); `--deep`, which needs `.stack`, runs it OFF.
+   [Details](./cpu-profiling.md#why-the-sampler-never-rides-a-stack-trace).
+4. **A driver step's `wallMs` is the page clock, and mostly its settle.** The stored wall is the page's
+   own clock (the trace-clock window between the step's marks on `--breakdown`/`--deep`, else the
+   page's `performance.now` delta), not a node-side bound. That bound would read 40.5 ms via
+   `page.click`, 31.9 ms via `page.evaluate`, 1.1 ms in `--bench`, because it carries the tool's
+   dispatch in no renderer timeline. Even on the page clock the window includes the deliberate settle
+   (floor ~31 ms under new-headless `--headless-mode new`, ~half on the default shell mode), so use
    `interaction.processingMs` or the per-step counts for what the page did.
-   [Details](./driver-timing.md#wallms-is-a-bound-on-the-step-not-the-cost-of-the-page).
+   [Details](./driver-timing.md#a-driver-steps-wallms-is-the-pages-own-clock-not-a-node-side-bound).
 
 ## How to add a claim here
 

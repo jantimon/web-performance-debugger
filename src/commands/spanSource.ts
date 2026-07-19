@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { deserialize } from "../output/format.js";
+import { assertRecordingArtifact } from "../model/artifact.js";
 import { resolveTarget } from "./resolve.js";
 import { loadCpuModel } from "../profile/cpuprofile.js";
 import { buildSpans, recordingLane } from "../model/spans.js";
@@ -12,7 +13,8 @@ import type { SpanEntry } from "../model/query.js";
  * its sibling CpuModel run bar onto the unified `SpanEntry[]` shape `query spans` produces. This is
  * the SAME slice-reading path as `query spans` (`buildSpans`), so `assert --max-slice` and `diff`
  * never grow a second interpretation of a slice. Returns null when the recording carries no bar at
- * all (an older recording, or a `--no-cpu-profile` run), which the caller treats as "no slice data".
+ * all (an older recording, or a sampler-off rung like --deep/--precise-wall), which the caller
+ * treats as "no slice data".
  */
 export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null> {
   const abs = await resolveTarget(file, "recording");
@@ -20,8 +22,10 @@ export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null>
     await fs.readFile(abs, "utf8"),
     path.extname(abs).toLowerCase(),
   ) as Recording;
+  assertRecordingArtifact(rec, abs);
+  const hasBar = rec.spans?.some((span) => span.breakdown);
   let cpuBreakdown: CpuBreakdown | undefined;
-  if (!rec.breakdowns?.length) {
+  if (!hasBar) {
     try {
       cpuBreakdown = (await loadCpuModel(abs)).breakdown;
     } catch (error) {
@@ -31,13 +35,7 @@ export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null>
       if ((error as NodeJS.ErrnoException)?.code !== "ENOCPUMODEL") throw error;
     }
   }
-  // An older recording may predate `meta`; it also has no bar, so buildSpans returns null anyway.
   const meta = rec.meta ?? {};
-  const result = buildSpans(
-    rec.breakdowns,
-    cpuBreakdown,
-    recordingLane(meta),
-    meta.iterations ?? 1,
-  );
+  const result = buildSpans(rec.spans, cpuBreakdown, recordingLane(meta), meta.iterations ?? 1);
   return result?.spans ?? null;
 }

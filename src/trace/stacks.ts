@@ -47,6 +47,26 @@ export function extractStack(args: unknown): StackFrame[] | undefined {
     }));
 }
 
+/**
+ * Pull the Gecko cause stack (the WRITE that dirtied a flush) out of a Reflow/Styles marker event.
+ * Gecko stashes it under `args.data.invalidationStack` (leaf-first JS frames), a different key from
+ * the read-site `stackTrace` above, so it never becomes a blame `at`. Undefined on chrome events,
+ * which carry no such key.
+ */
+export function extractInvalidationStack(args: unknown): StackFrame[] | undefined {
+  const data = (args as { data?: { invalidationStack?: RawFrame[] } } | undefined)?.data;
+  const raw = data?.invalidationStack;
+  if (!raw || !raw.length) return undefined;
+  return raw
+    .filter((frame) => frame && (frame.url || frame.functionName))
+    .map((frame) => ({
+      functionName: frame.functionName || undefined,
+      url: frame.url || undefined,
+      line: typeof frame.lineNumber === "number" ? frame.lineNumber : undefined,
+      column: typeof frame.columnNumber === "number" ? frame.columnNumber : undefined,
+    }));
+}
+
 /** Rewrite served (http://127.0.0.1:PORT/...) urls back to local file paths. */
 export function makeSourceResolver(serverUrl: string, root: string) {
   return (frame: StackFrame): StackFrame => {
@@ -88,20 +108,52 @@ export function makeNodeSourceResolver() {
   };
 }
 
-/** True for urls injected by the tool itself (puppeteer harness or node-runtime runner). */
+/**
+ * The wpd source files whose `page.evaluate` calls inject wpd's OWN page-side helpers: the driver's
+ * step marks / INP observer / settle, and the bench harness runner. Puppeteer stamps an evaluated
+ * function's sourceURL as `pptr:<fn>;<encoded call site>`, so a frame from one of these files is
+ * wpd's own, not the user's. A driver-mode USER `page.evaluate` callback carries the same `pptr:`
+ * scheme but a call site inside the user's module, so it is NOT one of these and must survive.
+ */
+const WPD_EVALUATE_SITES = [
+  "/browser/driver.",
+  "/browser/settle.",
+  "/browser/harness.",
+  "/record/runpass.",
+];
+
+/** True for urls injected by the tool itself (puppeteer internals/harness or node-runtime runner). */
 export function isToolFrameUrl(url: string | undefined): boolean {
   if (!url) return false;
-  return (
-    url.startsWith("pptr:") ||
-    url.startsWith("debugger://") ||
-    // page.evaluate'd code (our harness, incl. the post-run layout flush)
+  if (url.startsWith("debugger://")) return true;
+  if (
+    // page.evaluate'd code under older puppeteer (its legacy evaluation sourceURL)
     url.includes("__puppeteer_evaluation_script__") ||
     // Firefox/BiDi attributes page.evaluate code to the served host page url, so the
     // bench harness loop lands on the blank host page; drop it (not user code).
     url.includes("/__wpd_blank__") ||
     // the in-process node-runtime driver loop (not user code)
     url.includes("/runtime/node.")
-  );
+  )
+    return true;
+  if (url.startsWith("pptr:")) {
+    // Puppeteer's own internal frames.
+    if (url.startsWith("pptr:internal")) return true;
+    // A `pptr:<fn>;<encoded call site>` frame: drop it ONLY when the call site is one of wpd's own
+    // injection points. A user's driver-mode page.evaluate callback gets the same scheme, and its
+    // frames are real user code that must reach blame/cpu. The site is percent-encoded in the url,
+    // so decode before matching (the `/` separators would otherwise read as `%2F`).
+    let site = url;
+    try {
+      site = decodeURIComponent(url);
+    } catch {
+      // malformed percent-encoding: match against the raw url instead
+    }
+    // The call site is a filesystem path, so on Windows its separators are backslashes; the
+    // fragments are written with forward slashes, so normalize before matching.
+    return WPD_EVALUATE_SITES.some((fragment) => site.replaceAll("\\", "/").includes(fragment));
+  }
+  return false;
 }
 
 /** Frames injected by puppeteer itself (our harness), not user source. */
@@ -158,5 +210,18 @@ export async function attachStacks(
     for (const frame of stack) frame.source = relativizeSource(frame.source, root);
     event.stack = stack;
     event.at = topLocation(stack);
+  }
+  // Resolve the Gecko cause stack (firefox marker events) the same way, so `query get` shows local
+  // sources and the firefox --deep dirtied-by report has a write line. This is the WRITE, kept off
+  // `at` on purpose (the read-site stays the blame answer). A no-op on chrome (no invalidationStack).
+  for (const event of events) {
+    const cause = extractInvalidationStack(event.args);
+    if (!cause) continue;
+    cause.forEach(resolve);
+    await maps.resolveStack(cause);
+    for (const frame of cause) frame.source = relativizeSource(frame.source, root);
+    (event.args as { data: { invalidationStack: StackFrame[] } }).data.invalidationStack = cause;
+    const writeAt = topLocation(cause);
+    if (writeAt) event.dirtiedBy = { at: writeAt };
   }
 }

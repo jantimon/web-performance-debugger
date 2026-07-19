@@ -125,10 +125,10 @@ honesty a sharper wedge for wpd than the incumbents' indifference suggests.
 where wpd's number disagrees with DevTools/Lighthouse: explaining why the other number is
 optimistic is the moment latent demand becomes articulated.
 
-## 5. Record-once artifacts + query surface (`digest`/`spans`/`blame`/`cpu`/`get`, `diff`, `assert`): good
+## 5. Record-once artifacts + query surface (`spans`/`span`/`blame`/`cpu`/`get`, `diff`, `assert`): good
 
 **What.** A recording is a portable JSON/TOON artifact; query it later by verb and id, diff two
-runs, gate CI on thresholds. The digest is deliberately small; drilldown is by id.
+runs, gate CI on thresholds. The `spans` overview is deliberately small; drilldown is by id.
 
 **Why it wins.** Google's chrome-devtools-mcp validated the premise almost verbatim (a ~30MB
 trace summarized to <4KB for the model), but it re-traces live and persists nothing: no artifact,
@@ -258,7 +258,7 @@ the research: (1) an MCP server wrapping the existing verbs, highest leverage by
 on attribution, not format; (3) human-readable labels alongside drilldown ids (measured to improve
 retrieval precision over opaque ids); (4) a `concise|detailed` verbosity knob mirroring the
 recommended `response_format` pattern; (5) an agent-facing skill file externalizing the "read the
-digest, drill by id, never the raw recording" rule.
+`spans` overview, drill by id, never the raw recording" rule.
 
 ---
 

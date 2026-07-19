@@ -27,9 +27,8 @@ function pointerFileFor(cwd: string): string {
 const LEGACY_POINTER = "recordings/.wpd-last.json";
 
 export interface LastPointer {
+  /** the one default artifact (Span[] + summary + meta); the `query span`/`spans` views derive from it */
   recording: string;
-  digest: string;
-  index?: string;
   /** raw .cpuprofile, when CPU profiling ran */
   cpuProfile?: string;
   /** resolved CPU model (.cpu.json/.cpu.toon), when CPU profiling ran */
@@ -74,25 +73,23 @@ async function readPointer(): Promise<LastPointer> {
 
 /**
  * Resolve a file argument. The literal `latest` resolves to the most recent
- * recording (or its index) via the pointer file, never by mtime.
+ * recording via the pointer file, never by mtime.
  */
 export async function resolveTarget(
   file: string,
-  kind: "recording" | "index" | "auto" | "cpu-model" | "cpu-profile",
+  kind: "recording" | "auto" | "cpu-model" | "cpu-profile",
 ): Promise<string> {
   if (file !== "latest") return path.resolve(file);
   const pointer = await readPointer();
-  if (kind === "index") {
-    if (!pointer.index)
-      throw new Error("Latest run was not a stepped run (no index). Use a recording verb instead.");
-    return path.resolve(pointer.index);
-  }
   if (kind === "cpu-model" || kind === "cpu-profile") {
     const target = kind === "cpu-model" ? pointer.cpuModel : pointer.cpuProfile;
     if (!target)
-      throw new Error("Latest run has no CPU profile. Re-run `record` without --no-cpu-profile.");
+      throw new Error(
+        "Latest run has no CPU profile. Re-run `record` on a rung that samples CPU (the default or --breakdown, not --deep/--precise-wall).",
+      );
     return path.resolve(target);
   }
-  if (kind === "auto") return path.resolve(pointer.index ?? pointer.recording);
+  // One artifact kind: the recording carries the spans, so the `recording` and `auto` targets both
+  // resolve to it and every span/count view is derived by the verb.
   return path.resolve(pointer.recording);
 }

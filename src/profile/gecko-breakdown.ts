@@ -90,7 +90,7 @@ function byPackageMs(byPackageUs: Map<string, number>): Record<string, number> {
  * The run-level `js · style · layout · browser · gc · idle` bar (`CpuModel.breakdown` on Firefox).
  * `wallMs` is the profile's own summed deltas (= `CpuModel.totalMs`), so the bar reconciles by
  * construction. It sums every sample `[0, length)`, the same bounds `buildGeckoSpanBreakdowns` gives
- * the run span, so the run-bar wall matches across `query cpu` and `query digest`. Requires
+ * the run span, so the run-bar wall matches across `query cpu` and `query spans`. Requires
  * `raw.gecko` (present only when the CPU signal populated the idle slice).
  */
 export function computeGeckoCpuBreakdown(
@@ -151,7 +151,7 @@ function windowBounds(
   return from <= to ? { from, to } : { from: 0, to: 0 };
 }
 
-/** One seven-slice `Breakdown` (paint is always 0 on Firefox: main-thread paint is off on the
+/** One seven-slice `Breakdown` (paint is not-measured on Firefox: main-thread paint is off on the
  * compositor, a side track, never summed into the wall) for the samples in `[from, to)`. */
 function spanBreakdown(
   raw: RawCpuProfile,
@@ -167,7 +167,7 @@ function spanBreakdown(
       js: { ms: usToMs(sums.js), byPackage: byPackageMs(sums.byPackageUs) },
       style: { ms: usToMs(sums.style) },
       layout: { ms: usToMs(sums.layout) },
-      paint: { ms: 0 },
+      paint: null,
       gc: { ms: usToMs(sums.gc) },
       // DOM-accessor time + Profiler self-overhead + everything non-work-classified.
       other: { ms: usToMs(sums.browser) },
@@ -175,12 +175,12 @@ function spanBreakdown(
     },
   };
   // Every in-window delta lands in one slice, so this closes; the valve only catches float dust.
+  // paint is not-measured on firefox and contributes nothing to the sum.
   const residual = reconcileResidual(
     breakdown.wallMs,
     breakdown.slices.js.ms +
       breakdown.slices.style.ms +
       breakdown.slices.layout.ms +
-      breakdown.slices.paint.ms +
       breakdown.slices.gc.ms +
       breakdown.slices.other.ms +
       breakdown.slices.idle.ms,
@@ -190,15 +190,15 @@ function spanBreakdown(
 }
 
 /**
- * One `SpanBreakdown` per user `performance.measure` inside the run window (the §14 mark bridge on
+ * One `SpanBreakdown` per user `performance.measure` inside the run window (the mark bridge on
  * Firefox). The run span is emitted first so the report keeps a whole-window bar alongside the
- * measures. Returns [] when there are no user measures, so a plain run leaves `Recording.breakdowns`
- * unset and the run bar is shown via `CpuModel.breakdown` instead.
+ * measures. Returns [] when there are no user measures; the run bar is then shown via
+ * `CpuModel.breakdown` instead.
  *
  * The run span covers every sample `[0, length)`: the profile is already restricted to the run
  * window at conversion, so this IS the run window, and its slice sum equals `CpuModel.totalMs` by
  * construction, the same wall `CpuModel.breakdown` reports. So the run-bar wall reconciles across
- * `query digest` and `query cpu`. Re-deriving the bounds with `windowBounds` would rebuild the
+ * `query spans` and `query cpu`. Re-deriving the bounds with `windowBounds` would rebuild the
  * sample clock delta-by-delta and could trim the boundary sample, opening a one-sample-gap wall
  * difference between the two views; measure spans, which ARE sub-windows, still use `windowBounds`.
  */

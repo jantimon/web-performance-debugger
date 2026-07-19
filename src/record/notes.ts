@@ -4,9 +4,9 @@
  * browser/launch.ts; only the WORDING lives here, so a reader auditing what the tool can say reads
  * one file, and an e2e test matching a note substring has one place the text can change.
  *
- * The two algorithmic notes -- count scope (passplan.ts `noteCountScope`) and sourcemap resolution
- * (record.ts `sourcemapNote`) -- are not here: their text is assembled from the pass plan and the
- * diagnostics, so wording and logic are inseparable and already live in their own generators.
+ * The two algorithmic notes -- count scope (capture.ts `countScopeNote`) and sourcemap resolution
+ * (record.ts `sourcemapNote`) -- are not here: their text is assembled from the rung's capabilities
+ * and the diagnostics, so wording and logic are inseparable and already live in their own generators.
  */
 
 // --- --breakdown lane ---
@@ -16,11 +16,11 @@ export function breakdownNoProfile(): string {
 }
 
 export function breakdownShape(): string {
-  return "Breakdown mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (Σ slices + idle = wall). Timing rides this pass, so per-iteration wall is ~2-5% above a pristine timing pass.";
+  return "Breakdown mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (Σ slices + idle = wall). The light trace rides the same pass as the timing, so per-iteration wall is ~2-5% above a sampler-off wall (--precise-wall).";
 }
 
 export function breakdownForcedNotMeasured(): string {
-  return "NOT measured in breakdown mode: forced-layout count and forced-layout blame (they need the `.stack` trace category, which this mode drops); reported as 'not measured', never 0. Run the default mode (no --breakdown) for forced-layout blame.";
+  return "NOT measured in breakdown mode: forced-layout count and forced-layout blame (they need the `.stack` trace category, which this mode drops); reported as 'not measured', never 0. Run --deep for forced-layout blame and the dirtied-by/thrash report.";
 }
 
 export function breakdownInvalidationNotMeasured(): string {
@@ -36,15 +36,15 @@ export function breakdownHeuristicMainThread(): string {
 // --- Firefox lane ---
 
 export function firefoxBackend(): string {
-  return "Firefox backend (WebDriver BiDi): no CDP, so no exact counters and no CPU/network throttling. Wall timing rides performance.now (directional).";
+  return "Firefox backend (WebDriver BiDi): no CDP, so no exact counters and no CPU/network throttling. Wall timing rides performance.now (directional) and is measured under the Gecko profiler (~1% systematic cost; cancels in a diff of two Firefox runs).";
 }
 
 export function firefoxRenderingCountsMeasured(): string {
-  return "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's CDP counts: read them against another Firefox run. NOT measured at all and reported as 0: paintCount, invalidation counts, long tasks (counted from the DevTools trace, which Gecko has no equivalent of), and scriptingMs. A 0 in those means unmeasured, not clean.";
+  return "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's counts: read them against another Firefox run. NOT measured and reported as not-measured (—), never a fake 0: paintCount (off-main-thread), invalidation counts and long tasks (from the DevTools trace, which Gecko has no equivalent of). scriptingMs comes from the CPU model.";
 }
 
 export function firefoxRenderingCountsDisabled(): string {
-  return "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as 0 because nothing counted them, not because the page did no work: layout/style/paint, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.";
+  return "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as not-measured (—) because nothing counted them, not because the page did no work: layout/style/paint, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.";
 }
 
 export function firefoxInp(): string {
@@ -55,6 +55,10 @@ export function firefoxForcedCountSemantics(): string {
   return "Firefox forcedLayoutCount comes from Gecko Reflow/Styles marker cause stacks (the write-site JS cause), not Chrome's read-site rule, so it counts mount-driven reflows Chrome reports 0 for. Never compare forced counts across engines: read a Firefox run against another Firefox run.";
 }
 
+export function firefoxDeepReport(): string {
+  return "Deep report on Firefox (--deep): the SAME gecko pass, plus a dirtied-by (first-invalidation-only) write report from Gecko's Reflow/Styles cause stacks — the write that dirtied each forced flush. Gecko records only the FIRST invalidation since the last flush, so this is NOT Chrome's full write set: no exact-count parity, no forced-by read side (the read that forced each flush stays the sampled read-site blame: query blame --forced), and no layout-thrashing detector. See query blame --dirtied and query span run.";
+}
+
 export function firefoxBreakdown(): string {
   return "CPU time breakdown (js/style/layout/browser/gc/idle bar) on Firefox: idle comes from the per-sample CPU-usage signal (threadCPUDelta ~0 == the thread was descheduled/waiting; 95.7% on a pure-wait window), and style/layout from the sampled Layout-category frames. The slices reconcile (Σ slices = the sampled window). NOT in the bar: paint (off-main-thread compositor work, a side track shown separately, never summed), and on tiny workloads a ~1ms sampling floor. Layout/style/forced-layout counts come from the Reflow/Styles markers, not this bar.";
 }
@@ -63,45 +67,65 @@ export function firefoxNoCpuBreakdown(): string {
   return "No CPU time breakdown on Firefox: this Gecko dump carries no per-sample threadCPUDelta CPU signal (an older recording, or the profiler ran without the `cpu` feature), so idle cannot be told from engine work and a bar would fabricate it. CPU self-time (scriptingMs, query cpu) is still measured.";
 }
 
-// --- Chrome default lane ---
+// --- Chrome rung ladder ---
 
-export function timingInstrumented(): string {
-  return "Single-pass mode (--no-isolate): instrumentation was active during timing, so per-iteration timings are inflated. Drop --no-isolate for trustworthy timing.";
+/** Default rung (rung 1): sampler only, no trace, so no rendering counts. */
+export function defaultRung(): string {
+  return "Default mode (rung 1): CPU sampler only, no DevTools trace, for the cleanest wall. Rendering counts (layout/style/paint/forced) and their durations are NOT measured here and are reported as not-measured (—), never 0. Add --breakdown for the reconciling js/style/layout/paint/gc/other/idle bar, or --deep for exact counts and forced-layout blame.";
 }
 
-export function timingClean(): string {
-  return "Timing/stats come from a low-overhead pass with tracing OFF.";
+export function cpuSamplerOnDefaultRung(): string {
+  return "The CPU sampler perturbs per-iteration wall by ~1% on this rung: it is systematic, so it cancels in `diff`. Use --precise-wall for a sampler-off benchmark wall (no CPU model).";
 }
 
-export function paintCountsSeparatePass(): string {
-  return "Paint & invalidation counts come from a separate heavy-instrumentation pass; do not compare durations across the two.";
+/** Rung 3 (--deep): full trace, sampler off; exact counts + blame, durations suppressed. */
+export function deepRung(): string {
+  return "Deep mode (rung 3): full trace (.stack + invalidationTracking) with the CPU sampler OFF. Exact counts (layout/style/paint/forced), forced-layout blame, the invalidation rollup and long tasks are the product. Slice DURATIONS (layoutMs/styleMs/paintMs) are suppressed (—): the .stack trace inflates them (style up to +38%), and a distorted number is worse than none. Run --breakdown for the reconciling bar and a CPU model; span wall (the window width) is still honest here.";
 }
 
-export function noTracePass(): string {
-  return "No trace pass ran (--no-trace): counts come from CDP only. Paint, forced-layout, invalidation and long-task detail is NOT collected and is reported as 0 — that means unmeasured, not clean.";
+/** --precise-wall: rung 1 minus the sampler. */
+export function preciseWall(): string {
+  return "Precise-wall mode: the CPU sampler is OFF for a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts — the wall is the only product. Drop --precise-wall for the four-slice CPU bar.";
 }
 
-export function cpuSamplerOnTimingPass(): string {
-  return "The CPU sampler ran during the timing pass, which inflates per-iteration wall by roughly 10%: it is systematic, so it cancels in `diff`, but use --no-cpu-profile for absolute wall numbers.";
+// --- Driver step wall ---
+
+/**
+ * Which clock priced a driver run's step walls. Never the node-side driver clock: ~20ms of a
+ * `page.click` is input dispatch in the tool process, in no renderer timeline (docs/dev/driver-timing.md).
+ * "page" is the page's own performance.now() delta between the step marks; "trace" is the trace-clock
+ * window between the same marks, which spans navigation and reconciles with the breakdown bar.
+ */
+export function driverStepWallClock(clock: "trace" | "page"): string {
+  return clock === "trace"
+    ? "Driver step walls are the trace-clock window between each step's marks (t1-t0 on the renderer's clock), so they price the page's own window and reconcile with the breakdown bar, not the node-side page.click bound."
+    : "Driver step walls are the page's own performance.now() delta between each step's marks (no trace on this rung), not the node-side page.click bound (~20ms of which is input dispatch in the tool process; docs/dev/driver-timing.md). A step that navigated cannot be priced this way and reports its wall as not measured — record with --breakdown or --deep for a trace-clock wall that spans navigation.";
 }
 
-export function noCpuModelNoIsolate(): string {
-  return "No CPU model in this run: --no-isolate collapses to the single trace pass, and CPU sampling during tracing would inflate self-time by ~21% (trace instrumentation is billed to the JS frame that triggered it). Drop --no-isolate to get a CPU model, or add --no-trace to sample without tracing.";
+/** A driver run on the no-trace rung whose steps all navigated: no step wall could be priced. */
+export function driverStepWallUnmeasured(): string {
+  return "Driver step walls are NOT measured on this run: every step navigated, which resets the page clock, and there is no trace to span it. Record with --breakdown or --deep for a trace-clock wall that survives navigation. See docs/dev/driver-timing.md.";
 }
 
 // --- Cross-lane ---
 
 export function traceWindowMissing(): string {
-  return "WARNING: trace run-window markers (wpd:run:start/end) were not found, so paint/forced-layout/invalidation/long-task counts are NOT measured for this run and are reported as 0. CDP counters (layout/style/scripting) are unaffected. This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce work or raise --settle if it persists.";
+  return "WARNING: trace run-window markers (wpd:run:start/end) were not found, so layout/style/paint/forced-layout/invalidation/long-task counts are NOT measured for this run (reported as not measured, never 0). This usually means the trace buffer overflowed or the user_timing category was dropped; re-run, and reduce the measured work if it persists.";
+}
+
+/** The run window opened but never closed: the run:start mark was found, run:end was lost. */
+export function runEndMarkLost(): string {
+  return "WARNING: the run window opened (wpd:run:start) but never closed (wpd:run:end was lost, usually a trace-buffer overflow). Counts remain valid (they window start-onward by design), but the reconciling breakdown bar needs both bounds, so it is absent for this run rather than reported as 0. Re-run, reducing the measured work if it persists.";
+}
+
+/** A driver step's end mark was lost: its window (and bar) run to the run end, its wall stays page-clock. */
+export function stepEndMarkLost(): string {
+  return "WARNING: a driver step's end marker (wpd:step:N:end) was lost from the trace, so that step's counts and breakdown bar window to the run end (an over-estimate of the step), and its wall is the page-clock delta between the step marks rather than the trace-clock window, so it does not reconcile with the step's bar. Usually a trace-buffer overflow; reduce the measured work if it persists.";
 }
 
 /** The one templated note: names the slowdown that was applied. */
-export function artificialSlowdown(
-  cpuThrottle: number | undefined,
-  network: string | undefined,
-): string {
-  const parts = [cpuThrottle ? `cpu ${cpuThrottle}x` : null, network].filter(Boolean).join(", ");
-  return `Artificial slowdown applied (${parts}); timings are not comparable to an unthrottled run.`;
+export function artificialSlowdown(cpuThrottle: number | undefined): string {
+  return `Artificial slowdown applied (cpu ${cpuThrottle}x); timings are not comparable to an unthrottled run.`;
 }
 
 /** --target node lane (runtime/node.ts). */

@@ -47,10 +47,12 @@ function runCli(args) {
   return result.stdout;
 }
 
-e2e("record + query blame attributes forced layout to the source line", { timeout: TIMEOUT_MS }, () => {
+// Forced-layout blame is a --deep (rung 3) product: it needs the `.stack` trace category, which
+// only --deep captures (the default rung has no trace; --breakdown drops .stack).
+e2e("record --deep + query blame attributes forced layout to the source line", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "forced");
-  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--iterations", "3", "--out", out]);
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", "3", "--out", out]);
   assert.ok(existsSync(out), "recording file written");
 
   const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
@@ -60,6 +62,43 @@ e2e("record + query blame attributes forced layout to the source line", { timeou
   const top = fromExample[0];
   assert.ok(top.forced > 0, "forced count is positive");
   assert.ok(top.kinds.includes("layout"), "kinds include layout");
+});
+
+// The signature move: --deep detects layout thrashing (write->read->write->read) over the trace's
+// invalidation records, reports the count + interleave, and annotates each forced read with the
+// WRITE that dirtied it. examples/forces-layout.mjs is a known thrash: bump() writes inline style
+// (line 16), then each geometry property is read on its own line, so every read re-flushes.
+e2e("record --deep detects layout thrashing and dual-annotates read + dirtied-by write", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "thrash");
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", "1", "--out", out]);
+
+  // The thrash rollup rides the run span's anatomy. N = 3 is the headline threshold; this workload
+  // thrashes far over it (measured ~42 steps over ~21 geometry reads).
+  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
+  assert.ok(anatomy.thrash, "the run span carries a thrash rollup on --deep");
+  assert.ok(anatomy.thrash.count >= 3, `thrashCount >= N=3, got ${anatomy.thrash.count}`);
+  assert.ok(Array.isArray(anatomy.thrash.steps) && anatomy.thrash.steps.length > 0, "the interleave has steps");
+  // The anatomy also carries the forced read-sites, dual-annotated with the dirtied-by write.
+  assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length > 0, "forced read-sites present");
+
+  // The interleave names BOTH ends: a read line and the bump() write line (16).
+  const namesRead = anatomy.thrash.steps.some((step) => step.read?.includes("forces-layout.mjs"));
+  assert.ok(namesRead, "a thrash step names a geometry read line in forces-layout.mjs");
+  const writeLines = anatomy.thrash.steps.flatMap((step) => step.dirtiedBy.map((w) => w.at));
+  assert.ok(
+    writeLines.some((at) => /forces-layout\.mjs:16\b/.test(at)),
+    `a thrash step's dirtied-by names the bump() write line 16, got ${JSON.stringify([...new Set(writeLines)])}`,
+  );
+
+  // The dual annotation also hangs on `query blame --forced`: the read stays the headline, the write
+  // is attached as dirtiedBy with its Chrome invalidation reason.
+  const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
+  const annotated = blame.find((row) => row.dirtiedBy?.some((w) => /forces-layout\.mjs:16\b/.test(w.at)));
+  assert.ok(annotated, "a forced read-site carries a dirtied-by write");
+  const bumpWrite = annotated.dirtiedBy.find((w) => /forces-layout\.mjs:16\b/.test(w.at));
+  assert.equal(bumpWrite.reason, "Inline CSS style declaration was mutated", "the write names its mutation reason");
+  assert.ok(annotated.at.includes("forces-layout.mjs"), "the read (headline) is a forces-layout.mjs line");
 });
 
 // --target node profiles in-process via node's V8 inspector, so it needs no browser and
@@ -98,64 +137,58 @@ e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   assert.ok(named.source?.includes("cpu-busywork.mjs"), "hot function resolved to its source file");
 });
 
-// The invariant this pins: counts answer "how much work does one iteration cause", so they must
-// not move when --iterations changes. They used to be summed over the whole loop (measured on
-// this probe: layoutCount 22 -> 102 -> 202 at 1/5/10), which silently rescaled every threshold --
-// `assert --max-layouts 30` passed at 1 and failed at 10 on an unchanged page. Wall is the
-// opposite: it only means something in bulk, so its sample count MUST track --iterations.
-e2e("bench counts describe one iteration, not --iterations of them", { timeout: TIMEOUT_MS }, () => {
+// The single-axis capture invariant after the one-pass cutover. Every invocation is one pass, so
+// counts and wall come from the SAME run. The default rung (sampler only, no trace) measures no
+// rendering counts at all -- Measured null, never a fake 0 -- while --deep captures the exact counts
+// (with slice durations suppressed, the .stack refusal). Wall is the axis that grows with
+// --iterations; the bench wall is exactly the sum of the timed samples.
+e2e("the capture ladder: default rung has no counts; --deep has exact counts with suppressed durations", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
-  const read = (iterations) => {
-    const out = path.join(dir, `iters-${iterations}`);
-    runCli([
-      "record", path.join(examples, "forces-layout.mjs"),
-      "--bench", "--iterations", String(iterations), "--out", out,
-    ]);
+
+  // Default rung: no trace, so every rendering count is not-measured (null), never 0.
+  const dfltOut = path.join(dir, "default");
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--iterations", "1", "--out", dfltOut]);
+  const dflt = JSON.parse(readFileSync(dfltOut, "utf8")).summary;
+  assert.equal(dflt.layoutCount, null, "default rung measures no layout count (—, never 0)");
+  assert.equal(dflt.forcedLayoutCount, null, "and no forced count");
+  assert.equal(dflt.layoutMs, null, "and no durations");
+  assert.ok(dflt.scriptingMs > 0, "but the CPU model still measures JS self-time");
+
+  // --deep: exact counts are the product; slice durations are suppressed (.stack distorts them).
+  const readDeep = (iterations) => {
+    const out = path.join(dir, `deep-${iterations}`);
+    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", String(iterations), "--out", out]);
     return JSON.parse(readFileSync(out, "utf8")).summary;
   };
+  const deep = readDeep(1);
+  assert.ok(deep.layoutCount > 0, "--deep counts the forced layouts exactly");
+  assert.ok(deep.forcedLayoutCount > 0, "and attributes them as forced");
+  assert.ok(deep.styleCount > 0, "and counts style recalcs");
+  assert.equal(deep.layoutMs, null, "but slice durations are suppressed on the .stack trace (—, never a distorted number)");
+  assert.equal(deep.styleMs, null);
 
-  const one = read(1);
-  const many = read(8);
-
-  assert.ok(one.layoutCount > 0, "the probe forces layout at all");
-  assert.equal(many.layoutCount, one.layoutCount, "layoutCount must not scale with --iterations");
-  assert.equal(many.styleCount, one.styleCount, "styleCount must not scale with --iterations");
-  assert.equal(
-    many.forcedLayoutCount,
-    one.forcedLayoutCount,
-    "forcedLayoutCount must not scale with --iterations",
-  );
-
-  // Wall is the axis that SHOULD grow: one sample per timed iteration, contiguous, all real.
-  assert.equal(one.perIteration.length, 1, "one iteration yields one wall sample");
+  // Wall is the axis that grows with --iterations: one sample per timed iteration, all real, and the
+  // bench wall is EXACTLY their sum (no split, no bracket).
+  const many = readDeep(8);
+  assert.equal(deep.perIteration.length, 1, "one iteration yields one wall sample");
   assert.equal(many.perIteration.length, 8, "eight iterations yield eight wall samples");
-  assert.ok(
-    many.perIteration.every((ms) => ms > 0),
-    "every iteration of a split timed phase is measured, including those after the counts bracket",
-  );
+  assert.ok(many.perIteration.every((ms) => ms > 0), "every timed iteration is measured");
   assert.ok(many.stats && many.stats.samples === 8, "stats are computed over all timed iterations");
-
-  // The mirror of the counts bug, and a regression this actually hit: pinning the trace pass to
-  // one iteration made wallMs describe that ONE iteration while still being read as the whole
-  // run, which silently loosened `assert --max-wall` by ~N x on an unchanged page. Wall must stay
-  // on the N axis, and must be exactly the samples `stats` describes.
   const sum = (samples) => samples.reduce((total, ms) => total + ms, 0);
   assert.ok(
     Math.abs(many.wallMs - sum(many.perIteration)) < 0.001,
-    "bench wallMs is the sum of the timed samples, not a window that excludes most of them",
+    "bench wallMs is exactly the sum of the timed samples",
   );
-  assert.ok(
-    many.wallMs > one.wallMs,
-    `wallMs must grow with --iterations (got ${many.wallMs} at 8 vs ${one.wallMs} at 1)`,
-  );
+  assert.ok(many.wallMs > deep.wallMs, `wallMs grows with --iterations (${many.wallMs} at 8 vs ${deep.wallMs} at 1)`);
 });
 
 // The headline of driver --iterations: a real interaction measured once is a single sample of a
 // clock Chrome deliberately clamps, which cannot separate a regression from noise. Measured on
 // this flow, the n=1 reading of "first increment" was 87ms while the median over 6 was 40ms with
 // a 255ms outlier -- the single sample was not merely imprecise, it was 2x off the typical value.
-// Counts must NOT move with --iterations; only the sample count may.
-e2e("driver --iterations repeats the flow: per-step medians, per-iteration counts", { timeout: TIMEOUT_MS }, () => {
+// Per-step counts window to iteration 0, so they must NOT move with --iterations; only the sample
+// count may. Run under --deep, the rung whose full trace carries exact per-step counts.
+e2e("driver --deep --iterations repeats the flow: per-step medians, per-step counts don't scale", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   // A committed fixture, not examples/react-counter, whose dist/ is git-ignored and never built in
   // CI: the test would have returned early and reported green without exercising anything. It has
@@ -178,12 +211,12 @@ e2e("driver --iterations repeats the flow: per-step medians, per-iteration count
     const out = path.join(dir, `drv-${iterations}`);
     runCli([
       "record", flow,
-      "--html", html, "--iterations", String(iterations), "--out", out,
+      "--html", html, "--deep", "--iterations", String(iterations), "--out", out,
     ]);
-    return {
-      recording: JSON.parse(readFileSync(out, "utf8")),
-      index: JSON.parse(readFileSync(`${out}.index.json`, "utf8")),
-    };
+    // The collapse: one artifact. Steps are spans of kind "step" on the recording -- there is no
+    // separate index file to read.
+    const recording = JSON.parse(readFileSync(out, "utf8"));
+    return { recording, steps: recording.spans.filter((span) => span.kind === "step") };
   };
 
   const one = read(1);
@@ -205,27 +238,22 @@ e2e("driver --iterations repeats the flow: per-step medians, per-iteration count
   const sorted = [...step.perIteration].sort((left, right) => left - right);
   assert.ok(Math.abs(step.stats.medianMs - sorted[2]) < 0.001, "wall headline is the median");
 
-  // Counts are the axis that must hold still. Guard non-vacuity first: every equality below would
-  // hold at 0 === 0 on a page that did nothing, which is how the skipped version of this test
-  // passed for free.
-  assert.ok(one.recording.summary.layoutCount > 0, "the fixture actually causes layout");
-  assert.ok(one.recording.summary.forcedLayoutCount > 0, "and forces it synchronously");
+  // Per-step counts are the axis that must hold still: they window to the first timed iteration's
+  // trace window, so they never scale with --iterations. Guard non-vacuity first: every equality
+  // below would hold at 0 === 0 on a page that did nothing.
+  assert.ok(one.steps[0].counts.layoutCount > 0, "the fixture actually causes layout");
+  assert.ok(one.steps[0].counts.forcedLayoutCount > 0, "and forces it synchronously");
   assert.equal(
-    many.recording.summary.layoutCount,
-    one.recording.summary.layoutCount,
-    "overall layoutCount must not scale with --iterations",
+    many.steps[0].counts.layoutCount,
+    one.steps[0].counts.layoutCount,
+    "per-step layoutCount must not scale with --iterations (windowed to iteration 0)",
   );
   assert.equal(
-    many.recording.summary.forcedLayoutCount,
-    one.recording.summary.forcedLayoutCount,
-    "overall forcedLayoutCount must not scale with --iterations",
+    many.steps[0].counts.forcedLayoutCount,
+    one.steps[0].counts.forcedLayoutCount,
+    "per-step forcedLayoutCount must not scale with --iterations",
   );
-  assert.equal(
-    many.index.steps[0].headline.layoutCount,
-    one.index.steps[0].headline.layoutCount,
-    "per-step layoutCount must not scale with --iterations",
-  );
-  assert.ok(many.index.steps[0].stats?.samples === 5, "the step index exposes the spread");
+  assert.ok(many.steps[0].stats?.samples === 5, "the step span exposes the spread");
 });
 
 // --- the fused --breakdown pass and the reconciling seven-slice bar ---
@@ -247,11 +275,12 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
-  assert.ok(Array.isArray(rec.breakdowns) && rec.breakdowns.length > 0, "breakdowns present");
-  const runSpan = rec.breakdowns.find((span) => span.kind === "run");
+  const bars = rec.spans.filter((span) => span.breakdown);
+  assert.ok(bars.length > 0, "spans carrying a reconciling bar present");
+  const runSpan = bars.find((span) => span.kind === "run");
   assert.ok(runSpan, "a run span exists");
 
-  for (const span of rec.breakdowns) {
+  for (const span of bars) {
     const breakdown = span.breakdown;
     const sum = sliceSum(breakdown);
     assert.ok(
@@ -280,7 +309,7 @@ e2e("record --breakdown: a waiting-dominated span is mostly idle and still close
     "--bench", "--breakdown", "--iterations", "3", "--out", out,
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
-  const runSpan = rec.breakdowns.find((span) => span.kind === "run");
+  const runSpan = rec.spans.find((span) => span.kind === "run");
   assert.ok(runSpan, "a run span exists");
 
   const { wallMs, slices } = runSpan.breakdown;
@@ -302,7 +331,7 @@ e2e("record --breakdown: a repeated performance.measure merges to a median bar (
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
-  const measureBars = rec.breakdowns.filter((span) => span.kind === "measure" && span.label === "user-span");
+  const measureBars = rec.spans.filter((span) => span.kind === "measure" && span.label === "user-span");
   assert.equal(measureBars.length, 1, "the repeated label collapses to ONE stored bar, not one per iteration");
   const measureSpan = measureBars[0];
   assert.equal(measureSpan.samples, 3, "samples == iterations (one occurrence per iteration, all merged)");
@@ -360,6 +389,80 @@ e2e("query spans: unified per-span shape over a chrome --breakdown recording", {
   assert.equal(filtered.spans[0].label, "user-span");
 });
 
+// `query span <label>`: one span's full anatomy. On a --breakdown run span it carries the reconciling
+// bar AND the run-window hot functions (the resolved CPU model IS the run window). A bare label
+// resolves the single matching span.
+e2e("query span run: --breakdown recording shows the bar and the run-window hot functions", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "span-bd");
+  runCli([
+    "record", path.join(examples, "forces-layout.mjs"),
+    "--bench", "--breakdown", "--iterations", "5", "--out", out,
+  ]);
+  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
+  assert.equal(anatomy.kind, "run");
+  assert.equal(anatomy.aggregation, "sum", "the run window is a total across iterations");
+  assert.ok(anatomy.slices, "the reconciling bar's unified slices are present");
+  for (const key of SLICE_NAMES)
+    assert.ok(key in anatomy.slices, `slice '${key}' present in the anatomy`);
+  // The run span's hot list comes from the sibling CPU model (the sampler brackets the whole loop).
+  assert.ok(anatomy.hot, "hot functions are present for the run span");
+  assert.equal(anatomy.hot.scope, "run-window");
+  assert.ok(anatomy.hot.functions.length > 0, "at least one hot function in the run window");
+  // A --breakdown run drops the .stack forced count: not-measured, never a fake 0.
+  assert.equal(anatomy.counts.forcedLayoutCount, null, "forced count is not-measured on --breakdown");
+});
+
+// `query span <step-label>` on a --deep driver recording: the step's exact windowed counts plus the
+// forced read-sites (dual-annotated with the dirtied-by write) from the deep event log, scoped to the
+// step. A step span carries no run-window hot list (per-span CPU windowing is not reconstructed, and
+// --deep has no CPU model anyway).
+e2e("query span <step>: --deep driver recording shows the step's counts and forced/dirtied annotations", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const html = path.join(repoRoot, "test", "fixtures", "driver-probe.html");
+  assert.ok(existsSync(html), "driver-probe.html is committed, so this test cannot silently skip");
+  const flow = path.join(dir, "flow.mjs");
+  writeFileSync(
+    flow,
+    `export async function prepare({ page }) { await page.waitForSelector("#inc"); }
+     export async function run({ page, measureStep }) {
+       await measureStep("add rows", () => page.click("#inc"));
+     }`,
+  );
+  const out = path.join(dir, "span-step");
+  runCli(["record", flow, "--html", html, "--deep", "--iterations", "1", "--out", out]);
+
+  const anatomy = JSON.parse(runCli(["query", "span", out, "add rows", "--json"]));
+  assert.equal(anatomy.kind, "step", "a bare label resolves the single matching step span");
+  // Exact windowed counts (--deep).
+  assert.ok(anatomy.counts.layoutCount > 0, "the step's layout count is present");
+  assert.ok(anatomy.counts.forcedLayoutCount > 0, "and it forced layout synchronously");
+  // Forced read-sites from the event log, each naming a resolved source line.
+  assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length > 0, "forced read-sites present");
+  assert.ok(anatomy.forced.every((entry) => typeof entry.at === "string"), "each forced entry names a source line");
+  const dirtied = anatomy.forced.some((entry) => entry.dirtiedBy?.length > 0);
+  assert.ok(dirtied, "a forced read-site is dual-annotated with the dirtied-by write");
+  // A step span carries no run-window hot list.
+  assert.equal(anatomy.hot, null, "hot is not-available for a step span");
+});
+
+// The removed `query digest` / `query index` verbs exit 1 with a message naming the replacement, not
+// commander's bare "unknown command" and not a stack trace. Browser-free, so a plain test (never
+// skipped): the stub errors before any recording is read.
+for (const removed of ["digest", "index"]) {
+  test(`query ${removed} was removed and points at the replacement`, () => {
+    const result = spawnSync(process.execPath, [cli, "query", removed, "latest", "--json"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 1, `query ${removed} exits non-zero`);
+    const output = `${result.stdout}${result.stderr}`;
+    assert.match(output, new RegExp(`\`query ${removed}\` was removed`), "names the removed verb");
+    assert.match(output, /query span[s]?/, "names the replacement verb");
+    assert.doesNotMatch(output, /at Object\.|node:internal/, "no stack trace");
+  });
+}
+
 // The off-thread frame side track (Chrome --breakdown). It is DISPLAY-ONLY -- the frame count is
 // scheduler/settle noise that swings 1->28 on unchanged code (FP-1), so this asserts PRESENCE and
 // SHAPE only, never exact counts: the field exists, tallies to `total`, and the compact line is
@@ -373,7 +476,7 @@ e2e("record --breakdown: a per-span frame side track is recorded and printed", {
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
-  const runSpan = rec.breakdowns.find((span) => span.kind === "run");
+  const runSpan = rec.spans.find((span) => span.kind === "run");
   assert.ok(runSpan?.frames, "the run span carries a frame side track");
   const frames = runSpan.frames;
   // A painting workload produces at least one compositor frame in the run window (start-onward,
@@ -416,4 +519,40 @@ test("record --headless-mode new errors on a firefox target (chrome-only flag)",
   );
   assert.notEqual(result.status, 0, "the chrome-only flag on firefox exits non-zero");
   assert.match(result.stderr, /--headless-mode is chrome-only \(target is firefox\)/);
+});
+
+// The rungs are mutually exclusive: two rungs are two captures / two questions, so wpd points at
+// running twice rather than fusing them. Guards fire before any browser launches.
+const guardError = (args) =>
+  spawnSync(process.execPath, [cli, "record", path.join(examples, "forces-layout.mjs"), ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+
+test("record --breakdown --deep is rejected (two rungs, two invocations)", () => {
+  const result = guardError(["--breakdown", "--deep"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--breakdown and --deep are two different rungs/);
+});
+
+test("record --precise-wall --breakdown is rejected (rung 1 minus sampler vs a higher rung)", () => {
+  const result = guardError(["--precise-wall", "--breakdown"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--precise-wall is rung 1 minus the sampler/);
+});
+
+test("record --breakdown on firefox is rejected (the gecko pass IS the firefox lane)", () => {
+  // --deep on firefox is a reporting tier over the same gecko pass (its dirtied-by write report
+  // is covered in test/firefox.e2e.test.mjs). --breakdown has no meaning on firefox and is
+  // refused before any browser launches.
+  const result = guardError(["--target", "firefox", "--breakdown"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unsupported/);
+  assert.match(result.stderr, /--breakdown/);
+});
+
+test("record --deep on node is rejected (CPU-only lane, no trace)", () => {
+  const result = guardError(["--target", "node", "--deep"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /CPU-only lane/);
 });

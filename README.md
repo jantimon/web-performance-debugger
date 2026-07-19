@@ -7,29 +7,42 @@
     width="900">
 </p>
 
-Trace every rendering and JS cost back to the **source line** that caused it, with numbers you can
-trust. It drives real Chrome or Firefox (or pure Node), runs headless, and is built to gate in CI
+Account for **every millisecond** of an interaction, and make it add up. `wpd` drives real Chrome or
+Firefox (or pure Node) and decomposes one measured span into slices that tile it exactly:
 
-Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use the short `wpd`
+```
+run (run, 10.2 ms, sum of 5 iterations)
+slice   ms   %
+──────  ───  ─────  ───────────────────────────────
+js      2.8  27.1%  wpd-examples 2.1 · (native) 0.7
+style   4.4  42.9%
+layout  2.4  23.3%
+paint   0    0%
+gc      0    0%
+other   0.7  6.7%   (task remainder + unclassified)
+idle    0    0%     (waiting, not work)
+```
 
-## Requirements
+`Σ slices + idle = wall`, exactly. No unexplained time: JS is split by owning package, style and
+layout carry real milliseconds, and the part that was just waiting for the next frame is `idle`, not
+a vague "browser" bucket that reads like work. Above is a real forced-layout probe, so style + layout
+dominate; on a typical interaction most of the wall is `idle` (the frame wait) and `wpd` says so.
 
-- **Node 24+**
-- **Chrome** is downloaded automatically by Puppeteer on install. To skip the browser entirely, use
-  the `--target node` lane (CPU profiling only, no DOM/layout/paint)
-- **pnpm users:** pnpm 10+ blocks Puppeteer's browser-download postinstall by default, and pnpm 11
-  hard-fails `pnpm exec wpd` on that gate. Pick one recipe in your `package.json`: allow the download
-  with `"pnpm": {"onlyBuiltDependencies": ["puppeteer"]}`, or suppress the build-script gate with
-  `"pnpm": {"ignoredBuiltDependencies": ["puppeteer"]}` — but the latter only silences the gate, it
-  does not download a browser, so you must supply one yourself (set `PUPPETEER_EXECUTABLE_PATH`, or
-  populate the puppeteer cache with `npx puppeteer browsers install chrome`)
-- **Firefox** is optional (`--target firefox`): install it once with
-  `npx puppeteer browsers install firefox`. See
-  [What each target gives you](#what-each-target-gives-you)
-- For `--url`, **your dev/preview server must already be running** at that URL; wpd does not start it
-- `--html` files, and `--bench` modules, must live **under the current working directory** (they are
-  served to the browser from there). Driver and `--target node` modules are imported in Node and can
-  live anywhere
+The same tool attributes rendering and JS cost back to the **source line** that caused it, runs
+headless, and gates in CI. Run it with `npx @jantimon/web-performance-debugger ...`, or install it and
+use the short `wpd`.
+
+## Which problem do you have?
+
+| Symptom | Start here |
+| --- | --- |
+| Where did this interaction's time actually go | `record --breakdown`, then `query spans` |
+| A line forces synchronous layout (thrashing) | `record --deep`, then `query blame --forced` |
+| SSR or a hot JS loop is slow | `record --target node`, then `query cpu` |
+| Which dependency dominates CPU time | `query cpu --by package` |
+| Did my change regress a budget | `assert`, `diff`, `cpu-diff` |
+
+Each section below is one of these: reproduce it, read the result, fix the line.
 
 ## 30-second quickstart
 
@@ -37,29 +50,48 @@ Every run starts from a small JS file you write that exports a `run` function (t
 [Your `run` module](#your-run-module)). Pick the lane by what you are measuring:
 
 - **A real user flow in a real app** → the default **driver** lane: `run` gets a Puppeteer `page`
-  and drives your `--url`
+  and drives your `--url`.
 - **An isolated DOM-touching snippet** → `--bench`: `run` executes inside the page, repeated with
-  `--iterations`
-- **Pure JS, no DOM (SSR, hot loops)** → `--target node`: no browser at all
+  `--iterations`.
+- **Pure JS, no DOM (SSR, hot loops)** → `--target node`: no browser at all.
 
 ```bash
-# 1. forced-layout (thrashing) attribution, in-page:
-npx @jantimon/web-performance-debugger record probe.mjs --bench --iterations 5
+# 1. the reconciling bar for a forced-layout probe, in-page:
+npx @jantimon/web-performance-debugger record probe.mjs --bench --breakdown --iterations 5
+npx @jantimon/web-performance-debugger query spans latest
+
+# 2. who forced the layout (source lines), plus the thrash count:
+npx @jantimon/web-performance-debugger record probe.mjs --bench --deep --iterations 5
 npx @jantimon/web-performance-debugger query blame latest --forced
 
-# 2. pure-JS cost, no browser:
+# 3. pure-JS cost, no browser:
 npx @jantimon/web-performance-debugger record render.entry.js --target node --iterations 50
 npx @jantimon/web-performance-debugger query cpu latest
 ```
 
-By default `record` runs your flow **twice**: once with tracing off for clean timing, once fully
-instrumented for counts and attribution (that split is why the numbers stay honest, see
-[the trust table](#the-numbers-and-how-far-to-trust-them)). It writes into `./recordings/` (or
-name the run with `--out`): the full recording (`<timestamp>.json`), a small **digest** next to it
-(the summary and worst offenders, each carrying an `id` to drill into), a `.cpu.json` model plus the
-raw `.cpuprofile`, and a per-step index for driver runs. A `latest` pointer tracks the newest run, so
-every `query` verb accepts `latest` instead of a file path. Start at the digest, then drill in by
-id
+Each `record` runs your flow **once** (one browser launch, one pass) and writes into `./recordings/`
+(or name the run with `--out`): one small **recording** (`<timestamp>.json`) holding the run summary
+and every span, a resolved CPU model (`.cpu.json`) plus the raw `.cpuprofile`, and — only under
+`--deep` or Firefox — the classified event log inside the recording. A `latest` pointer tracks the
+newest run, so every `query` verb accepts `latest` instead of a file path.
+
+## Requirements
+
+- **Node 24+**.
+- **Chrome** is downloaded automatically by Puppeteer on install. To skip the browser entirely, use
+  the `--target node` lane (CPU profiling only, no DOM/layout/paint).
+- **pnpm users:** pnpm 10+ blocks Puppeteer's browser-download postinstall by default, and pnpm 11
+  hard-fails `pnpm exec wpd` on that gate. Pick one recipe in your `package.json`: allow the download
+  with `"pnpm": {"onlyBuiltDependencies": ["puppeteer"]}`, or suppress the build-script gate with
+  `"pnpm": {"ignoredBuiltDependencies": ["puppeteer"]}` — but the latter only silences the gate, it
+  does not download a browser, so you must supply one yourself (set `PUPPETEER_EXECUTABLE_PATH`, or
+  populate the puppeteer cache with `npx puppeteer browsers install chrome`).
+- **Firefox** is optional (`--target firefox`): install it once with
+  `npx puppeteer browsers install firefox`. See [What each target gives you](#what-each-target-gives-you).
+- For `--url`, **your dev/preview server must already be running** at that URL; wpd does not start it.
+- `--html` files, and `--bench` modules, must live **under the current working directory** (they are
+  served to the browser from there). Driver and `--target node` modules are imported in Node and can
+  live anywhere.
 
 ## Your `run` module
 
@@ -73,60 +105,64 @@ export async function run(arg) {}     // the measured part
 export async function cleanup(arg) {} // optional, after the window (alias: teardown)
 ```
 
-`prepare` and `cleanup` run **outside** the measured window, so setup and teardown never pollute
-the numbers: once around all `--iterations`, per pass. Because `record` replays the whole flow for
-each of its two passes, hooks should be idempotent (safe to run again on a fresh browser). All
-three hooks receive the same argument, which depends on the lane. Note the asymmetry: in driver
-mode `ctx` is a *property* of the argument; in the other lanes it *is* the argument
+`prepare` and `cleanup` run **outside** the measured window, so setup and teardown never pollute the
+numbers: once around all `--iterations`. All three hooks receive the same argument, which depends on
+the lane. Note the asymmetry: in driver mode `ctx` is a *property* of the argument; in the other lanes
+it *is* the argument.
 
-- **driver** (default): `run({ page, ctx, measureStep })` executes in Node, `page` is a Puppeteer page
-- **`--bench`**: `run(ctx)` executes inside the browser page, with live `document`/`window`
-- **`--target node`**: `run(ctx)` executes in this Node process
+- **driver** (default): `run({ page, ctx, measureStep })` executes in Node, `page` is a Puppeteer page.
+- **`--bench`**: `run(ctx)` executes inside the browser page, with live `document`/`window`.
+- **`--target node`**: `run(ctx)` executes in this Node process.
 
-`ctx` starts as an empty object and is shared across the hooks: stash things in `prepare` (a
-handle, a prebuilt DOM node, test data) and read them in `run`. `--iterations` / `--warmup`
-(defaults 1 / 0) repeat `run` in **every** lane. In driver mode each iteration re-measures every
-step, so a step reports the **median** of its samples instead of a single reading — see
-[Measuring an interaction more than once](#measuring-an-interaction-more-than-once)
+`ctx` starts as an empty object and is shared across the hooks: stash things in `prepare` (a handle, a
+prebuilt DOM node, test data) and read them in `run`. `--iterations` / `--warmup` (defaults 1 / 0)
+repeat `run` in **every** lane. In driver mode each iteration re-measures every step, so a step reports
+the **median** of its samples instead of a single reading — see
+[Measuring an interaction more than once](#measuring-an-interaction-more-than-once).
 
 In `--bench` the module is imported *inside the page*, so it must live under the current working
 directory to be servable. It also runs in the browser, so it has **no `process.env`**: route
 parameters in through the URL/query string (`--url`) or page globals, not env vars. Driver and
-`--target node` modules are imported in Node and can live anywhere
+`--target node` modules are imported in Node and can live anywhere.
 
 Match `--iterations` to the phase you are measuring. A phase that can only happen once per page (a
-first mount) runs with `--iterations 1` — that is one sample; repeat it by running `record` again.
-A phase you can repeat in place (an INP-style re-render, a cache probe) iterates in-page, and each
-`--iterations` pass is a fresh sample of the same work
+first mount) runs with `--iterations 1` — that is one sample; repeat it by running `record` again. A
+phase you can repeat in place (an INP-style re-render, a cache probe) iterates in-page, and each
+`--iterations` pass is a fresh sample of the same work.
 
-## Which problem do you have?
+## One capture per run: the three rungs
 
-| Symptom | Start here |
-| --- | --- |
-| A page janks on a click or interaction | `record` a flow, then `query index` |
-| A line forces synchronous layout (thrashing) | `query blame --forced` |
-| SSR or a hot JS loop is slow | `record --target node` |
-| Which dependency dominates CPU time | `query cpu` |
-| Did my change regress a budget | `assert`, `diff`, `cpu-diff` |
+Every `record` invocation is **exactly one capture pass** — one browser launch, one run of the flow.
+A rung picks *what* that pass captures. They are mutually exclusive: each answers a different question
+with a different instrumentation, and wanting two answers means running `wpd` twice.
 
-Each section below is one of these problems: reproduce it, read the result, fix the line
+| Rung (chrome) | What it captures | What you get |
+| --- | --- | --- |
+| **default** (no flag) | CPU sampler only, no trace | the four-slice CPU bar (`js · browser · gc · idle`), cleanest wall (~1%). No rendering counts |
+| **`--breakdown`** | light trace + CPU sampler, fused | the reconciling **seven-slice bar** per span (`js·style·layout·paint·gc·other·idle`, `Σ + idle = wall`) plus exact layout/style/paint counts |
+| **`--deep`** | full trace (`.stack` + invalidations), sampler off | the **attribution report**: forced-by read-sites, dirtied-by writes, the thrash detector, invalidation rollup, exact counts, long tasks. Identities and counts, no slice ms |
+| **`--precise-wall`** | sampler off, no trace | a pristine benchmark wall (buys back the ~1% the sampler costs). Nothing else |
 
-### Compared to the tools you already have
+The split is what keeps the numbers honest. The CPU sampler must never ride a `.stack` trace (it
+inflates sampled self-time +21%, billing the trace's own stack-walk to the JS frame that forced a
+layout), so `--breakdown` samples only the light no-`.stack` trace and `--deep` runs the sampler off.
+For the same reason `--deep` suppresses slice durations: the `.stack` trace inflates style recalc up
+to +38%, and a distorted millisecond is worse than none — so `--deep` leads with identities and exact
+counts, and shows span wall (the honest window width) but no slice ms.
 
-- **Chrome DevTools**: the same underlying data, but scripted and repeatable instead of a manual
-  session, and already attributed to source lines instead of a flame chart to read. When you do
-  want the flame chart, the raw `.cpuprofile` wpd writes opens right in DevTools
-- **Lighthouse**: audits a page load and scores it. wpd measures the specific interaction or
-  module *you* define, names the source line responsible, and fails CI when it regresses
-- **React Profiler**: component-level render timing inside React. wpd is framework-agnostic
-  self-time across the whole stack (react-dom, your styling library, your code, each as its own
-  bucket), plus rendering signals React cannot see, like forced layout
+**Want the bar and the blame?** Run twice: `record --breakdown` for the reconciling bar and CPU model,
+`record --deep` for the forced-by/dirtied-by/thrash attribution.
 
-## A line forces synchronous layout
+`--target firefox` is one Gecko-profiler pass at every rung (samples and markers are entangled at
+profiler startup), so the rungs are reporting tiers over that one capture rather than capture tiers;
+`--breakdown`/`--precise-wall` are rejected there and `--deep` adds a dirtied-by write report.
+`--target node` is a CPU-only lane with the four-slice bar. See [the lanes](#what-each-target-gives-you).
 
-Reading geometry (`offsetTop`, `getBoundingClientRect`, ...) right after a DOM write forces a
-synchronous reflow. `--bench` runs a module's `run()` inside the page, so you can reproduce the work
-in isolation:
+## Where did this interaction's time go
+
+`--breakdown` fuses a light trace with the CPU sampler into one pass and tiles each span into the
+seven-slice reconciling bar. `--bench` runs a module's `run()` inside the page, so you can reproduce
+the work in isolation:
 
 ```js
 // probe.mjs
@@ -140,7 +176,54 @@ export function run() {
 ```
 
 ```bash
-wpd record probe.mjs --bench --iterations 5
+wpd record probe.mjs --bench --breakdown --iterations 5
+
+wpd query spans latest
+```
+
+```
+CPU time breakdown (per span: Σ slices + idle = wall)
+
+run (run, 10.2 ms, sum of 5 iterations)
+slice   ms   %
+──────  ───  ─────  ───────────────────────────────
+js      2.8  27.1%  wpd-examples 2.1 · (native) 0.7
+style   4.4  42.9%
+layout  2.4  23.3%
+paint   0    0%
+gc      0    0%
+other   0.7  6.7%   (task remainder + unclassified)
+idle    0    0%     (waiting, not work)
+```
+
+Style + layout are 66% of this span: the read-after-write loop is paying for a synchronous flush on
+every iteration. `idle` is 0 because a tight loop never yields to the frame; on a real interaction
+`idle` is usually the largest slice (the wait for the next paint), and naming it as idle rather than
+folding it into work is the whole point. Every slice is disjoint main-thread self-time from the trace,
+so the sum is exact by construction, not a proportional allocation.
+
+`--breakdown` also reports **exact counts** (layout/style/paint), main-thread windowed:
+
+```
+metric        count  ms
+────────────  ─────  ────
+layout        102    2.4
+style recalc  103    4.39
+paint         3      0.21
+```
+
+The counts are trace-derived and exact; the milliseconds are wall-tier (~1%, directional). It cannot
+report forced-layout counts or blame — those need the `.stack` trace category, which `--deep` captures
+(see below).
+
+## A line forces synchronous layout
+
+Reading geometry (`offsetTop`, `getBoundingClientRect`, ...) right after a DOM write forces a
+synchronous reflow. `--deep` captures the full trace (`.stack` + invalidation tracking) with the
+sampler off, and reports who read, who wrote, and whether the two interleaved into thrashing:
+
+```bash
+wpd record probe.mjs --bench --deep --iterations 5
 
 wpd query blame latest --forced
 ```
@@ -153,13 +236,29 @@ count  ms     kinds         source
 
 Line 6, `void el.offsetWidth`, caught red-handed: 100 loop reads forcing style + layout, times 5
 iterations. `blame --all` lists every attributed line with a `forced` column, so "ran but never
-forced" is a real answer too, not a guess
+forced" is a real answer too, not a guess.
+
+`record --deep` also prints the layout-thrashing interleave when it finds one: the write→read→write→read
+signature where each geometry read re-flushes a layout the prior write dirtied.
+
+```
+⚠ layout thrashed 202x during this run  (a write re-dirtied a just-read layout; forced re-flush)
+  interleave (write → read), the thrashing signature:
+    write forces-layout.mjs:16:18 (Inline CSS style declaration was mutated) → read forces-layout.mjs:52:14 (style)
+    read forces-layout.mjs:52:14 (layout)
+    …
+```
+
+`query span run <recording>` shows the same anatomy scoped to the run window (counts, forced read-sites
+with their dirtied-by writes, and the thrash rollup); `query blame --forced` lists the read-sites, and
+under each the write that dirtied it (chrome `--deep` names both ends).
 
 ## A page janks on a real interaction
 
 By default `record` drives the page through Puppeteer: your `run` receives `{ page, ctx, measureStep }`,
-and each `measureStep` becomes one report: counts plus INP (Interaction to Next Paint, the time
-from the interaction until the next frame reaches the screen)
+and each `measureStep` becomes one **step span** — counts plus INP (Interaction to Next Paint, the
+time from the interaction until the next frame reaches the screen). Add `--breakdown` for the
+reconciling bar per step.
 
 ```js
 // flow.mjs
@@ -172,109 +271,90 @@ export async function run({ page, measureStep }) {
 ```
 
 ```bash
-wpd record flow.mjs --url http://localhost:3000
+wpd record flow.mjs --url http://localhost:3000 --breakdown
 
-wpd query index latest
+wpd query spans latest
 ```
 
 ```
-#  label       inp ms  processing ms  layout  forced  paint  layoutInval  wall ms*
-0  open menu   24      1.7            3       0       5      4            31.2
-1  type query  56      45.1           9       2       18     12           88.6
+first increment (step, 39.1 ms)
+slice   ms    %
+──────  ────  ─────  ───────────────────────────────
+js      2     5.1%   react-dom 2
+style   0.1   0.2%
+layout  0.1   0.2%
+paint   0.1   0.2%
+gc      0     0%
+other   17.7  45.4%  (task remainder + unclassified)
+idle    19.1  48.9%  (waiting, not work)
 ```
 
-`inp ms` is the user-perceived latency, and `processing ms` is the part of it spent in your own
-event handlers. Both are measured **in-page**, so they describe the page rather than the driver
-
-`wall ms` is different, and the `*` in the table says so: it is measured around the driver, so it
-includes dispatching the action and waiting for the page to settle. On a trivial interaction that is
-most of it — the settle floor is two frames, ~16 ms on the default headless mode
-(chrome-headless-shell, ~120 Hz) and ~31 ms under `--headless-mode new` (full Chrome, ~60 Hz) — and
-`page.click` costs ~20 ms of input dispatch before your handler runs. (Under `--headless-mode new`,
-identical work reports 40.5 ms via `page.click` and 31.9 ms via `page.evaluate`.) Treat `wall ms` as
-a bound on the step, not the cost of it. `wall`/`INP` carry this one-frame floor either way, so a
-sub-frame re-render reads as the frame time; `--headless-mode new` doubles the floor to model a
-60 Hz user.
-
-To see where an interaction's time actually went, `record` prints the Core Web Vitals split:
+Half of this step is `idle` — the frame wait — and only 2 ms is JS. That is the point of the bar: it
+stops you optimizing a re-render that was never the cost. `record` also prints the Core Web Vitals
+split of the interaction:
 
 ```
 Where that interaction's time went (in-page, Core Web Vitals split)
 
-input delay         0.1 ms   (main thread busy at input)
-processing          45.1 ms  (your event handlers)
-presentation delay  10.8 ms  (rendering the result)
+input delay         1 ms    (main thread busy at input)
+processing          1.2 ms  (your event handlers)
+presentation delay  21.8 ms (rendering the result)
 ```
 
 That is the standard triage: a slow interaction is slow because the main thread was busy when the
 input landed, because your handler ran long, or because rendering the result did. A `—` means no
-interaction crossed the 16 ms floor the Event Timing spec sets, so nothing was measured
+interaction crossed the 16 ms floor the Event Timing spec sets, so nothing was measured.
+
+`inp ms` and the CWV split are measured **in-page**, so they describe the page, not the driver. A
+step's `wallMs` is the page's own window too: the trace-clock span between the step's marks under
+`--breakdown`/`--deep`, or the page's `performance.now` delta on the default rung — never the node-side
+`page.click` bound (~20 ms of which is input dispatch in the tool's process, in no renderer timeline).
+The stored span records which clock priced it in `wallClock` (`"trace"` or `"page"`).
 
 Omitting `until` waits for the page to **settle**: two animation frames, each followed by an idle
-callback, which covers the usual state-update → render → cleanup pattern. Pass `until` when your
-step ends on something specific: a selector to wait for, or a function or promise that wpd simply
-awaits
-
-Works against `--url` (any local or remote server) or `--html somefile.html`. Each step also gets its
-own digest you can drill into
+callback, which covers the usual state-update → render → cleanup pattern. Pass `until` when your step
+ends on something specific: a selector to wait for, or a function or promise that wpd awaits. The
+settle floor is two frames — ~16 ms on the default headless mode (chrome-headless-shell, ~120 Hz) and
+~31 ms under `--headless-mode new` (full Chrome, ~60 Hz). `wall`/`INP` carry this one-frame floor, so a
+sub-frame re-render reads as the frame time; read the counts, the bar, or `interaction.processingMs`
+for the work itself. See [docs/dev/frame-floor.md](docs/dev/frame-floor.md).
 
 **Behind a login?** Add `--no-headless` to sign in by hand and `--user-data-dir ./.wpd-profile` to
-persist that session (without it, the default two-pass run opens a fresh browser per pass and makes
-you log in twice). Gate the login in your driver so it only waits when not yet authenticated, and do
-any iframe/list waiting there too
+persist that session. Gate the login in your driver so it only waits when not yet authenticated, and do
+any iframe/list waiting there too.
 
 ### Measuring an interaction more than once
 
-One reading of `wall ms` cannot tell a regression from noise: it is a single sample of a clock
-Chrome deliberately clamps. `--iterations N` repeats `run` and re-measures every step, so each one
-reports the **median** of its samples, with `--warmup M` for untimed runs first:
+One reading of `wall ms` cannot tell a regression from noise: it is a single sample of a clock Chrome
+deliberately clamps. `--iterations N` repeats `run` and re-measures every step, so each one reports the
+**median** of its samples, with `--warmup M` for untimed runs first:
 
 ```bash
 wpd record flow.mjs --url http://localhost:3000 --iterations 20 --warmup 3
 ```
 
-```
-Per-step wall time (median of --iterations samples; performance.now is coarse)
+Each step keeps its **raw samples** in the recording (`spans[].perIteration`), because a median hides
+the bimodality that usually is the finding — a median of 40 ms next to a max of 255 ms says one
+iteration was cold. `spans[].stats` is that step's own min/median/mean/max, `null` below 2 samples.
+There is deliberately no median *across* steps: "mount" and "inp" measure different work, so pooling
+them would produce a real-looking number that means nothing.
 
-step        median ms  min     max      samples
-open menu   40.383     39.428  255.254  20
-type query  82.513     73.132  147.178  20
-```
+Each iteration must measure the **same steps** — `wpd` fails the run rather than report a median over
+fewer samples than it claims. If a step needs a fresh page every time, put a bare `page.goto(url)` in
+`run` outside any `measureStep`: everything after it is fresh each iteration, everything not preceded by
+one repeats in place. Make a `page.goto` its own step to measure a **cold boot** (drop `--url` so the
+page starts blank; everything from navigation through first render lands in that step).
 
-That `min`/`max` spread is the point: here the median is 40 ms but one iteration took 255 ms, which
-a single sample would have reported as *the* number. The raw samples are kept in the recording
-(`summary.perStep[].perIteration`), because a median hides the bimodality that usually is the
-finding
-
-**Counts do not scale with `--iterations`.** They answer "how much work does one iteration cause",
-so they come from the first timed iteration and mean the same at `--iterations` 1 or 50 — an
-`assert --max-layouts` gate keeps its meaning. Only the wall samples grow. (Two lanes cannot do
-this and say so in `meta.notes`: `--no-isolate`, which has one pass for both jobs, and
-`--target firefox`, whose count pass is also its only CPU sampler)
-
-Each iteration must measure the **same steps** — `wpd` fails the run rather than report a median
-over fewer samples than it claims. If a step needs a fresh page every time, put a bare
-`page.goto(url)` in `run` outside any `measureStep`: everything after it is fresh each iteration,
-everything not preceded by one repeats in place. There is no reset flag, because that is strictly
-more expressive than one
-
-Make a `page.goto` its own step to measure a **cold boot**. Drop `--url` so the page starts blank
-(otherwise it pre-navigates before tracing); everything from navigation through first render lands in
-that step:
-
-```js
-export async function run({ page, measureStep }) {
-  await measureStep("boot", () => page.goto("http://localhost:3000", { waitUntil: "load" }), {
-    until: "#app", // wait for your mounted root; omit for a rAF+idle settle
-  });
-}
-```
+**Counts do not scale with `--iterations`.** A step's counts describe its first timed iteration, so an
+`assert --max-layouts` gate on a step keeps its meaning. The *run* span's counts are a total across
+iterations (its window covers the whole loop); `meta.notes` says so, and `query spans` labels the run
+span `sum` and a step span `first` (see [aggregation](#what-a-spans-numbers-represent)).
 
 ## SSR or a hot JS loop is slow
 
 When the cost is JavaScript, profile self-time per function and per package. `--target node` runs
-`run()` in this Node process (no browser, no DOM): that is where SSR runs in production, and it
-resolves `node_modules` directly without bundling to a browser module
+`run()` in this Node process (no browser, no DOM): that is where SSR runs in production, and it resolves
+`node_modules` directly without bundling to a browser module.
 
 ```js
 // render.entry.js
@@ -282,17 +362,17 @@ import { renderToString } from "react-dom/server";
 import { createElement } from "react";
 import Page from "./your-compiled-output.js";
 
-export function run() { 
-  for (let i = 0; i < 50; i++) 
-    renderToString(createElement(Page)); 
+export function run() {
+  for (let i = 0; i < 50; i++)
+    renderToString(createElement(Page));
 }
 ```
 
-In a real app, `./your-compiled-output.js` is your component compiled to plain JS (node can't
-import JSX/TS directly). Any bundler works; the requirements are plain ESM output, a sourcemap
-(for line attribution), and dependencies kept **external**, so node resolves `react-dom` & co from
-`node_modules` and wpd attributes them per package (a bundled-in dependency gets blamed on your
-app bucket instead). With esbuild:
+In a real app, `./your-compiled-output.js` is your component compiled to plain JS (node can't import
+JSX/TS directly). Any bundler works; the requirements are plain ESM output, a sourcemap (for line
+attribution), and dependencies kept **external**, so node resolves `react-dom` & co from `node_modules`
+and wpd attributes them per package (a bundled-in dependency gets blamed on your app bucket instead).
+With esbuild:
 
 ```bash
 esbuild src/pages/Product.tsx --bundle --packages=external --platform=node \
@@ -301,10 +381,10 @@ esbuild src/pages/Product.tsx --bundle --packages=external --platform=node \
 
 ```bash
 wpd record render.entry.js --target node --iterations 50
-# hot functions + by-package rollup
+# hot functions + by-package rollup, plus the four-slice CPU bar
 wpd query cpu   latest
 # drill one function; 0 = the id column of `query cpu`
-wpd query frame latest 0  
+wpd query frame latest 0
 ```
 
 ```
@@ -321,11 +401,11 @@ id  self ms  self %  total ms  package    function (source)
 ```
 
 The headline (`268.4 ms JS self-time`) is the **total** JS self-time across all sampled iterations
-(here, 50), not a per-iteration or mean figure; divide by `--iterations` for a per-call cost. Because
-it is a total, comparing two builds is only fair when both runs use the **same `--iterations` and
-`--warmup`** (warmup iterations are excluded from the sampled window). `self %` is each function's
-share of that self-time. In the sample, `next-yak` is a compile-time CSS-in-JS dependency and
-`app` is your own code
+(here, 50), not a per-iteration figure; divide by `--iterations` for a per-call cost. Because it is a
+total, comparing two builds is only fair when both runs use the **same `--iterations` and `--warmup`**
+(warmup iterations are excluded from the sampled window). `self %` is each function's share of that
+self-time. `query cpu` also prints the four-slice bar (`js · native · gc · idle`, node's engine slice
+is `native`), which tiles the sampled window.
 
 Two lanes measure CPU self-time; pick by where the code runs in production:
 
@@ -340,30 +420,28 @@ For the browser lane, bundle to one ESM module with sourcemaps:
 esbuild render.entry.js --bundle --format=esm --sourcemap \
   --define:process.env.NODE_ENV='"production"' --outfile=render.mjs
 wpd record render.mjs --bench --iterations 50
+wpd query cpu latest
 ```
 
-Either lane writes a `.cpu.json` model (read by the verbs) and a raw `.cpuprofile` that opens in
-Chrome DevTools (Performance, Load profile) or Speedscope. On a `--url` site each remote bundle's
-sourcemap is auto-fetched (from its `sourceMappingURL` comment, or the `SourceMap` response header
-if the build stripped the comment), so **minification is not a problem**: a minified single bundle
-still splits per package, as long as its map is reachable. See
+Either lane writes a `.cpu.json` model (read by the verbs) and a raw `.cpuprofile` that opens in Chrome
+DevTools (Performance → Load profile) or Speedscope. On a `--url` site each remote bundle's sourcemap is
+auto-fetched (from its `sourceMappingURL` comment, or the `SourceMap` response header if the build
+stripped the comment), so **minification is not a problem**: a minified single bundle still splits per
+package, as long as its map is reachable. See
 [When per-package attribution can't work](#when-per-package-attribution-cant-work) for when it isn't.
-For compile-time CSS-in-JS (next-yak, Linaria, ...) bundle from your build's already-compiled output,
-not raw source: wpd profiles what you ship
+
+**In a browser, `self ms` is not only JavaScript.** It is your JS *plus the synchronous engine work
+that JS triggered*: force a layout by reading `offsetWidth`, and the reflow is billed to the line that
+read it (measured: ~85% of the layout probe's "JS" self-time is the reflow). That is usually what you
+want — it prices "what do I save by deleting this line?" — and it is why a `query cpu` row can dwarf the
+JavaScript actually on that line. `--target node` has no DOM, so there it really is pure JS.
 
 ### When per-package attribution can't work
 
-Splitting a bundle by package needs its sourcemap. When a map can't be fetched, wpd says so instead
-of guessing: the run prints a `Sourcemaps: 0/1 resolved` line, `meta.sourcemaps` records every
-script it tried and why each failed, and the affected frames are bucketed by **origin**
-(`(cdn.example.com)`) rather than blamed on your `app`:
-
-```
-package            self ms  self %  fns
-─────────────────  ───────  ──────  ───
-(127.0.0.1:51986)  7.5      6.2%    64
-Sourcemaps: 0/1 resolved  ← no-sourcemap-url — packages below are minified bundles, not real packages
-```
+Splitting a bundle by package needs its sourcemap. When a map can't be fetched, wpd says so instead of
+guessing: the run prints a `Sourcemaps: 0/1 resolved` line, `meta.sourcemaps` records every script it
+tried and why each failed, and the affected frames are bucketed by **origin** (`(cdn.example.com)`)
+rather than blamed on your `app`.
 
 | `meta.sourcemaps.failed` reason | What to do |
 | --- | --- |
@@ -373,276 +451,239 @@ Sourcemaps: 0/1 resolved  ← no-sourcemap-url — packages below are minified b
 | `map-parse-failed` | The `.map` isn't a readable sourcemap |
 
 A partial failure is normal and healthy: third-party scripts (analytics, chat widgets) rarely ship
-maps, and bucketing them by origin is the honest answer — their cost is real, but it is not yours.
-Only `0 of N` means the package table can't be believed at all
+maps, and bucketing them by origin is the honest answer — their cost is real, but it is not yours. Only
+`0 of N` means the package table can't be believed at all.
 
 ## Did my change regress a budget
 
-`assert` fails the build when a budget is blown; `diff` and `cpu-diff` compare two recordings.
-Name each run with `--out` (the recording is written to exactly that path; the digest and the
-`.cpu.json` model land next to it), or just rely on `latest`:
+`assert` fails the build when a budget is blown; `diff` and `cpu-diff` compare two recordings. Name each
+run with `--out` (the recording is written to exactly that path; the `.cpu.json` model lands next to
+it), or just rely on `latest`:
 
 ```bash
-wpd record probe.mjs --bench --out runs/before.json
+wpd record probe.mjs --bench --breakdown --out runs/before.json
 # ...apply your change, rebuild...
-wpd record probe.mjs --bench --out runs/after.json
+wpd record probe.mjs --bench --breakdown --out runs/after.json
 
 # exit 1 on violation:
-wpd assert   latest --max-forced 0 --max-inp 200
+wpd assert   runs/after.json --max-forced 0 --max-layouts 120 --max-slice layout=2
 wpd diff     runs/before.json runs/after.json --fail-on-regression
 # per-function self-time deltas, noise filtered
 wpd cpu-diff runs/before.json runs/after.json --fail-on-regression
 ```
 
-## Read a result
-
-`record` prints a summary and tells you what to look at next (for example, `⚠ layout thrashing: run
-query blame --forced`). A full recording can be megabytes, so drill from the small digest by event
-id. For the thrashing probe above, `query digest latest` prints (trimmed):
+`assert` gates the exact counts (`--max-forced`, `--max-layouts`, `--max-paints`,
+`--max-layout-invalidations`, `--max-style-invalidations`, `--max-long-tasks`, `--max-inp`,
+`--max-wall`) and the reconciling bar's slices (`--max-slice <name>=<ms>`, repeatable, defaulting to the
+run span; `--label` targets another span). Slice ms is directional (wall-tier ~1%), never count-exact,
+so a slice budget is a directional gate like `--max-inp`, not a count gate. A budget on a slice the rung
+didn't measure — `layout` on a default-rung recording, say — is a **loud FAIL** (`n/a`), never a silent
+pass:
 
 ```
-Hotspots
+target  metric  value  max
+──────  ──────  ─────  ───  ────
+run     layout  2.39   2    FAIL
 
-forced layout/style      1000  (9.97 ms)
-long tasks ≥50ms         0  (longest 5.6 ms)
-wall                     18.09 ms
-  ⚠ layout thrashing — run `query blame --forced` to see the source lines
-
-Layout thrashing — forced layout/style by source:
-count  ms    source
-─────  ────  ──────────────
-1000   9.97  probe.mjs:6:13
-
-Slowest events:
-id    kind   name              ms     source
-────  ─────  ────────────────  ─────  ──────────────
-100   style  UpdateLayoutTree  0.984  probe.mjs:6:13
+✗ 1 assertion(s) failed:
+  ✗ run: layout slice 2.39 ms > 2
 ```
 
-Every row carries an `id`: `query get latest 100` prints that `UpdateLayoutTree` event with its
-full stack and args
-
-```bash
-# summary + thrashing + long tasks + slowest events
-wpd query digest latest            
-# rendering work grouped by source line
-wpd query blame  latest --forced   
-wpd query events latest --kind task --top 10
-# one event: full stack + args (the id comes from the digest or an events row)
-wpd query get    latest 100        
-```
+`diff` matches spans by label and reports per-slice ms deltas (advisory, directional) alongside the
+gated exact-count deltas, and warns when a metric is comparable on one side only (`n/a`). `cpu-diff`
+joins two CPU models per function and per package, noise-filtered.
 
 ## Reference
-
-### What each target gives you
-
-wpd is additive: the core promise (attribute cost to the source line that caused it) works
-everywhere, and each richer target stacks more signals on top
-
-**Target Node (`--target node`), no browser at all:** CPU self-time attributed to source line,
-file, and owning package, plus per-iteration timing and `cpu-diff` regression gates. If your cost
-is pure JS (SSR, hot loops), this is already the whole story
-
-**Target a browser (`--target chrome`, default, or `--target firefox`): all of that, plus the
-real DOM.** Drive real user flows (`measureStep`) or benchmark DOM-touching modules in-page
-(`--bench`), measure wall time per step, take screenshots, and get **forced layout/style blame**
-pointing at the offending statement. The same modules, recording format, and query verbs work in
-both browsers, so you can verify an optimization in both engines instead of tuning for a Chromium
-quirk. Firefox also writes `<base>.geckoprofile.json`, ready to open at profiler.firefox.com
-
-**Target Chrome: all of that, plus the exact CDP layer on top** (the last rows below). The flags
-that need CDP error out on other targets, and a Firefox recording names in `meta.notes` both what
-it measured differently and what it did not measure at all. Read that note before trusting a
-number: a metric Firefox cannot measure is currently reported as **`0`**, which looks identical to
-a genuinely clean run
-
-| Signal | node | firefox | chrome |
-| --- | --- | --- | --- |
-| CPU self-time by package / file / function | ✓ (V8) | ✓ (Gecko) | ✓ (V8) |
-| Wall / per-iteration timing | ✓ | ✓ | ✓ |
-| Real user flows, in-page bench, screenshots | — | ✓ | ✓ |
-| Forced layout/style blame to source | — | ✓ | ✓ |
-| INP per step | — | ✓ | ✓ |
-| Layout / style / forced-layout counts | — | ~ (Gecko) | ✓ (CDP) |
-| Paint counts + invalidation rollup | — | — | ✓ (trace) |
-| Long tasks | — | — | ✓ |
-| `--cpu-throttle` / `--network` slowdowns | — | — | ✓ |
-
-`~` means measured, but not by the same mechanism: Firefox counts layout/style from the Gecko
-profiler's Reflow/Styles markers rather than CDP counters, and Gecko batches layout differently
-than Blink. Those counts are real and useful **against another Firefox run**; comparing them to
-Chrome's counts compares two different definitions. Everything marked `—` is reported as `0` on
-that target
-
-**Forced-layout blame names the same line on both engines.** Chrome and Firefox both name the
-geometry **read** that forced the flush (`el.offsetWidth`) — the same flush-site semantic — so the
-two engines' `blame --forced` tables are comparable at line granularity (on the thrashing probe, 12
-of 21 forced read lines matched exactly). Chrome reads that line from the trace's synchronous
-`.stack`; Firefox **samples** it from the DOM-accessor stacks and names the property alongside it.
-Two caveats the CLI prints under the table: Firefox's line is a *sampled estimate* at Gecko's ~1 ms
-granularity, so a cheap read can be missed, and the reported line can lag one statement behind the
-read. The **write** that dirtied the DOM stays reachable on Firefox via `query get` / `query events`
-under `args.data.invalidationStack`. Separately, Firefox's forced-layout *milliseconds* still
-under-report, so when you compare engines trust the forced *line*, not its ms
-
-INP comes from an in-page Event Timing observer, so **both engines measure it** (long tasks do not:
-they are counted from the DevTools trace, which Firefox has no equivalent of). Both span the
-interaction through the next paint and round to 8 ms, but they are **not interchangeable**: for
-identical work Firefox reports a systematically lower number than Chrome, because presentation delay
-is genuinely engine-specific. Compare a browser against itself across your change, not one engine
-against the other
-
-```bash
-# the same probe in both engines. Compare each engine against ITSELF across your change; the forced
-# blame line and `query cpu` both line up between the two now (see the note above):
-wpd record examples/forces-layout.mjs --bench
-wpd query blame latest --forced
-wpd query cpu latest
-
-wpd record examples/forces-layout.mjs --bench --target firefox
-wpd query blame latest --forced
-wpd query cpu latest
-```
 
 ### The query verbs
 
 | Verb | Shows |
 | --- | --- |
-| `digest <file>` | entry point: summary, thrashing, long tasks, slowest events |
-| `index <file>` | per-step table (driver runs) |
-| `spans <file>` | per-span time breakdown, one shape across targets (`--label <L>`) |
-| `events <file>` | the classified event log (`--kind`, `--name`, `--forced`, `--top`, `--sort`) |
-| `blame <file>` | events grouped by source line (`--forced`, `--all`, `--kind`, `--top`) |
-| `get <file> <id>` | one event, full stack and args |
+| `spans <file>` | per-span reconciling bars (run + steps + `performance.measure`), one shape across targets (`--label <L>`) |
+| `span <file> <label>` | one span's full anatomy: bar, counts, INP, forced/dirtied-by, thrash, hot functions. `<label>` is bare or `kind:label` |
+| `blame <file>` | events grouped by source line (`--forced`, `--all`, `--kind`, `--dirtied` on firefox `--deep`, `--top`) |
 | `cpu <file>` | hot functions + rollup (`--by package\|file\|function`, `--top`) |
 | `frame <file> <id>` | one CPU function: its callers and callees |
+| `events <file>` | the classified event log (`--kind`, `--name`, `--forced`, `--top`, `--sort`); needs `--deep`/firefox |
+| `get <file> <id>` | one event, full stack and args; needs `--deep`/firefox |
 
-Any `<file>` may be `latest`. Verbs emit JSON with `--json` or `--format toon` (`get` takes
-`--format` only)
+Any `<file>` may be `latest`. Verbs emit JSON with `--json` or `--format toon` (`get` takes `--format`
+only). `query events`/`get`/`blame` read the classified event log, which only `--deep` (chrome) and
+Firefox store; on other rungs they say so rather than report an empty page as clean.
 
-**`query spans` is the one surface for per-interaction breakdowns across every target.** It returns
-one entry per span — the run window, each driver step, and every user `performance.measure` — each
-with the same slice keys (`js` with `byPackage`, `style`, `layout`, `paint`, `gc`, `other`, `idle`)
-whether the recording came from chrome `--breakdown`, `--target firefox`, or `--target node`. A
-slice a lane could not measure is an explicit `null`, never a fabricated `0`. That null-vs-0
-distinction is not target-stable, though: on the same target `paint` can be `null` on a run-only
-recording but a measured `0` once a stored breakdown exists, so a consumer normalizing across
-recordings should read `paint?.ms ?? 0` rather than treat null-vs-0 as a per-target signal. Filter to one span
-with `--label <L>` (exact, case-sensitive, like a `performance.measure` name). This is the
-label-keyed join a matrix consumer performs: `spans[]` keyed by `label`, the same access path on
-every engine — no hand-parsing `digest.breakdowns` and no special-casing Firefox's differently
-shaped `cpu.breakdown`.
+**`query spans` is the one surface for per-interaction breakdowns across every target.** It returns one
+entry per span — the run window, each driver step, and every user `performance.measure` — each with the
+same slice keys (`js` with `byPackage`, `style`, `layout`, `paint`, `gc`, `other`, `idle`) whether the
+recording came from chrome `--breakdown`, `--target firefox`, or `--target node`. A slice a lane could
+not measure is an explicit `null`, never a fabricated `0`. Filter to one span with `--label <L>` (exact,
+case-sensitive, like a `performance.measure` name); this is the label-keyed join a matrix consumer
+performs, the same access path on every engine.
 
-Each entry also carries `aggregation` and `iterations`, which say **what a span's numbers represent**
-when `--iterations` repeats the flow. The `run` span is `"sum"` — its window covers the whole loop,
-so its slices are a total across every iteration; a `step` or `performance.measure` span is `"first"`
-— it describes the first timed iteration (a step is windowed to iteration 0; a measure keeps its first
-in-window occurrence). One recording therefore mixes both contracts, and `aggregation` is how a
-consumer tells them apart; `iterations` is the count they span. Per-iteration distributions are not
-yet produced. Human output appends the contract to each bar, e.g. `run (run, 42.0 ms, sum of 7
-iterations)`.
+On the CPU-only lanes (default-rung chrome, `--target node`, Firefox without user measures) there is no
+stored per-span bar, so `query spans` synthesizes the run span from the CPU model's own sampled window.
+That window is the profiler's bracket around the whole timed loop and **includes the settle wait**, so
+its `wallMs` differs from `summary.wallMs` (the sum of the timed `run()` samples); the human header
+labels it `sampled window`, and the JSON marks it `source: "cpu-model"`.
+
+#### What a span's numbers represent
+
+Each entry carries `aggregation` and `iterations`, which say what a span's numbers mean when
+`--iterations` repeats the flow. The contracts:
+
+- **`sum`** — the run span: its window covers the whole loop, so its slices/counts are a **total** across
+  every iteration.
+- **`first`** — a driver step, or an unrepeated `performance.measure`: the numbers describe **one**
+  iteration. A step's wall/INP is the median of its samples, but its counts and bar come from the
+  **first** timed iteration (counts never scale with `--iterations`), disclosed per field.
+- **`median`** — a `performance.measure` label that recurred: the lower-median-by-wall occurrence,
+  **verbatim** (a real reconciling sample, not per-slice averages), with `samples`/`wallMinMs`/`wallMaxMs`
+  disclosing the spread.
+
+One recording mixes these, and `aggregation` is how a consumer tells them apart. Human output appends
+the contract to each bar, e.g. `run (run, 10.2 ms, sum of 5 iterations)`.
 
 Human output is colorized when stdout is a terminal. Control it with `--color auto|always|never`
-(default `auto`); `NO_COLOR` is honored, and piped, redirected, and `--json`/`--format` output is
-always plain, so CI and scripts are unaffected
+(default `auto`); `NO_COLOR` is honored, and piped, redirected, and `--json`/`--format` output is always
+plain, so CI and scripts are unaffected.
 
 ### The numbers, and how far to trust them
 
 | Signal | Source | Trust |
 | --- | --- | --- |
-| Counts (layout / style) | CDP counters | exact: compare freely |
-| Counts (paint / forced layout / invalidation) | DevTools trace | exact: measured bit-identical across repeated runs |
-| Wall and INP times | `performance.now()`, browser-clamped | directional: good for "~2x worse?", not "1.3 ms" |
+| Counts (layout / style / paint / forced / invalidation) | DevTools trace, windowed to the main thread | exact: measured bit-identical across repeated runs; compare freely |
+| Slice ms on a `--breakdown` bar (`style` / `layout` / `paint`) | trace `base::TimeTicks`, light trace only | wall-tier (~1%, directional); reconciles to `wall` exactly |
+| Wall and INP times | `performance.now()`, browser-clamped | directional: good for "~2x worse?", not "1.3 ms". Carry the one-frame floor |
 | CPU self-time | the sampler's own clock (V8 microsecond; Gecko ~1 ms floor on Firefox) | real: trustworthy in aggregate (a few % noise) |
 
-**`forcedLayoutMs` / `forcedLayoutCount` are a subset, never an addend.** A synchronously forced
-flush is already inside `styleMs` / `layoutMs` (and the layout/style counts) — the forced fields just
-re-report the part of that work JS triggered on the spot, so **never sum forced onto style + layout**;
-that double-counts it. The field also covers forced *style* recalc as well as forced *layout*, not
-layout alone, despite the name.
+A few consequences worth stating plainly:
 
-**In a browser, `self ms` is not only JavaScript.** It is your JS *plus the synchronous engine work
-that JS triggered*: force a layout by reading `offsetWidth`, and the reflow is billed to the line
-that read it. That is usually what you want — it prices "what do I save by deleting this line?" —
-and it is why a `query cpu` row can dwarf the JavaScript actually on that line. `--target node` has
-no DOM, so there it really is pure JS.
+- **Counts are trace-derived and exact, windowed to one main thread.** A cross-origin out-of-process
+  iframe's layout is a separate off-thread count, never summed into the top span's wall.
+- **`--deep` suppresses slice ms by design.** Its `.stack` trace inflates style recalc up to +38%, so a
+  `--deep` recording reports counts and identities but `null` durations; the reconciling bar comes from
+  `--breakdown`.
+- **`inpMs` is the max duration over every Event Timing entry** in the window (including entries with no
+  `interactionId`), rounded to 8 ms by the spec — a directional worst-interaction latency, not a sum.
+- **`forcedLayoutCount` / `forcedLayoutMs` are a subset, never an addend.** A synchronously forced flush
+  is already inside `styleMs` / `layoutMs` and the layout/style counts; the forced fields re-report the
+  part JS triggered on the spot, so **never sum forced onto style + layout**. The field covers forced
+  *style* recalc as well as forced *layout*, despite the name.
+- **Firefox paint is not-measured** (off-main-thread), reported `null`, never a fake 0.
 
-The two passes exist to keep this table honest: heavy instrumentation distorts timing, so timing is
-measured with tracing off and the counts/attribution in a separate instrumented pass. The CPU
-sampler rides the timing pass, which costs it about 10% on wall — systematic, so it cancels in
-`diff`; use `--no-cpu-profile` when you need absolute wall numbers or are benchmarking with
-`--iterations`. `--no-isolate` collapses everything into one faster but noisier pass. Slow things
-down to surface jank with `--cpu-throttle 4` or `--network slow-3g`
+**`Measured` is null-vs-0, everywhere.** Any count or slice a rung could not observe is an explicit
+`null` (not-measured), never a `0` (which reads as "measured clean"). The default rung observes no
+rendering work, so its counts are `null`; Firefox paint is `null`; a `--deep` slice ms is `null`. A gate
+treats `null` as a loud failure, and a `diff` refuses to invent a delta from it. When you normalize
+across recordings of different rungs, read `slice?.ms ?? 0` rather than treat null-vs-0 as a per-target
+signal — the same target can report `paint` as `null` on a run-only recording and a measured `0` once a
+stored breakdown exists.
 
-**`summary.wallMs` is not your interaction.** It is the whole `wpd:run` window of one pass:
-navigation, `prepare`, every step, and the `--settle` wait. On a driver flow that is routinely
-orders of magnitude larger than the thing you clicked. For per-interaction wall read
-`summary.perStep` (labelled, one entry per `measureStep`) or `query index`, both of which report
-each step's own window:
+### What each target gives you
 
-```json
-"perStep": [
-  { "label": "open menu",  "perIteration": [31.2], "stats": null },
-  { "label": "type query", "perIteration": [88.6], "stats": null }
-]
+wpd is additive: the core promise (attribute cost to the source line that caused it) works everywhere,
+and each richer target stacks more signals on top.
+
+**Target Node (`--target node`), no browser at all:** CPU self-time attributed to source line, file, and
+owning package, the four-slice CPU bar, per-iteration timing, and `cpu-diff` regression gates. If your
+cost is pure JS (SSR, hot loops), this is already the whole story, and its `js` slice really is pure JS
+(no DOM to fold engine work into).
+
+**Target a browser (`--target chrome`, default, or `--target firefox`): all of that, plus the real DOM.**
+Drive real user flows (`measureStep`) or benchmark DOM-touching modules in-page (`--bench`), get the
+reconciling bar (`--breakdown`), and get **forced layout/style blame** pointing at the offending
+statement (`--deep`). The same modules, recording format, and query verbs work in both browsers, so you
+can verify an optimization in both engines. Firefox delivers the Gecko pass at every rung: the reconciling
+bar, layout/style/forced counts (from Reflow/Styles markers), INP, and read-site blame come from that one
+capture; `--deep` adds a dirtied-by (first-invalidation-only) write report. Firefox also writes
+`<base>.geckoprofile.json`, ready to open at profiler.firefox.com.
+
+**Target Chrome: all of that, plus the exact main-thread trace** (the last rows below). The flags that
+need CDP error out on Firefox, and a Firefox recording names in `meta.notes` both what it measured
+differently and what it did not measure at all — reported as `—` (not-measured), never a fake `0`.
+
+| Signal | node | firefox | chrome |
+| --- | --- | --- | --- |
+| CPU self-time by package / file / function | ✓ (V8) | ✓ (Gecko) | ✓ (V8) |
+| Four/seven-slice reconciling bar | ✓ (4) | ✓ (6) | ✓ (7, `--breakdown`) |
+| Wall / per-iteration timing | ✓ | ✓ | ✓ |
+| Real user flows, in-page bench | — | ✓ | ✓ |
+| Forced layout/style blame to source | — | ✓ (sampled) | ✓ (`--deep`) |
+| Dirtied-by write attribution | — | ✓ (first-invalidation, `--deep`) | ✓ (full set, `--deep`) |
+| INP per step | — | ✓ | ✓ |
+| Layout / style / forced-layout counts | — | ~ (Gecko markers) | ✓ (trace) |
+| Paint counts + invalidation rollup + long tasks | — | — | ✓ (trace, `--breakdown`/`--deep`) |
+| `--cpu-throttle` slowdown | — | — | ✓ |
+
+`~` means measured, but not by the same mechanism: Firefox counts layout/style from the Gecko profiler's
+Reflow/Styles markers, and Gecko batches layout differently than Blink. Those counts are real and useful
+**against another Firefox run**; comparing them to Chrome's counts compares two different definitions.
+
+**Forced-layout blame names the same line on both engines.** Chrome and Firefox both name the geometry
+**read** that forced the flush (`el.offsetWidth`) — the same flush-site semantic — so the two engines'
+`blame --forced` tables are comparable at line granularity (on the thrashing probe, 12 of 21 forced read
+lines matched exactly). Chrome reads that line from the trace's `.stack` under `--deep`; Firefox
+**samples** it from the DOM-accessor stacks and names the property alongside it. Two caveats the CLI
+prints under the table: Firefox's line is a *sampled estimate* at Gecko's ~1 ms granularity, so a cheap
+read can be missed, and the reported line can lag one statement. The **write** that dirtied the DOM is the
+other end: chrome `--deep` names the full write set (`query blame --forced` shows dirtied-by under each
+read), Firefox `--deep` names Gecko's first-invalidation-only write (`query blame --dirtied`). Firefox's
+forced-layout *milliseconds* still under-report ~7x, so when you compare engines trust the forced *line*,
+not its ms.
+
+INP comes from an in-page Event Timing observer, so **both engines measure it** (long tasks do not: they
+are counted from the DevTools trace, which Firefox has no equivalent of). Both span the interaction
+through the next paint and round to 8 ms, but they are **not interchangeable**: for identical work Firefox
+reports a systematically lower number than Chrome, because presentation delay is genuinely
+engine-specific. Compare a browser against itself across your change, not one engine against the other.
+
+```bash
+# the same probe in both engines. Compare each engine against ITSELF across your change:
+wpd record examples/forces-layout.mjs --bench --deep
+wpd query blame latest --forced
+
+wpd record examples/forces-layout.mjs --bench --target firefox --deep
+wpd query blame latest --forced   # read-site; add --dirtied for the write report
 ```
-
-Each step keeps its **raw samples** rather than only a statistic, and aggregates only against
-itself: `stats` is that step's own min/median/mean/max, `null` below 2 samples. There is
-deliberately no median *across* steps — "mount" and "inp" measure different work, so pooling them
-would produce a real-looking number that means nothing. `perIteration` holds one sample per
-`--iterations`, so `stats` is `null` at the default of 1. In `--bench` / `--target node`,
-`--iterations` fills the top-level `summary.perIteration` / `summary.stats` instead, and those stay
-empty in driver mode
-
-A step's `wallMs` is measured **around the driver**, so it includes the cost of dispatching the
-action and waiting for the page to settle. It bounds the step; it does not price it. For what the
-page did, read `interaction` (the in-page Core Web Vitals split of `inpMs`) or the step's counts:
-
-```json
-{ "inpMs": 56, "interaction": { "inputDelayMs": 0.1, "processingMs": 45.1, "presentationDelayMs": 10.8 } }
-```
-
-**If your step is programmatic, `--bench` is the lane you want.** `interaction` comes from Event
-Timing, which only observes *trusted* input, so a step that calls `page.evaluate(() => app.mount())`
-has no interaction to split — and its wall is dispatch plus the deliberate two-frame settle that
-`measureStep` waits out (~16 ms on the default shell mode, ~31 ms under `--headless-mode new`;
-[docs/dev/driver-timing.md](docs/dev/driver-timing.md) measures the split under new-headless:
-31.9 ms total, ~2 ms of it the action).
-
-`--bench --html host.html` runs the same module *inside* the page instead: `run(ctx)` gets live
-`document`/`window` (so it can call `window.__mount()` directly), and its wall is an in-page
-`performance.now` delta around `run()` alone. The two are not the same window — bench does not wait
-for the paint, so it prices your code rather than the frame it lands in. That is what you want when
-comparing implementations, and it is why the same work reads 1.1 ms in `--bench` against the
-driver's 31.9 ms on the same probe.
-
-For a real interaction you want to keep (a click, a navigation, INP), don't reach for `--bench` —
-read `interaction.processingMs` or the step's counts. Both are drive-independent, so neither carries
-the settle.
 
 ### Consuming the JSON
 
 Every artifact and `--format json|toon` output is typed. Import the types from the package root:
 
 ```ts
-import type { CpuModel, Recording, Digest, CpuOverview } from "@jantimon/web-performance-debugger";
+import type { Recording, Span, CpuModel, SpansResult } from "@jantimon/web-performance-debugger";
 
-const model: CpuModel = JSON.parse(await readFile("run.cpu.json", "utf8"));
+const rec: Recording = JSON.parse(await readFile("run.json", "utf8"));
 ```
 
 | File / output | Type |
 | --- | --- |
+| recording `.json` (summary + `spans[]` + `events[]` under `--deep`/firefox) | `Recording` (spans: `Span`, events: `NormalizedEvent`) |
 | `.cpu.json` (CPU model) | `CpuModel` (functions: `CpuFunction`, edges: `CpuEdge`) |
-| recording `.json` / `.toon` | `Recording` (events: `NormalizedEvent`) |
-| `.digest.json` | `Digest` |
-| `.index.json` (stepped runs) | `StepIndex` |
-| `query cpu` / `frame` / `blame` | `CpuOverview` / `FrameQueryResult` / `BlameEntry[]` |
 | `query spans` | `SpansResult` (spans: `SpanEntry`, slices: `UnifiedSlices`) |
-| `cpu-diff` | `CpuDiffResult` |
+| `query span` | `SpanAnatomy` |
+| `query cpu` / `frame` / `blame` | `CpuOverview` / `FrameQueryResult` / `BlameEntry[]` |
 | `query get` / `events` | `NormalizedEvent` / `NormalizedEvent[]` |
+| `cpu-diff` | `CpuDiffResult` |
 
-Notes: `selfMs`/`scriptingMs`/etc. are rounded to 4 decimals on disk (the raw `.cpuprofile` stays
-exact); TOON encodes the same shape, so the same types apply. Source paths (`source`/`file`/`at`) are
-relative to the recording root; back-pointers (`profile`/`recording`) are absolute. These root-level
-types are covered by semver; breaking field changes ship as a major (`SCHEMA_VERSION`)
+The recording is one file: the run summary, every `Span` (the run window, each driver step, and every
+user `performance.measure`), and — only under `--deep`/firefox — the classified `events[]` log. Steps are
+spans of `kind: "step"`; there is no separate digest or step-index file, and no `query digest`/`index`
+verb (`query spans` + `query span <label>` replace them).
+
+Recordings are self-describing: `meta.schemaVersion` stamps the on-disk schema epoch (currently `"3"`),
+and a reader **rejects** any artifact from another epoch with a "recorded by an older wpd; re-record"
+message rather than mis-parsing it into silent nulls. Numbers are rounded to 4 decimals on disk (the raw
+`.cpuprofile` stays exact); TOON encodes the same shape, so the same types apply, and a recording is read
+back auto-detecting the format. These root-level types are covered by semver; breaking field changes ship
+as a schema-epoch bump.
+
+## Compared to the tools you already have
+
+- **Chrome DevTools**: the same underlying data, but scripted and repeatable instead of a manual session,
+  and already attributed to source lines instead of a flame chart to read. When you do want the flame
+  chart, the raw `.cpuprofile` wpd writes opens right in DevTools.
+- **Lighthouse**: audits a page load and scores it. wpd measures the specific interaction or module *you*
+  define, names the source line responsible, and fails CI when it regresses.
+- **React Profiler**: component-level render timing inside React. wpd is framework-agnostic self-time
+  across the whole stack (react-dom, your styling library, your code, each as its own bucket), plus
+  rendering signals React cannot see, like forced layout.

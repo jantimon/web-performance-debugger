@@ -1,12 +1,14 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { deserialize } from "../output/format.js";
+import { assertRecordingArtifact } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget } from "./resolve.js";
 import { gateMeasured, type Measured } from "../model/measured.js";
 import { gateSliceBudgets, type SliceBudgets } from "../model/spans.js";
 import { loadSpanEntries } from "./spanSource.js";
-import type { Recording, RecordingSummary, StepIndex } from "../model/recording.js";
+import { isSteppedRecording, stepEntry, stepSpans } from "../model/step-view.js";
+import type { Recording, RecordingSummary, StepIndexEntry } from "../model/recording.js";
 
 // Every threshold gates a `summary` field. The off-thread frame side track
 // (SpanBreakdown.frames) is deliberately absent: its counts are scheduler noise (see
@@ -24,14 +26,15 @@ export interface Thresholds {
 }
 
 interface Metrics {
-  /** Measured (model/measured.ts): null when the run did not measure forced layout (--breakdown),
-   * which a gate on it turns into a loud FAIL. Same for inpMs/wallMs on lanes that never observed them. */
+  /** Every gated metric is Measured (model/measured.ts): null when the rung did not observe it (the
+   * default rung captures no counts; --breakdown drops forced; a bench run captures no interaction),
+   * which `gateMeasured` turns into a loud FAIL -- a gate you asked for but cannot evaluate has not passed. */
   forcedLayoutCount: Measured<number>;
-  layoutCount: number;
-  paintCount: number;
-  layoutInvalidations: number;
-  styleInvalidations: number;
-  longTaskCount: number;
+  layoutCount: Measured<number>;
+  paintCount: Measured<number>;
+  layoutInvalidations: Measured<number>;
+  styleInvalidations: Measured<number>;
+  longTaskCount: Measured<number>;
   inpMs: Measured<number>;
   wallMs: Measured<number>;
 }
@@ -60,6 +63,19 @@ function fromSummary(summary: RecordingSummary): Metrics {
   };
 }
 
+function fromStep(step: StepIndexEntry): Metrics {
+  return {
+    forcedLayoutCount: step.headline.forcedLayoutCount,
+    layoutCount: step.headline.layoutCount,
+    paintCount: step.headline.paintCount,
+    layoutInvalidations: step.headline.layoutInvalidations,
+    styleInvalidations: step.headline.styleInvalidations,
+    longTaskCount: step.headline.longTaskCount,
+    inpMs: step.inpMs,
+    wallMs: step.wallMs,
+  };
+}
+
 /**
  * Gate a recording or step-index against thresholds; sets exit code 1 on violation. Count/timing
  * thresholds gate the run (or each step); `sliceBudgets` (`--max-slice`) gate the target span's
@@ -73,35 +89,22 @@ export async function assertCmd(
 ): Promise<void> {
   const abs = await resolveTarget(file, "auto");
   const obj = deserialize(await fs.readFile(abs, "utf8"), path.extname(abs).toLowerCase()) as any;
+  assertRecordingArtifact(obj, abs);
 
-  // A run-level driver recording has no wall by design, so `--max-wall` against it can only fail.
-  // "was not measured" would be true but useless: the wall exists, one per step, in the sidecar.
-  // Name the file rather than let a reader conclude the tool lost the number. A per-step recording
-  // is excluded because it HAS a wall (its median), so it never reaches the null branch anyway.
-  const wallIsPerStep =
-    obj?.meta?.driver === true && obj?.meta?.step == null && !Array.isArray(obj.steps);
-
-  const isStepIndex = Array.isArray(obj.steps) && typeof obj.recording === "string";
+  // A stepped (driver) recording gates PER STEP, from its step spans: each step has its own wall,
+  // INP and windowed counts, which is the per-interaction granularity a CI gate wants. A bench/node
+  // run gates its run summary. A step whose wall could not be priced (navigated on a no-trace rung)
+  // is Measured null, so `--max-wall` there is a loud FAIL, not a silent pass.
+  const rec = obj as Recording;
+  const stepped = isSteppedRecording(rec);
   const targets: { label: string; m: Metrics }[] = [];
-  if (isStepIndex) {
-    const idx = obj as StepIndex;
-    for (const step of idx.steps) {
-      targets.push({
-        label: `step ${step.index} "${step.label}"`,
-        m: {
-          forcedLayoutCount: step.headline.forcedLayoutCount,
-          layoutCount: step.headline.layoutCount,
-          paintCount: step.headline.paintCount,
-          layoutInvalidations: step.headline.layoutInvalidations,
-          styleInvalidations: step.headline.styleInvalidations,
-          longTaskCount: step.headline.longTaskCount,
-          inpMs: step.inpMs,
-          wallMs: step.wallMs,
-        },
-      });
+  if (stepped) {
+    for (const step of stepSpans(rec)) {
+      const entry = stepEntry(step);
+      targets.push({ label: `step ${entry.index} "${entry.label}"`, m: fromStep(entry) });
     }
   } else {
-    targets.push({ label: "run", m: fromSummary((obj as Recording).summary) });
+    targets.push({ label: "run", m: fromSummary(rec.summary) });
   }
 
   const active = CHECKS.filter((check) => thresholds[check.opt] != null);
@@ -122,11 +125,7 @@ export async function assertCmd(
         // --max-inp on an in-page run that captured no interaction. Skipping it green
         // is a CI gate that doesn't gate.
         violations.push(
-          wallIsPerStep && check.opt === "wall"
-            ? `${target.label}: a driver run has no run-level wall (it would be prepare + every ` +
-                `step + settle, mostly driver overhead). Each step has its own: assert the step ` +
-                `index beside this file (<name>.index.json, or 'latest') to gate --max-wall per step.`
-            : `${target.label}: ${check.label} was not measured; cannot satisfy max ${max}`,
+          `${target.label}: ${check.label} was not measured; cannot satisfy max ${max}`,
         );
         rows.push([target.label, check.label, "n/a", max, "FAIL"]);
         continue;
@@ -139,8 +138,8 @@ export async function assertCmd(
   // Slice budgets gate the target span's per-slice ms, a different axis from the count/timing
   // targets above: they read the recording's breakdown bar (`query spans` shape), not the summary.
   if (sliceBudgetKeys.length) {
-    // A step index carries no bars itself; its slice data lives in the recording it points at.
-    const spans = await loadSpanEntries(isStepIndex ? (obj as StepIndex).recording : abs);
+    // The slice data lives on the recording's spans (the run bar by default; `label` picks another).
+    const spans = await loadSpanEntries(abs);
     const targetLabel = label ?? "run";
     for (const gate of gateSliceBudgets(spans, sliceBudgets, targetLabel)) {
       rows.push([

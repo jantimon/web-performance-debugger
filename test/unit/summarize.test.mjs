@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildSummary, traceRenderingWork } from "../../dist/metrics/summarize.js";
+import { buildRecordingSpans } from "../../dist/record/spans-build.js";
 import { mainThread } from "../../dist/trace/main-thread.js";
 import { classify } from "../../dist/trace/classify.js";
 
@@ -40,16 +41,28 @@ test("traceRenderingWork counts layout on the main thread only, excluding an OOP
   assert.equal(allPids.layoutCount, 18, "an unfiltered sum double-scopes the OOPIF (6 + 12)");
 });
 
-// buildSummary is the regression gate: with the CDP path deleted (cdpDelta {}), the reported
-// layoutCount must equal the pre-deletion top-process number, sourced from the trace, main-thread
-// windowed. The OOPIF's 12 are excluded exactly as getMetrics excluded them.
-test("buildSummary: trace-fallback layoutCount is main-thread windowed, matching top-process getMetrics", () => {
+// buildSummary is the regression gate: with the CDP counter path deleted, the reported layoutCount
+// must equal the pre-deletion top-process number, sourced from the trace, main-thread windowed. The
+// OOPIF's 12 are excluded exactly as getMetrics excluded them (§25 disclosure rule 3).
+const TRACE_CAP = {
+  counts: true,
+  paintCount: true,
+  longTasks: true,
+  invalidations: true,
+  durations: true,
+  forced: true,
+};
+test("buildSummary: trace-sourced layoutCount is main-thread windowed, matching top-process getMetrics", () => {
   const events = [marker(48371, 1)];
   for (let index = 0; index < 6; index++) events.push(layout(index + 1, 1000, 48371, 1));
   for (let index = 0; index < 12; index++) events.push(layout(index + 100, 1000, 48373, 1));
 
-  const summary = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
+  const summary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
   assert.equal(summary.layoutCount, 6);
+
+  // The default rung (no capabilities) captures no trace: the count is Measured null, never a fake 0.
+  const defaultRung = buildSummary({ detailEvents: events, detailWindowStart: null });
+  assert.equal(defaultRung.layoutCount, null, "no trace on the default rung, so no count");
 });
 
 // §26 probe F: CDP RecalcStyleDuration EXCLUDES the stylesheet parse. The excluded variant tracks
@@ -111,23 +124,113 @@ test("traceRenderingWork skips sampled annotations and pre-window events", () =>
   assert.equal(work.styleCount, 0, "the only recalc is a sampled annotation");
 });
 
-// Wave-1 is behaviorally inert: the CDP-first preference is unchanged, so a present CDP counter still
-// shadows the trace count/duration exactly as before.
-test("buildSummary still prefers CDP counts/durations over the trace fallback", () => {
+// With the CDP counter path deleted, counts and durations come from the trace alone (no CDP source
+// to shadow them). The single-axis invariant: on a light trace both counts and durations are
+// measured; on a .stack (--deep) trace the counts stay exact but the durations are refused (null).
+test("buildSummary sources counts/durations from the trace; --deep refuses the distorted durations", () => {
   const events = [marker(100, 1), layout(1, 2000, 100, 1), recalc(2, 3000, 100, 1)];
-  const withCdp = buildSummary({
+  const light = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
+  assert.equal(light.layoutCount, 1);
+  assert.equal(light.layoutMs, 2);
+  assert.equal(light.styleCount, 1);
+  assert.equal(light.styleMs, 3);
+
+  const deep = buildSummary({
     detailEvents: events,
     detailWindowStart: null,
-    cdpDelta: { LayoutCount: 7, LayoutDuration: 0.05, RecalcStyleCount: 4, RecalcStyleDuration: 0.02 },
+    capabilities: { ...TRACE_CAP, durations: false },
   });
-  assert.equal(withCdp.layoutCount, 7);
-  assert.equal(withCdp.layoutMs, 50);
-  assert.equal(withCdp.styleCount, 4);
-  assert.equal(withCdp.styleMs, 20);
+  assert.equal(deep.layoutCount, 1, "counts stay exact on a .stack trace");
+  assert.equal(deep.layoutMs, null, "durations are refused on a .stack trace");
+  assert.equal(deep.styleMs, null);
+});
 
-  const noCdp = buildSummary({ detailEvents: events, detailWindowStart: null, cdpDelta: {} });
-  assert.equal(noCdp.layoutCount, 1);
-  assert.equal(noCdp.layoutMs, 2);
-  assert.equal(noCdp.styleCount, 1);
-  assert.equal(noCdp.styleMs, 3);
+// F28: the GENERAL count loop (paint/forced/invalidation/long-task/total) scoped to the same main
+// thread as layout/style, so an OOPIF's own-process paint/forced work is filtered out, never summed
+// into the main-thread window.
+const paint = (id, dur, pid, tid) => ({ id, name: "Paint", ts: id, dur, ph: "X", kind: "paint", pid, tid });
+const forcedLayout = (id, dur, pid, tid) => ({ ...layout(id, dur, pid, tid), forced: true });
+test("buildSummary scopes paint/forced/total to the main thread, excluding an OOPIF process (F28)", () => {
+  const events = [marker(1, 1)];
+  // top process (the selected main thread): 2 paints, 1 forced layout
+  events.push(paint(10, 500, 1, 1), paint(11, 500, 1, 1), forcedLayout(12, 500, 1, 1));
+  // OOPIF process: 5 paints, 3 forced layouts -- must NOT count toward the main-thread window
+  for (let index = 0; index < 5; index++) events.push(paint(index + 100, 500, 2, 1));
+  for (let index = 0; index < 3; index++) events.push(forcedLayout(index + 200, 500, 2, 1));
+
+  const summary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
+  assert.equal(summary.paintCount, 2, "only the top-process paints count, not the OOPIF's 5");
+  assert.equal(summary.forcedLayoutCount, 1, "only the top-process forced layout counts, not the OOPIF's 3");
+  // totalEvents is main-thread scoped too: marker + 2 paint + 1 forced = 4, never the OOPIF's 8 mixed in.
+  assert.equal(summary.totalEvents, 4, "totalEvents excludes the OOPIF process (would be 12 unfiltered)");
+});
+
+// F29: a step's counts are scoped to the RUN-selected thread, not re-picked by the heuristic on the
+// step's own marker-less window. Here the OOPIF thread does more layout inside the step window, so a
+// per-step heuristic would pick it; the run's marker selection (top process) must win, so the step's
+// counts match the thread its bar sits on.
+test("buildRecordingSpans: a step's counts follow the run-selected thread, not the step heuristic (F29)", () => {
+  const events = [marker(1, 1)]; // run:start on the top process (main thread)
+  events.push(layout(10, 500, 1, 1)); // 1 layout on the main thread inside the step window
+  for (let index = 0; index < 5; index++) events.push(layout(index + 100, 500, 2, 1)); // 5 on the OOPIF
+
+  // Sanity: on the step window alone (no marker) the heuristic picks the busier OOPIF thread.
+  const stepWindowEvents = events.filter((event) => event.name !== "wpd:run:start");
+  assert.equal(mainThread(stepWindowEvents).pid, 2, "heuristic alone would pick the OOPIF thread");
+
+  const runSummary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
+  const spans = buildRecordingSpans({
+    summary: runSummary,
+    mergedSteps: [
+      {
+        index: 0,
+        label: "mount",
+        perIteration: [10],
+        wallMs: 10,
+        inpMs: null,
+        interaction: null,
+        startTs: 5,
+        endTs: 300,
+      },
+    ],
+    detailEvents: events,
+    capabilities: TRACE_CAP,
+    bars: [],
+    runWindowEnd: 400,
+  });
+  const step = spans.find((span) => span.kind === "step");
+  assert.ok(step, "the step span is present");
+  assert.equal(step.counts.layoutCount, 1, "step counts on the run's main thread (1), not the OOPIF's 5");
+});
+
+// F27: a step whose end marker was lost (endTs null) must window its counts to the run end -- the
+// same bound its bar uses (breakdown-spans.ts `step.endTs ?? runWindow.endTs`) -- rather than running
+// open to trace end, which would fold settle-tail work after the run window into the step.
+test("buildRecordingSpans: a start-only step windows counts to the run end, not trace end (F27)", () => {
+  const events = [marker(1, 1)];
+  events.push(layout(50, 500, 1, 1)); // inside the run window [5, 100]
+  events.push(layout(150, 500, 1, 1)); // settle-tail layout AFTER run end: must not count for the step
+
+  const runSummary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
+  const spans = buildRecordingSpans({
+    summary: runSummary,
+    mergedSteps: [
+      {
+        index: 0,
+        label: "mount",
+        perIteration: [10],
+        wallMs: 10,
+        inpMs: null,
+        interaction: null,
+        startTs: 5,
+        endTs: null, // the wpd:step:0:end mark was lost from the trace
+      },
+    ],
+    detailEvents: events,
+    capabilities: TRACE_CAP,
+    bars: [],
+    runWindowEnd: 100,
+  });
+  const step = spans.find((span) => span.kind === "step");
+  assert.equal(step.counts.layoutCount, 1, "bounded to the run end (1), not open to trace end (2)");
 });

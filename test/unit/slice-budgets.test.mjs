@@ -156,7 +156,8 @@ test("diffSpanSlices: matched spans get per-slice ms deltas", () => {
   const current = [chromeRun({ js: jsSlice(7), layout: slice(2) })];
   const diff = diffSpanSlices(base, current);
   assert.equal(diff.spans.length, 1);
-  assert.equal(diff.spans[0].label, "run");
+  // Spans are joined + displayed by kind+label, so a user measure named "run" can never collide (F32).
+  assert.equal(diff.spans[0].label, "run:run");
   const bySlice = Object.fromEntries(diff.spans[0].slices.map((slice) => [slice.slice, slice]));
   assert.equal(bySlice.js.delta, 2, "5 -> 7 is +2");
   assert.equal(bySlice.layout.delta, 0, "2 -> 2 is 0");
@@ -174,9 +175,9 @@ test("diffSpanSlices: labels present on one side only are reported, not errors",
   const base = [chromeRun(), { ...chromeRun(), label: "open", kind: "step" }];
   const current = [chromeRun(), { ...chromeRun(), label: "close", kind: "step" }];
   const diff = diffSpanSlices(base, current);
-  assert.deepEqual(diff.spans.map((span) => span.label), ["run"], "only shared labels are compared");
-  assert.deepEqual(diff.unmatchedBaseline, ["open"]);
-  assert.deepEqual(diff.unmatchedCurrent, ["close"]);
+  assert.deepEqual(diff.spans.map((span) => span.label), ["run:run"], "only shared kind+label are compared");
+  assert.deepEqual(diff.unmatchedBaseline, ["step:open"]);
+  assert.deepEqual(diff.unmatchedCurrent, ["step:close"]);
 });
 
 test("diffSpanSlices: missing breakdowns on either side is empty, not a throw", () => {
@@ -187,7 +188,7 @@ test("diffSpanSlices: missing breakdowns on either side is empty, not a throw", 
   });
   const oneSide = diffSpanSlices(null, [chromeRun()]);
   assert.equal(oneSide.spans.length, 0, "no matches when one side has no spans");
-  assert.deepEqual(oneSide.unmatchedCurrent, ["run"]);
+  assert.deepEqual(oneSide.unmatchedCurrent, ["run:run"]);
 });
 
 // --- End-to-end through the commands, reading a recording with stored breakdowns ---
@@ -205,13 +206,13 @@ function writeBreakdownRecording(name, breakdowns) {
   const file = path.join(tmpDir, name);
   writeFileSync(
     file,
-    JSON.stringify({ meta: { target: "chrome", iterations: 1 }, summary: emptySummary, breakdowns }),
+    JSON.stringify({ meta: { schemaVersion: "3", target: "chrome", iterations: 1 }, summary: emptySummary, spans: breakdowns }),
     "utf8",
   );
   return file;
 }
 
-// Stored SpanBreakdown shape (Recording.breakdowns): the run bar buildSpans folds to the run span.
+// A stored run span carrying a bar (Recording.spans): buildSpans folds it to the run span entry.
 const storedRun = (slices) => ({
   label: "run",
   kind: "run",
@@ -242,37 +243,20 @@ test("assertCmd: --max-slice on an exceeded slice fails the gate (exit 1)", asyn
   assert.equal(code, 1);
 });
 
-test("assertCmd: --max-slice on a step-index file reads the recording it points at", async () => {
-  const recording = writeBreakdownRecording("slice-index-rec.json", [storedRun()]);
-  const indexFile = path.join(tmpDir, "slice-index.index.json");
-  writeFileSync(
-    indexFile,
-    JSON.stringify({
-      recording,
-      steps: [
-        {
-          index: 0,
-          label: "click",
-          headline: {
-            forcedLayoutCount: 0, layoutCount: 0, paintCount: 0,
-            layoutInvalidations: 0, styleInvalidations: 0, longTaskCount: 0,
-          },
-          inpMs: null,
-          wallMs: null,
-        },
-      ],
-    }),
-    "utf8",
-  );
-  const code = await captureExitCode(() => assertCmd(indexFile, {}, { js: 6 }));
-  assert.equal(code, undefined, "slice data comes from the recording behind the index");
+// After the collapse there is no separate step-index file: a stepped run is one recording, and
+// `--max-slice` reads its spans (the run bar by default). This pins that the slice path finds the bar
+// on the single artifact.
+test("assertCmd: --max-slice reads the run bar off the (single) recording", async () => {
+  const recording = writeBreakdownRecording("slice-single-rec.json", [storedRun()]);
+  const code = await captureExitCode(() => assertCmd(recording, {}, { js: 6 }));
+  assert.equal(code, undefined, "slice data comes from the recording's run span");
 });
 
 test("assertCmd: a corrupt sibling CPU model surfaces instead of reading as no slice data", async () => {
   const file = path.join(tmpDir, "no-bars.json");
   writeFileSync(
     file,
-    JSON.stringify({ meta: { target: "chrome", iterations: 1 }, summary: emptySummary }),
+    JSON.stringify({ meta: { schemaVersion: "3", target: "chrome", iterations: 1 }, summary: emptySummary }),
     "utf8",
   );
   writeFileSync(path.join(tmpDir, "no-bars.cpu.json"), "{ not json", "utf8");

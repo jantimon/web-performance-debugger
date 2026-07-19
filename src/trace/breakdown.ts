@@ -104,13 +104,15 @@ export function computeSpanBreakdown(
   const byPackage = splitJsByPackage(jsMs, jsSegments, samples);
 
   const idleMs = usToMs(sliceUs.idle);
+  const paintMs = usToMs(sliceUs.paint);
   const breakdown: Breakdown = {
     wallMs: usToMs(windowUs),
     slices: {
       js: { ms: jsMs, byPackage },
       style: { ms: usToMs(sliceUs.style) },
       layout: { ms: usToMs(sliceUs.layout) },
-      paint: { ms: usToMs(sliceUs.paint) },
+      // Chrome measures main-thread paint (null only on firefox, where it is off-main-thread).
+      paint: { ms: paintMs },
       gc: { ms: usToMs(sliceUs.gc) },
       other: { ms: usToMs(sliceUs.other) },
       idle: { ms: idleMs },
@@ -123,7 +125,7 @@ export function computeSpanBreakdown(
     breakdown.slices.js.ms +
     breakdown.slices.style.ms +
     breakdown.slices.layout.ms +
-    breakdown.slices.paint.ms +
+    paintMs +
     breakdown.slices.gc.ms +
     breakdown.slices.other.ms +
     breakdown.slices.idle.ms;

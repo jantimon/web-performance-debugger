@@ -1,15 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serialize, deserialize } from "../../dist/output/format.js";
 import { diffCmd } from "../../dist/commands/diff.js";
 import { assertCmd } from "../../dist/commands/assert.js";
 import { countProvenance } from "../../dist/commands/summaryView.js";
+import * as notesCatalog from "../../dist/record/notes.js";
+import { assertSchemaVersion } from "../../dist/model/artifact.js";
 import { resolveHeadless } from "../../dist/browser/launch.js";
 import { SCHEMA_VERSION } from "../../dist/index.js";
-import { writeRecording, captureExitCode } from "./helpers.mjs";
+import { writeRecording, writeSchemaArtifact, captureExitCode, tmpDir } from "./helpers.mjs";
 
 test("serialize/deserialize round-trips json and toon", () => {
   const obj = { a: 1, b: [{ x: 1 }, { x: 2 }], c: "hi" };
@@ -18,7 +21,27 @@ test("serialize/deserialize round-trips json and toon", () => {
 });
 
 test("public entrypoint exposes the schema version anchor", () => {
-  assert.equal(SCHEMA_VERSION, "2");
+  assert.equal(SCHEMA_VERSION, "3");
+});
+
+// Write-first (§17.13.9 item 5): an artifact stamped with an older schema epoch is REJECTED, loudly,
+// with the re-record message -- never mis-parsed against a shape it was not written to.
+test("schema reject: an artifact recorded by an older wpd is refused with the re-record message", () => {
+  assert.throws(
+    () => assertSchemaVersion("2", "/tmp/old.json"),
+    /re-record with this version/,
+    "a schema-2 artifact is rejected, not silently read as the current shape",
+  );
+  assert.throws(() => assertSchemaVersion(undefined, "/tmp/nometa.json"), /re-record/);
+  // The current epoch passes through untouched.
+  assert.doesNotThrow(() => assertSchemaVersion(SCHEMA_VERSION, "/tmp/current.json"));
+});
+
+// The reject reaches through the verbs, not only the pure guard: `assert` on a schema-2 recording
+// refuses rather than gating a mis-parsed (all-null) summary green.
+test("schema reject: `assert` on an older-schema recording refuses instead of mis-gating", async () => {
+  const old = writeSchemaArtifact("assert-old-schema.json", "2", { forcedLayoutCount: 0 });
+  await assert.rejects(() => assertCmd(old, { forced: 0 }), /re-record with this version/);
 });
 
 test("package exports map points at files that exist", () => {
@@ -42,25 +65,95 @@ test("published types declare the documented public shapes", () => {
 
 // --- Count provenance (the same number means different things per target) ---
 
-test("countProvenance never calls a non-CDP count authoritative", () => {
-  const recording = (meta) => ({ meta: { passes: ["timing"], ...meta }, summary: {} });
+test("countProvenance distinguishes exact trace counts, Gecko markers, and a rung that measured none", () => {
+  const recording = (meta, summary = {}) => ({ meta: { passes: ["default"], ...meta }, summary });
 
-  // Chrome: CDP counters, the only exact ones.
-  assert.match(countProvenance(recording({ passes: ["timing", "trace"] })), /authoritative/);
-  assert.match(countProvenance(recording({ browser: "chrome" })), /authoritative/);
+  // Chrome with a trace (breakdown/deep): counts come from the trace, main-thread windowed, exact.
+  const exact = countProvenance(recording({ passes: ["deep"] }, { layoutCount: 5 }));
+  assert.match(exact, /exact/);
+  assert.doesNotMatch(exact, /NOT measured/);
 
-  // Firefox + gecko pass: summarize falls back to counting Reflow/Styles markers, so the counts
-  // are real -- but Gecko batches layout differently, so they must not read as comparable.
-  const gecko = countProvenance(recording({ browser: "firefox", passes: ["timing", "gecko"] }));
+  // Firefox + gecko pass: counts from Reflow/Styles markers -- real, but batched by a different
+  // engine, so they must not read as comparable to Chrome.
+  const gecko = countProvenance(recording({ browser: "firefox", passes: ["gecko"] }, { layoutCount: 3 }));
   assert.match(gecko, /Gecko markers/);
   assert.match(gecko, /not comparable to Chrome/);
-  assert.doesNotMatch(gecko, /authoritative/);
 
-  // Firefox with no gecko pass: nothing counts anything, so every count is 0. Saying so is the
-  // difference between "clean" and "unmeasured".
-  const none = countProvenance(recording({ browser: "firefox", passes: ["timing"] }));
+  // The default rung captures no trace: layoutCount is null, so the header says NOT measured, never 0.
+  const none = countProvenance(recording({ passes: ["default"] }, { layoutCount: null }));
   assert.match(none, /NOT measured/);
-  assert.doesNotMatch(none, /authoritative/);
+});
+
+// F26/F27: a lost run:end mark leaves the bar silently absent, and a lost step:end mark left counts
+// running to trace end while the bar stopped at the run end. Both now push a disclosing note.
+test("notes: a lost run-end / step-end mark is disclosed, not silent (F26/F27)", () => {
+  const runEnd = notesCatalog.runEndMarkLost();
+  assert.match(runEnd, /wpd:run:end was lost/);
+  assert.match(runEnd, /Counts remain valid/);
+  assert.match(runEnd, /bar/); // the bar is absent, not 0
+
+  const stepEnd = notesCatalog.stepEndMarkLost();
+  assert.match(stepEnd, /wpd:step:N:end/);
+  assert.match(stepEnd, /window to the run end/);
+  assert.match(stepEnd, /page-clock/); // the wall stayed page-clock, does not reconcile with the bar
+});
+
+// F31: a diff across incompatible captures subtracts numbers that do not describe the same thing.
+// Write recordings with explicit meta (browser/passes/iterations) to exercise the comparability gate.
+function writeRecMeta(name, metaOverrides, summaryOverrides = {}) {
+  const summary = {
+    wallMs: null, inpMs: null, scriptingMs: 0,
+    layoutCount: 0, styleCount: 0, paintCount: 0,
+    forcedLayoutCount: 0, layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0,
+    longTaskCount: 0, totalEvents: 0, perIteration: [], stats: null,
+    ...summaryOverrides,
+  };
+  const meta = { schemaVersion: "3", passes: ["deep"], driver: false, iterations: 5, ...metaOverrides };
+  const file = path.join(tmpDir, name);
+  writeFileSync(file, JSON.stringify({ meta, summary, spans: [] }), "utf8");
+  return file;
+}
+
+// Run diffCmd capturing BOTH its exit code and its console output (captureExitCode silences logs).
+async function runDiffCapture(base, current, opts) {
+  const priorExit = process.exitCode;
+  const priorLog = console.log;
+  const logs = [];
+  process.exitCode = undefined;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    await diffCmd(base, current, opts);
+    return { code: process.exitCode, logs };
+  } finally {
+    console.log = priorLog;
+    process.exitCode = priorExit;
+  }
+}
+
+test("diff: matched captures compare cleanly and gate a real count regression (F31)", async () => {
+  const base = writeRecMeta("f31-match-base.json", {}, { layoutCount: 1 });
+  const current = writeRecMeta("f31-match-cur.json", {}, { layoutCount: 9 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.equal(code, 1, "a real layout regression on matched captures still gates");
+  assert.ok(!logs.some((line) => /captured differently/.test(line)), "no comparability warning when matched");
+});
+
+test("diff: an iterations mismatch WARNS but still compares (F31)", async () => {
+  const base = writeRecMeta("f31-iter-base.json", { iterations: 5 }, { layoutCount: 1 });
+  const current = writeRecMeta("f31-iter-cur.json", { iterations: 50 }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /captured differently/.test(line)), "the iterations mismatch is disclosed");
+  assert.ok(logs.some((line) => /iterations: 5 → 50/.test(line)));
+  assert.equal(code, undefined, "iterations alone does not refuse the gate (counts do not scale with it)");
+});
+
+test("diff: --fail-on-regression REFUSES across a mismatched rung/browser (F31)", async () => {
+  const base = writeRecMeta("f31-refuse-base.json", { passes: ["deep"], browser: undefined }, { layoutCount: 1 });
+  const current = writeRecMeta("f31-refuse-cur.json", { passes: ["gecko"], browser: "firefox" }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.equal(code, 1, "gating across an incompatible browser/rung refuses");
+  assert.ok(logs.some((line) => /Refusing to gate/.test(line)));
+  assert.ok(logs.some((line) => /browser/.test(line) && /rung/.test(line)));
 });
 
 test("diff: advisory wall/INP/scripting deltas do NOT fail the gate (H1)", async () => {

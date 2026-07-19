@@ -1,12 +1,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { deserialize } from "../output/format.js";
+import { assertRecordingArtifact } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget } from "./resolve.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
 import { diffSpanSlices, type SpanSliceDiff } from "../model/spans.js";
 import { loadSpanEntries } from "./spanSource.js";
-import type { Recording, RecordingSummary } from "../model/recording.js";
+import type { Recording, RecordingMeta, RecordingSummary } from "../model/recording.js";
 
 // `gated` metrics participate in --fail-on-regression; `advisory` ones are printed but never
 // fail the build. A metric gates only if it is REPRODUCIBLE on unchanged code, which is not the
@@ -46,13 +47,57 @@ const METRICS: {
   { label: "scripting ms", key: "scriptingMs", higherIsWorse: true, gated: false },
 ];
 
-async function loadSummary(file: string): Promise<RecordingSummary> {
+async function loadRecording(file: string): Promise<Recording> {
   const abs = await resolveTarget(file, "recording");
   const rec = deserialize(
     await fs.readFile(abs, "utf8"),
     path.extname(abs).toLowerCase(),
   ) as Recording;
-  return rec.summary;
+  assertRecordingArtifact(rec, abs);
+  return rec;
+}
+
+/** One capture axis that differs between the two recordings; `blocksGating` axes make a
+ * --fail-on-regression comparison meaningless (a delta reflects the config, not the code). */
+interface CompatMismatch {
+  axis: string;
+  base: string;
+  current: string;
+  blocksGating: boolean;
+}
+
+/**
+ * Which capture axes differ between two recordings. A diff subtracts summary fields as if the two
+ * captures measured the same thing; they do not when the lane, rung, or iteration count differ
+ * (firefox Gecko-marker counts vs chrome trace counts; a --deep exact count vs a --breakdown null;
+ * a sum over more iterations). browser/runtime/rung block a --fail-on-regression gate, because a
+ * "regression" there is an artifact of the config change. iterations only warns (counts do not scale
+ * with --iterations; wall/scripting are advisory anyway).
+ */
+function comparabilityMismatches(base: RecordingMeta, current: RecordingMeta): CompatMismatch[] {
+  const rungOf = (meta: RecordingMeta): string => [...(meta.passes ?? [])].sort().join("+");
+  const axes: CompatMismatch[] = [
+    {
+      axis: "browser",
+      base: base.browser ?? "chrome",
+      current: current.browser ?? "chrome",
+      blocksGating: true,
+    },
+    {
+      axis: "runtime",
+      base: base.runtime ?? "chrome",
+      current: current.runtime ?? "chrome",
+      blocksGating: true,
+    },
+    { axis: "rung", base: rungOf(base), current: rungOf(current), blocksGating: true },
+    {
+      axis: "iterations",
+      base: String(base.iterations ?? "?"),
+      current: String(current.iterations ?? "?"),
+      blocksGating: false,
+    },
+  ];
+  return axes.filter((entry) => entry.base !== entry.current);
 }
 
 /**
@@ -92,12 +137,41 @@ export async function diffCmd(
   current: string,
   opts: { failOnRegression?: boolean },
 ): Promise<void> {
-  const [baselineSummary, currentSummary, baselineSpans, currentSpans] = await Promise.all([
-    loadSummary(baseline),
-    loadSummary(current),
+  const [baselineRec, currentRec, baselineSpans, currentSpans] = await Promise.all([
+    loadRecording(baseline),
+    loadRecording(current),
     loadSpanEntries(baseline),
     loadSpanEntries(current),
   ]);
+  const baselineSummary = baselineRec.summary;
+  const currentSummary = currentRec.summary;
+
+  // Comparability: name every capture axis that differs, so a reader never reads a config-driven
+  // delta as a code change. Warn (not refuse) by default so cross-config exploration stays possible;
+  // but a --fail-on-regression gate REFUSES across an incompatible browser/runtime/rung, where an
+  // exact-count "regression" would be an artifact of the config, not the code.
+  const mismatches = comparabilityMismatches(baselineRec.meta, currentRec.meta);
+  if (mismatches.length) {
+    console.log("\n⚠ WARNING: baseline and current were captured differently:");
+    for (const mismatch of mismatches)
+      console.log(`    ${mismatch.axis}: ${mismatch.base} → ${mismatch.current}`);
+    console.log(
+      "  Their counts/durations may not describe the same thing; treat this diff as directional.",
+    );
+  }
+  if (opts.failOnRegression && mismatches.some((mismatch) => mismatch.blocksGating)) {
+    const blocking = mismatches
+      .filter((mismatch) => mismatch.blocksGating)
+      .map((mismatch) => mismatch.axis)
+      .join(", ");
+    console.log(
+      `\nRefusing to gate (--fail-on-regression) across an incompatible capture (${blocking} differ): ` +
+        `a count delta would reflect the capture change, not a code regression. Re-record both sides ` +
+        `on the same lane and rung to gate.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   const rows: (string | number)[][] = [];
   const regressions: string[] = [];

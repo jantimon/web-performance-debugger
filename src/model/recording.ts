@@ -64,6 +64,15 @@ export interface NormalizedEvent {
    * every trace-derived event.
    */
   sampled?: boolean;
+  /**
+   * The WRITE that dirtied this flush, resolved from a Firefox Gecko cause stack (the innermost JS
+   * caller of the FIRST invalidation since the last flush). Set on a forced Reflow/Styles marker
+   * event under `--deep --target firefox`; absent everywhere else. It is a WRITE, deliberately never
+   * surfaced as `at` (which stays the blame read-site), so write and read never collide. Being
+   * first-invalidation-only it is Gecko's write, NOT chrome's full write set, and drives no thrash
+   * detector. See trace/firefox-dirtied.ts.
+   */
+  dirtiedBy?: DirtiedByWrite;
   args?: unknown;
 }
 
@@ -80,12 +89,6 @@ export interface TimingEntry {
   name: string;
   startTime: number;
   duration?: number;
-}
-
-export interface MetricsBlock {
-  before: Record<string, number>;
-  after: Record<string, number>;
-  delta: Record<string, number>;
 }
 
 /** Timing is coarse (Chrome clamps performance.now); these are directional, not precise. */
@@ -108,21 +111,36 @@ export interface RecordingSummary {
    */
   interaction?: InteractionTiming | null;
 
-  layoutCount: number;
-  layoutMs: number;
-  styleCount: number;
-  styleMs: number;
+  /**
+   * Rendering counts and durations are `Measured` (model/measured.ts): a number is the exact count
+   * (0 = measured clean), null = NOT measured on this rung. The default rung (sampler only, no
+   * trace) observes no rendering work at all, so every count/duration here is null there, never a
+   * fake 0. Counts come from the trace, windowed on the bar's main thread; a `--breakdown`/`--deep`
+   * capture supplies them.
+   */
+  layoutCount: Measured<number>;
+  /**
+   * Wall-tier trace duration (`base::TimeTicks`, ~1% directional), valid only on the light
+   * (no-`.stack`) trace. Null on the default rung (no trace) AND on `--deep`, whose `.stack` trace
+   * inflates style dur up to +38% (a distorted number is worse than none). Run `--breakdown` for it.
+   */
+  layoutMs: Measured<number>;
+  styleCount: Measured<number>;
+  /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
+  styleMs: Measured<number>;
   /**
    * Main-thread paint chunks: one per dirtied region, [measured] exactly N+1 for N regions with
    * zero run-to-run variance. Raster (off-main-thread) is deliberately not in here; it counts
-   * scheduler behaviour, not the page. See docs/dev/rendering-counts.md.
+   * scheduler behaviour, not the page. See docs/dev/rendering-counts.md. `Measured`: null on the
+   * default rung (no trace) and on Firefox (paint is off-main-thread there), never a fake 0.
    */
-  paintCount: number;
-  paintMs: number;
+  paintCount: Measured<number>;
+  /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
+  paintMs: Measured<number>;
 
-  layoutInvalidations: number;
-  paintInvalidations: number;
-  styleInvalidations: number;
+  layoutInvalidations: Measured<number>;
+  paintInvalidations: Measured<number>;
+  styleInvalidations: Measured<number>;
 
   /**
    * layout/style synchronously forced by JS (thrashing), as a `Measured` value (see
@@ -133,11 +151,13 @@ export interface RecordingSummary {
   forcedLayoutCount: Measured<number>;
   forcedLayoutMs: Measured<number>;
 
-  /** tasks >= 50ms ("long tasks") in the window */
-  longTaskCount: number;
-  longestTaskMs: number;
+  /** tasks >= 50ms ("long tasks") in the window; `Measured`, null on the default rung (no trace). */
+  longTaskCount: Measured<number>;
+  /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
+  longestTaskMs: Measured<number>;
 
-  scriptingMs: number;
+  /** JS self-time from the CPU model; `Measured`, null on `--deep` (sampler off, no CPU model). */
+  scriptingMs: Measured<number>;
   totalEvents: number;
 
   /**
@@ -181,11 +201,6 @@ export interface RecordingWindow {
   startTs: number | null;
   endTs: number | null;
   wallMs: number | null;
-}
-
-export interface ScreenshotRefs {
-  before?: string;
-  after?: string;
 }
 
 /** Why a script's sourcemap could not be applied. */
@@ -300,7 +315,12 @@ export interface RecordingMeta {
   userDataDir: string | null;
   /** lifecycle hooks found and called */
   lifecycle: string[];
-  /** measurement passes run in isolation, e.g. ["timing","trace"] (>1 => isolated) */
+  /**
+   * The one capture that ran, by rung name: "default" (sampler only) | "breakdown" | "deep" |
+   * "precise-wall" | "gecko" (firefox) | "node-cpu". Every invocation is exactly one pass (one
+   * browser launch, one run of the flow), so this is a single-element array naming the rung, not a
+   * multi-pass plan.
+   */
   passes: string[];
   notes: string[];
   /**
@@ -318,17 +338,16 @@ export interface RecordingMeta {
   /**
    * Which code this run's forced-layout blame names (see BlameSemantic). "flush-site" (the read) on
    * both engines today, comparable at line granularity; "invalidation-site" (the write) only on
-   * older Firefox recordings. Absent => the run produced no blame (--target node, or Chrome with
-   * --no-trace).
+   * older Firefox recordings. Absent => the run produced no blame (--target node, or a chrome
+   * rung without a .stack trace).
    */
   blameSemantic?: BlameSemantic;
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
   runtime?: "chrome" | "node";
   /** artificial slowdown applied during the run */
-  throttle?: { cpuRate?: number; network?: string };
+  throttle?: { cpuRate?: number };
   /** when this recording is one step of a stepped run */
   step?: { index: number; label: string };
-  screenshots?: ScreenshotRefs;
 }
 
 /**
@@ -344,8 +363,12 @@ export interface BreakdownSlices {
   style: CpuSlice;
   /** layout (reflow) */
   layout: CpuSlice;
-  /** main-thread paint record */
-  paint: CpuSlice;
+  /**
+   * Main-thread paint record. `Measured` (model/measured.ts): a chrome seven-slice bar always
+   * measures it; null on firefox, where paint is off-main-thread (a compositor side track, never
+   * summed into the wall), so the bar says not-measured rather than a fake 0.
+   */
+  paint: Measured<CpuSlice>;
   /** garbage collection (MinorGC/MajorGC) */
   gc: CpuSlice;
   /** task remainder + anything unclassified (composite/invalidation/user-timing/other) */
@@ -432,6 +455,102 @@ export interface FrameSideTrack {
   frames: FrameRecord[];
 }
 
+/**
+ * Exact rendering counts windowed to ONE span's representative occurrence (the run window; a step's
+ * first timed iteration). Each field is `Measured` (model/measured.ts): a rung that cannot observe a
+ * count reports null, never a fake 0 (the default rung has no trace; --breakdown drops the `.stack`
+ * category forced detection needs). A forced flush is already inside `layoutCount`/`styleCount`
+ * (`forcedLayoutCount` re-reports the JS-triggered SUBSET), so a reader must never sum forced onto
+ * layout + style.
+ */
+export interface SpanCounts {
+  layoutCount: Measured<number>;
+  styleCount: Measured<number>;
+  paintCount: Measured<number>;
+  /** the JS-forced SUBSET of `layoutCount`/`styleCount`, never a separate addend */
+  forcedLayoutCount: Measured<number>;
+  layoutInvalidations: Measured<number>;
+  styleInvalidations: Measured<number>;
+  /** tasks >= 50ms ("long tasks") within this span's window */
+  longTaskCount: Measured<number>;
+}
+
+/**
+ * The one labelled unit of measured work in a recording -- the run window (`kind: "run"`), a driver
+ * step (`"step"`), or a user `performance.measure` (`"measure"`). Everything the recording used to
+ * model as separate artifacts (the run, the step index, the per-span bars) is one `Span[]`.
+ *
+ * `aggregation` says how the numbers combine the timed iterations (see SpanAggregation). Fields are
+ * populated by what the rung measured: `breakdown` (the reconciling seven-slice bar) only under
+ * --breakdown / firefox / node; `counts` exactly under --breakdown/--deep/firefox and not-measured on
+ * the default rung; INP/interaction only on a driver step that observed one. Not-measured is an
+ * explicit null, never a fabricated 0.
+ */
+export interface Span {
+  label: string;
+  kind: SpanKind;
+  /**
+   * How this span's numbers combine the timed iterations (see SpanAggregation). A `"first"` STEP span
+   * is aggregated PER FIELD, not uniformly: `wallMs` and `inpMs`/`interaction` are the MEDIAN of the
+   * step's `--iterations` samples (with `perIteration`/`stats` the raw spread), while `counts` and
+   * `breakdown` come from the FIRST timed iteration (counts never scale with --iterations). So a step
+   * reports a median latency over iteration-0 counts, disclosed here rather than implied.
+   */
+  aggregation: SpanAggregation;
+  /** a step's position within its iteration; absent on run/measure spans */
+  index?: number;
+  /**
+   * Headline wall (ms) on the page's own clock: the trace-clock window between the span's marks
+   * (--breakdown/--deep), else the page's performance.now delta (a driver step on the default rung),
+   * else the summed timed samples (a bench run). Null when unmeasured (a step that navigated on a
+   * no-trace rung; see docs/dev/driver-timing.md).
+   */
+  wallMs: number | null;
+  /**
+   * Which clock priced a STEP span's wall: "trace" (the window between its marks; reconciles with
+   * the bar) or "page" (the page's performance.now delta; beside a trace-clock `breakdown` it does
+   * NOT reconcile with the bar, e.g. a step whose end mark was lost). Absent on run/measure spans,
+   * whose clock is fixed by kind (see wallMs), and when wallMs is null.
+   */
+  wallClock?: "trace" | "page";
+  /**
+   * The reconciling seven-slice bar (`Σ slices + idle = wallMs`), when the rung built one
+   * (--breakdown / firefox / node). Absent on the default and --deep rungs, which report identities
+   * and counts but no bar. When `aggregation` is `"median"` this is the lower-median-by-wall
+   * occurrence VERBATIM (a real reconciling sample, not per-slice averages).
+   */
+  breakdown?: Breakdown;
+  /** exact rendering counts windowed to this span's representative occurrence; Measured throughout */
+  counts: SpanCounts;
+  /** worst-interaction INP (ms) for a driver step; null when no interaction crossed the 16ms floor */
+  inpMs?: number | null;
+  /** in-page CWV split of `inpMs` (a driver step); absent when no interaction was observed */
+  interaction?: InteractionTiming | null;
+  /**
+   * Per-iteration wall samples in run order (a driver step under --iterations, or a bench run). Raw,
+   * not just the aggregate: a median hides the bimodality that says "the first iteration was cold".
+   * Absent for a single-sample span.
+   */
+  perIteration?: number[];
+  /** min/median/mean/max over `perIteration`; null below 2 samples */
+  stats?: BenchStats | null;
+  /**
+   * How many real occurrences were merged into `breakdown` (a `measure` label recurring once per
+   * --iteration, and/or within one). Absent means a single occurrence -- the run, a step, an
+   * unrepeated measure. When present (> 1), `aggregation` is `"median"`.
+   */
+  samples?: number;
+  /** wall (ms) of the shortest merged occurrence; disclosed with `samples` (`wallMinMs <= wallMs <= wallMaxMs`) */
+  wallMinMs?: number;
+  /** wall (ms) of the longest merged occurrence; disclosed with `samples` */
+  wallMaxMs?: number;
+  /**
+   * Off-thread compositor frame side track for this span (Chrome --breakdown only). DISPLAY-ONLY:
+   * never summed into `breakdown`, never gated (its counts are scheduler noise). See FrameSideTrack.
+   */
+  frames?: FrameSideTrack;
+}
+
 /** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure). */
 export interface SpanBreakdown {
   label: string;
@@ -458,47 +577,107 @@ export interface SpanBreakdown {
   wallMaxMs?: number;
 }
 
+/**
+ * The one small default artifact a run writes (schema 3): the run summary, the collapsed `Span[]`
+ * (run + steps + user measures), and meta. The raw `.cpuprofile` and the resolved `.cpu.json` model
+ * are separate siblings; the `events[]` DEEP EVENT LOG is written into this file ONLY under --deep
+ * (chrome) and firefox, where blame/`query get`/`query events` read it -- every other rung leaves it
+ * empty, which keeps the default artifact digest-sized.
+ */
 export interface Recording {
   meta: RecordingMeta;
   window: RecordingWindow;
   marks: TimingEntry[];
-  metrics: MetricsBlock;
+  /**
+   * The deep event log: resolved trace events with `.stack` frames and invalidation records. Present
+   * only on a rung that captured one (--deep, firefox); an EMPTY array on the default/--breakdown/
+   * --precise-wall rungs, where `query events`/`get`/`blame` report "not captured at this rung".
+   */
   events: NormalizedEvent[];
   summary: RecordingSummary;
   /**
-   * Per-span seven-slice time breakdowns (--breakdown mode only). Absent otherwise, so existing
-   * recordings are unchanged and every reader that predates the field keeps working. Additive: no
-   * schema major bump.
+   * Every labelled unit of measured work: the run window, each driver step, and every user
+   * `performance.measure`. Always present (at least the run span). The one artifact carries them all;
+   * steps are spans of `kind: "step"`, read as an anatomy by `query span <label>`.
    */
-  breakdowns?: SpanBreakdown[];
+  spans: Span[];
 }
 
 /**
- * Small, context-friendly entry point into a (possibly huge) recording. Read this
- * first, then drill by event `id` (`query get`) or bounded `query` calls.
+ * The WRITE end of a forced flush: a DOM mutation that dirtied layout/style so a later geometry read
+ * had to flush it synchronously. `at` is the mutation's source line.
+ *
+ * Both browser lanes reach it, by different routes (docs/dev/engine-mapping.md):
+ *  - Chrome `--deep`: from the STYLE-kind invalidation records the trace's invalidationTracking
+ *    carries, with the invalidation `reason` (e.g. "Inline CSS style declaration was mutated"). The
+ *    layout-kind `LayoutInvalidationTracking` stack names the forcing READ on style-driven
+ *    invalidations, not the write, so it is never a dirtied-by (measured). This is the FULL write set
+ *    in a flush's gap, which is what lets the thrash detector run.
+ *  - Firefox `--deep`: from a Gecko Reflow/Styles marker's cause stack (its innermost JS caller),
+ *    with no `reason`. Gecko records only the FIRST invalidation since the last flush, so this is one
+ *    write per flush, NOT the full set -- comparable at line granularity but never a thrash input.
  */
-export interface Digest {
-  recording: string;
-  meta: RecordingMeta;
-  window: RecordingWindow;
-  summary: RecordingSummary;
-  slowestEvents: { id: number; kind: EventKind; name: string; durMs: number; at?: string }[];
-  topBlame: { at: string; count: number; durMs: number; kinds: EventKind[] }[];
-  /**
-   * forced (synchronous) layout/style grouped by source; prime optimization targets. On Firefox
-   * these counts are sample-derived (one per read-site sample), while `summary.forcedLayoutCount`
-   * is marker-derived (one per real flush), so the two legitimately differ there.
-   */
-  forced: { at: string; count: number; durMs: number }[];
-  /** longest tasks (>= threshold) as drill-in entry points */
-  longTasks: { id: number; ts: number; durMs: number; dominantKind?: string; at?: string }[];
-  invalidationsByReason: { kind: string; reason: string; count: number; sampleAt?: string }[];
-  /** per-span seven-slice time breakdowns (--breakdown mode only); absent otherwise */
-  breakdowns?: SpanBreakdown[];
-  hints: string[];
+export interface DirtiedByWrite {
+  /** source line of the mutation (the write), relative to root */
+  at: string;
+  /** the Chrome invalidation reason string, when the record carried one (absent on firefox) */
+  reason?: string;
 }
 
-/** Entry-point file for a stepped (driver) run; points at per-step files. */
+/**
+ * One step of the layout-thrashing interleave: a forced flush that re-read geometry an intervening
+ * write had re-dirtied since the previous flush in the same task. `read` is the geometry read that
+ * paid (the flush-site), `dirtiedBy` the mutation(s) that caused the re-dirty (the write end). A
+ * layout-flush step can carry an empty `dirtiedBy`: it is a thrash step because a layout-kind write
+ * sat in its gap, but that write's stack names the read, not a surfaceable write (see DirtiedByWrite).
+ */
+export interface ThrashStep {
+  kind: "layout" | "style";
+  read?: string;
+  dirtiedBy: DirtiedByWrite[];
+}
+
+/**
+ * The layout-thrashing detector's rollup over a window (Chrome `--deep` only). `count` is Σ thrash
+ * steps -- forced flushes re-dirtied since the previous flush in the same top-level task, matched by
+ * kind (a layout flush needs a layout write in its gap, a style flush a style write). `steps` is the
+ * write->read interleave, capped for size; `omitted` counts thrash steps past the cap. Absent, never
+ * a fabricated `count: 0`, on any lane that cannot observe it (the default/--breakdown rungs drop the
+ * invalidation records, Firefox has none).
+ */
+export interface ThrashReport {
+  count: number;
+  steps: ThrashStep[];
+  omitted: number;
+}
+
+/** One write line Gecko blamed (firefox `--deep`), rolled up across the forced flushes that named it. */
+export interface DirtiedByWriteRollup {
+  /** source line of the write (the cause stack's innermost JS caller), relative to root */
+  at: string;
+  /** which flush kinds this write dirtied (layout, style, or both) */
+  kinds: ("layout" | "style")[];
+  /** how many forced flushes named this write as their first-since-last-flush invalidation */
+  count: number;
+}
+
+/**
+ * The firefox `--deep` dirtied-by report: Gecko's native cause-stack write identity as a first-class
+ * rollup. `semantic: "first-invalidation"` marks the honest scope -- Gecko records only the FIRST
+ * invalidation since the last flush, so `writes` is the write Gecko blames, NOT chrome's full write
+ * set. This is why the firefox lane runs no thrash detector and fabricates no forced-by read side
+ * (the read stays the sampled read-site blame on the same gecko pass). See trace/firefox-dirtied.ts.
+ */
+export interface FirefoxDirtiedByReport {
+  semantic: "first-invalidation";
+  writes: DirtiedByWriteRollup[];
+}
+
+/**
+ * One step of a stepped (driver) run, projected from its `kind: "step"` span. Feeds the per-step
+ * `assert` targets and the `query span <step-label>` anatomy; carries no per-step file pointers,
+ * since the whole run is one recording.
+ */
 export interface StepIndexEntry {
   index: number;
   label: string;
@@ -510,23 +689,15 @@ export interface StepIndexEntry {
   /** this step's own min/median/mean/max; null below 2 samples, same contract as elsewhere */
   stats?: BenchStats | null;
   headline: {
-    layoutCount: number;
+    /** Measured (see model/measured.ts): null when the rung captured no trace to count from */
+    layoutCount: Measured<number>;
     /** Measured (see model/measured.ts): null when forced detection was not run for this step */
     forcedLayoutCount: Measured<number>;
-    paintCount: number;
-    layoutInvalidations: number;
-    styleInvalidations: number;
-    longTaskCount: number;
+    paintCount: Measured<number>;
+    layoutInvalidations: Measured<number>;
+    styleInvalidations: Measured<number>;
+    longTaskCount: Measured<number>;
   };
-  recording: string;
-  digest: string;
-}
-
-export interface StepIndex {
-  meta: RecordingMeta;
-  recording: string;
-  steps: StepIndexEntry[];
-  hints: string[];
 }
 
 /** One function aggregated across a CPU sampling profile (self/total time). */

@@ -2,7 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import { buildSpans, recordingLane, spanAggregation } from "../../dist/model/spans.js";
+import {
+  buildSpans,
+  recordingLane,
+  spanAggregation,
+  gateSliceBudgets,
+  diffSpanSlices,
+  resolveSpanSelector,
+} from "../../dist/model/spans.js";
 import { querySpans } from "../../dist/commands/query.js";
 import { tmpDir } from "./helpers.mjs";
 
@@ -48,8 +55,8 @@ const firefoxCpu = {
   },
 };
 
-// Firefox WITH user measures: stored as seven-slice Breakdowns on Recording.breakdowns, paint a
-// MEASURED 0 (off-main-thread, genuinely no main-thread paint) -- distinct from not-measured.
+// Firefox WITH user measures: stored as seven-slice Breakdowns on Recording.breakdowns, paint
+// not-measured (null) -- paint is off-main-thread on firefox, so the bar says so, never a fake 0.
 const firefoxMeasureBreakdowns = [
   {
     label: "run",
@@ -60,7 +67,7 @@ const firefoxMeasureBreakdowns = [
         js: jsSlice(5),
         style: slice(1),
         layout: slice(2),
-        paint: slice(0),
+        paint: null,
         gc: slice(0),
         other: slice(1),
         idle: slice(11),
@@ -76,7 +83,7 @@ const firefoxMeasureBreakdowns = [
         js: jsSlice(2),
         style: slice(0.2),
         layout: slice(0.3),
-        paint: slice(0),
+        paint: null,
         gc: slice(0),
         other: slice(0.1),
         idle: slice(0.4),
@@ -207,15 +214,18 @@ test("buildSpans: firefox CpuModel bar synthesizes the run span; paint is not-me
   assert.equal(run.wallMs, 21.8);
 });
 
-test("buildSpans: firefox stored measure breakdowns win over the CpuModel bar; paint is a measured 0", () => {
+test("buildSpans: firefox stored measure breakdowns win over the CpuModel bar; paint is not-measured (null)", () => {
   // Both a stored breakdowns array AND a cpu bar exist; the richer stored bars must be preferred.
   const result = buildSpans(firefoxMeasureBreakdowns, firefoxCpu, "firefox");
   assert.equal(result.source, "breakdowns");
   const work = result.spans.find((span) => span.label === "work");
   assert.ok(work, "the user performance.measure span is present");
-  // On firefox stored bars, paint is a MEASURED 0 (off-thread), distinct from the synthesized-null.
-  assert.notEqual(work.slices.paint, null);
-  assert.equal(work.slices.paint.ms, 0);
+  // F04: adding a performance.measure must NOT turn firefox paint into a measured 0. Paint is
+  // off-main-thread on firefox, so a stored bar reports it not-measured (null), same as the
+  // synthesized run bar -- never a fake 0 that a --max-slice paint gate would pass on.
+  assert.equal(work.slices.paint, null);
+  const run = result.spans.find((span) => span.label === "run");
+  assert.equal(run.slices.paint, null, "the firefox run stored bar is also not-measured");
 });
 
 test("buildSpans: node rung-1 model splits nothing it cannot see; style/layout/paint are null, not 0", () => {
@@ -250,6 +260,57 @@ test("recordingLane: the engine axis comes from browser/runtime, not meta.target
   assert.equal(recordingLane({ runtime: "chrome" }), "chrome");
 });
 
+// --- F32: span selectors and joins key on kind+label, so a user measure named "run" never
+// collides with the run span ---
+
+// A SpanEntry with just the slice(s) a budget/diff reads.
+const spanEntry = (label, kind, jsMs) => ({
+  label,
+  kind,
+  wallMs: 10,
+  aggregation: spanAggregation(kind),
+  iterations: 1,
+  slices: {
+    js: jsSlice(jsMs),
+    style: slice(0), layout: slice(0), paint: slice(0), gc: slice(0), other: slice(0), idle: slice(10 - jsMs),
+  },
+});
+
+test("resolveSpanSelector: a bare label colliding across kinds errors, listing the qualified forms (F32)", () => {
+  const spans = [spanEntry("run", "run", 5), spanEntry("run", "measure", 2)];
+  assert.throws(() => resolveSpanSelector(spans, "run"), /matches 2 spans of different kinds.*run:run.*measure:run/s);
+  // The qualified form picks exactly one.
+  assert.equal(resolveSpanSelector(spans, "measure:run").kind, "measure");
+  assert.equal(resolveSpanSelector(spans, "run:run").kind, "run");
+});
+
+test("resolveSpanSelector: a bare label that is unambiguous still resolves (F32)", () => {
+  const spans = [spanEntry("run", "run", 5), spanEntry("mount", "step", 3)];
+  assert.equal(resolveSpanSelector(spans, "mount").kind, "step");
+  assert.equal(resolveSpanSelector(spans, "run").kind, "run");
+});
+
+test("gateSliceBudgets: a colliding bare label errors instead of gating the wrong span (F32)", () => {
+  const spans = [spanEntry("run", "run", 5), spanEntry("run", "measure", 2)];
+  assert.throws(() => gateSliceBudgets(spans, { js: 3 }, "run"), /qualified form/);
+  // The qualified selector gates exactly the measure span (js 2 <= 3 => ok).
+  const [gate] = gateSliceBudgets(spans, { js: 3 }, "measure:run");
+  assert.equal(gate.ok, true);
+  assert.equal(gate.value, 2);
+});
+
+test("diffSpanSlices: joins on kind+label, never crossing a measure 'run' with the run span (F32)", () => {
+  const base = [spanEntry("run", "run", 5), spanEntry("run", "measure", 2)];
+  const current = [spanEntry("run", "run", 6), spanEntry("run", "measure", 2)];
+  const diff = diffSpanSlices(base, current);
+  const labels = diff.spans.map((span) => span.label).sort();
+  assert.deepEqual(labels, ["measure:run", "run:run"], "both spans matched by kind+label, displayed qualified");
+  const runSpan = diff.spans.find((span) => span.label === "run:run");
+  assert.equal(runSpan.slices.find((slice) => slice.slice === "js").delta, 1, "run js 5→6 = +1");
+  const measureSpan = diff.spans.find((span) => span.label === "measure:run");
+  assert.equal(measureSpan.slices.find((slice) => slice.slice === "js").delta, 0, "measure js 2→2 = 0, not crossed");
+});
+
 // --- The command: --label filtering, the never-empty guarantee, and the empty-case error ---
 
 function writeRec(name, recording) {
@@ -274,8 +335,8 @@ async function captureJson(runner) {
 
 test("query spans --label keeps the exact match; a miss is an empty array, not an error", async () => {
   const file = writeRec("spans-chrome.json", {
-    meta: { target: "chrome", iterations: 4 },
-    breakdowns: chromeBreakdowns,
+    meta: { schemaVersion: "3", target: "chrome", iterations: 4 },
+    spans: chromeBreakdowns,
   });
 
   const hit = JSON.parse(await captureJson(() => querySpans(file, { json: true, label: "inp" })));
@@ -290,11 +351,14 @@ test("query spans --label keeps the exact match; a miss is an empty array, not a
 });
 
 test("query spans synthesizes the run span from a sibling cpu model (never empty when a bar exists)", async () => {
-  const file = writeRec("spans-ff.json", { meta: { target: "firefox", browser: "firefox" } });
+  const file = writeRec("spans-ff.json", {
+    meta: { schemaVersion: "3", target: "firefox", browser: "firefox" },
+    spans: [],
+  });
   // loadCpuModel finds `<base>.cpu.json` beside the recording; it must carry a functions array.
   writeFileSync(
     path.join(tmpDir, "spans-ff.cpu.json"),
-    JSON.stringify({ functions: [], breakdown: firefoxCpu }),
+    JSON.stringify({ meta: { schemaVersion: "3" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
   const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
@@ -305,6 +369,26 @@ test("query spans synthesizes the run span from a sibling cpu model (never empty
 });
 
 test("query spans errors (non-zero) on a recording that holds no bar at all", async () => {
-  const file = writeRec("spans-old.json", { meta: { target: "chrome" } });
+  const file = writeRec("spans-no-bar.json", {
+    meta: { schemaVersion: "3", target: "chrome" },
+    spans: [],
+  });
   await assert.rejects(() => querySpans(file, { json: true }), /no per-span breakdown/);
+});
+
+// F35: a CORRUPT sibling CPU model must surface, not be swallowed into "no per-span breakdown" (which
+// reads as a rung that never sampled). Only the ENOCPUMODEL "no model here" case is the empty case.
+test("query spans surfaces a corrupt sibling cpu model instead of reporting 'no breakdown' (F35)", async () => {
+  const file = writeRec("spans-corrupt-sibling.json", {
+    meta: { schemaVersion: "3", target: "chrome" },
+    spans: [],
+  });
+  writeFileSync(path.join(tmpDir, "spans-corrupt-sibling.cpu.json"), "{ this is not valid json", "utf8");
+  await assert.rejects(
+    () => querySpans(file, { json: true }),
+    (error) => {
+      assert.doesNotMatch(error.message, /no per-span breakdown/, "corrupt must not read as 'no breakdown'");
+      return true;
+    },
+  );
 });
