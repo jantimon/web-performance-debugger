@@ -76,9 +76,10 @@ frame is the query/assert result alone.
 
 Tape gotchas specific to the shots:
 
-- **`Screenshot` and `Output` paths must be quoted** (`Screenshot "shots/x.png"`); an unquoted path
-  is a parse error. They are written relative to VHS's launch directory (`examples/demo-gif`), not
-  the shell's `cd`.
+- **`Screenshot`/`Output` paths containing a `/` must be quoted** (`Screenshot "shots/x.png"`);
+  an unquoted path with a slash is a parse error, while a bare filename (`Output demo.gif`) works
+  unquoted. Both are written relative to VHS's launch directory (`examples/demo-gif`), not the
+  shell's `cd`.
 - **`Set Width`/`Set Height` are top-of-file only** (VHS ignores them mid-tape). That is why there
   is one tape per shot: each is sized to frame its own output tightly (crop by terminal size, not by
   editing the PNG). Height must fit the whole output including the typed command line; if it is too

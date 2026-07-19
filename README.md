@@ -61,7 +61,7 @@ Full section: [Where did this interaction's time go](#where-did-this-interaction
 ### A line forces synchronous layout
 
 Reading geometry (`offsetTop`, `getBoundingClientRect`, ...) right after a DOM write forces a
-synchronous reflow. `--deep` names the read that forced the flush and the writes that dirtied it.
+synchronous layout flush (a forced reflow). `--deep` names the read that forced the flush and the writes that dirtied it.
 
 ```bash
 wpd record examples/forces-layout.mjs --bench --deep --iterations 5
@@ -301,7 +301,7 @@ report forced-layout counts or blame — those need the `.stack` trace category,
 ## A line forces synchronous layout
 
 Reading geometry (`offsetTop`, `getBoundingClientRect`, ...) right after a DOM write forces a
-synchronous reflow. `--deep` captures the full trace (`.stack` + invalidation tracking) with the
+synchronous layout flush (a forced reflow). `--deep` captures the full trace (`.stack` + invalidation tracking) with the
 sampler off, and reports who read, who wrote, and whether the two interleaved into thrashing:
 
 ```bash
