@@ -7,7 +7,7 @@
 
 <p align="center">
   <img
-    src="https://github.com/user-attachments/assets/0619a085-de4f-49bd-8a62-5c9d5aff4705"
+    src="https://github.com/user-attachments/assets/8fb5cea7-c51a-41b7-b834-2e5cf2cc3d0b"
     alt="wpd query cpu attributes SSR renderToString self-time to react-dom (43.8%), the styling library tailwind-merge (24.2%), and your own component, each down to a source line — the hottest function is tailwind-merge's LRU cache lookup at lib/lru-cache.ts:35"
     width="900">
 </p>
