@@ -150,3 +150,13 @@ to round the parts to whole ms where Chrome does not.
   sub-`run()` phase (an app's `__hydrateMs` / `__mountMs`) is timed in-page on the page's own clock —
   no driver wall, no frame wait, and finer-grained than bench's single `run()` window. `query spans
   latest` lists them; see [cpu-profiling.md](./cpu-profiling.md).
+- **A measure label that repeats gets a median, not iteration 1.** `--iterations`/`--warmup` re-run
+  `run()`, so a label emitted inside `run()` recurs once per iteration (and can recur within one),
+  mirroring `mergeSteps`. `mergeSpanOccurrences` (`model/span-merge.ts`) keys those occurrences by
+  label and reports the one whose `breakdown.wallMs` is the lower median across them, VERBATIM — a
+  real reconciling sample, so `Σ slices + idle = wall` still holds byte-for-byte (per-slice averaging
+  would fabricate a bar no occurrence produced). The merged span discloses `aggregation: "median"`,
+  `samples`, and the `wallMinMs`/`wallMaxMs` spread; single-occurrence measures pass through as
+  `"first"` and run spans stay `"sum"`. Occurrence begin/end pairing is FIFO per label
+  (`breakdown-spans.ts`), which handles sequential same-label repeats but cross-pairs nested or
+  overlapping same-label measures into the wrong window.

@@ -63,10 +63,12 @@ Flow: **`record` produces a `Recording` (model/recording.ts) → `query`/`assert
 `src/cli.ts` (commander) is the only entry point and wires every command. The model is split across
 `model/`: `recording.ts` (the `Recording`/`EventKind`/`Breakdown` types), `marks.ts` (the `wpd:*`
 mark namespace), `time.ts` (clock/us↔ms helpers), `measured.ts` (the `Measured<T>` not-measured-vs-0
-honesty wrapper), `reconcile.ts` (slice-sum-vs-wall residual), and `spans.ts` (the `query spans`
-adapter). `record` orchestration lives in `src/record/`: `passplan.ts` (the pass specs +
-`noteCountScope`/`blameSemanticFor`), `runpass.ts` (runs a spec, per-pass), `artifacts.ts`
-(serialization), `breakdown-spans.ts` (per-span bar assembly), and `notes.ts` (`meta.notes`).
+honesty wrapper), `reconcile.ts` (slice-sum-vs-wall residual), `span-merge.ts`
+(`mergeSpanOccurrences`: collapse a repeated `measure` label to its lower-median-by-wall occurrence,
+verbatim), and `spans.ts` (the `query spans` adapter). `record` orchestration lives in
+`src/record/`: `passplan.ts` (the pass specs + `noteCountScope`/`blameSemanticFor`), `runpass.ts`
+(runs a spec, per-pass), `artifacts.ts` (serialization), `breakdown-spans.ts` (per-span bar assembly,
+FIFO measure pairing, then `mergeSpanOccurrences`), and `notes.ts` (`meta.notes`).
 
 ### Two execution modes (this is the central design fork)
 
@@ -137,7 +139,10 @@ model and says so. Measurements: [docs/dev/cpu-profiling.md](docs/dev/cpu-profil
 `.stack` and MINUS `invalidationTracking`, plus gc events, `keepThreadIds` on) with the sampler
 riding it, so trace events and CPU samples share a clock and `trace/breakdown.ts` tiles a
 reconciling `js·style·layout·paint·gc·other·idle` bar per span (the run window plus every user
-`performance.measure`). [measured] the light trace keeps self-time clean (+0-1%) at ~2-5% wall.
+`performance.measure`). A `measure` label emitted every `--iteration` recurs, and its occurrences are
+its samples: `mergeSpanOccurrences` reports the lower-median-by-wall occurrence VERBATIM
+(`aggregation: "median"`, `samples`, `wallMin/MaxMs`), never a per-slice average, so the bar stays a
+real reconciling sample. [measured] the light trace keeps self-time clean (+0-1%) at ~2-5% wall.
 Dropping `.stack` means no forced counts/blame, so this mode reports them **`null`, never 0**; and
 being the only pass, its counts total across `--iterations` (`noteCountScope` says so). The CLI
 rejects `--breakdown` on firefox/node and with the isolation flags.
@@ -185,7 +190,9 @@ Two things this rule is **not**, both documented in
 - `commands/query.ts` = 6 verbs: `digest`, `index`, `spans`, `events`, `blame`, `get` (plus `cpu`/
   `frame` in `commands/cpu.ts`). `query spans` (via `model/spans.ts`) is a read-only OUTPUT ADAPTER
   that folds whatever bar a recording already holds (seven-slice `SpanBreakdown` or four/six-slice
-  `CpuBreakdown`) onto one `UnifiedSlices` shape — no new stored type. `assert.ts` gates against
+  `CpuBreakdown`) onto one `UnifiedSlices` shape — no new stored type — surfacing each span's
+  `aggregation` (`first`/`sum`/`median`) and, for a merged measure, its `samples`/wall spread.
+  `assert.ts` gates against
   thresholds (recording *or* StepIndex), `diff.ts` compares two recordings.
 - `commands/resolve.ts`: the `latest` keyword resolves via a **cwd-keyed** pointer file under the XDG
   state dir (`$XDG_STATE_HOME/wpd/pointers/<hash>.json`, else `~/.local/state/wpd/pointers/`) that
@@ -299,7 +306,9 @@ the `cpu` feature populates the per-sample `threadCPUDelta` column, whose ~0 val
 `idle` signal `computeGeckoCpuBreakdown` (`profile/gecko-breakdown.ts`) tiles into a
 `js·style·layout·browser·gc·idle` bar (style/layout from the sampled Layout-category frame). Firefox
 `performance.measure` spans (from UserTiming interval markers) become per-span breakdowns on
-`Recording.breakdowns`. `parseGecko` **throws** on a missing `JavaScript` category or an empty thread
+`Recording.breakdowns`, and a label repeated across `--iterations` is collapsed by the same
+`mergeSpanOccurrences` the chrome lane uses (lower-median-by-wall occurrence, verbatim). `parseGecko`
+**throws** on a missing `JavaScript` category or an empty thread
 list: both would otherwise yield an empty-but-valid model reporting ~0 scripting time, the fake zero
 this lane refuses to emit. `isToolFrameUrl` also drops `/__wpd_blank__` (BiDi attributes bench
 harness frames to the served host page). Fixture: a trimmed real dump at
@@ -331,6 +340,10 @@ all live there with the probes that establish them.
 - **No em-dashes or AI-prose in comments.** Use ASCII punctuation (`:`, `;`, `()`, `.`) and keep
   comments terse and technical; drop chatty tells (`à la`, `Best-guess`, `Nudge the engine`).
   The standalone `"—"` used as a missing-value placeholder in table *output* is allowed.
+- **No hedging endcaps.** Do not append an unrequested caveat, counterargument, or moralizing endcap
+  to a sharp claim in a comment or doc merely to demonstrate balance. If a boundary condition changes
+  the truth of the claim, put it in the mechanism or scope the claim correctly. If it does not, cut
+  it. Accuracy belongs in the argument; model self-protection does not.
 - **No archeology.** Comments and docs describe the code as it is now, never how it used to be.
   Cut past-tense narration ("used to", "was null before", "until 0.5.0", "the bug this fixes",
   "measured before this was fixed"), version/PR numbers used as rationale, and incident logs.
@@ -342,6 +355,10 @@ all live there with the probes that establish them.
   which is where history lives. This applies to `docs/dev/` too: state the finding, not its
   discovery story.
 - Per the user's global rule: use `trash`, never `rm -rf`.
+- **Commit messages carry no tooling attribution.** Do NOT append a `Co-Authored-By:` trailer, a
+  `🤖 Generated with Claude Code` line, a `claude.ai/code/...` session link, or any similar
+  advertisement to commit messages or PR bodies. Write the message as the change itself, nothing
+  more.
 - **Changesets are release notes, not design docs.** A changeset becomes a `CHANGELOG.md` entry read
   by someone deciding whether to upgrade: say what changed, what breaks, and what to do about it.
   Budget **~5 lines, ~15 for a breaking change**. The reasoning (why the bug existed, what was
