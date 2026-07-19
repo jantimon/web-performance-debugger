@@ -11,6 +11,7 @@ import type {
   CpuSystem,
   EventKind,
   FrameSideTrack,
+  SpanAggregation,
   SpanKind,
 } from "./recording.js";
 import type { Measured } from "./measured.js";
@@ -125,7 +126,7 @@ export interface SpanEntry {
    * At `iterations === 1` with no repeated measures the labels coincide; the label is still the
    * truthful one for the span.
    */
-  aggregation: "first" | "sum" | "median";
+  aggregation: SpanAggregation;
   /** timed iterations behind this recording (`meta.iterations`); 1 unless `--iterations` repeated run() */
   iterations: number;
   slices: UnifiedSlices;

@@ -8,6 +8,7 @@ import type {
   Breakdown,
   CpuBreakdown,
   RecordingMeta,
+  SpanAggregation,
   SpanBreakdown,
   SpanKind,
 } from "./recording.js";
@@ -24,7 +25,7 @@ import { gateMeasured, type Measured } from "./measured.js";
  * the truthful description of what the numbers are. Single source of truth for the adapter and the
  * human printers.
  */
-export function spanAggregation(kind: SpanKind, samples?: number): "first" | "sum" | "median" {
+export function spanAggregation(kind: SpanKind, samples?: number): SpanAggregation {
   if (kind === "run") return "sum";
   if (kind === "measure" && samples != null && samples > 1) return "median";
   return "first";

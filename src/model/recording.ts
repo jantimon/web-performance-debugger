@@ -375,6 +375,17 @@ export interface Breakdown {
 /** Which kind of span a breakdown describes. */
 export type SpanKind = "run" | "step" | "measure";
 
+/**
+ * How a span's numbers combine the recording's timed iterations. `"sum"`: the window spans every
+ * iteration, so the numbers are a TOTAL across them (the run span). `"first"`: the numbers describe
+ * ONE iteration -- a step windowed to the first timed iteration (counts never scale with
+ * `--iterations`), or a `performance.measure` seen once. `"median"`: a `performance.measure` that
+ * recurred, reported as the lower-median-by-wall occurrence (a real reconciling sample, not per-slice
+ * averages). The one value both the stored bars (`model/spans.ts` `spanAggregation`) and the span
+ * model speak in.
+ */
+export type SpanAggregation = "first" | "sum" | "median";
+
 /** Terminal verdict of a compositor frame, from PipelineReporter's `frame_reporter.state`. */
 export type FrameState = "presented" | "presentedPartial" | "dropped" | "noUpdate";
 
