@@ -47,9 +47,13 @@ and CDP are bit-identical.
 The shipped `styleCount` is the trace `UpdateLayoutTree` count with `ParseAuthorStyleSheet`
 **excluded**: summing every `style` event gives recalc + parses, so `summarize` skips
 `STYLE_PARSE_NAMES` to match what Blink's `RecalcStyleCount` reports (Blink increments that counter
-without ever counting the parse). `ParseAuthorStyleSheet`'s time is real main-thread style work, so
-`taxonomy.ts` keeps it mapped to the `style` slice (the breakdown bar bills it); only the *count*
-drops it.
+without ever counting the parse). **The duration side excludes it too.** CDP `RecalcStyleDuration`
+also fences out the stylesheet parse, so `summarize` drops `STYLE_PARSE_NAMES` from `styleMs` as well
+(the parse-excluded trace sum tracks `RecalcStyleDuration` to a few µs on a light trace); **[measured]**
+a 3.5 MB sheet's parse is ~7.4 ms and would swamp a sub-0.1 ms recalc. But `ParseAuthorStyleSheet`'s
+time is real main-thread style work, so `taxonomy.ts` keeps it mapped to the `style` slice and the
+**breakdown bar bills it**: the bar's `style` slice includes the parse, while `styleCount` and
+`styleMs` both exclude it to stay 1:1 with `RecalcStyleCount`/`RecalcStyleDuration`.
 
 **No-op mutations** (a write that sets the same value) increment **neither** the counters nor the
 events — both correctly skip them.
@@ -112,7 +116,9 @@ So when the marker thread carries **zero** in-window layout/paint but another th
 out-of-process iframe runs its own layout on its own thread while the top (marker) thread keeps doing
 the top page's work, so the marker thread's count stays > 0 and it wins — the OOPIF never steals the
 attribution, however much layout it does. A single-process recording (marker thread did the work)
-always resolves to `via: "marker"`, unchanged. The work check is windowed start-onward, so a
+always resolves to `via: "marker"`, unchanged. When no `wpd:run:start` marker exists at all,
+`mainThread` has no thread identity to key on and falls back to the busiest layout/paint thread
+(`via: "heuristic"`). The work check is windowed start-onward, so a
 blank-host flush **before** `run:start` does not mask the swap.
 
 ## `Paint` is exact, and it is per-chunk

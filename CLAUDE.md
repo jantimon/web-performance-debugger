@@ -38,26 +38,26 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 
 CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
 unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). The **191** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+`test:e2e`). The **265** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
 `dist/` (classify/summarize/analysis/format, plus the breakdown engine, `query spans` adapter, the
 `query span` anatomy + removed-verb stubs, the thrash detector, the firefox dirtied-by report, the
-gecko converter, the XDG pointer, frame side track, and the `facts.md` ledger drift check). The **21** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
+gecko converter, the XDG pointer, frame side track, and the `facts.md` ledger drift check). The **24** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
 built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
 `--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`),
 `query spans`, `query span` (a run span's bar + hot functions, a --deep step's counts + forced), the
 digest/index removal, and the frame side track. They **self-skip when Chrome is not installed** (so
 `npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a
-missing browser into a hard failure so the e2e job can't silently pass. **9** firefox e2e tests
+missing browser into a hard failure so the e2e job can't silently pass. **11** firefox e2e tests
 (`test/firefox.e2e.test.mjs`, self-skipping) cover the gecko lane end-to-end.
 The broader smoke tests below stay manual (always `npm run build` first — the CLI runs `dist/`):
 
 ```bash
 node dist/cli.js record examples/forces-layout.mjs --bench --iterations 5  # in-page; forced-layout detection
 node dist/cli.js query blame latest --forced                        # source-attributed thrashing
-node dist/cli.js record examples/counter-steps.mjs --html examples/react-counter/dist/index.html  # driver (default)
+node dist/cli.js record examples/counter-steps.mjs --url examples/react-counter/dist/index.html  # driver (default)
 node dist/cli.js query spans latest                                 # per-span overview (run + steps)
 node dist/cli.js query span latest "add rows"                       # one span's full anatomy
-# examples/react-counter is a Vite app: cd examples/react-counter && npm install && npm run build (needed once for --html)
+# examples/react-counter is a Vite app: cd examples/react-counter && npm install && npm run build (needed once for --url)
 ```
 
 ## Architecture
@@ -69,10 +69,16 @@ mark namespace), `time.ts` (clock/us↔ms helpers), `measured.ts` (the `Measured
 honesty wrapper), `reconcile.ts` (slice-sum-vs-wall residual), `span-merge.ts`
 (`mergeSpanOccurrences`: collapse a repeated `measure` label to its lower-median-by-wall occurrence,
 verbatim), `span.ts`/`spans.ts` (the stored `Span` count projection + the `query spans` adapter),
-`rung.ts` (rung/passes predicates like `isFirefoxDeep`/`isGeckoRung`), and `artifact.ts` (the
-schema-version + recording-shape gates every reader passes through). `record` orchestration lives in
+`rung.ts` (rung/passes predicates like `isFirefoxDeep`/`isGeckoRung`), `artifact.ts` (the
+schema-version + recording-shape gates every reader passes through), `query.ts` (the derived view
+shapes the `query`/`cpu-diff` verbs emit under `--format json|toon`, kept off the stored types so the
+JSON contract cannot silently drift), and `compat.ts` (`comparabilityMismatches`: the capture axes
+that make a `diff`/`cpu-diff` `--fail-on-regression` gate meaningless, so it refuses instead of
+fabricating a pass/fail). `record` orchestration lives in
 `src/record/`: `capture.ts` (`captureFor` picks the ONE capture rung + `capabilitiesFor`/
-`blameSemanticFor`/`countScopeNote`), `runpass.ts` (runs that one capture), `artifacts.ts`
+`blameSemanticFor`/`countScopeNote`), `page-option.ts` (`PageResolution`: resolves the `--url <value>`
+host page, or its hidden `--html` alias, to a live URL to navigate or a local HTML file to serve),
+`runpass.ts` (runs that one capture), `artifacts.ts`
 (serialization), `spans-build.ts` (assembles `Span[]` from the run/steps/summary), `breakdown-spans.ts`
 (per-span bar assembly, FIFO measure pairing, then `mergeSpanOccurrences`), and `notes.ts`
 (`meta.notes`).
@@ -102,8 +108,19 @@ not within the run: the repetitions are a label's samples, so
 `DriverStep` carries `markIndex` separately from `index` -- the trace needs a name that is unique
 per pass, while `index` is the step's stable position within an iteration.
 
-Modules/HTML must live under the cwd (the static server is rooted there). `--url` profiles any
-local/remote server; `--html` a local file; neither => blank page.
+Modules/HTML must live under the cwd (the static server is rooted there). `--url` names the host page
+(a live URL or a local HTML file, `page-option.ts`); `--html` is its hidden alias. A module + `--url`
+runs the module against that host; a module + no `--url` runs it against a blank page. **No module +
+`--url` is the zero-authoring on-ramp**: the built-in load flow navigates to the target inside one
+`"load"` step and settles, so the recorded window is the page's own cold boot (`runpass.ts`,
+`driver.ts`). No module and no `--url` errors.
+
+`browser/launch.ts` launches Chrome **sandboxed by default**; a sandbox startup failure is re-thrown
+as guidance naming the opt-in (`--disable-browser-sandbox`, for containers/restricted CI), never a
+silent unsandboxed retry (`isSandboxLaunchError`/`sandboxLaunchError`). A transient cross-process boot
+failure (`net::ERR_INVALID_HANDLE`, "detached Frame", common on a heavy `--url` boot) IS retried, on a
+fresh browser, up to a bounded limit (`retryTransientNav`); `notes.ts` records that the numbers are
+from the successful attempt.
 
 ### One capture per run: the rung ladder (why numbers are trustworthy)
 
@@ -144,8 +161,11 @@ invocations), and the CLI rejects `--breakdown`/`--precise-wall` on firefox/node
 **Counts are trace-derived, main-thread windowed.** There are no CDP/`getMetrics` counters (`cdp.ts`
 holds only the profiler calls). `metrics/summarize.ts` sums `Layout`/`UpdateLayoutTree`(-parse)/
 `Paint` on the renderer main-thread pid/tid the breakdown bar tiles (`trace/main-thread.ts`), which
-reproduces the old top-process scope (an OOPIF's own-process count is a separate off-thread count,
-never summed). `layoutMs`/`styleMs`/`paintMs` are now **wall-tier** trace `base::TimeTicks` ms (~1%
+reproduces the top-process scope (an OOPIF's own-process count is a separate off-thread count,
+never summed). A `--url` boot navigates the blank host page to the target on a NEW renderer process,
+so `wpd:run:start` lands on the pre-navigation renderer; `main-thread.ts` **re-anchors** to the thread
+that carried the post-navigation work (and `notes.ts` says the counts describe the loaded page, not
+the blank host). `layoutMs`/`styleMs`/`paintMs` are now **wall-tier** trace `base::TimeTicks` ms (~1%
 directional), valid only on the light trace. Because every invocation is one pass that runs every
 iteration for the wall samples, a counting rung's counts **total across `--iterations`**
 (`countScopeNote` says so); a driver step's counts window to iteration 0 (`labelWindows`), so per-step
@@ -432,11 +452,12 @@ lean). **See `examples/demo-gif/README.md` for the render/publish steps.** Inter
 What it shows: the `--target node` CPU lane attributing SSR `renderToString` self-time to
 `react-dom` vs a styling library vs your component, down to a source line, via `query cpu`. It runs
 **`examples/ssr-demo`** (in this repo, JSX-free so no build step): `react-dom` ~44% vs
-`tailwind-merge` ~22% vs `app` ~9%, with `tailwind-merge get (lib/lru-cache.ts:35)` the single
-hottest function (~21%) as the punchline. Both the `record` and `query cpu` output carry the
-four-slice CPU breakdown bar (`js · native · gc · idle`, node's engine slice is `native`), and the
-`query cpu` headline names the per-iteration divisor (`sum of 250 iterations`), so the GIF shows the
-slice split and the divisor alongside the package rollup.
+`tailwind-merge` ~23% vs `wpd-ssr-demo` (your component) ~10%, with `tailwind-merge get
+(lib/lru-cache.ts:35)` the single hottest function (~22%) as the punchline. Both the `record` and
+`query cpu` output carry the four-slice CPU breakdown bar (`js · gc · native · idle`, node's engine
+slice is `native`), and the `query cpu` headline names the per-iteration divisor (`summed over the
+whole window across 250 iterations (divide by 250 ...)`), so the GIF shows the slice split and the
+divisor alongside the package rollup.
 
 **Keep this demo runnable from a clean checkout**; that property is the point, not the exact
 percentages. A demo that depends on a pre-compiled bundle from a private repo can only be

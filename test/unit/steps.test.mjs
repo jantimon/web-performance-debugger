@@ -136,9 +136,9 @@ test("mergeSteps pairs by label, not by position", () => {
   assert.equal(merged[0].wallMs, 10);
 });
 
-test("mergeSteps throws when the passes recorded different steps (never emits a null window)", () => {
+test("mergeSteps throws when the timings and trace windows disagree on steps (never emits a null window)", () => {
   const timing = [driverStep(0, "mount"), driverStep(1, "hydrate"), driverStep(2, "inp")];
-  // The trace pass took a different path and skipped "hydrate". Index-keyed, "inp" would silently
+  // The trace windows took a different path and skipped "hydrate". Index-keyed, "inp" would silently
   // inherit "hydrate"'s window and every count for the unmatched step would read 0 -- which
   // `assert --max-forced 0` reads as a pass.
   const traced = [

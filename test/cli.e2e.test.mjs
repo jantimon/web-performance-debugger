@@ -33,7 +33,7 @@ if (!ready && process.env.WPD_E2E_REQUIRED) {
 }
 const e2e = ready ? test : (name, _opts, fn) => test(name, { skip: "Chrome not installed" }, fn ?? _opts);
 
-// Chrome launch + two isolated passes; generous so a slow CI runner does not flake.
+// Chrome launch + one capture pass; generous so a slow CI runner does not flake.
 const TIMEOUT_MS = 180_000;
 
 function runCli(args) {

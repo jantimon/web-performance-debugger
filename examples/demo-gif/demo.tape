@@ -3,10 +3,10 @@
 #
 # Edit the one absolute path in the Hide block for your machine.
 #
-# This used to copy a pre-compiled bundle out of a private benchmarks repo, which meant only one
-# person on one machine could re-render it. It duly rotted: the bundle was deleted, and the GIF went
-# on demonstrating a CLI flag that had been removed. It now runs examples/ssr-demo, which is
-# committed here and needs no build step, so anyone can regenerate this.
+# It runs examples/ssr-demo, which is committed here and needs no build step, so anyone can
+# regenerate this from a clean checkout. Keep it that way: a demo that leans on a pre-compiled bundle
+# from a private repo can only be re-rendered by one person on one machine, and rots unnoticed until
+# the published GIF demonstrates a CLI flag that no longer exists.
 
 Output demo.gif
 

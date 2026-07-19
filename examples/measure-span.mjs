@@ -1,8 +1,9 @@
-// The §14 mark bridge: a slice of work wrapped in performance.mark/measure becomes its own
-// reconciling breakdown span, attributed the same way as the whole run. Bench mode: run() executes
-// inside the page, so document/window/performance are all live.
+// The mark bridge: a slice of work wrapped in performance.mark/measure becomes its own reconciling
+// span (recording.spans, kind "measure"), attributed the same way as the whole run. Bench mode:
+// run() executes inside the page, so document/window/performance are all live.
 // Run: node dist/cli.js record examples/measure-span.mjs --bench --target firefox --iterations 5
-//      node dist/cli.js query digest latest --json   (see recording.breakdowns, kind "measure")
+//      node dist/cli.js query spans latest             # the "work" measure span alongside the run
+//      node dist/cli.js query span latest work         # its full anatomy (bar + hot functions)
 
 export async function run() {
   const host = document.createElement("div");
