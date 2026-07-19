@@ -81,8 +81,9 @@ export async function assertCmd(
   const wallIsPerStep =
     obj?.meta?.driver === true && obj?.meta?.step == null && !Array.isArray(obj.steps);
 
+  const isStepIndex = Array.isArray(obj.steps) && typeof obj.recording === "string";
   const targets: { label: string; m: Metrics }[] = [];
-  if (Array.isArray(obj.steps) && typeof obj.recording === "string") {
+  if (isStepIndex) {
     const idx = obj as StepIndex;
     for (const step of idx.steps) {
       targets.push({
@@ -138,7 +139,8 @@ export async function assertCmd(
   // Slice budgets gate the target span's per-slice ms, a different axis from the count/timing
   // targets above: they read the recording's breakdown bar (`query spans` shape), not the summary.
   if (sliceBudgetKeys.length) {
-    const spans = await loadSpanEntries(file);
+    // A step index carries no bars itself; its slice data lives in the recording it points at.
+    const spans = await loadSpanEntries(isStepIndex ? (obj as StepIndex).recording : abs);
     const targetLabel = label ?? "run";
     for (const gate of gateSliceBudgets(spans, sliceBudgets, targetLabel)) {
       rows.push([
@@ -149,7 +151,7 @@ export async function assertCmd(
         gate.ok ? "ok" : "FAIL",
       ]);
       if (!gate.measured)
-        violations.push(`${gate.target}: ${gate.reason}; cannot satisfy max ${gate.max}`);
+        violations.push(`${gate.target}: --max-slice ${gate.slice}=${gate.max}: ${gate.reason}`);
       else if (!gate.ok)
         violations.push(`${gate.target}: ${gate.slice} slice ${num(gate.value!)} ms > ${gate.max}`);
     }

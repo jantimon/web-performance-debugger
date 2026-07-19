@@ -811,10 +811,14 @@ export async function loadCpuModel(file: string): Promise<CpuModel> {
       path.extname(sibling).toLowerCase(),
     );
     if (fallback && Array.isArray((fallback as CpuModel).functions)) return fallback as CpuModel;
-  } catch {
-    // fall through to the error below
+  } catch (error) {
+    // A missing sibling is the expected "no CPU model" case, reported below; a corrupt or
+    // unreadable sibling surfaces as its own error rather than masquerading as absence.
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
   }
-  throw new Error(
+  const noModel = new Error(
     `${file} is not a CPU model. Pass the .cpu.json, or use 'latest' after a record run that was not given --no-cpu-profile.`,
   );
+  (noModel as NodeJS.ErrnoException).code = "ENOCPUMODEL";
+  throw noModel;
 }

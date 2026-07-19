@@ -242,6 +242,43 @@ test("assertCmd: --max-slice on an exceeded slice fails the gate (exit 1)", asyn
   assert.equal(code, 1);
 });
 
+test("assertCmd: --max-slice on a step-index file reads the recording it points at", async () => {
+  const recording = writeBreakdownRecording("slice-index-rec.json", [storedRun()]);
+  const indexFile = path.join(tmpDir, "slice-index.index.json");
+  writeFileSync(
+    indexFile,
+    JSON.stringify({
+      recording,
+      steps: [
+        {
+          index: 0,
+          label: "click",
+          headline: {
+            forcedLayoutCount: 0, layoutCount: 0, paintCount: 0,
+            layoutInvalidations: 0, styleInvalidations: 0, longTaskCount: 0,
+          },
+          inpMs: null,
+          wallMs: null,
+        },
+      ],
+    }),
+    "utf8",
+  );
+  const code = await captureExitCode(() => assertCmd(indexFile, {}, { js: 6 }));
+  assert.equal(code, undefined, "slice data comes from the recording behind the index");
+});
+
+test("assertCmd: a corrupt sibling CPU model surfaces instead of reading as no slice data", async () => {
+  const file = path.join(tmpDir, "no-bars.json");
+  writeFileSync(
+    file,
+    JSON.stringify({ meta: { target: "chrome", iterations: 1 }, summary: emptySummary }),
+    "utf8",
+  );
+  writeFileSync(path.join(tmpDir, "no-bars.cpu.json"), "{ not json", "utf8");
+  await assert.rejects(() => assertCmd(file, {}, { js: 6 }));
+});
+
 test("diffCmd: per-span slice deltas are advisory and never fail the gate", async () => {
   const base = writeBreakdownRecording("diff-slice-base.json", [
     { ...storedRun(), samples: undefined },

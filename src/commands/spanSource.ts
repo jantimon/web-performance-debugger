@@ -24,8 +24,11 @@ export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null>
   if (!rec.breakdowns?.length) {
     try {
       cpuBreakdown = (await loadCpuModel(abs)).breakdown;
-    } catch {
-      // No sibling CPU model: buildSpans falls back to null, reported as "no slice data".
+    } catch (error) {
+      // No CPU model beside the recording means "no bar", which buildSpans reports as no
+      // slice data. Anything else (corrupt JSON, unreadable file) surfaces: swallowing it
+      // would report real slice data as absent.
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOCPUMODEL") throw error;
     }
   }
   // An older recording may predate `meta`; it also has no bar, so buildSpans returns null anyway.
