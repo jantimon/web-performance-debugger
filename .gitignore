@@ -3,7 +3,11 @@ dist/
 recordings/
 .wpd-profile/
 *.png
-examples/demo-gif/demo.gif
+# The routing-section terminal shots are committed (they render on GitHub and npm rewrites the
+# relative paths via the repository field); the render's throwaway GIFs are not.
+!examples/demo-gif/shots/
+!examples/demo-gif/shots/*.png
+examples/demo-gif/*.gif
 *.tsbuildinfo
 *.tgz
 .DS_Store
