@@ -69,7 +69,8 @@ export function notMeasuredSpanCounts(): SpanCounts {
  * carries no per-span counters (see notMeasuredSpanCounts).
  *
  * This is the un-collapsed view of the same occurrences `mergeSpanOccurrences` (model/span-merge.ts)
- * reduces to one stored bar per label: it keeps every sample rather than picking the lower-median one.
+ * reduces to one stored bar per (kind, label): it keeps every sample rather than picking the
+ * lower-median one.
  */
 export function spansFromOccurrences(occurrences: SpanBreakdown[]): Span[] {
   const byKeyedLabel = new Map<string, { label: string; kind: SpanKind; samples: SpanSample[] }>();

@@ -20,13 +20,13 @@ const bar = (wallMs, mark) => ({
 });
 const occurrence = (label, kind, wallMs, mark) => ({ label, kind, breakdown: bar(wallMs, mark) });
 
-test("spansFromOccurrences: one Span per label, each occurrence a sample carrying its own breakdown", () => {
+test("spansFromOccurrences: one Span per kind:label, each occurrence a sample carrying its own breakdown", () => {
   const spans = spansFromOccurrences([
     occurrence("run", "run", 20, "run"),
     occurrence("work", "measure", 3, "w0"),
     occurrence("work", "measure", 1, "w1"),
   ]);
-  assert.equal(spans.length, 2, "run and work, grouped by label");
+  assert.equal(spans.length, 2, "run and work, grouped by kind:label");
   const work = spans.find((span) => span.label === "work");
   assert.equal(work.samples.length, 2, "both occurrences become samples, not collapsed");
   assert.deepEqual(
