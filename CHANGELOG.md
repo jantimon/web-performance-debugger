@@ -1,5 +1,58 @@
 # @jantimon/web-performance-debugger
 
+## 0.11.0
+
+### Minor Changes
+
+- 01b2c3d: `query span <label>` now shows per-span hot functions for step and measure spans, not just the run
+  window. On a `--breakdown` chrome recording (step and measure spans) and a firefox recording (measure
+  spans), the anatomy ranks the span's own hottest JS functions from the CPU sampler, resolved to
+  source via the sibling CPU model.
+
+  The list lives on the CPU-sampler scripting axis, so its `self %` is each function's share of the
+  span's pooled JS samples (the panel discloses the pooled sample and occurrence counts); it is never
+  reconciled against the bar's `js` slice. A measure pools samples across all its occurrences; a span
+  with too few samples reports the ranking as suppressed with a raise-`--iterations` hint rather than a
+  noisy top-N. The `hot.scope` / `hot.pooledSamples` / `hot.occurrences` / `hot.suppressed` fields are
+  new in the `query span --json` output; `hot.sampleCount` is replaced by `hot.pooledSamples`, and
+  stored per-span hot rows carry no `totalMs` (it was run-wide, not span-local).
+
+### Patch Changes
+
+- 08f4301: Fixes `--url` boot measurement across a cross-process navigation. A `--url` boot navigates wpd's
+  blank host page to the target; when the target is a different site, Chrome swaps the renderer
+  process, and `wpd:run:start` was left on the pre-navigation thread. `--breakdown`/`--deep` then
+  reported the boot as ~100% idle with **zero** layout/style/paint counts, and `assert --max-layouts`
+  passed at 0 on a page that clearly laid out. wpd now re-anchors counts and the reconciling bar to the
+  renderer the page navigated into (disclosed in a note); single-process recordings and out-of-process
+  iframes are unchanged. If you gated a real `--url` boot on these counts, the numbers were wrong and
+  now reflect the loaded page.
+
+  Also hardens the `--url` path: a transient cross-process navigation failure (`net::ERR_INVALID_HANDLE`
+  and similar) is retried on a fresh browser up to twice instead of a hard exit; a positionless
+  sourcemap frame no longer crashes the run with `` `line` must be greater than 0 ``; webpack's
+  module-loader runtime (`webpack/bootstrap`, `webpack/runtime/*`) is bucketed as `(webpack)` instead of
+  inflating your `app` self-time; and `--iterations` on the default `--url` rung now says plainly that a
+  per-iteration wall/median needs `--breakdown`, rather than implying one exists.
+
+- f82db2f: `cpu-diff --fail-on-regression` now refuses to gate across an `iterations` or `cpu-throttle`
+  mismatch. CPU self-time totals across every sampled iteration and stretches under throttling, so
+  those axes fabricated a self-time "regression" from pure config.
+
+  `diff --fail-on-regression` help now promises what it actually gates: exit 1 on a gated exact-count
+  increase; INP and other wall-tier numbers stay advisory (they were never gated).
+
+  Sourcemap fetches that answer 401/403 now report a distinct `auth-required` diagnostic whose remedy
+  names the auth wall instead of citing CORS (a browser-only concept that cannot apply to wpd's
+  node-side, cookie-less fetch).
+
+  The committed `package-lock.json` version now tracks `package.json`, with a unit test guarding
+  against future drift.
+
+- 6c8406b: `query spans` drill-down tips now echo the target you passed (e.g. `latest`) instead of the resolved
+  absolute recording path, matching every other command and keeping your home directory out of pasted
+  output, screenshots, and recorded terminals.
+
 ## 0.10.0
 
 ### Minor Changes
