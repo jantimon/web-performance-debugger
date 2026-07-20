@@ -36,6 +36,14 @@ export interface CaptureConfig {
   categories: string[] | null;
   /** run the CPU sampler on this pass */
   cpu: boolean;
+  /**
+   * Where this pass's CPU samples come from when `cpu` is true:
+   *   - "cdp"   the CDP Profiler.start/stop sampler (default rung, and firefox uses the gecko dump).
+   *   - "trace" the trace's `disabled-by-default-v8.cpu_profiler` ProfileChunk stream (--breakdown),
+   *             continuous across a cross-document navigation. On this source the CDP profiler is NOT
+   *             started -- only ONE profiler ever runs.
+   */
+  cpuSource: "cdp" | "trace";
   /** keep each trace event's pid/tid so counts and the bar window to the one renderer main thread */
   keepThreadIds: boolean;
   /** Firefox: run under the Gecko profiler; the shutdown dump yields samples AND markers (blame) */
@@ -55,16 +63,19 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
     // rung name ("gecko-deep") records that the dirtied-by write report was requested. capabilitiesFor
     // and blameSemanticFor key off `gecko` (still true), so nothing about what is captured moves.
     const rung: Rung = opts.deep ? "gecko-deep" : "gecko";
-    return { rung, categories: null, cpu: gecko, keepThreadIds: false, gecko };
+    return { rung, categories: null, cpu: gecko, cpuSource: "cdp", keepThreadIds: false, gecko };
   }
   if (opts.breakdown) {
-    // Light trace (no `.stack`, no invalidationTracking) fused with the sampler: trace events and
-    // samples share a clock so the seven-slice bar reconciles. keepThreadIds so the engine picks
-    // the main thread. Cannot report forced counts/blame (they need `.stack`).
+    // Light trace (no `.stack`, no invalidationTracking, plus the v8.cpu_profiler stream) fused with
+    // the samples: trace events and samples share a clock so the seven-slice bar reconciles.
+    // keepThreadIds so the engine picks the main thread. The samples come from the trace stream (not
+    // the CDP sampler), which is continuous across a cross-document navigation, so a navigating driver
+    // step keeps CPU attribution. Cannot report forced counts/blame (they need `.stack`).
     return {
       rung: "breakdown",
       categories: breakdownTraceCategories(),
       cpu: true,
+      cpuSource: "trace",
       keepThreadIds: true,
       gecko: false,
     };
@@ -77,6 +88,7 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
       rung: "deep",
       categories: traceCategories({ invalidationTracking: true }),
       cpu: false,
+      cpuSource: "cdp",
       keepThreadIds: true,
       gecko: false,
     };
@@ -87,6 +99,7 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
       rung: "precise-wall",
       categories: null,
       cpu: false,
+      cpuSource: "cdp",
       keepThreadIds: false,
       gecko: false,
     };
@@ -96,6 +109,7 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
     rung: "default",
     categories: null,
     cpu: opts.cpuProfile !== false,
+    cpuSource: "cdp",
     keepThreadIds: false,
     gecko: false,
   };

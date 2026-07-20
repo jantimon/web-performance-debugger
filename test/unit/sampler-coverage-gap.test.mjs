@@ -5,10 +5,11 @@ import { buildBreakdowns } from "../../dist/record/breakdown-spans.js";
 import { SourceMapResolver } from "../../dist/trace/sourcemap.js";
 
 // buildBreakdowns pushes exactly ONE samplerCoverageGap note when a step/measure span attributes JS
-// (its trace-measured bar shows real js ms) that the CPU sampler never covered (zero pooled samples
-// over a window that should have caught >= 2). That is the navigation-reset symptom: the V8 profiler
-// resets on each cross-document navigation, so Profiler.stop returns only post-last-navigation
-// samples, and an iteration-0 step window before that navigation gets none. See notes.samplerCoverageGap.
+// (its trace-measured bar shows real js ms) that the CPU sample stream did not cover (zero pooled
+// samples over a window that should have caught >= 2). On --breakdown the samples come from the trace's
+// v8.cpu_profiler stream, which is continuous across navigation, so this is the fallback for a window
+// the stream genuinely produced no sample for (or a profile shape the merge could not populate), NOT
+// the per-navigation reset the CDP sampler had. See notes.samplerCoverageGap.
 //
 // Clocks are microseconds on the trace axis (events) and the profile axis (raw), which share
 // base::TimeTicks, so a sample's absolute ts = startTime + Σ timeDeltas is directly comparable to a
@@ -73,7 +74,7 @@ function contextWith(notes) {
 }
 
 const isCoverageGap = (note) =>
-  note.includes("The V8 CPU profiler resets on each cross-document navigation");
+  note.includes("Per-span CPU attribution (package split, hot functions) is empty");
 
 test("buildBreakdowns: a step the sampler never reached pushes exactly one samplerCoverageGap note", async () => {
   // First sample lands at 41ms (startTime 40ms + first 1ms delta), well past the step's [0,30ms]

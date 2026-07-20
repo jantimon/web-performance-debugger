@@ -12,11 +12,17 @@
 // --- --breakdown lane ---
 
 export function breakdownNoProfile(): string {
-  return "WARNING: --breakdown could not be computed: the fused pass produced no CPU sampler profile, so no per-span breakdown was generated.";
+  return "WARNING: --breakdown could not be computed: the trace carried no v8.cpu_profiler ProfileChunk stream, so there are no CPU samples and no per-span breakdown was generated. Rendering counts from the trace are still reported.";
 }
 
 export function breakdownShape(): string {
-  return "Breakdown mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (Σ slices + idle = wall). The light trace rides the same pass as the timing, so per-iteration wall is ~2-5% above a sampler-off wall (--precise-wall).";
+  return "Breakdown mode: ONE fused pass (light trace + CPU samples from the trace's v8.cpu_profiler stream) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (Σ slices + idle = wall). The light trace + sampling ride the same pass as the timing, so per-iteration wall is ~2-5% above a sampler-off wall (--precise-wall).";
+}
+
+/** The --breakdown CPU sample source + the trace stream's fixed interval. Pushed after the CPU model
+ * is built, so the interval is the rate the stream actually ran at (read back from the chunks). */
+export function breakdownTraceCpuSource(intervalUs: number): string {
+  return `CPU samples on --breakdown come from the trace's v8.cpu_profiler stream (no CDP profiler runs), which is continuous across a cross-document navigation: a navigating driver step or an early measure occurrence keeps its CPU attribution, unlike the CDP sampler that resets per navigation. The stream samples at a fixed ~${Math.round(intervalUs)}us (read back from the chunk deltas, not a value wpd sets); it is inside the interval-stable band, so the reported percentages do not move.`;
 }
 
 export function breakdownForcedNotMeasured(): string {
@@ -42,13 +48,15 @@ export function breakdownHeuristicMainThread(): string {
   return "WARNING: the wpd:run:start marker was not found, so the breakdown's main thread was picked by layout/paint activity (heuristic). Per-span breakdown attribution may be on the wrong thread.";
 }
 
-/** Some step/measure span attributes JS to a window the CPU sampler never covered: the V8 profiler
- * resets on each cross-document navigation, so only samples since the run's LAST navigation survive.
- * Pushed from buildBreakdowns when the symptom is present (a step/measure bar with real js ms but zero
- * pooled samples), so an empty per-span package split and hot list are read correctly. */
+/** Some step/measure span attributes JS to a window the CPU sample stream did not cover: no sample
+ * landed in it despite its reconciling bar showing real JS. On --breakdown the samples come from the
+ * trace's v8.cpu_profiler stream, which is continuous across navigation, so this is now rare (the
+ * stream simply produced no sample for that window, or the window predates its first sample), not the
+ * per-navigation reset the CDP sampler had. Pushed from buildBreakdowns when the symptom is present, so
+ * an empty per-span package split and hot list are read correctly. */
 export function samplerCoverageGap(spanCount: number, gapMs: number): string {
   const spans = spanCount === 1 ? "1 step/measure span" : `${spanCount} step/measure spans`;
-  return `Per-span CPU attribution (package split, hot functions) is empty for ${spans} whose window ran before the CPU sampler's first sample (about ${gapMs.toFixed(0)} ms into the run window). The V8 CPU profiler resets on each cross-document navigation, so Profiler.stop returns only the samples since the run's LAST navigation: earlier windows (iteration-0 steps, early measure occurrences) carry no samples even though their reconciling bar shows real JS. The bar ms are trace-measured and correct; only the sample-derived package/hot breakdown of that JS is unavailable there. The run-level CPU model and any post-navigation span are unaffected.`;
+  return `Per-span CPU attribution (package split, hot functions) is empty for ${spans} whose window ran before the CPU sample stream's first sample (about ${gapMs.toFixed(0)} ms into the run window), or that the stream produced no sample for. The bar ms are trace-measured and correct; only the sample-derived package/hot breakdown of that JS is unavailable there. The run-level CPU model and any covered span are unaffected.`;
 }
 
 /** The run window's rendering work landed on a different renderer process than the one wpd:run:start

@@ -41,7 +41,20 @@ test("captureFor: --breakdown is the light trace fused with the sampler (no .sta
     "and invalidationTracking",
   );
   assert.equal(config.cpu, true, "the sampler rides the light trace");
+  assert.ok(
+    config.categories.includes("disabled-by-default-v8.cpu_profiler"),
+    "the light trace carries the v8.cpu_profiler stream (the CPU sample source)",
+  );
+  assert.equal(config.cpuSource, "trace", "CPU samples come from the trace stream, not the CDP sampler");
   assert.equal(config.keepThreadIds, true, "the bar windows to the main thread");
+});
+
+test("captureFor: cpuSource is 'cdp' on every rung but --breakdown (only that one runs a trace profiler)", () => {
+  assert.equal(captureFor(opts(), "chrome").cpuSource, "cdp", "default rung uses the CDP sampler");
+  assert.equal(captureFor(opts({ deep: true }), "chrome").cpuSource, "cdp");
+  assert.equal(captureFor(opts({ preciseWall: true }), "chrome").cpuSource, "cdp");
+  assert.equal(captureFor(opts(), "firefox").cpuSource, "cdp", "firefox samples come from the gecko dump");
+  assert.equal(captureFor(opts({ breakdown: true }), "chrome").cpuSource, "trace");
 });
 
 test("captureFor: --deep is the full trace with the sampler OFF", () => {
