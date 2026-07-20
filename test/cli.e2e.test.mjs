@@ -409,6 +409,44 @@ e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed
   );
 });
 
+// prepare()/warmup page-side JS must NOT reach the CPU model. In driver mode the sampler is not
+// windowed after the fact (no trace clock to slice it by on the default rung), so it opens at the run
+// mark, after prepare and warmup. Here prepare() and one warmup each burn ~70 ms of page-side JS while
+// the timed run() does ~6 ms: scriptingMs must price the run only. Opened before prepare instead, it
+// bills all ~146 ms to the run with the setup loop as the top hot function.
+e2e("record (driver): prepare()/warmup page-side JS stays out of the CPU model", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const flow = path.join(dir, "lifecycle.mjs");
+  writeFileSync(
+    flow,
+    `export async function prepare({ page }) {
+       await page.evaluate((ms) => { const end = performance.now() + ms; let acc = 0;
+         while (performance.now() < end) acc += Math.sqrt(acc + 1); window.__s = acc; }, 70);
+     }
+     export async function run({ page, measureStep }) {
+       await measureStep("work", () =>
+         page.evaluate((ms) => { const end = performance.now() + ms; let acc = 0;
+           while (performance.now() < end) acc += Math.sqrt(acc + 1); window.__s = acc; }, 6));
+     }`,
+  );
+  const out = path.join(dir, "lifecycle");
+  // One warmup so the warmup path is exercised too; both prepare and warmup precede the sampler.
+  runCli(["record", flow, "--iterations", "1", "--warmup", "1", "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+
+  const scriptingMs = rec.summary.scriptingMs;
+  assert.ok(scriptingMs != null && scriptingMs > 0.5, `run()'s own JS is measured, got ${scriptingMs}`);
+  assert.ok(
+    scriptingMs < 35,
+    `prepare()+warmup (~140 ms of page JS) must not leak into scriptingMs, got ${scriptingMs}`,
+  );
+
+  // And no single function bills anywhere near the ~70 ms setup loop.
+  const model = JSON.parse(readFileSync(`${out}.cpu.json`, "utf8"));
+  const topSelfMs = Math.max(0, ...model.functions.map((fn) => fn.selfMs));
+  assert.ok(topSelfMs < 35, `no function carries the setup loop's ~70 ms, top self ${topSelfMs} ms`);
+});
+
 // The idle edge probe C left untested: a run() that only awaits is ~pure waiting, so idle must
 // dominate the window and the sum must still close.
 e2e("record --breakdown: a waiting-dominated span is mostly idle and still closes", { timeout: TIMEOUT_MS }, () => {
@@ -426,6 +464,64 @@ e2e("record --breakdown: a waiting-dominated span is mostly idle and still close
   assert.ok(slices.idle.ms / wallMs > 0.8, `idle should dominate a waiting window, got ${(slices.idle.ms / wallMs) * 100}%`);
   const sum = sliceSum(runSpan.breakdown);
   assert.ok(Math.abs(sum - wallMs) < 0.01, `slices+idle ${sum} must equal wall ${wallMs}`);
+});
+
+// The run's rendering COUNTS are start-onward (they catch the trailing frame that paints after
+// run:end), the run BAR tiles [run:start, run:end]. So a run count can exceed its bar slice, and the
+// tool must disclose that rather than let it read as a bug. Here run() schedules a paint+layout burst
+// on a setTimeout(100) (well after run:end, inside the 200ms drain): its paints land in the run
+// paintCount but not the run bar's paint slice. Assert the gap is real AND that both the note and the
+// `query span run` anatomy disclose the two windows.
+e2e("record --breakdown: run counts are start-onward and the window gap is disclosed", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const flow = path.join(dir, "drain.mjs");
+  writeFileSync(
+    flow,
+    `export async function prepare({ page }) {
+       await page.evaluate(() => {
+         for (let index = 0; index < 6; index++) {
+           const box = document.createElement("div");
+           box.id = "box" + index;
+           box.style.cssText = "position:absolute;width:50px;height:50px;left:" + index * 80 + "px;top:0;background:#000";
+           document.body.appendChild(box);
+         }
+       });
+     }
+     export async function run({ page, measureStep }) {
+       await measureStep("interact", () =>
+         page.evaluate(() => {
+           document.getElementById("box0").style.background = "#111";
+           void document.getElementById("box0").offsetTop;
+           // Fires ~100ms after run:end, inside the 200ms settle drain (comfortable slack on CI):
+           // counted by the start-onward run counts, but past the run bar's [run:start, run:end].
+           setTimeout(() => {
+             for (let index = 2; index < 6; index++) {
+               const late = document.getElementById("box" + index);
+               late.style.background = "#" + (index * 111).toString(16).padStart(3, "0");
+               void late.offsetWidth;
+             }
+           }, 100);
+         }));
+     }`,
+  );
+  const out = path.join(dir, "drain");
+  runCli(["record", flow, "--breakdown", "--iterations", "1", "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+
+  const runSpan = rec.spans.find((span) => span.kind === "run");
+  assert.ok(runSpan, "a run span exists");
+  // The late-drain burst dirtied 4 boxes past run:end. Only a start-onward count catches them:
+  // clipping the run counts to run:end (the bug this guards) would drop the burst below this floor.
+  const paintCount = runSpan.counts.paintCount;
+  assert.ok(paintCount >= 4, `run paintCount should include the late-drain burst, got ${paintCount}`);
+
+  // Both surfaces disclose the two windows.
+  assert.ok(
+    (rec.meta.notes ?? []).some((note) => note.includes("start-onward from wpd:run:start")),
+    "meta.notes discloses the start-onward count window",
+  );
+  const anatomy = runCli(["query", "span", out, "run"]);
+  assert.match(anatomy, /windowed start-onward from run:start/, "query span run discloses the count window");
 });
 
 // The mark bridge: a page-side performance.measure becomes a span with its own breakdown. Repeated
@@ -804,4 +900,70 @@ test("record --deep on node is rejected (CPU-only lane, no trace)", () => {
   const result = guardError(["--target", "node", "--deep"]);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /CPU-only lane/);
+});
+
+// --keep-partial: a flaky production site can fail one iteration. The flag keeps the iterations that
+// completed instead of discarding the whole run; examples/flaky-iteration.mjs throws partway through
+// the iteration named by FAIL_AT (1-based). run() imports once in Node, so its counter survives.
+const recordFlaky = (args, failAt) =>
+  spawnSync(process.execPath, [cli, "record", path.join(examples, "flaky-iteration.mjs"), ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, FAIL_AT: String(failAt) },
+  });
+
+e2e("record --keep-partial salvages the completed iterations when a later one fails", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "partial");
+  // Fail on iteration 2 of 3: iteration 1 completed, so it is salvaged.
+  const result = recordFlaky(["--iterations", "3", "--keep-partial", "--out", out], 2);
+  assert.equal(result.status, 0, `--keep-partial exits 0\n${result.stderr}`);
+  assert.match(result.stderr, /--keep-partial: iteration 2 of 3 failed at step 'maybe-fail'/);
+
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+  assert.equal(rec.meta.iterations, 1, "meta.iterations is the completed count, not the requested 3");
+  const note = rec.meta.notes.find((entry) => /--keep-partial/.test(entry));
+  assert.ok(note, "the recording carries a loud partial note");
+  assert.match(note, /only the 1 iteration/);
+  const labels = rec.spans.map((span) => `${span.kind}:${span.label}`);
+  assert.ok(labels.includes("step:touch-dom"), "the completed iteration's steps survive");
+});
+
+e2e("record without --keep-partial hard-fails a later-iteration failure (no partial recording)", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "nopartial");
+  const result = recordFlaky(["--iterations", "3", "--out", out], 2);
+  assert.notEqual(result.status, 0, "the run fails");
+  assert.match(result.stderr, /simulated flaky-iteration failure/);
+  assert.ok(!existsSync(out), "no recording is written on a hard fail");
+});
+
+e2e("record --keep-partial still hard-fails when the FIRST iteration fails (nothing to salvage)", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "iter0");
+  const result = recordFlaky(["--iterations", "3", "--keep-partial", "--out", out], 1);
+  assert.notEqual(result.status, 0, "a broken flow that never completes once is a hard error");
+  assert.ok(!existsSync(out), "no recording is written");
+});
+
+// query spans --min-wall / --filter cut a tag-manager flood; the hidden count is always disclosed.
+e2e("query spans --min-wall and --filter narrow the overview and disclose the hidden count", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "spans");
+  runCli(["record", path.join(examples, "measure-span.mjs"), "--bench", "--breakdown", "--out", out]);
+
+  const all = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
+  assert.ok(all.spans.length >= 2, "the recording has a run span and at least one measure span");
+
+  // A threshold above every span's wall hides them all and reports the count.
+  const filtered = JSON.parse(runCli(["query", "spans", out, "--min-wall", "100000", "--format", "json"]));
+  assert.equal(filtered.spans.length, 0, "--min-wall hides everything above the threshold");
+  assert.equal(filtered.hidden, all.spans.length, "the hidden count equals what was removed");
+  assert.deepEqual(filtered.filter, { minWallMs: 100000 });
+
+  // A label filter keeps only the run span; the measure spans are hidden and counted.
+  const byLabel = JSON.parse(runCli(["query", "spans", out, "--filter", "run", "--format", "json"]));
+  assert.ok(byLabel.spans.every((span) => /run/i.test(span.label)), "only labels containing 'run' survive");
+  assert.equal(byLabel.hidden, all.spans.length - byLabel.spans.length, "hidden count is disclosed");
 });

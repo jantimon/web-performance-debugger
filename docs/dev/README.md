@@ -19,6 +19,7 @@ permalink).
 | [driver-timing.md](./driver-timing.md) | touching `browser/driver.ts`, or presenting a step's `wallMs` as a cost |
 | [frame-floor.md](./frame-floor.md) | changing the headless mode, adding a headless flag, or explaining why libraries with different cost report the same `wallMs` |
 | [rendering-counts.md](./rendering-counts.md) | adding a name to `trace/classify.ts`, gating a count in `diff.ts`/`assert.ts`, or calling a count "exact" |
+| [trace-buffer.md](./trace-buffer.md) | changing `trace/tracing.ts`, the trace buffer size, or claiming a `--deep` count is exact on a heavy page |
 | [facts.md](./facts.md) | changing any load-bearing measured number (a ledger of them + the files that must agree, checked by a unit test) |
 | [core-features.md](./core-features.md) | writing user-facing copy, prioritizing features, or claiming a capability is unique. The one file here whose evidence is market research (competitor docs and issue threads, link-verified and dated) rather than engine probes |
 
@@ -30,9 +31,8 @@ permalink).
    `countScopeNote` says so; use `--iterations 1` to assert on counts. And a `Measured<>` field a rung
    did not measure is `null`, never 0 (`--breakdown` reports `forcedLayoutCount`/`forcedLayoutMs` as
    `null`, since forced needs `.stack`): `assert` FAILs on `null`, so `assert --max-forced 0` fails
-   under `--breakdown` by design, rather than passing on a fake 0. Firefox's unmeasured plain-number
-   counts cannot hold `null` — paint reports a literal `0` disclosed by a loud `meta.notes` entry
-   ("A 0 in those means unmeasured, not clean"), which is exactly why that note exists.
+   under `--breakdown` by design, rather than passing on a fake 0. Firefox is the same model: its
+   unmeasured counts (paint, invalidations, long tasks) report `null`/`—`, never a fake 0.
 2. **`selfMs` on the browser lanes is not pure JS.** It is JS *plus the synchronous engine work JS
    triggered* — a forced layout shows up as self-time on the line that forced it (~85% of the
    probe's "JS" time is reflow). Only `--target node` measures pure JS.

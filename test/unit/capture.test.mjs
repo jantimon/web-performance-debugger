@@ -7,6 +7,7 @@ import {
   blameSemanticFor,
   countScopeNote,
 } from "../../dist/record/capture.js";
+import * as notes from "../../dist/record/notes.js";
 
 // The one-pass ladder: which capture config each flag combination yields. Every rung is exactly one
 // pass (one categories set, one cpu decision), so the whole capture story is this pure function.
@@ -141,4 +142,44 @@ test("capabilitiesAfterParse: a lost run window degrades every rendering capabil
   for (const [capability, enabled] of Object.entries(degraded))
     assert.equal(enabled, false, `${capability} must be not-measured when the window is lost`);
   assert.deepEqual(capabilitiesAfterParse(deep, true), deep, "a found window changes nothing");
+});
+
+// Drift guard: the not-measured NOTES must agree with capabilitiesFor and honor the Measured
+// contract. Under that contract unmeasured is `—`/null and 0 is measured-clean, so a note that tells
+// a reader "a 0 there means unmeasured" contradicts the model that already renders unmeasured as `—`.
+test("notes: the breakdown invalidation note matches capabilitiesFor and never equates 0 with unmeasured", () => {
+  const caps = capabilitiesFor(captureFor(opts({ breakdown: true }), "chrome"), "chrome");
+  assert.equal(caps.invalidations, false, "precondition: --breakdown drops invalidationTracking");
+  const note = notes.breakdownInvalidationNotMeasured();
+  assert.match(note, /NOT measured/, "the note states the count is not measured");
+  assert.match(note, /never 0/, "and that it reports as not-measured, not a 0");
+  assert.doesNotMatch(note, /means unmeasured/i, "unmeasured is —, never a 0 that 'means unmeasured'");
+});
+
+test("notes: the firefox counts note matches capabilitiesFor (paint not measured; layout/style/forced measured)", () => {
+  const caps = capabilitiesFor(captureFor(opts(), "firefox"), "firefox");
+  assert.equal(caps.paintCount, false);
+  assert.equal(caps.counts, true);
+  assert.equal(caps.forced, true);
+  const note = notes.firefoxRenderingCountsMeasured();
+  assert.match(note, /layoutCount\/styleCount\/forcedLayoutCount ARE measured/);
+  assert.match(note, /never a fake 0/);
+  assert.match(note, /paintCount/, "and names paint as the not-measured one");
+});
+
+test("notes: no note equates a literal 0 with unmeasured (unmeasured renders — under the Measured contract)", () => {
+  const strings = Object.values(notes)
+    .filter((value) => typeof value === "function")
+    .map((make) => {
+      try {
+        return make(2, 12, 3, "http://example.test", "trace");
+      } catch {
+        return "";
+      }
+    });
+  assert.ok(strings.length > 10, "sanity: found the note catalog");
+  for (const note of strings) {
+    assert.doesNotMatch(note, /a 0\b[^.]*means unmeasured/i, `note wrongly equates 0 with unmeasured: ${note}`);
+    assert.doesNotMatch(note, /literal `?0`?[^.]*unmeasured/i, `note claims a literal 0 for unmeasured: ${note}`);
+  }
 });

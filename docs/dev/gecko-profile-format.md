@@ -177,10 +177,11 @@ modes (both already emit those marks).
 
 ## What is NOT measured on Firefox (reported honestly, never as fake zeros)
 
-Exact rendering counts (layout/style/script; trace-derived on Chrome, unreachable here without a
-DevTools trace), paint counts, invalidation tracking + rollup,
-long-task attribution from a DevTools trace, and CPU/network throttling. `meta.notes` and the
-terminal report say so; `assert` on those metrics fails rather than passing on a fake 0.
+Paint counts (off-main-thread here), invalidation tracking + rollup, long-task attribution (all
+trace-derived on Chrome, and Gecko has no DevTools trace), and CPU/network throttling. `meta.notes`
+and the terminal report say so; `assert` on those metrics fails rather than passing on a fake 0.
+Layout/style/forced counts ARE measured, from the Reflow/Styles markers (above); they are
+approximate (Gecko batches differently), so read them against another Firefox run, never Chrome's.
 
 **INP is not on this list**: it never came from CDP, so it works here (see the BiDi section above).
 Its honest caveat is a different one -- the number is real in both engines but not interchangeable
@@ -191,10 +192,12 @@ measure is the same failure as faking a zero, in the opposite direction.
 A fake zero announces itself; these do not.
 
 - `forcedLayoutMs` **under-reports badly** on Firefox: 1.08ms vs chrome's 7.17ms for identical work
-  on `examples/forces-layout.mjs`. The markers miss short flushes.
-- `query blame --forced` names the **write** on Firefox and the **read** on Chrome (above).
-- Both are invisible in the output today. Neither is a zero, so neither trips the "unmeasured"
-  guard. `meta.notes` covers what is missing, not what is subtly different.
+  on `examples/forces-layout.mjs`. The markers miss short flushes. It is invisible in the output:
+  not a zero, so it never trips the "unmeasured" guard, and `meta.notes` covers what is missing, not
+  what is subtly off.
+- `query blame --forced` names the **read** on both engines, but Firefox's is a **sampled** estimate
+  (it can lag one statement or miss a cheap read) where Chrome's comes exact from the `.stack`. The
+  blame output discloses the sampled caveat, so this one is not silent.
 - The signal that *does* survive cross-engine is CPU self-time (8.41ms chrome / 8.79ms firefox,
   ~5%), which is the inverse of how the README ranks trust. See
   [engine-mapping.md](./engine-mapping.md#what-is-actually-comparable-across-engines).

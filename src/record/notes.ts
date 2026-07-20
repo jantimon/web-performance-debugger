@@ -24,7 +24,16 @@ export function breakdownForcedNotMeasured(): string {
 }
 
 export function breakdownInvalidationNotMeasured(): string {
-  return "NOT measured in breakdown mode: invalidation counts (layout/style/paint), because the invalidationTracking category is dropped. A 0 there means unmeasured, not clean. Layout/style/paint counts, long tasks, and CPU self-time ARE measured.";
+  return "NOT measured in breakdown mode: invalidation counts (layout/style/paint), because the invalidationTracking category is dropped; reported as not measured (—), never 0. Layout/style/paint counts, long tasks, and CPU self-time ARE measured.";
+}
+
+/** The chrome run's rendering counts and its reconciling bar cover different windows, by design.
+ * Counts are start-onward (analysis.ts inWindow), the bar tiles [run:start, run:end]. Pushed for the
+ * chrome --breakdown rung (exact counts AND a bar with ms), where the two sit together and a count
+ * can read larger than its slice. Not firefox: the gecko lane windows its markers bounded on both
+ * sides and reports paint as not-measured, so start-onward is not its count rule. */
+export function runCountWindow(): string {
+  return "Run-level rendering counts (layout/style/paint) are windowed start-onward from wpd:run:start with no upper bound, so a paint or layout the run commits just after wpd:run:end (the trailing frame, which paints on the next tick) is counted. The reconciling bar instead tiles [run:start, run:end] exactly, so its slice ms stop at run:end: a run count can be larger than its bar slice would imply. This is not double-counting, it is the trailing frame the count is meant to catch. Per-step counts are windowed to their own step marks and match their step bar.";
 }
 
 /** WARNING when the breakdown's main thread was picked by activity because the run:start marker was
@@ -169,6 +178,37 @@ export function runEndMarkLost(): string {
 /** A driver step's end mark was lost: its window (and bar) run to the run end, its wall stays page-clock. */
 export function stepEndMarkLost(): string {
   return "WARNING: a driver step's end marker (wpd:step:N:end) was lost from the trace, so that step's counts and breakdown bar window to the run end (an over-estimate of the step), and its wall is the page-clock delta between the step marks rather than the trace-clock window, so it does not reconcile with the step's bar. Usually a trace-buffer overflow; reduce the measured work if it persists.";
+}
+
+/**
+ * Chrome reported the trace buffer overflowed and dropped events. The trace records on a raised 1 GB
+ * buffer (docs/dev/trace-buffer.md), so this only fires on a trace heavy enough to outgrow even that;
+ * the dropped events mean trace-derived counts (layout/style/paint/forced, invalidations, long tasks)
+ * can UNDERCOUNT and a windowing marker may be lost. Loud, never silent: a dropped event turns an
+ * exact count into a plausible wrong one. */
+export function traceDataLoss(): string {
+  return "WARNING: the trace buffer overflowed and Chrome dropped events (Tracing reported data loss). Layout/style/paint/forced-layout counts, invalidations and long tasks are derived from the trace, so they can UNDERCOUNT here: read them as a floor, not an exact figure. Reduce the measured work (fewer steps per run, or scope the flow); on --deep, the heaviest trace, --breakdown drops the .stack and invalidationTracking categories for a much lighter trace if you do not need forced-layout blame.";
+}
+
+/**
+ * Some iterations completed and a later one failed; --keep-partial salvaged the completed ones. Names
+ * the failed iteration and the step it died on, and states plainly which numbers cover how many
+ * iterations, so a salvaged recording is never read as a clean full run. */
+export function partialIterations(
+  requested: number,
+  completed: number,
+  failedIteration: number,
+  failedStep: string | null,
+  reason: string,
+): string {
+  const at = failedStep ? `at step '${failedStep}'` : "between steps (outside any measureStep)";
+  return (
+    `WARNING: --keep-partial: iteration ${failedIteration + 1} of ${requested} failed ${at}, so this ` +
+    `recording covers only the ${completed} iteration(s) that completed. Per-step walls/INP are the ` +
+    `median of those ${completed}; the failed iteration's partial steps were discarded. The run-window ` +
+    `bar and counts still include the failed iteration's work up to the failure, so the run total spans ` +
+    `${completed} complete iteration(s) plus a partial one. Failure: ${reason}`
+  );
 }
 
 /** The one templated note: names the slowdown that was applied. */

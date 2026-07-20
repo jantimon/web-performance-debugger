@@ -126,11 +126,27 @@ export function interactionBreakdown(entries: RawEventTiming[]): InteractionTimi
   };
 }
 
+/** A timed iteration failed partway and --keep-partial salvaged the ones that completed. */
+export interface PartialRun {
+  /** iterations the caller asked for */
+  requested: number;
+  /** iterations that ran run() to completion (and whose steps are kept) */
+  completed: number;
+  /** 0-based index of the iteration that threw */
+  failedIteration: number;
+  /** label of the measureStep in progress when it threw, or null (it failed between steps) */
+  failedStep: string | null;
+  /** the thrown error's message */
+  reason: string;
+}
+
 export interface DriverResult {
   steps: DriverStep[];
   lifecycle: string[];
   /** teardown to run AFTER tracing stops, so it's kept out of the measured window */
   cleanup?: () => unknown | Promise<unknown>;
+  /** set when --keep-partial salvaged a run whose later iteration failed */
+  partial?: PartialRun;
 }
 
 export interface DriverOptions {
@@ -138,6 +154,12 @@ export interface DriverOptions {
   iterations: number;
   /** untimed repetitions of run() before the timed loop, excluded from marks/counters/samples */
   warmup: number;
+  /**
+   * Keep the iterations that completed when a LATER one fails, instead of aborting the whole run.
+   * Only salvages when at least one full iteration completed; a failure in iteration 0 (a broken
+   * flow) still throws. The failed iteration's partial steps are discarded and disclosed loudly.
+   */
+  keepPartial?: boolean;
 }
 
 /** "Step is done" override: a selector to wait for, a predicate/async fn, or a promise. */
@@ -172,6 +194,7 @@ export async function runDriver(
   fnName: string,
   options: DriverOptions = { iterations: 1, warmup: 0 },
   onramp?: OnrampFlow,
+  beforeRunWindow?: () => Promise<void>,
 ): Promise<DriverResult> {
   let run: (arg: any) => unknown;
   let prepare: ((arg: any) => unknown) | undefined;
@@ -283,6 +306,9 @@ export async function runDriver(
   // cleanup() is deliberately called by record.ts AFTER tracing stops, so a step measured there
   // can never have a trace window; see the throw in measure().
   let inCleanup = false;
+  // The measureStep in progress, for --keep-partial's disclosure: which step an iteration died on.
+  // Set before the action runs, cleared once the step is recorded; null means "between steps".
+  let activeStepLabel: string | null = null;
 
   async function measure(label: string, action: () => unknown, until: Until): Promise<void> {
     if (inCleanup) {
@@ -303,6 +329,7 @@ export async function runDriver(
     // the rest of the flow and the second pass have run.
     if (usedLabels.has(label)) throw duplicateLabelError(label);
     usedLabels.add(label);
+    activeStepLabel = label;
     const index = indexInIteration++;
     const stepMark = markIndex++;
     await page.evaluate(() => ((window as any).__cpInp = []));
@@ -346,6 +373,7 @@ export async function runDriver(
       inpMs: inp,
       interaction,
     });
+    activeStepLabel = null;
   }
 
   // measureStep('label', fn, {until})  OR  measureStep({label, action, until})
@@ -371,6 +399,16 @@ export async function runDriver(
   for (let warm = 0; warm < options.warmup; warm++) await run({ page, ctx, measureStep });
   recording = true;
 
+  // prepare() and warmup have run; open the CPU sampler HERE, right before the run mark, not before
+  // prepare. The V8 sampler is not windowed after the fact (there is no trace clock on the default
+  // rung to slice it by), so anything it samples lands in the model. Started before prepare it bills
+  // prepare's and every warmup's page-side JS to the run: on a probe whose run() does ~5ms and
+  // prepare() does ~80ms, scriptingMs reads ~88ms with prepare as the top hot function. Starting it
+  // after warmup makes the profile's lifetime the run window (the settle tail aside, which is idle),
+  // symmetric with bench, where setup already runs before the sampler. The trace counts are windowed
+  // from the mark regardless, so the trace may start earlier; only the sampler must not.
+  if (beforeRunWindow) await beforeRunWindow();
+
   // prepare() and warmup have run; mark the run window so setup DOM work stays outside it (the
   // trace counts, when a trace is captured, are windowed start-onward from this mark).
   await mark("wpd:run:start");
@@ -382,10 +420,31 @@ export async function runDriver(
   // it as a bare page.goto() inside run() outside any measureStep, which is strictly more
   // expressive than a boolean (it makes the fresh/in-place choice per step, not per run) and
   // needs no API at all.
+  let partial: PartialRun | undefined;
   for (iteration = 0; iteration < options.iterations; iteration++) {
     usedLabels = new Set<string>();
     indexInIteration = timedIndexBase;
-    await run({ page, ctx, measureStep });
+    try {
+      await run({ page, ctx, measureStep });
+    } catch (error) {
+      // A flow that never completed a full iteration (iteration 0 failed, or --keep-partial was not
+      // set) has nothing honest to salvage: rethrow so a broken flow is a hard error, not a quietly
+      // empty recording. When --keep-partial is set and an earlier iteration DID complete, keep those
+      // and disclose the failure loudly (record.ts turns `partial` into a note + stderr warning).
+      if (!options.keepPartial || iteration === 0) throw error;
+      // Discard the failed iteration's partial steps: they are the trailing entries (steps push in
+      // order), and a half-measured iteration would fail the same-labels-each-iteration check and
+      // skew a label's median with a sample that measured less work than it claims.
+      while (steps.length && steps[steps.length - 1].iteration === iteration) steps.pop();
+      partial = {
+        requested: options.iterations,
+        completed: iteration,
+        failedIteration: iteration,
+        failedStep: activeStepLabel,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+      break;
+    }
   }
   await mark("wpd:run:end");
 
@@ -394,6 +453,7 @@ export async function runDriver(
   return {
     steps,
     lifecycle,
+    ...(partial ? { partial } : {}),
     cleanup: cleanup
       ? () => {
           inCleanup = true;

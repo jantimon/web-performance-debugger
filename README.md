@@ -405,6 +405,14 @@ settle floor is two frames — ~16 ms on the default headless mode (chrome-headl
 sub-frame re-render reads as the frame time; read the counts, the bar, or `interaction.processingMs`
 for the work itself. See [docs/dev/frame-floor.md](docs/dev/frame-floor.md).
 
+**Clicking a page that never stops re-rendering.** Prefer a stable selector and `page.click('#id')`.
+A raw element handle (`evaluateHandle(...).asElement().click()`) throws `Node is detached from
+document` when the app re-renders between grabbing the node and clicking it, and
+`page.locator(sel).click()` can hang on its actionability wait when the page never settles.
+`page.click` on a stable id sidesteps both. It is also the click to reach for because it is **trusted**:
+it produces an INP entry, where a synthetic `page.evaluate(() => element.click())` produces none at all
+(no Event Timing entry, so `inpMs` stays `null`).
+
 **Behind a login?** Add `--no-headless` to sign in by hand and `--user-data-dir ./.wpd-profile` to
 persist that session. Gate the login in your driver so it only waits when not yet authenticated, and do
 any iframe/list waiting there too.
@@ -426,7 +434,13 @@ There is deliberately no median *across* steps: "mount" and "inp" measure differ
 them would produce a real-looking number that means nothing.
 
 Each iteration must measure the **same steps** — `wpd` fails the run rather than report a median over
-fewer samples than it claims. If a step needs a fresh page every time, put a bare `page.goto(url)` in
+fewer samples than it claims. On a flaky production site where one slow iteration can time out, add
+`--keep-partial`: if a **later** iteration fails, `wpd` keeps the iterations that completed and writes
+the recording with a loud note naming the failed iteration and the step it died on (`meta.iterations`
+is the completed count, not the requested one). A failure in the **first** iteration still errors —
+there is nothing honest to salvage from a flow that never completed once.
+
+If a step needs a fresh page every time, put a bare `page.goto(url)` in
 `run` outside any `measureStep`: everything after it is fresh each iteration, everything not preceded by
 one repeats in place. Make a `page.goto` its own step to measure a **cold boot** (drop `--url` so the
 page starts blank; everything from navigation through first render lands in that step).
@@ -602,7 +616,10 @@ build. And a gate **refuses** across an incompatible capture rather than fabrica
 `diff` across a different browser/runtime/rung/workload/`--iterations`/`--warmup`/headless flavour/
 `--cpu-throttle`, or a `cpu-diff` across a different
 browser/runtime/workload/`--iterations`/`--warmup`/`--cpu-throttle`, names the mismatch and declines
-to gate.
+to gate. The **workload** axis is the executed flow (lane + host page + module), not just the target
+string, so a different module — or the built-in load flow — against the *same* host page is a different
+workload and refuses; two recordings written before this identity fall back to comparing the target,
+and a new-vs-old pair warns that it cannot verify the flow.
 
 ## Reference
 
@@ -610,7 +627,7 @@ to gate.
 
 | Verb | Shows |
 | --- | --- |
-| `spans <file>` | per-span reconciling bars (run + steps + `performance.measure`), one shape across targets (`--label <L>`) |
+| `spans <file>` | per-span reconciling bars (run + steps + `performance.measure`), one shape across targets (`--label <L>`, `--min-wall <ms>`, `--filter <text>`) |
 | `span <file> <label>` | one span's full anatomy: bar, counts, INP, forced/dirtied-by, thrash, hot functions. `<label>` is bare or `kind:label` |
 | `blame <file>` | events grouped by source line (`--forced`, `--all`, `--kind`, `--dirtied` on firefox `--deep`, `--top`) |
 | `cpu <file>` | hot functions + rollup (`--by package\|file\|function`, `--top`) |
@@ -629,6 +646,12 @@ recording came from chrome `--breakdown`, `--target firefox`, or `--target node`
 not measure is an explicit `null`, never a fabricated `0`. Filter to one span with `--label <L>` (exact,
 case-sensitive, like a `performance.measure` name); this is the label-keyed join a matrix consumer
 performs, the same access path on every engine.
+
+When a site's tag manager floods the overview with hundreds of tiny `performance.measure` spans, cut
+the noise with `--min-wall <ms>` (hide spans below a wall threshold) and `--filter <text>` (keep only
+labels containing `<text>`, case-insensitive substring). Both combine with `--label` and with each
+other, and the output always states how many spans the filter hid, so a filtered view is never mistaken
+for the whole recording.
 
 On the CPU-only lanes (default-rung chrome, `--target node`, Firefox without user measures) there is no
 stored per-span bar, so `query spans` synthesizes the run span from the CPU model's own sampled window.
