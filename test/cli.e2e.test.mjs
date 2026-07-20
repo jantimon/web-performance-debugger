@@ -805,3 +805,69 @@ test("record --deep on node is rejected (CPU-only lane, no trace)", () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /CPU-only lane/);
 });
+
+// --keep-partial: a flaky production site can fail one iteration. The flag keeps the iterations that
+// completed instead of discarding the whole run; examples/flaky-iteration.mjs throws partway through
+// the iteration named by FAIL_AT (1-based). run() imports once in Node, so its counter survives.
+const recordFlaky = (args, failAt) =>
+  spawnSync(process.execPath, [cli, "record", path.join(examples, "flaky-iteration.mjs"), ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, FAIL_AT: String(failAt) },
+  });
+
+e2e("record --keep-partial salvages the completed iterations when a later one fails", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "partial");
+  // Fail on iteration 2 of 3: iteration 1 completed, so it is salvaged.
+  const result = recordFlaky(["--iterations", "3", "--keep-partial", "--out", out], 2);
+  assert.equal(result.status, 0, `--keep-partial exits 0\n${result.stderr}`);
+  assert.match(result.stderr, /--keep-partial: iteration 2 of 3 failed at step 'maybe-fail'/);
+
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+  assert.equal(rec.meta.iterations, 1, "meta.iterations is the completed count, not the requested 3");
+  const note = rec.meta.notes.find((entry) => /--keep-partial/.test(entry));
+  assert.ok(note, "the recording carries a loud partial note");
+  assert.match(note, /only the 1 iteration/);
+  const labels = rec.spans.map((span) => `${span.kind}:${span.label}`);
+  assert.ok(labels.includes("step:touch-dom"), "the completed iteration's steps survive");
+});
+
+e2e("record without --keep-partial hard-fails a later-iteration failure (no partial recording)", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "nopartial");
+  const result = recordFlaky(["--iterations", "3", "--out", out], 2);
+  assert.notEqual(result.status, 0, "the run fails");
+  assert.match(result.stderr, /simulated flaky-iteration failure/);
+  assert.ok(!existsSync(out), "no recording is written on a hard fail");
+});
+
+e2e("record --keep-partial still hard-fails when the FIRST iteration fails (nothing to salvage)", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "iter0");
+  const result = recordFlaky(["--iterations", "3", "--keep-partial", "--out", out], 1);
+  assert.notEqual(result.status, 0, "a broken flow that never completes once is a hard error");
+  assert.ok(!existsSync(out), "no recording is written");
+});
+
+// query spans --min-wall / --filter cut a tag-manager flood; the hidden count is always disclosed.
+e2e("query spans --min-wall and --filter narrow the overview and disclose the hidden count", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "spans");
+  runCli(["record", path.join(examples, "measure-span.mjs"), "--bench", "--breakdown", "--out", out]);
+
+  const all = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
+  assert.ok(all.spans.length >= 2, "the recording has a run span and at least one measure span");
+
+  // A threshold above every span's wall hides them all and reports the count.
+  const filtered = JSON.parse(runCli(["query", "spans", out, "--min-wall", "100000", "--format", "json"]));
+  assert.equal(filtered.spans.length, 0, "--min-wall hides everything above the threshold");
+  assert.equal(filtered.hidden, all.spans.length, "the hidden count equals what was removed");
+  assert.deepEqual(filtered.filter, { minWallMs: 100000 });
+
+  // A label filter keeps only the run span; the measure spans are hidden and counted.
+  const byLabel = JSON.parse(runCli(["query", "spans", out, "--filter", "run", "--format", "json"]));
+  assert.ok(byLabel.spans.every((span) => /run/i.test(span.label)), "only labels containing 'run' survive");
+  assert.equal(byLabel.hidden, all.spans.length - byLabel.spans.length, "hidden count is disclosed");
+});
