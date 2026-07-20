@@ -38,13 +38,15 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 
 CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
 unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). The **265** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
-`dist/` (classify/summarize/analysis/format, plus the breakdown engine, `query spans` adapter, the
-`query span` anatomy + removed-verb stubs, the thrash detector, the firefox dirtied-by report, the
-gecko converter, the XDG pointer, frame side track, and the `facts.md` ledger drift check). The **25** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
+`test:e2e`). The **284** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+`dist/` (classify/summarize/analysis/format, plus the breakdown engine, `query spans` adapter + its
+flood filter, the `query span` anatomy + removed-verb stubs, the thrash detector, the firefox
+dirtied-by report, the gecko converter, the XDG pointer, frame side track, the trace-overflow/partial
+notes, and the `facts.md` ledger drift check). The **29** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
 built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
 `--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`),
-`query spans`, `query span` (a run span's bar + hot functions, a --deep step's counts + forced), the
+`query spans` (incl. the `--min-wall`/`--filter` flood filter), `query span` (a run span's bar + hot
+functions, a --deep step's counts + forced), `--keep-partial` salvage, the
 digest/index removal, the frame side track, and the two-capture assert workflow (a forced budget on
 `--breakdown` and a slice budget on `--deep` each fail loudly). They **self-skip when Chrome is not installed** (so
 `npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a
@@ -436,7 +438,8 @@ all live there with the probes that establish them.
   `rendering-counts.md` (what each count counts, which ones reproduce, why there is no composite
   count) before adding a name to `classify.ts` or gating a count; `frame-floor.md` (the one-frame
   floor on `wall`/`INP`, and why the headless mode sets its height) before changing the headless
-  option or adding a headless flag.
+  option or adding a headless flag; `trace-buffer.md` (what raises the trace-buffer ceiling, what
+  drops events, and the ~512MB parse limit) before changing `trace/tracing.ts` or the buffer size.
 - **Claims about engine behaviour need a probe, not a mechanism.** A plausible mechanism is not
   evidence, however obviously true it reads: sourcemaps, INP, Gecko cause stacks and sampler
   isolation all behave in ways a mechanism alone predicts wrongly. Run `examples/forces-layout.mjs`
