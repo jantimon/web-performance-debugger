@@ -19,7 +19,9 @@
 //     self-time +21%. So the sampler rides only the light (no-`.stack`) trace (--breakdown) or no
 //     trace at all (default); --deep, which needs `.stack`, runs with the sampler OFF.
 //   - The fused --breakdown pass costs ~2-5% wall over sampler-only and leaves sampled self-time
-//     clean (+0-1%), which is why the light trace and the sampler can share one pass.
+//     clean (+0-1%), which is why the light trace and the sampler can share one pass. That ~2-5% is
+//     the pure-JS floor (a near-empty trace); a workload that renders costs more, since the trace
+//     records every layout/style event (docs/dev/cpu-profiling.md, per-capture-mode wall overhead).
 
 import { traceCategories, breakdownTraceCategories, STACK_CATEGORY } from "../trace/categories.js";
 import type { BrowserName } from "../browser/backend.js";
@@ -112,7 +114,8 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
       gecko: false,
     };
   }
-  // Default mode: the CPU sampler alone, no trace, for the cleanest wall (~1%). No rendering counts.
+  // Default mode: the CPU sampler alone, no trace, for the cleanest wall (~1% on JS-heavy work; more
+  // on a short rendering window, docs/dev/cpu-profiling.md per-capture-mode wall overhead). No counts.
   return {
     mode: "default",
     categories: null,

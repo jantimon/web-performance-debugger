@@ -9,6 +9,7 @@
 · [the sampler opens at the run mark](#the-sampler-opens-at-the-run-mark-not-before-prepare)
 · [never ride a `.stack` trace](#why-the-sampler-never-rides-a-stack-trace)
 · [trace durations vs CDP](#layoutmsstylemspaintms-are-trace-durations-and-cdp-would-be-no-finer)
+· [per-mode wall overhead](#per-capture-mode-wall-overhead-the-readme-speed-column)
 · [the interval: why 200us](#the-sampler-interval-why-200us)
 · [sub-frame resolution](#sub-frame-cpu-work-is-measurable-on-both-engines-off-the-frame-floor-axis)
 
@@ -19,7 +20,8 @@ names and semantics), [gecko-profile-format.md](./gecko-profile-format.md) (raw 
 
 **Provenance.** Capture-mode numbers are 5 interleaved runs per arm, after a discarded warmup, of
 `examples/forces-layout.mjs --bench` on chrome 150 / firefox 152; interval numbers are 3 runs per arm
-of `examples/cpu-busywork.mjs --target node`. First-run numbers are cold-start outliers by a wide
+of `examples/cpu-busywork.mjs --target node`; the per-mode wall-overhead table is 3 interleaved runs
+of `examples/capture-mode-speed.mjs` (8 rounds x 20 iterations each). First-run numbers are cold-start outliers by a wide
 margin (a single un-warmed run reads 18ms against a 7ms median, enough to "prove" the wrong
 conclusion): **always warm up and interleave** before believing a capture-mode A/B.
 
@@ -216,6 +218,55 @@ That trade respects the existing trust hierarchy — wall is declared *direction
 declared *real* — and systematic inflation cancels in `diff`, where both sides carry it. So the
 sampling capture modes (default, `--breakdown`) are not pristine on wall, which is what `--precise-wall` is
 for: clean-wall and `--iterations` benchmarking work.
+
+### Per-capture-mode wall overhead (the README Speed column)
+
+**[measured]** The whole-mode wall cost, not just the sampler's slice: what each capture mode adds
+over a NO-MEASUREMENT baseline (a plain browser launch, no trace, no sampler, no Gecko profiler),
+timed on ONE mixed mid-size workload (`examples/capture-mode-speed.mjs`: a ~7 ms integer loop plus a
+~7 ms read-after-write layout/style thrash over 25 boxes, ~14 ms baseline, ~550 forced reflows). One
+page-clock window (`performance.now` inside the page) times the SAME workload in every cell, so
+node-side dispatch and the trace start/stop calls stay outside the window; cells interleave across
+rounds so drift spreads across modes. This is the README Speed column.
+
+The `vs sampler-only` column is the median ratio of that mode's window to the default mode's window
+(both directly measured), given so the `--breakdown` figure can be read against the pure-JS `~2-5%`
+ledger fact below.
+
+| chrome mode | Δ vs no-measurement | vs sampler-only (default) |
+| --- | --- | --- |
+| `--precise-wall` | ~0% (captures nothing beyond the baseline) | removes the sampler |
+| default (sampler) | ~4-7% | 0 (this IS sampler-only) |
+| `--breakdown` | ~25% | ~19% |
+| `--deep` | ~70% | n/a (sampler off) |
+
+| firefox mode | Δ vs no-measurement (plain Firefox) |
+| --- | --- |
+| `gecko` / `gecko-deep` | ~140-160% (~150%) |
+
+`gecko` and `gecko-deep` are within noise of each other (byte-identical capture; `--deep` is only a
+reporting tier), which the probe confirms rather than assumes. Reading it, and reconciling with the
+tighter numbers stated elsewhere in this file:
+
+- **The sampler costs more than ~1% here.** The interval study below reads ~1% for the 200us sampler,
+  but on the 2.2 s pure-JS `cpu-busywork` probe; on this ~14 ms mixed window it reads ~4-7%. Not a
+  contradiction: the sampler fires at a fixed 200us rate, so it is a larger fraction of a short
+  window, and a stack walk taken during a synchronous layout is deeper (Blink C++ under the JS frame)
+  than one over a tight JS loop. ~1% is the JS-heavy floor; a short rendering window pays more, the
+  same reason the interval study warns the layout probe is the wrong workload for a JS-sampler figure.
+- **The trace-based modes scale with how much the page renders.** `--breakdown` is ~2-5% over
+  sampler-only on a pure-JS workload (near-empty trace); here, where ~550 forced reflows fill the
+  trace with Layout/UpdateLayoutTree events, it is ~19% over sampler-only. `--deep` adds `.stack` (a
+  JS stack walk on every layout) and `invalidationTracking` on top, so it is the heaviest chrome
+  mode (~70% over baseline). Neither contradicts the ~2-5% breakdown fact: that is the pure-JS floor,
+  and this workload has rendering the trace must record.
+- **Firefox has no cheap mode.** The Gecko profiler is on for the whole browser lifetime (a startup
+  feature), so its ONE pass carries ~150% here and there is no sampler-free counterpart to buy it
+  back. That asymmetry is the honest point: Chrome's `--precise-wall` reclaims the sampler; a Firefox
+  number is a floor, not a benchmark wall.
+
+Directional and machine-dependent — the ordering is the load-bearing part, not the exact percent.
+Refresh with `npm run build && node examples/capture-mode-speed.mjs`.
 
 ### The sampler interval: why 200us
 

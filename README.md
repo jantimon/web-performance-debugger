@@ -222,12 +222,20 @@ Every `record` invocation is **exactly one capture pass** — one browser launch
 A capture mode picks *what* that pass captures. They are mutually exclusive: each answers a different question
 with a different instrumentation, and wanting two answers means running `wpd` twice.
 
-| Capture mode (chrome) | What it captures | What you get |
-| --- | --- | --- |
-| **default** (no flag) | CPU sampler only, no trace | the four-slice CPU bar (`js · browser · gc · idle`), cleanest wall (~1%). No rendering counts |
-| **`--breakdown`** | light trace + CPU sampler, fused | the reconciling **seven-slice bar** per span (`js·style·layout·paint·gc·other·idle`, `Σ + idle = wall`) plus exact layout/style/paint counts |
-| **`--deep`** | full trace (`.stack` + invalidations), sampler off | the **attribution report**: forced-by read-sites, dirtied-by writes, the thrash detector, invalidation rollup, exact counts, long tasks. Identities and counts, no slice ms |
-| **`--precise-wall`** | sampler off, no trace | a pristine benchmark wall (buys back the ~1% the sampler costs). Nothing else |
+| Capture mode (chrome) | What it captures | What you get | Speed |
+| --- | --- | --- | --- |
+| **no measurement** *(not a mode)* | nothing — plain browser, no trace, no sampler | just the wall; the baseline the Speed column is measured against | 🏆 baseline |
+| **default** (no flag) | CPU sampler only, no trace | the four-slice CPU bar (`js · browser · gc · idle`), cleanest wall. No rendering counts | 🐌 Δ ~4-7% |
+| **`--breakdown`** | light trace + CPU sampler, fused | the reconciling **seven-slice bar** per span (`js·style·layout·paint·gc·other·idle`, `Σ + idle = wall`) plus exact layout/style/paint counts | 🐌🐌 Δ ~25% |
+| **`--deep`** | full trace (`.stack` + invalidations), sampler off | the **attribution report**: forced-by read-sites, dirtied-by writes, the thrash detector, invalidation rollup, exact counts, long tasks. Identities and counts, no slice ms | 🐌🐌🐌 Δ ~70% |
+| **`--precise-wall`** | sampler off, no trace | a pristine benchmark wall (buys back the sampler cost). Nothing else | 🏆 Δ ~0% |
+
+**Speed** is the median wall-time overhead each mode adds over the no-measurement baseline, on a
+mid-size mixed JS + layout workload, from the repo's own probe (`examples/capture-mode-speed.mjs`).
+It is directional and machine-dependent: the ordering holds, the exact percentages will not. The
+trace-based modes (`--breakdown`, `--deep`) cost more the more the page renders, because the trace
+records every layout/style event, so a heavier interaction pays more than these numbers and a lighter
+one less.
 
 The split is what keeps the numbers honest. The CPU sampler must never ride a `.stack` trace (it
 inflates sampled self-time +21%, billing the trace's own stack-walk to the JS frame that forced a
@@ -241,7 +249,14 @@ counts, and shows span wall (the honest window width) but no slice ms.
 
 `--target firefox` is one Gecko-profiler pass in every capture mode (samples and markers are entangled at
 profiler startup), so the capture modes are reporting tiers over that one capture rather than capture tiers;
-`--breakdown`/`--precise-wall` are rejected there and `--deep` adds a dirtied-by write report.
+`--breakdown`/`--precise-wall` are rejected there and `--deep` adds a dirtied-by write report. That pass has
+no sampler-free counterpart — the Gecko profiler is a startup feature for the whole browser lifetime — so
+even Firefox's fastest capture pays for it: **🐌🐌🐌 Δ ~150%** over a plain Firefox launch on the same
+workload, and `--deep` is the same capture at the same cost. That tax is reflow-weighted, not flat:
+each synchronous reflow's marker captures a JS cause stack (the blame signal), so the probe's
+reflow-heavy workload pays ~150% while pure-JS work pays ~5%
+([details](docs/dev/firefox-cpu.md)). Chrome can buy the sampler back with
+`--precise-wall`; Firefox cannot, so its numbers are a floor, not a benchmark wall.
 `--target node` is a CPU-only lane with the four-slice bar. See [the lanes](#what-each-target-gives-you).
 
 ## Where did this interaction's time go
