@@ -185,9 +185,10 @@ try {
         // its collected samples are kept.
         const collectedSoFar = collected.get(`${cell.engine}:${cell.mode}`).length;
         if (collectedSoFar === 0) skippedEngines.add(cell.engine);
-        process.stderr.write(
-          `SKIP ${cell.engine}:${cell.mode} (round ${round + 1}): ${error.message.split("\n")[0]}\n`,
-        );
+        // A thrown value is not guaranteed to be an Error, so coerce before reading a message: the
+        // self-skip must survive a non-Error throw rather than crash inside its own handler.
+        const reason = String(error instanceof Error ? error.message : error).split("\n")[0];
+        process.stderr.write(`SKIP ${cell.engine}:${cell.mode} (round ${round + 1}): ${reason}\n`);
       }
     }
   }
@@ -205,6 +206,12 @@ function report(engine) {
   console.log("mode".padEnd(14), "median", "  min", "  max", " spread%", "  delta vs baseline");
   for (const cell of CELLS.filter((entry) => entry.engine === engine)) {
     const samples = collected.get(`${engine}:${cell.mode}`);
+    if (samples.length === 0) {
+      // A mode that failed every round after its engine's baseline succeeded collected nothing;
+      // median/min/max would read NaN/Infinity, so report it as n/a rather than printing garbage.
+      console.log(cell.mode.padEnd(14), "n/a");
+      continue;
+    }
     const med = median(samples);
     const min = Math.min(...samples);
     const max = Math.max(...samples);
