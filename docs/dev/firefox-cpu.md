@@ -9,9 +9,11 @@
 **In this file:** [samples and markers share one pass](#samples-and-markers-share-a-pass-unavoidably)
 · [idle lives on the CPU axis](#firefox-idle-is-on-the-cpu-axis-not-the-category-axis)
 · [the `js,cpu` / 1 ms config](#the-firefox-sampler-config-jscpu-1-ms-and-what-not-to-chase)
+· [where the ~150% overhead comes from](#where-the-150-gecko-overhead-comes-from)
 
 **Provenance.** As in [cpu-profiling.md](./cpu-profiling.md): interleaved warmed runs of the probes
-named per section, Firefox 152. Related: [gecko-profile-format.md](./gecko-profile-format.md) (the
+named per section, Firefox 152. The overhead-split section is 8 rounds x 20 iterations, interleaved,
+of `examples/gecko-overhead.mjs`. Related: [gecko-profile-format.md](./gecko-profile-format.md) (the
 raw dump schemas these facts are read out of), [engine-mapping.md](./engine-mapping.md) (what the
 Gecko names mean against Blink's), [cpu-profiling.md](./cpu-profiling.md) (the Chrome sampler
 physics this lane is measured against).
@@ -78,3 +80,70 @@ signal. Paint stays off the bar: it is off-main-thread compositor work (a side t
   `stackwalk` +0.7 MB), so a dump is ~15-23 MB regardless of workload. Do NOT shrink it by lowering
   ENTRIES: undersizing silently overwrites (drops) the window's *earliest* samples. `stackwalk`
   stays off (zero signal on shallow JIT stacks, +0.7 MB).
+
+## Where the ~150% gecko overhead comes from
+
+**[measured]** The gecko pass costs **~140% wall** over a plain Firefox launch on a reflow-heavy
+window, where Chrome's sampler costs ~4-7% on the same work. That cost is **workload-weighted, not a
+standing sampler tax**: it is the per-reflow marker capture, and it collapses to a few percent when
+the page does not reflow.
+
+Probe: `examples/gecko-overhead.mjs`, one page-clock window over a MIXED workload (a ~7 ms integer
+loop plus a read-after-write thrash, ~550 forced reflows) and a PURE-JS workload (the same integer
+loop, zero layout), each against its own plain-Firefox baseline. Firefox clamps `performance.now()`
+to 1 ms, so the pooled MEAN over 160 samples is the small-effect read and the median the
+cross-check. `Δ mean` vs the matching baseline:
+
+| cell (features, interval, filter, entries) | workload | Δ vs plain Firefox |
+| --- | --- | --- |
+| `js,cpu` 1 ms — the shipped config | mixed (~550 reflows) | **+141%** |
+| `js,cpu` 4 ms | mixed | +128% |
+| `js,cpu` 16 ms | mixed | +123% |
+| `js,cpu` 50 ms | mixed | +119% |
+| `js,cpu` 1 ms, `FILTERS=GeckoMain` | mixed | +135% |
+| `js,cpu` 1 ms, `ENTRIES=1M` | mixed | +135% |
+| `js` 1 ms (no `cpu`) | mixed | +135% |
+| `js,cpu` 1 ms — the shipped config | pure JS (0 reflows) | **+5%** |
+
+Reading it, and reconciling with the tighter numbers above:
+
+- **It is per-reflow, not per-sample (interval-independent).** Sweeping the periodic interval 50x
+  (1 ms -> 50 ms) drops overhead only ~141% -> ~119%. A per-periodic-sample cost would fall ~50x; it
+  barely moves. The reason: each synchronous reflow emits a `Reflow (sync)`/`Styles` marker carrying a
+  captured JS cause stack (`data.stack`, a StackMarker,
+  [gecko-profile-format.md](./gecko-profile-format.md#reflowstyles-markers---layoutstyle-blame-see-the-semantics-warning)),
+  and those markers fire on the reflow, not on the sampler tick. So the ~119% floor rides on the reflow
+  count, and the ~20% the interval reclaims is the periodic sampler's own slice at 1 ms. This is the
+  Gecko analog of Chrome's `.stack` tax ([cpu-profiling.md](./cpu-profiling.md#why-the-sampler-never-rides-a-stack-trace)):
+  a stack capture on every layout, billed to the same thread.
+- **It collapses on pure JS.** The same shipped config over the zero-reflow window costs **~5%** — the
+  sampler's own wall, no markers to capture. That +5% baseline-delta is the same order as the
+  **~4%** scriptingMs-vs-bench-wall reconciliation residual measured above; the two are different axes
+  (a delta vs an uninstrumented baseline here, a within-run sum-vs-wall residual there) that agree the
+  periodic sampler on non-reflow work is small. The +141% is what a page full of forced reflows adds
+  on top, so the headline scales with reflow count: a low-reflow interaction pays far less than this
+  ~550-reflow probe.
+- **`cpu` is ~free here.** `js` alone (+135%) and `js,cpu` (+141%) are within noise, confirming the
+  `cpu` feature's ~1% cost. The overhead is driven by `js` — which wpd cannot drop (it is the source of
+  UserTiming windowing marks, cause-stack blame, AND the only samples), and `js` is exactly what makes
+  every reflow marker capture a stack.
+
+**No cheap lever, verified.** Two configs that look like speed levers buy nothing and one is a
+correctness hazard:
+
+- **Thread filter buys no wall and loses no signal.** `FILTERS=GeckoMain` (+135%) is within noise of
+  the shipped +141%: the marker cost is on the content main thread itself, so sampling fewer sibling
+  threads does not touch it. The probe's signal-loss check confirms the filtered dump still carries
+  everything wpd reads off the content thread — `threadCPUDelta` 100% populated, ~26k Reflow/Styles
+  markers, `parseGecko` accepts it (wpd already reads exactly one content thread in `profile/gecko.ts`,
+  so filtering to `GeckoMain` drops only threads wpd ignores). It stays unset because the wall is
+  identical and the extra threads' samples are harmless.
+- **`ENTRIES=1M` buys no wall (+135%) and would silently drop the window's earliest samples** (above).
+  The dump is the same ~51 MB either way, confirming size scales with samples used, not the ring
+  ceiling.
+
+So the ~140% is the honest floor of the Firefox lane on rendering-heavy work, and Firefox has no
+sampler-free counterpart to buy it back (Chrome's `--precise-wall` reclaims its sampler; the gecko
+profiler is a whole-lifetime startup feature). Directional and machine-dependent — the ordering and
+the per-reflow-vs-per-sample split are the load-bearing part, not the exact percent. Refresh with
+`npm run build && node examples/gecko-overhead.mjs`.
