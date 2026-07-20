@@ -66,6 +66,14 @@ export function reanchoredMainThread(): string {
   return "The run navigated to a new renderer process (a top-level cross-process navigation, typical of a --url boot): wpd:run:start was marked on the pre-navigation renderer, but the window's layout/paint/style work ran on the process the page navigated INTO. Counts and the breakdown bar are scoped to that post-navigation renderer main thread, so they describe the page you loaded, not the blank host page it started on.";
 }
 
+/** The run's rendering work was split across more than one renderer process (successive cross-process
+ * navigations), so no single main thread holds it all. Pushed loudly from record() (and stderr): the
+ * counts/bar cover only the busiest thread, so a step that ran in another process must not be read as
+ * a clean js:0/idle:100%. */
+export function crossProcessWorkSplit(): string {
+  return "WARNING: the run's rendering work was split across more than one renderer process (successive cross-process navigations), so no single renderer main thread holds the whole run. The counts and the reconciling bar describe only the busiest thread; a step whose window ran in a DIFFERENT process reports only the little rendering it did on the selected thread (often none), NOT that process's own work, so read its bar as not-covered, never as a clean idle span. Keep each run to one navigation (split the flow, or record the second page in its own run) for counts and a bar that cover all of it.";
+}
+
 // --- Firefox lane ---
 
 export function firefoxBackend(): string {

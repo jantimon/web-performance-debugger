@@ -110,16 +110,35 @@ A mere port change is same-site and stays in-process; a different site (an IP vs
 real cross-origin `--url`) swaps. Anchoring on the marker thread alone reports the swapped boot as
 **~100% idle, 0 counts** — and a page that clearly lays out then passes `assert --max-layouts` at 0.
 
-So when the marker thread carries **zero** in-window layout/paint but another thread carries some,
-`mainThread` **re-anchors** to the busiest layout/paint thread (`via: "reanchored"`, disclosed by a
-`meta.notes` line). The zero threshold is what separates a process swap from an **OOPIF**: an
-out-of-process iframe runs its own layout on its own thread while the top (marker) thread keeps doing
-the top page's work, so the marker thread's count stays > 0 and it wins — the OOPIF never steals the
-attribution, however much layout it does. A single-process recording (marker thread did the work)
-always resolves to `via: "marker"`, unchanged. When no `wpd:run:start` marker exists at all,
-`mainThread` has no thread identity to key on and falls back to the busiest layout/paint thread
-(`via: "heuristic"`). The work check is windowed start-onward, so a
-blank-host flush **before** `run:start` does not mask the swap.
+So when the marker thread carries a **vanishing share** of the window's layout/paint — none of it, or
+under 5% of the busiest thread's — while that busiest thread carries the rest, `mainThread`
+**re-anchors** to it (`via: "reanchored"`, disclosed by a `meta.notes` line). The **share** is what
+separates a process swap from an **OOPIF**: a navigated-away marker thread did none of the window's
+rendering (or a stray flush or two on the blank host before the swap), while an out-of-process iframe's
+top (marker) thread renders its own top page and keeps a substantial share, so it stays selected — the
+OOPIF never steals the attribution, however much layout the child does. A strict zero-work test misses
+the stray case: a common driver shape touches the page (one forced layout on the blank host) before
+navigating, and that single count on the pre-nav thread reads as "no swap", anchoring the whole run to
+the husk and reporting the navigated page as ~100% idle. The one edge the share test cannot split is a
+near-empty top page (a thin frame wrapper rendering under the floor) beside a heavy cross-origin OOPIF:
+it looks like a swap and re-anchors to the iframe. Rare, and it still attributes to a real rendering
+thread, never a fake zero.
+
+A single-process recording (marker thread did the work) always resolves to `via: "marker"`, unchanged.
+When no `wpd:run:start` marker exists at all, `mainThread` falls back to the busiest layout/paint
+thread (`via: "heuristic"`). The share check is windowed start-onward, so a blank-host flush **before**
+`run:start` does not mask the swap.
+
+**Successive cross-process navigations in one run** (a driver flow that `page.goto`s site A, then
+site B) leave the boot flushes split across two renderer processes, so no single main thread holds the
+whole run. `mainThread` re-anchors to the busiest of them and sets `split: true`; `record()` turns
+that into a loud WARNING (`meta.notes` and stderr). The counts and bar then describe only the busiest
+thread — the other process's step reports the little it did on the selected thread (usually none), so
+it must be read as **not-covered**, never as a clean idle span. Keep each run to one navigation for
+counts and a bar that cover all of it. The split test is a heavy thread whose activity is DISJOINT in
+time from the selected thread's, which is what separates a second navigation (its window follows or
+precedes the selected thread's) from a same-page OOPIF that renders CONCURRENTLY (its window overlaps):
+a `--url` boot of a page with a heavy third-party iframe re-anchors but does not warn.
 
 ## `Paint` is exact, and it is per-chunk
 

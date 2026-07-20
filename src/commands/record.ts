@@ -421,12 +421,18 @@ export async function record(opts: RecordOptions): Promise<{
   // numbers describe the loaded page, not the blank host it started on. Fires for any counting chrome
   // capture mode (--breakdown/--deep); firefox is single-process (no CDP trace) and the no-trace
   // capture modes count nothing. Skipped when the window was lost (counts already downgraded to not-measured).
-  if (
-    effectiveCapabilities.counts &&
-    browserName !== "firefox" &&
-    mainThread(detail.events)?.via === "reanchored"
-  )
-    notes.push(notesCatalog.reanchoredMainThread());
+  const threadSelection =
+    effectiveCapabilities.counts && browserName !== "firefox" ? mainThread(detail.events) : null;
+  if (threadSelection?.via === "reanchored") notes.push(notesCatalog.reanchoredMainThread());
+  // The run's rendering work landed on more than one renderer process (successive cross-process
+  // navigations), so no single main thread holds all of it: the counts and bar describe only the
+  // busiest thread, and a step that ran in a different process reports what little it did on the
+  // selected thread. Loud, never a silent js:0/idle:100% for the un-tiled process.
+  if (threadSelection?.split) {
+    const splitNote = notesCatalog.crossProcessWorkSplit();
+    notes.push(splitNote);
+    console.error(splitNote);
+  }
   if (opts.cpuThrottle) {
     notes.push(notesCatalog.artificialSlowdown(opts.cpuThrottle));
   }
