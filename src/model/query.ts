@@ -289,6 +289,65 @@ export interface SpanAnatomy {
   hints: string[];
 }
 
+/** One member's own numbers for a stitched span, tagged by its capture mode. Walls are shown PER
+ * member and never combined -- a group holds N captures of one workload, not one measurement. */
+export interface GroupSpanMember {
+  mode: string;
+  variant?: string;
+  wallMs: number | null;
+  aggregation: SpanAggregation;
+  iterations: number;
+}
+
+/** Which member each stitched panel was drawn from, so every number carries its provenance. */
+export interface GroupSpanSources {
+  slices?: string;
+  counts?: string;
+  forced?: string;
+  hot?: string;
+  inp?: string;
+}
+
+/**
+ * `query span <label>` output on a RUN-GROUP: the stitch. One anatomy view drawing each panel from
+ * the member that measures it -- the reconciling bar + hot functions from the breakdown member, the
+ * exact counts + forced read-sites + thrash from the deep member -- with every panel tagged in
+ * `sources` and each member's own wall listed in `members` (never combined). A group NEVER averages:
+ * the bar is ONE member's real reconciling sample, the counts ONE member's exact figures. A panel no
+ * member measured is null/absent (a loud gap), never fabricated.
+ */
+export interface GroupSpanStitch {
+  group: string;
+  target: string;
+  label: string;
+  kind: SpanKind;
+  /** each member's own wall for this span, tagged by mode; NEVER combined into one number */
+  members: GroupSpanMember[];
+  /** which member each panel below came from */
+  sources: GroupSpanSources;
+  /** the reconciling bar's slices (from the bar member); null when no member built one */
+  slices: UnifiedSlices | null;
+  residualMs?: number;
+  frames?: FrameSideTrack;
+  /** exact rendering counts (from the counts member); Measured throughout */
+  counts: SpanCounts;
+  inpMs?: number | null;
+  interaction?: InteractionTiming | null;
+  loaf?: StepLoaf;
+  /** forced read-sites (from the deep member) */
+  forced?: SpanForced[];
+  /** the layout-thrashing rollup (chrome --deep member, run span) */
+  thrash?: ThrashReport;
+  /** firefox --deep dirtied-by write report (from a gecko-deep member) */
+  firefoxDirtiedBy?: FirefoxDirtiedByReport;
+  /** hot functions (from the CPU-bearing member) */
+  hot: SpanHotFunctions | null;
+  /** group-level disclosures (count disagreement across members, partial formation), surfaced so a
+   * stitched number is never read as agreed when the members did not agree */
+  notes: string[];
+  hints: string[];
+}
+
 /** Per-package self-time delta in a CPU diff. */
 export interface CpuPackageDelta {
   package: string;

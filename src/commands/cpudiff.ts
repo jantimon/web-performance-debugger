@@ -9,6 +9,7 @@ import {
   shortSource,
 } from "../profile/cpuprofile.js";
 import { comparabilityMismatches, CPU_DIFF_BLOCKING_AXES } from "../model/compat.js";
+import { resolveVerbTarget } from "./group.js";
 
 /** Self-time deltas below this are treated as sampling noise. */
 const NOISE_MS = 0.5;
@@ -53,9 +54,15 @@ function structuredFormat(opts: DiffOpts): Format | null {
 
 /** Compare two CPU models: per-package and per-function self-time deltas, noise-filtered. */
 export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOpts): Promise<void> {
+  // A run-group routes to its CPU-bearing member (breakdown preferred), so two groups compare their
+  // CPU-bearing members; a plain recording/model resolves to itself.
+  const [baseTarget, currentTarget] = await Promise.all([
+    resolveVerbTarget(baseline, "cpu", "CPU sampling"),
+    resolveVerbTarget(current, "cpu", "CPU sampling"),
+  ]);
   const [baseModel, currentModel] = await Promise.all([
-    loadCpuModel(baseline),
-    loadCpuModel(current),
+    loadCpuModel(baseTarget.target),
+    loadCpuModel(currentTarget.target),
   ]);
 
   // Comparability: a cpu-diff joins per-function self-time across two models as if they measured the

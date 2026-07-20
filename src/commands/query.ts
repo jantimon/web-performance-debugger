@@ -10,10 +10,20 @@ import type {
   Recording,
   RecordingMeta,
   Span,
+  SpanCounts,
   SpanHot,
 } from "../model/recording.js";
 import { matchedFrameFloorMs } from "../model/frame-floor.js";
-import type { BlameEntry, SpanAnatomy, SpanForced, SpanHotFunctions } from "../model/query.js";
+import type {
+  BlameEntry,
+  GroupSpanMember,
+  GroupSpanSources,
+  GroupSpanStitch,
+  SpanAnatomy,
+  SpanForced,
+  SpanHotFunctions,
+  UnifiedSlices,
+} from "../model/query.js";
 import { MIN_POOLED_HOT_SAMPLES } from "../profile/span-hot.js";
 import {
   buildSpans,
@@ -36,7 +46,16 @@ import { deserialize, serialize, isFormat, type Format } from "../output/format.
 import { assertRecordingArtifact } from "../model/artifact.js";
 import { printSpanBreakdowns, printCpuBreakdown } from "./cpu.js";
 import { loadCpuModel, shortSource } from "../profile/cpuprofile.js";
-import { resolveTarget, hintTarget } from "./resolve.js";
+import { resolveTarget, hintTarget, resolveConsumption } from "./resolve.js";
+import {
+  loadGroup,
+  loadMemberRecording,
+  memberLabel,
+  memberRecordingPath,
+  resolveVerbTarget,
+  routingNote,
+} from "./group.js";
+import { pickMember, type GroupMember, type RunGroup } from "../model/group.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
 import { usToMs } from "../model/time.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
@@ -60,6 +79,23 @@ function structuredFormat(opts: OutOpts): Format | null {
     return opts.format;
   }
   return opts.json ? "json" : null;
+}
+
+/**
+ * Load a recording for an event-log verb (events/get/blame), routing a run-group to its deep member
+ * (the only one carrying the event log) and disclosing the routing in human output. A group with no
+ * deep member fails loudly in resolveVerbTarget, never a silent empty result.
+ */
+async function loadEventLogTarget(file: string, opts: OutOpts): Promise<Recording> {
+  const routed = await resolveVerbTarget(
+    file,
+    "blame",
+    "the deep event log (forced-layout blame / events)",
+  );
+  const rec = await load(routed.target);
+  const routeLine = routingNote(routed, "the event log");
+  if (routeLine && !structuredFormat(opts)) console.log(dim(routeLine));
+  return rec;
 }
 
 function emit(value: unknown, fmt: Format): void {
@@ -150,7 +186,12 @@ function measureWindow(
  * span's window (run span only; per-step/measure windowing is not reconstructable at read time).
  */
 export async function querySpan(file: string, label: string, query: SpanQuery): Promise<void> {
-  const abs = await resolveTarget(file, "recording");
+  // A run-group STITCHES one span across its members (bar+hot from the breakdown member, counts+forced
+  // from the deep member); a plain recording renders the single-member anatomy below.
+  const consumption = await resolveConsumption(file);
+  if (consumption.kind === "group")
+    return void (await querySpanGroup(consumption.path, label, query));
+  const abs = consumption.path;
   const rec = await load(abs);
 
   const qualifier = parseSpanKindLabel(label);
@@ -632,6 +673,297 @@ function printSpanAnatomy(
   }
 }
 
+/** An all-not-measured SpanCounts, for a stitch whose group has no counting member. */
+function emptySpanCounts(): SpanCounts {
+  return {
+    layoutCount: null,
+    styleCount: null,
+    paintCount: null,
+    forcedLayoutCount: null,
+    layoutInvalidations: null,
+    styleInvalidations: null,
+    longTaskCount: null,
+  };
+}
+
+/**
+ * `query span <label>` on a run-group: the stitch. Draws each panel from the member that measures it,
+ * tags every panel with its source member, and lists each member's own wall separately (never
+ * combined). A panel no member measured is null/absent (a loud gap), never fabricated or averaged.
+ */
+async function querySpanGroup(
+  manifestPath: string,
+  label: string,
+  query: SpanQuery,
+): Promise<void> {
+  const group = await loadGroup(manifestPath);
+  const stitch = await buildGroupSpanStitch(
+    manifestPath,
+    group,
+    label,
+    query.top ?? DEFAULT_SPAN_HOT,
+  );
+  const fmt = structuredFormat(query);
+  if (fmt) return emit(stitch, fmt);
+  printGroupSpanStitch(stitch);
+}
+
+async function buildGroupSpanStitch(
+  manifestPath: string,
+  group: RunGroup,
+  label: string,
+  topN: number,
+): Promise<GroupSpanStitch> {
+  const qualifier = parseSpanKindLabel(label);
+  const wantedLabel = qualifier?.label ?? label;
+  const wantedKind = qualifier?.kind;
+
+  // Build each member's OWN anatomy of the span (skip a member that has no such span). Reuses the
+  // single-recording buildSpanAnatomy, so each member's numbers are exactly what `query span` on that
+  // member would report -- the stitch only chooses which member's panel to surface.
+  const perMember = new Map<GroupMember, SpanAnatomy>();
+  for (const member of group.members) {
+    const abs = memberRecordingPath(manifestPath, member);
+    const rec = await loadMemberRecording(manifestPath, member);
+    const matches = rec.spans.filter(
+      (span) => span.label === wantedLabel && (wantedKind == null || span.kind === wantedKind),
+    );
+    if (matches.length > 1) {
+      const forms = matches.map((span) => `${span.kind}:${span.label}`).join(", ");
+      throw new Error(
+        `'${label}' matches ${matches.length} spans of different kinds in member '${memberLabel(member)}': ` +
+          `${forms}. Re-run with the qualified form, e.g. ${matches[0].kind}:${wantedLabel}.`,
+      );
+    }
+    if (!matches.length) continue;
+    const model = await tryLoadCpuModel(abs);
+    perMember.set(member, buildSpanAnatomy(rec, abs, matches[0], model, topN, "latest"));
+  }
+  if (perMember.size === 0) {
+    const first = await loadMemberRecording(manifestPath, group.members[0]);
+    const available = first.spans.map((span) => `${span.kind}:${span.label}`).join(", ");
+    throw new Error(
+      `No span '${label}' in run-group '${group.meta.name}'. Available: ${available || "(none)"}. ` +
+        `List them with \`query spans latest\`.`,
+    );
+  }
+
+  const anatomyOf = (member: GroupMember | null): SpanAnatomy | undefined =>
+    member ? perMember.get(member) : undefined;
+  const kind = [...perMember.values()][0].kind;
+  const target = [...perMember.values()][0].target;
+
+  const barMember = pickMember(group, "slice-bar");
+  const countsMember = pickMember(group, "counts");
+  const forcedMember = pickMember(group, "forced");
+  const cpuMember = pickMember(group, "cpu");
+  const inpMember = pickMember(group, "inp");
+
+  const barAnatomy = anatomyOf(barMember);
+  const countsAnatomy = anatomyOf(countsMember);
+  const forcedAnatomy = anatomyOf(forcedMember);
+  const cpuAnatomy = anatomyOf(cpuMember);
+  const inpAnatomy = anatomyOf(inpMember);
+
+  const slices = barAnatomy?.slices ?? null;
+  const counts = countsAnatomy?.counts ?? emptySpanCounts();
+  const hot = cpuAnatomy?.hot ?? null;
+
+  const members: GroupSpanMember[] = group.members
+    .map((member): GroupSpanMember | null => {
+      const anatomy = perMember.get(member);
+      if (!anatomy) return null;
+      return {
+        mode: member.mode,
+        ...(member.variant ? { variant: member.variant } : {}),
+        wallMs: anatomy.wallMs,
+        aggregation: anatomy.aggregation,
+        iterations: anatomy.iterations,
+      };
+    })
+    .filter((entry): entry is GroupSpanMember => entry != null);
+
+  const sources: GroupSpanSources = {
+    ...(slices != null && barMember ? { slices: memberLabel(barMember) } : {}),
+    ...(countsAnatomy && countsMember ? { counts: memberLabel(countsMember) } : {}),
+    ...(forcedAnatomy?.forced && forcedMember ? { forced: memberLabel(forcedMember) } : {}),
+    ...(hot != null && cpuMember ? { hot: memberLabel(cpuMember) } : {}),
+    ...(inpAnatomy?.inpMs != null && inpMember ? { inp: memberLabel(inpMember) } : {}),
+  };
+
+  const hints: string[] = [];
+  if (forcedMember) hints.push("Forced-layout source lines: wpd query blame latest --forced");
+  if (cpuMember) hints.push("Run-window hot functions: wpd query cpu latest");
+  hints.push("All spans at a glance: wpd query spans latest");
+
+  return {
+    group: group.meta.name,
+    target,
+    label: wantedLabel,
+    kind,
+    members,
+    sources,
+    slices,
+    ...(barAnatomy?.residualMs != null ? { residualMs: barAnatomy.residualMs } : {}),
+    ...(barAnatomy?.frames ? { frames: barAnatomy.frames } : {}),
+    counts,
+    ...(inpAnatomy?.inpMs != null ? { inpMs: inpAnatomy.inpMs } : {}),
+    ...(inpAnatomy?.interaction ? { interaction: inpAnatomy.interaction } : {}),
+    ...(inpAnatomy?.loaf ? { loaf: inpAnatomy.loaf } : {}),
+    ...(forcedAnatomy?.forced ? { forced: forcedAnatomy.forced } : {}),
+    ...(forcedAnatomy?.thrash ? { thrash: forcedAnatomy.thrash } : {}),
+    ...(forcedAnatomy?.firefoxDirtiedBy
+      ? { firefoxDirtiedBy: forcedAnatomy.firefoxDirtiedBy }
+      : {}),
+    hot,
+    notes: group.notes ?? [],
+    hints,
+  };
+}
+
+/** Human report for the stitch: per-member walls, then each panel tagged with its source member. */
+function printGroupSpanStitch(stitch: GroupSpanStitch): void {
+  const count = (value: Measured<number>): string =>
+    formatMeasured(value, (measured) => String(measured));
+  console.log(
+    `\nspan ${bold(stitch.label)} ${dim(`(${stitch.kind} · run-group '${stitch.group}' · ${stitch.target})`)}`,
+  );
+  console.log(dim(`  ${stitchFooterFromSources(stitch)}`));
+
+  console.log("\nWall per member (never combined):\n");
+  console.log(
+    table(
+      ["member", "wall", "agg", "iterations"],
+      stitch.members.map((member) => [
+        member.variant ? `${member.mode}/${member.variant}` : member.mode,
+        member.wallMs == null ? "—" : `${num(member.wallMs, 1)} ms`,
+        member.aggregation,
+        String(member.iterations),
+      ]),
+    ),
+  );
+
+  if (stitch.slices) {
+    console.log(`\nCPU time breakdown ${dim(`(from member '${stitch.sources.slices ?? "?"}')`)}`);
+    printUnifiedSlices(stitch.slices);
+  } else {
+    console.log(dim("\n(no reconciling bar: no member of this group built one)"));
+  }
+
+  console.log(
+    `\nRendering counts ${dim(`(from member '${stitch.sources.counts ?? "none"}'; Measured: — = not measured, never 0)`)}\n`,
+  );
+  console.log(
+    table(
+      ["metric", "count"],
+      [
+        ["layout", count(stitch.counts.layoutCount)],
+        ["style recalc", count(stitch.counts.styleCount)],
+        ["paint", count(stitch.counts.paintCount)],
+        ["forced layout/style", count(stitch.counts.forcedLayoutCount)],
+        ["layout invalidations", count(stitch.counts.layoutInvalidations)],
+        ["style invalidations", count(stitch.counts.styleInvalidations)],
+        ["long tasks ≥50ms", count(stitch.counts.longTaskCount)],
+      ],
+    ),
+  );
+
+  if (stitch.inpMs != null || stitch.interaction) {
+    const inp = stitch.inpMs == null ? "—" : `${num(stitch.inpMs)} ms`;
+    console.log(
+      `\nINP (worst interaction): ${bold(inp)} ${dim(`(from member '${stitch.sources.inp ?? "?"}')`)}`,
+    );
+    if (stitch.interaction) {
+      const { inputDelayMs, processingMs, presentationDelayMs } = stitch.interaction;
+      console.log(
+        dim(
+          `  input delay ${num(inputDelayMs, 2)} ms · processing ${num(processingMs, 2)} ms · presentation ${num(presentationDelayMs, 2)} ms`,
+        ),
+      );
+    }
+  }
+
+  if (stitch.forced?.length) {
+    console.log(
+      `\nForced layout/style by source ${dim(`(from member '${stitch.sources.forced ?? "?"}'; the read that forced the flush)`)}\n`,
+    );
+    const shown = stitch.forced.slice(0, ANATOMY_FORCED_CAP);
+    console.log(
+      table(
+        ["count", "ms", "source"],
+        shown.map((entry) => [entry.count, num(entry.durMs, 2), entry.at]),
+      ),
+    );
+    if (stitch.forced.length > shown.length)
+      console.log(dim(`  … +${stitch.forced.length - shown.length} more source(s)`));
+  }
+  if (stitch.thrash && stitch.thrash.count > 0)
+    console.log(
+      `\n⚠ layout thrashed ${bold(`${stitch.thrash.count}x`)} during the run ${dim("(query blame latest --forced for the full interleave)")}`,
+    );
+
+  if (stitch.hot?.functions?.length) {
+    console.log(
+      `\nHot functions ${dim(`(from member '${stitch.sources.hot ?? "?"}', ${num(stitch.hot.scriptingMs, 1)} ms JS self over ${stitch.hot.pooledSamples} sample(s))`)}. Drill with ${cyan("`query frame <id>`")}:\n`,
+    );
+    console.log(
+      table(
+        ["id", "self ms", "self %", "package", "function (source)"],
+        stitch.hot.functions.map((fn) => [
+          dim(String(fn.id)),
+          num(fn.selfMs, 1),
+          `${num(fn.selfPct, 1)}%`,
+          cyan(fn.package),
+          `${fn.fn}${fn.file ? ` ${dim(`(${shortSource(fn.file, fn.source)})`)}` : ""}`,
+        ]),
+      ),
+    );
+  }
+
+  // Group-level disclosures (count disagreement across members, partial formation): surface them so a
+  // stitched number is never read as agreed when the members did not.
+  for (const note of stitch.notes) console.log(dim(`\n${note}`));
+
+  if (stitch.hints.length) {
+    console.log("");
+    for (const hint of stitch.hints) console.log(dim(`  • ${hint}`));
+  }
+}
+
+/** The footer rebuilt from a stitch's `sources` for the human header (no GroupMember handles here). */
+function stitchFooterFromSources(stitch: GroupSpanStitch): string {
+  const bar = stitch.sources.slices ? `bar+hot from ${stitch.sources.slices}` : "no bar member";
+  const counts = stitch.sources.counts ? `counts from ${stitch.sources.counts}` : null;
+  const forced = stitch.sources.forced ? `forced from ${stitch.sources.forced}` : null;
+  const rest = [counts, forced].filter(Boolean).join(", ") || "no counts/forced member";
+  return `${bar}, ${rest}. Walls are per member, never combined.`;
+}
+
+/** Print a UnifiedSlices bar (js/style/layout/paint/gc/other/idle), Measured-honest (— for not-measured). */
+function printUnifiedSlices(slices: UnifiedSlices): void {
+  const rows: [string, number | null, string][] = [
+    ["js", slices.js.ms, ""],
+    ["style", slices.style?.ms ?? null, ""],
+    ["layout", slices.layout?.ms ?? null, ""],
+    ["paint", slices.paint?.ms ?? null, slices.paint ? "" : dim("(not measured)")],
+    ["gc", slices.gc.ms, ""],
+    ["other", slices.other.ms, dim("(task remainder + engine/unclassified)")],
+    ["idle", slices.idle.ms, dim("(waiting, not work)")],
+  ];
+  const wall = rows.reduce((total, [, ms]) => total + (ms ?? 0), 0);
+  console.log(
+    table(
+      ["slice", "ms", "%", ""],
+      rows.map(([name, ms, note]) => [
+        name,
+        ms == null ? "—" : num(ms, 1),
+        ms == null || wall <= 0 ? "—" : `${num((ms / wall) * 100, 1)}%`,
+        note,
+      ]),
+    ),
+  );
+}
+
 export interface SpansQuery extends OutOpts {
   /** exact span label to keep (case-sensitive, like a performance.measure name) */
   label?: string;
@@ -660,7 +992,39 @@ function printSpanFilterNote(hidden: number): void {
  * hidden count is always disclosed.
  */
 export async function querySpans(file: string, query: SpansQuery): Promise<void> {
-  const abs = await resolveTarget(file, "recording");
+  // A run-group renders the bar-bearing member's overview, plus a disclosure pointing at the deep
+  // member's verbs; a plain recording renders itself.
+  const consumption = await resolveConsumption(file);
+  let abs = consumption.path;
+  let groupCtx: {
+    name: string;
+    overviewLabel: string;
+    countsLabel: string | null;
+    deepLabel: string | null;
+    notes: string[];
+  } | null = null;
+  if (consumption.kind === "group") {
+    const group = await loadGroup(consumption.path);
+    // The overview comes from the bar-bearing member; a group with no bar member (e.g. deep-only)
+    // falls back to a counting member and renders the bar-less counts overview, exactly as a plain
+    // --deep recording does, rather than refusing the documented overview flow.
+    const countsMember = pickMember(group, "counts");
+    const overviewMember = pickMember(group, "slice-bar") ?? countsMember;
+    if (!overviewMember)
+      throw new Error(
+        `No member of run-group '${group.meta.name}' has a bar or exact counts to overview ` +
+          `(members: ${group.members.map((entry) => memberLabel(entry)).join(", ")}).`,
+      );
+    abs = memberRecordingPath(consumption.path, overviewMember);
+    const deepMember = pickMember(group, "forced");
+    groupCtx = {
+      name: group.meta.name,
+      overviewLabel: memberLabel(overviewMember),
+      countsLabel: countsMember ? memberLabel(countsMember) : null,
+      deepLabel: deepMember ? memberLabel(deepMember) : null,
+      notes: group.notes ?? [],
+    };
+  }
   const rec = await load(abs);
   // Prefer the recording's spans that carry a bar; reach for the sibling CPU model only when none do
   // (firefox/node without measures, or a default-mode chrome run), where the run bar lives on
@@ -707,11 +1071,38 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   // The opt-in variant travels in the structured output as well, so a JSON/TOON consumer sees which
   // technique this recording is without re-reading meta.
   const variantField = rec.meta.variant ? { variant: rec.meta.variant } : {};
-  if (fmt) return emit({ ...result, ...variantField, spans, hidden, filter: spanFilter }, fmt);
+  // A group overview carries its provenance: the bar-bearing member it came from, and the deep member
+  // that answers counts/blame -- so a consumer never reads this one member's bar as the whole group.
+  const groupField = groupCtx
+    ? {
+        group: {
+          name: groupCtx.name,
+          overviewFrom: groupCtx.overviewLabel,
+          countsFrom: groupCtx.countsLabel,
+          blameFrom: groupCtx.deepLabel,
+          notes: groupCtx.notes,
+        },
+      }
+    : {};
+  if (fmt)
+    return emit(
+      { ...result, ...variantField, ...groupField, spans, hidden, filter: spanFilter },
+      fmt,
+    );
 
   // Surface an opt-in variant label next to the recording identity, so a reader knows which technique
   // this recording is (and why a diff gate against another variant would refuse).
   if (rec.meta.variant) console.log(dim(`\nvariant: ${rec.meta.variant}`));
+  if (groupCtx) {
+    console.log(
+      dim(
+        `\nrun-group '${groupCtx.name}': overview from member '${groupCtx.overviewLabel}'${groupCtx.deepLabel ? `; exact counts + forced-layout blame live on member '${groupCtx.deepLabel}' (query span/blame latest)` : ""}.`,
+      ),
+    );
+    // Group-level disclosures (count disagreement across members, partial formation) are the honesty
+    // valve: surface them so a two-member number is never read as agreed when the members did not.
+    for (const note of groupCtx.notes) console.log(dim(`  ${note}`));
+  }
   // Human output reuses the existing bar renderers. The stored-bars path prints the seven-slice
   // per-span table; the synthesized run bar prints the CpuModel bar, which already labels
   // style/layout and browser/native honestly for its lane.
@@ -744,14 +1135,24 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   }
   // Point drill-down at one span's full anatomy (bar + counts + forced/dirtied + hot functions) and
   // at the event log, where one exists. The hint target is `latest` when this IS the latest recording,
-  // else a cwd-relative path, so a pasted command carries no absolute home/scratch path.
-  const hintPath = await hintTarget(abs);
+  // else a cwd-relative path, so a pasted command carries no absolute home/scratch path. For a group,
+  // the drills target the GROUP (so `query span` stitches, `query events` routes to the deep member),
+  // not the bar member the overview happened to come from.
+  const hintPath = groupCtx
+    ? file === "latest"
+      ? "latest"
+      : JSON.stringify(file)
+    : await hintTarget(abs);
   console.log(
     dim(
       `\n  • One span's anatomy (counts, forced, hot functions): wpd query span ${hintPath} <label>`,
     ),
   );
-  if (rec.meta.passes.includes("deep") || isGeckoCaptureMode(rec.meta.passes))
+  // A group has an event log iff a deep member is present; on a plain recording, iff this capture kept one.
+  const hasEventLog = groupCtx
+    ? groupCtx.deepLabel != null
+    : rec.meta.passes.includes("deep") || isGeckoCaptureMode(rec.meta.passes);
+  if (hasEventLog)
     console.log(
       dim(`  • The classified event log: wpd query events ${hintPath} (drill: query get)`),
     );
@@ -839,7 +1240,7 @@ async function printBarlessSpans(
 }
 
 export async function queryGet(file: string, id: number, opts: OutOpts): Promise<void> {
-  const rec = await load(file);
+  const rec = await loadEventLogTarget(file, opts);
   requireEventLog(rec, file);
   const event = rec.events.find((candidate) => candidate.id === id);
   if (!event) throw new Error(`No event with id ${id} in ${file}`);
@@ -857,7 +1258,7 @@ export interface EventsQuery extends OutOpts {
 export async function queryEvents(file: string, query: EventsQuery): Promise<void> {
   if (query.kind && !isEventKind(query.kind))
     throw new Error(`Unknown --kind '${query.kind}'. Valid kinds: ${EVENT_KINDS.join(", ")}`);
-  const rec = await load(file);
+  const rec = await loadEventLogTarget(file, query);
   requireEventLog(rec, file);
   let events = eventsInWindow(rec);
   if (query.kind) events = events.filter((event) => event.kind === query.kind);
@@ -899,7 +1300,7 @@ export interface BlameQuery extends OutOpts {
 export async function queryBlame(file: string, query: BlameQuery): Promise<void> {
   if (query.kind && !isEventKind(query.kind))
     throw new Error(`Unknown --kind '${query.kind}'. Valid kinds: ${EVENT_KINDS.join(", ")}`);
-  const rec = await load(file);
+  const rec = await loadEventLogTarget(file, query);
   requireEventLog(rec, file);
 
   // --dirtied: the firefox --deep write report ALONE (Gecko cause stacks, first-invalidation-only).
