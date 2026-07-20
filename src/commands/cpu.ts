@@ -142,6 +142,7 @@ export function printSpanBreakdowns(
   spans: Span[],
   iterations?: number,
   browser?: "chrome" | "firefox",
+  showFrames = false,
 ): void {
   const bars = spans.filter((span) => span.breakdown);
   if (!bars.length) return;
@@ -195,7 +196,7 @@ export function printSpanBreakdowns(
     );
     if (residualMs != null)
       console.log(dim(`  residual ${num(residualMs, 3)} ms (tiling did not fully close)`));
-    if (span.frames) printFrameSideTrack(span.frames);
+    if (span.frames) printFrameSideTrack(span.frames, showFrames);
   }
   // Engine-conditioned footer: firefox bills forced layout to style/layout (js can read ~0) and its
   // slices quantize to the ~1ms Gecko sampler; chrome folds the forced layout into the js frame.
@@ -205,12 +206,14 @@ export function printSpanBreakdowns(
 }
 
 /**
- * One compact off-thread frame line under a span's bar, plus a line naming any dropped or
- * smoothness-affecting frame and the slowest presented (incl. partial) frame's top stages.
- * DISPLAY-ONLY: these numbers are scheduler noise (see docs/dev/rendering-counts.md) and never feed a
- * bar or a gate.
+ * One compact off-thread frame line under a span's bar: the verdict tally, plus a one-line count of
+ * any dropped/smoothness-affecting frames and the slowest presented (incl. partial) frame's top
+ * stages. On a real page a span spans dozens of frames, so the per-frame jank lines flood the bars;
+ * they print one per frame only under `showFrames` (`--frames`). DISPLAY-ONLY: these numbers are
+ * scheduler noise (see docs/dev/rendering-counts.md) and never feed a bar or a gate. The JSON output
+ * keeps every per-frame record regardless.
  */
-function printFrameSideTrack(frames: FrameSideTrack): void {
+function printFrameSideTrack(frames: FrameSideTrack, showFrames: boolean): void {
   const parts = [
     `${frames.presented} presented`,
     `${frames.presentedPartial} partial`,
@@ -221,12 +224,21 @@ function printFrameSideTrack(frames: FrameSideTrack): void {
   const jank = frames.frames.filter(
     (frame) => frame.state === "dropped" || frame.affectsSmoothness,
   );
-  for (const frame of jank)
-    console.log(
-      yellow(
-        `  ⚠ frame ${frame.sequence}: ${frame.state}${frame.affectsSmoothness ? ", affects smoothness" : ""} (${num(frame.durMs, 1)} ms)`,
-      ),
-    );
+  if (jank.length) {
+    if (showFrames)
+      for (const frame of jank)
+        console.log(
+          yellow(
+            `  ⚠ frame ${frame.sequence}: ${frame.state}${frame.affectsSmoothness ? ", affects smoothness" : ""} (${num(frame.durMs, 1)} ms)`,
+          ),
+        );
+    else
+      console.log(
+        yellow(
+          `  ⚠ ${jank.length} frame(s) dropped or affecting smoothness ${dim("(--frames to list each)")}`,
+        ),
+      );
+  }
   if (frames.worstStages?.length) {
     const stages = frames.worstStages
       .map((stage) => `${stage.name} ${num(stage.ms, 1)}`)

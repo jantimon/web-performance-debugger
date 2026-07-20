@@ -32,7 +32,7 @@ import { printCpuHeadline, printCpuBreakdown, printSpanBreakdowns } from "./cpu.
 import { printSummary } from "./summaryView.js";
 import { kv, num, sparkline } from "../output/ascii.js";
 import { bold, cyan, dim } from "../output/color.js";
-import { writePointer } from "./resolve.js";
+import { writePointer, displayPath } from "./resolve.js";
 import { extFor, type Format } from "../output/format.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
@@ -115,24 +115,6 @@ function shorterPath(root: string, absPath: string | undefined): string | null {
   if (!absPath) return null;
   const relative = path.relative(root, absPath);
   return relative && relative.length < absPath.length ? relative : absPath;
-}
-
-/**
- * An artifact path as the REPORT should show it: relative to cwd when that is shorter.
- *
- * Display only. The stored back-pointers stay absolute on purpose, so a recording can be reopened
- * from any directory; this is purely about the terminal, where an absolute path is both harder to
- * scan and something you may not want on screen -- a pasted report or a recorded terminal otherwise
- * carries your home directory with it.
- *
- * Falls back to absolute when relativizing does not help: an --out outside cwd would otherwise
- * become a worse `../../../tmp/x.json`.
- */
-function displayPath(absPath: string): string {
-  const relative = path.relative(process.cwd(), absPath);
-  return relative && !relative.startsWith("..") && relative.length < absPath.length
-    ? relative
-    : absPath;
 }
 
 /** Plain-English remedy per failure reason, so the note says what to actually do. */

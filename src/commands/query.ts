@@ -33,7 +33,7 @@ import { deserialize, serialize, isFormat, type Format } from "../output/format.
 import { assertRecordingArtifact } from "../model/artifact.js";
 import { printSpanBreakdowns, printCpuBreakdown } from "./cpu.js";
 import { loadCpuModel, shortSource } from "../profile/cpuprofile.js";
-import { resolveTarget } from "./resolve.js";
+import { resolveTarget, hintTarget } from "./resolve.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
 import { usToMs } from "../model/time.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
@@ -92,6 +92,8 @@ const ANATOMY_FORCED_CAP = 12;
 export interface SpanQuery extends OutOpts {
   /** how many hot functions to include in the span's window (default DEFAULT_SPAN_HOT) */
   top?: number;
+  /** list each dropped/smoothness-affecting frame under the bar (default: a one-line count) */
+  frames?: boolean;
 }
 
 /**
@@ -173,11 +175,15 @@ export async function querySpan(file: string, label: string, query: SpanQuery): 
 
   const span = matches[0];
   const model = await tryLoadCpuModel(abs);
-  const anatomy = buildSpanAnatomy(rec, abs, span, model, query.top ?? DEFAULT_SPAN_HOT);
+  // Drill-in hints get the friendly target (`latest` when this IS the latest, else a cwd-relative
+  // path) so a pasted command carries no absolute home/scratch path; the stored `recording`
+  // back-pointer stays absolute for cwd-independent reopening.
+  const hintPath = await hintTarget(abs);
+  const anatomy = buildSpanAnatomy(rec, abs, span, model, query.top ?? DEFAULT_SPAN_HOT, hintPath);
 
   const fmt = structuredFormat(query);
   if (fmt) return emit(anatomy, fmt);
-  printSpanAnatomy(anatomy, span, model, rec.meta);
+  printSpanAnatomy(anatomy, span, model, rec.meta, query.frames ?? false);
 }
 
 /** Load the sibling CPU model if one exists; a missing/absent model is not an error for the anatomy.
@@ -199,6 +205,7 @@ function buildSpanAnatomy(
   span: Span,
   model: CpuModel | undefined,
   topN: number,
+  hintPath: string,
 ): SpanAnatomy {
   const iterations = rec.meta.iterations ?? 1;
   const target = recordingLane(rec.meta);
@@ -255,14 +262,14 @@ function buildSpanAnatomy(
 
   const hints: string[] = [];
   if (hasEventLog) {
-    hints.push(`Forced-layout source lines: wpd query blame "${recordingPath}" --forced`);
-    hints.push(`Drill an event by id: wpd query get "${recordingPath}" <id>`);
+    hints.push(`Forced-layout source lines: wpd query blame ${hintPath} --forced`);
+    hints.push(`Drill an event by id: wpd query get ${hintPath} <id>`);
   }
   if (model && span.kind !== "run" && !span.hot)
-    hints.push(`Run-window hot functions: wpd query cpu "${recordingPath}"`);
+    hints.push(`Run-window hot functions: wpd query cpu ${hintPath}`);
   // Only suggest `query spans` when this rung actually has a bar/CpuModel for it to fold; on the
   // default/--deep rungs it would error, so a not-available hint would send the reader in a circle.
-  if (spansResult) hints.push(`All spans at a glance: wpd query spans "${recordingPath}"`);
+  if (spansResult) hints.push(`All spans at a glance: wpd query spans ${hintPath}`);
 
   const residualMs = entry?.residualMs ?? span.breakdown?.residualMs;
   return {
@@ -369,6 +376,7 @@ function printSpanAnatomy(
   span: Span,
   model: CpuModel | undefined,
   meta: RecordingMeta,
+  showFrames: boolean,
 ): void {
   const count = (value: Measured<number>): string =>
     formatMeasured(value, (measured) => String(measured));
@@ -403,7 +411,7 @@ function printSpanAnatomy(
 
   // The reconciling bar, when the rung built one. A stored bar prints the seven-slice per-span table;
   // a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled).
-  if (span.breakdown) printSpanBreakdowns([span], anatomy.iterations, meta.browser);
+  if (span.breakdown) printSpanBreakdowns([span], anatomy.iterations, meta.browser, showFrames);
   else if (span.kind === "run" && model?.breakdown) printCpuBreakdown(model, anatomy.iterations);
   else console.log(dim("\n(no reconciling bar at this rung; record with --breakdown for one)"));
 
@@ -443,6 +451,28 @@ function printSpanAnatomy(
     console.log(
       dim(
         "\ncounts are windowed start-onward from run:start (through the settle drain), so a paint/layout the run commits just after run:end is counted; the bar above tiles [run:start, run:end] only, so a count can exceed its slice ms.",
+      ),
+    );
+  // A measure span carries a reconciling bar (real style/layout/paint slice ms) but no counts: counts
+  // window to the run/steps, never to an arbitrary user-measure window. Without this the bar's slice
+  // ms beside an all-"—" counts table read as a contradiction. Gated on the rendering slices actually
+  // summing above 0, so an all-idle bar (no style/layout/paint to reconcile against) prints no note
+  // rather than claiming ms it did not measure. Say it, rather than fabricate counts.
+  const renderingSliceMs = span.breakdown
+    ? span.breakdown.slices.style.ms +
+      span.breakdown.slices.layout.ms +
+      (span.breakdown.slices.paint?.ms ?? 0)
+    : 0;
+  if (
+    anatomy.kind === "measure" &&
+    span.breakdown &&
+    anatomy.target !== "firefox" &&
+    anatomy.counts.layoutCount == null &&
+    renderingSliceMs > 0
+  )
+    console.log(
+      dim(
+        "\ncounts are not windowed to a performance.measure span (they scope to the run/steps), so they read — here even though the bar above measured real style/layout/paint ms in this window.",
       ),
     );
 
@@ -603,6 +633,8 @@ export interface SpansQuery extends OutOpts {
   minWall?: number;
   /** keep only spans whose label contains this text (case-insensitive substring) */
   filter?: string;
+  /** list each dropped/smoothness-affecting frame under a bar (default: a one-line count) */
+  frames?: boolean;
 }
 
 /** One dim line disclosing how many spans --min-wall/--filter hid, so a filtered view is never
@@ -676,7 +708,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
         `No spans matched the filter in ${file} (${hidden} hidden by --min-wall/--filter).`,
       );
     }
-    printSpanBreakdowns(bars, iterations, rec.meta.browser);
+    printSpanBreakdowns(bars, iterations, rec.meta.browser, query.frames ?? false);
     printSpanFilterNote(hidden);
   } else if (label && label !== "run") {
     return void console.log(
@@ -692,14 +724,18 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     printSpanFilterNote(hidden);
   }
   // Point drill-down at one span's full anatomy (bar + counts + forced/dirtied + hot functions) and
-  // at the event log, where one exists.
+  // at the event log, where one exists. The hint target is `latest` when this IS the latest recording,
+  // else a cwd-relative path, so a pasted command carries no absolute home/scratch path.
+  const hintPath = await hintTarget(abs);
   console.log(
     dim(
-      `\n  • One span's anatomy (counts, forced, hot functions): wpd query span "${file}" <label>`,
+      `\n  • One span's anatomy (counts, forced, hot functions): wpd query span ${hintPath} <label>`,
     ),
   );
   if (rec.meta.passes.includes("deep") || isGeckoRung(rec.meta.passes))
-    console.log(dim(`  • The classified event log: wpd query events "${file}" (drill: query get)`));
+    console.log(
+      dim(`  • The classified event log: wpd query events ${hintPath} (drill: query get)`),
+    );
 }
 
 export async function queryGet(file: string, id: number, opts: OutOpts): Promise<void> {

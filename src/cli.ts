@@ -371,6 +371,10 @@ fmtOpts(
     .option(
       "--filter <text>",
       "keep only spans whose label contains <text> (case-insensitive substring). The hidden count is disclosed",
+    )
+    .option(
+      "--frames",
+      "list each dropped/smoothness-affecting compositor frame under a bar (default: a one-line count)",
     ),
 ).action((file, opts) => run(querySpans(file, opts)));
 fmtOpts(
@@ -379,7 +383,11 @@ fmtOpts(
     .description(
       "one span's full anatomy: bar, counts, INP, forced/dirtied-by, hot functions. <label> is a bare label or a kind:label qualifier",
     )
-    .option("--top <n>", "hot functions to show within the span (run span only)", toInt),
+    .option("--top <n>", "hot functions to show within the span (run span only)", toInt)
+    .option(
+      "--frames",
+      "list each dropped/smoothness-affecting compositor frame under the bar (default: a one-line count)",
+    ),
 ).action((file, label, opts) => run(querySpan(file, label, opts)));
 // The removed `digest`/`index` verbs: a run is already digest-sized and steps are spans, so both
 // folded into `spans` (overview) + `span <label>` (one span's anatomy). Kept as hidden stubs so an
