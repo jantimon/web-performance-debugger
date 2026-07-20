@@ -850,9 +850,16 @@ e2e("query span <measure>: --breakdown surfaces per-span hot functions, suppress
 
   const trivial = JSON.parse(runCli(["query", "span", out, "measure:trivial", "--json"]));
   assert.ok(trivial.hot, "the trivial measure still reports a hot object");
-  assert.equal(trivial.hot.suppressed, true, "below the pooled floor: suppressed, never a fabricated top-N");
-  assert.equal(trivial.hot.functions, undefined, "no functions when suppressed");
-  assert.ok(trivial.hot.pooledSamples < 10, "the trivial window gathered too few samples to rank");
+  // Whether this window stays under the 10-sample floor depends on runner speed (a stalled CI
+  // machine stretches even this loop across enough sampler ticks to rank), so assert the
+  // suppression contract both ways instead of one fixed outcome.
+  if (trivial.hot.pooledSamples < 10) {
+    assert.equal(trivial.hot.suppressed, true, "below the pooled floor: suppressed, never a fabricated top-N");
+    assert.equal(trivial.hot.functions, undefined, "no functions when suppressed");
+  } else {
+    assert.equal(trivial.hot.suppressed, undefined, "at or above the floor there is no suppression flag");
+    assert.ok(trivial.hot.functions?.length > 0, "a real ranked list replaces suppression above the floor");
+  }
 });
 
 // `query span <step-label>` on a --deep driver recording: the step's exact windowed counts plus the
