@@ -1,5 +1,55 @@
 # @jantimon/web-performance-debugger
 
+## 0.13.0
+
+### Minor Changes
+
+- 9993cba: `--breakdown` now sources CPU samples from the trace's `v8.cpu_profiler` stream instead of the CDP
+  sampler. The trace stream is continuous across a cross-document navigation, so a navigating driver
+  step (or an early measure occurrence) now keeps its per-step CPU attribution -- the js-by-package
+  split and hot-function list -- where the CDP sampler dropped it (it resets in the new renderer
+  process). No CDP profiler runs on this rung.
+
+  The sampler interval on `--breakdown` is now the stream's own fixed rate (~150us), read back from the
+  chunks and recorded in `meta.cpuIntervalUs`/the CPU model, rather than the 200us default. Other rungs
+  (default, `--deep`, `--precise-wall`, firefox, node) are unchanged. When a browser build emits no
+  chunk stream, the run reports the counts and an honest note rather than fabricating samples.
+
+- 408aa4c: **Per-step Long Animation Frame attribution (Chrome).** A driver step now carries the Long Animation
+  Frames it triggered, naming the scripts that made a frame slow (the listener/callback, its script url,
+  its duration, and the ms it forced in style/layout). The in-page observer is ungated, so a step gets
+  script-level attribution even on the default rung (no trace, no CPU sampler window) and where the
+  sampler could not reach. `query span <step>` prints the blamed scripts. Firefox has no LoAF API, so a
+  Firefox step omits it rather than reporting a fake zero.
+
+  **`waitForStable` completion helper for streamed / soft navigations.** A new exported `measureStep`
+  `until` waits for a selector and then for the DOM to stop mutating, catching a streamed route
+  transition the default settle can end before. Opt-in, since it trades a longer wall for catching the
+  whole transition.
+
+### Patch Changes
+
+- cc6fe30: Firefox and frame-floor honesty in the breakdown/span output:
+
+  - The "js is not pure JS" bar footer is now engine-conditioned. On Firefox a forced layout bills to
+    the style/layout slices (js can read ~0), so the footer says that instead of repeating Chrome's
+    "bills to the forcing frame".
+  - Firefox bars disclose their ~1ms Gecko sampler granularity, so a 0 or 1 ms slice is not read as
+    precise.
+  - A Firefox forced-layout count carries a note that it is marker-derived and the read site is a
+    sampled estimate that can miss cheap reads; an empty `query blame --forced` beside a nonzero count
+    now says sampling missed the site, not "no forced layout".
+  - `query span` surfaces the sample spread (min sample, js slice) beside a wall/INP median pinned to
+    the frame floor, so a floored number is not read as "no difference".
+
+- 39ffac7: **`query cpu --by package` no longer blames a dependency's cost on "app".** When a sourcemap remaps a
+  frame to an original source that is not on the recorder's disk (a dependency built from a
+  workspace/source checkout, or a stale map), the resolver used to fs-walk that phantom path up to the
+  nearest `package.json` and land on the user's own root, so the dependency read as `app`. It now
+  derives the owner from the path string: the `node_modules` package the phantom source or its bundle
+  url names, else an honest `(unmapped: <dir>)` bucket, never `app`. Frames that were never remapped
+  (the app's own source) are unaffected.
+
 ## 0.12.0
 
 ### Minor Changes
