@@ -33,6 +33,10 @@ export interface LastPointer {
   cpuProfile?: string;
   /** resolved CPU model (.cpu.json/.cpu.toon), when CPU profiling ran */
   cpuModel?: string;
+  /** the run-group manifest, when the latest record formed or extended a group (absolute, like the
+   * others). `recording` still points at the last member as a fallback; a subsequent NON-group record
+   * writes a pointer without this field, which CLEARS it, so `latest` stops resolving to the group. */
+  group?: string;
 }
 
 export async function writePointer(pointer: LastPointer): Promise<void> {
@@ -104,6 +108,37 @@ export async function hintTarget(absPath: string): Promise<string> {
     // relative display path rather than failing a hint line.
   }
   return JSON.stringify(displayPath(absPath));
+}
+
+export interface Consumption {
+  kind: "recording" | "group";
+  /** absolute path to the recording or the run-group manifest */
+  path: string;
+}
+
+/** Whether a path names a run-group manifest by its `<base>.group.json|.toon` filename convention.
+ * A member recording never matches, so an explicit member path always resolves to the recording (the
+ * maintainer-locked rule), while an explicit manifest path resolves to the group. */
+function looksLikeGroupPath(file: string): boolean {
+  const base = path.basename(file).toLowerCase();
+  return base.endsWith(".group.json") || base.endsWith(".group.toon");
+}
+
+/**
+ * Resolve a consumption target to a recording OR a run-group manifest. `latest` resolves to the group
+ * iff the pointer carries one (a group-forming record set it; a later non-group record cleared it);
+ * an explicit path is a group only when it is a `.group.json|.toon` manifest, so an explicit member
+ * path always resolves to the recording. A group-aware verb branches on `kind`; the recording verbs
+ * keep using `resolveTarget`.
+ */
+export async function resolveConsumption(file: string): Promise<Consumption> {
+  if (file === "latest") {
+    const pointer = await readPointer();
+    if (pointer.group) return { kind: "group", path: path.resolve(pointer.group) };
+    return { kind: "recording", path: path.resolve(pointer.recording) };
+  }
+  const abs = path.resolve(file);
+  return { kind: looksLikeGroupPath(abs) ? "group" : "recording", path: abs };
 }
 
 /**
