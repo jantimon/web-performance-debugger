@@ -428,6 +428,64 @@ e2e("record --breakdown: a waiting-dominated span is mostly idle and still close
   assert.ok(Math.abs(sum - wallMs) < 0.01, `slices+idle ${sum} must equal wall ${wallMs}`);
 });
 
+// The run's rendering COUNTS are start-onward (they catch the trailing frame that paints after
+// run:end), the run BAR tiles [run:start, run:end]. So a run count can exceed its bar slice, and the
+// tool must disclose that rather than let it read as a bug. Here run() schedules a paint+layout burst
+// on a setTimeout(100) (well after run:end, inside the 200ms drain): its paints land in the run
+// paintCount but not the run bar's paint slice. Assert the gap is real AND that both the note and the
+// `query span run` anatomy disclose the two windows.
+e2e("record --breakdown: run counts are start-onward and the window gap is disclosed", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const flow = path.join(dir, "drain.mjs");
+  writeFileSync(
+    flow,
+    `export async function prepare({ page }) {
+       await page.evaluate(() => {
+         for (let index = 0; index < 6; index++) {
+           const box = document.createElement("div");
+           box.id = "box" + index;
+           box.style.cssText = "position:absolute;width:50px;height:50px;left:" + index * 80 + "px;top:0;background:#000";
+           document.body.appendChild(box);
+         }
+       });
+     }
+     export async function run({ page, measureStep }) {
+       await measureStep("interact", () =>
+         page.evaluate(() => {
+           document.getElementById("box0").style.background = "#111";
+           void document.getElementById("box0").offsetTop;
+           // Fires ~100ms after run:end, inside the 200ms settle drain (comfortable slack on CI):
+           // counted by the start-onward run counts, but past the run bar's [run:start, run:end].
+           setTimeout(() => {
+             for (let index = 2; index < 6; index++) {
+               const late = document.getElementById("box" + index);
+               late.style.background = "#" + (index * 111).toString(16).padStart(3, "0");
+               void late.offsetWidth;
+             }
+           }, 100);
+         }));
+     }`,
+  );
+  const out = path.join(dir, "drain");
+  runCli(["record", flow, "--breakdown", "--iterations", "1", "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+
+  const runSpan = rec.spans.find((span) => span.kind === "run");
+  assert.ok(runSpan, "a run span exists");
+  // The late-drain burst dirtied 4 boxes past run:end. Only a start-onward count catches them:
+  // clipping the run counts to run:end (the bug this guards) would drop the burst below this floor.
+  const paintCount = runSpan.counts.paintCount;
+  assert.ok(paintCount >= 4, `run paintCount should include the late-drain burst, got ${paintCount}`);
+
+  // Both surfaces disclose the two windows.
+  assert.ok(
+    (rec.meta.notes ?? []).some((note) => note.includes("start-onward from wpd:run:start")),
+    "meta.notes discloses the start-onward count window",
+  );
+  const anatomy = runCli(["query", "span", out, "run"]);
+  assert.match(anatomy, /windowed start-onward from run:start/, "query span run discloses the count window");
+});
+
 // The mark bridge: a page-side performance.measure becomes a span with its own breakdown. Repeated
 // once per --iteration, its occurrences are its samples: the stored bar is the lower-median-by-wall
 // real occurrence (samples == iterations), NOT iteration 1's, and it still reconciles because it is a

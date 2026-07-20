@@ -218,6 +218,42 @@ to prevent. Firefox reports paint as unmeasured, and `meta.notes` says so.
 start-onward. Gecko paints on the next refresh tick *after* `run:end`, so the bounded rule yields
 **0 for every paint marker**. Match the start-onward rule, or measure nothing.
 
+## The run count window and the run bar window differ, by design
+
+A run's rendering **counts** and its reconciling **bar** cover different windows, and both are
+right:
+
+- **Counts are start-onward** from `wpd:run:start` with no upper bound (`analysis.ts` `inWindow`).
+- **The bar tiles `[run:start, run:end]` exactly** (`trace/breakdown.ts` clamps every event to the
+  window).
+
+The reason is the trailing frame. A paint is always committed on the next tick, so a paint the run
+causes lands **after** `wpd:run:end`. **[measured]** a bench run whose `run()` only recolors one box
+paints **0.15 ms after** `run:end` (`UpdateLayoutTree` +0.01 ms, `Paint` +0.15 ms). Clipping counts
+to `run:end` would report `paintCount` 0 for a run that plainly painted, so counts stay start-onward
+to catch that frame. The bar cannot: its slice ms must sum to the run's wall, and the wall is
+`[run:start, run:end]`. So a run's `paintCount` can be larger than its bar's `paint` slice ms would
+imply. This is the trailing frame, not double-counting.
+
+Driver mode does not need the drain for its trailing paint: each `measureStep` settles (rAF twice +
+idle) before its `wpd:step:N:end` mark, so the step's trailing paint lands **before** `step:end`
+(and thus before `run:end`). **[measured]** a driver run whose only step recolors a box paints
+**~17-23 ms before** `run:end`. Per-step counts are therefore windowed to `[step:start, step:end]`
+(`record/spans-build.ts`) and match the step bar; only the run span is start-onward.
+
+The settle drain (`settleMs`, 200 ms) keeps tracing live past `run:end` so that trailing frame is
+recorded. It also admits any async work the run *scheduled* to fire later: **[measured]** a
+`setTimeout(150)` inside `run()` that dirties 4 boxes adds its style/paint to the run counts
+(`paintCount` 9 vs 3, `styleCount` 6 vs 2, against the same probe delaying the timer to 250 ms so it
+fires after tracing stops), while the run bar's slice ms are unchanged. That is the scope cost of an
+unbounded count window; `meta.notes` (`runCountWindow`) and the `query span run` anatomy disclose
+it, so a count above its slice reads as the trailing frame plus any later scheduled work, not a bug.
+
+This is a **chrome** property. Firefox windows its Reflow/Styles markers bounded on both sides
+(`profile/gecko.ts` clips every marker to `run:end`), the gecko bar covers that same window, and
+paint is not measured at all, so the disclosure is chrome-gated and never states it on the firefox
+lane.
+
 ## Settle does not explain count instability
 
 Worth knowing before blaming the settle window for a noisy count: with the settle window at zero,

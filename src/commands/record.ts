@@ -461,6 +461,20 @@ export async function record(opts: RecordOptions): Promise<{
     browserName !== "firefox" &&
     wantTrace;
   if (runEndMarkLost) notes.push(notesCatalog.runEndMarkLost());
+  // The chrome run counts and the reconciling bar cover different windows on purpose: counts are
+  // start-onward (they catch the trailing frame that paints just after run:end), the bar tiles
+  // [run:start, run:end]. Disclose it when both exist with ms (chrome --breakdown: exact counts AND
+  // a bar), so a run paint/layout count reading larger than its slice is not misread as a bug.
+  // Chrome only: the gecko lane windows its markers bounded (both sides clip to run:end) and reports
+  // paint as not-measured, so start-onward is not the firefox count rule and the note would be false.
+  if (
+    effectiveCapabilities.counts &&
+    effectiveCapabilities.durations &&
+    detail.windowStart != null &&
+    detail.windowEnd != null &&
+    browserName !== "firefox"
+  )
+    notes.push(notesCatalog.runCountWindow());
   // A driver step's end mark was lost (start present, end null): its counts + bar window to the run
   // end (an over-estimate) and its wall stays page-clock, so it does not reconcile with its bar.
   const stepEndMarkLost = (mergedSteps ?? []).some(

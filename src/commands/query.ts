@@ -397,6 +397,19 @@ function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | un
       ],
     ),
   );
+  // The chrome run counts and the run bar cover different windows, on purpose, so disclose it where
+  // both are on screen. Counts are start-onward from run:start with no upper bound, so a paint the
+  // run commits just after run:end (the trailing frame paints on the next tick) is counted; the bar
+  // above tiles [run:start, run:end] exactly, so its slice ms stop at run:end. A run count can
+  // therefore exceed what its bar slice suggests. Step spans are windowed to their own marks and do
+  // not have this gap. Firefox is excluded: the gecko lane windows its markers bounded on both sides
+  // and reports paint as not-measured, so the start-onward claim is not true there.
+  if (anatomy.kind === "run" && span.breakdown && anatomy.target !== "firefox")
+    console.log(
+      dim(
+        "\ncounts are windowed start-onward from run:start (through the settle drain), so a paint/layout the run commits just after run:end is counted; the bar above tiles [run:start, run:end] only, so a count can exceed its slice ms.",
+      ),
+    );
 
   if (anatomy.inpMs != null || anatomy.interaction) {
     const inp = anatomy.inpMs == null ? "—" : `${num(anatomy.inpMs)} ms`;
