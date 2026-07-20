@@ -11,6 +11,7 @@ import { buildSummary } from "../metrics/summarize.js";
 import {
   buildCpuModel,
   packagesByProfileNode,
+  toDevtoolsCpuProfile,
   DEFAULT_CPU_INTERVAL_US,
 } from "../profile/cpuprofile.js";
 import { buildGeckoSpanBreakdowns } from "../profile/gecko-breakdown.js";
@@ -630,7 +631,12 @@ export async function record(opts: RecordOptions): Promise<{
       await fs.rm(cpuPass.geckoDumpPath, { force: true });
     } else {
       cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
-      await fs.writeFile(cpuProfilePath, JSON.stringify(cpuPass.cpuProfile), "utf8");
+      // Strip the trace-lane-only sampleTimestampsUs so the raw file stays the standard DevTools shape.
+      await fs.writeFile(
+        cpuProfilePath,
+        JSON.stringify(toDevtoolsCpuProfile(cpuPass.cpuProfile)),
+        "utf8",
+      );
     }
     cpuModel = await buildCpuModel(cpuPass.cpuProfile, {
       profilePath: cpuProfilePath,
@@ -647,6 +653,22 @@ export async function record(opts: RecordOptions): Promise<{
   // now, and `recording.summary` is shared by reference), so a rung with no sampler (--deep) keeps
   // the null it was built with -- a distinct not-measured, never a fake 0.
   if (cpuModel) recording.summary.scriptingMs = cpuModel.scriptingMs;
+  // On the trace-sourced --breakdown lane the sampler interval is the v8.cpu_profiler stream's own
+  // fixed rate (read back from the chunks), not a value wpd requested, so record that observed
+  // interval rather than the default constant this lane does not use. Chrome only: firefox keeps the
+  // requested value in meta (its actual gecko interval already lives on the CpuModel).
+  if (cpuModel && cpuPass?.cpuSampleIntervalUs != null && browserName === "chrome")
+    meta.cpuIntervalUs = cpuModel.sampleIntervalUs;
+  // Disclose the --breakdown CPU sample source (the trace stream, continuous across navigation) and
+  // its fixed interval, once the model exists so the interval is the observed rate. Only when the
+  // fused pass produced a profile; the no-profile case has its own breakdownNoProfile note above.
+  if (
+    opts.breakdown &&
+    browserName === "chrome" &&
+    cpuModel &&
+    cpuPass?.cpuSampleIntervalUs != null
+  )
+    notes.push(notesCatalog.breakdownTraceCpuSource(cpuModel.sampleIntervalUs));
 
   // Firefox CPU breakdown note: produced when the Gecko dump carried the threadCPUDelta CPU signal
   // (js,cpu feature), absent otherwise (an older dump). Pushed here, after the model exists, so it

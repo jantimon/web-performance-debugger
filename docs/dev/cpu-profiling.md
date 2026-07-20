@@ -52,7 +52,7 @@ A rung picks WHAT that pass captures, never how many passes run. `captureFor()` 
 
 ```
 chrome default:        [sampler]                     four-slice CPU bar; no rendering counts
-chrome --breakdown:    [light-trace + sampler]       seven-slice reconciling bar + exact counts
+chrome --breakdown:    [light-trace + trace samples]  seven-slice reconciling bar + exact counts
 chrome --deep:         [full trace, sampler OFF]     forced-layout blame + exact counts, no bar
 chrome --precise-wall: [no trace, no sampler]        pristine benchmark wall, nothing else
 firefox:               [gecko]                        one pass; every rung is a reporting tier over it
@@ -63,13 +63,22 @@ node:                  [node-cpu]                     in-process V8, four-slice 
   four-slice CPU bar (`js · browser · gc · idle`) and no rendering counts, so
   layout/style/paint/forced are `Measured` null, never 0.
 - **--breakdown**: ONE fused pass: a light trace (the shipped categories MINUS
-  `disabled-by-default-devtools.timeline.stack` and MINUS `invalidationTracking`, plus gc events)
-  with the sampler riding it. Trace events and samples share a clock, so the seven-slice
-  `js · style · layout · paint · gc · other · idle` bar reconciles, and it carries exact
-  layout/style/paint counts. **[measured]** the light trace leaves self-time clean (**+0-1%** vs the
-  sampler-only baseline, no invented functions) and costs **~2-5%** wall (probes A-C); dropping
-  `.stack` is what removes the +21% contamination below. Being one pass it runs every iteration, so
-  counts total across `--iterations`; forced counts and blame need `.stack`, so this rung reports
+  `disabled-by-default-devtools.timeline.stack` and MINUS `invalidationTracking`, plus gc events, PLUS
+  `disabled-by-default-v8.cpu_profiler`). The CPU samples come from that `v8.cpu_profiler` ProfileChunk
+  stream, **not** the CDP `Profiler.start/stop` sampler (no CDP profiler runs on this rung). The stream
+  shares the trace's `base::TimeTicks` clock, so the seven-slice
+  `js · style · layout · paint · gc · other · idle` bar reconciles, and the trace carries exact
+  layout/style/paint counts. The stream is **continuous across a cross-document navigation** (the CDP
+  sampler resets per navigation), so a navigating driver step or an early measure occurrence keeps its
+  CPU attribution -- the gap the CDP sampler leaves is closed here. **[measured]** the fused pass leaves
+  self-time clean (**+0-1%** vs the sampler-only baseline, no invented functions) and costs **~2-5%**
+  wall over `--precise-wall` (measured cpu-busywork +4.0%, fixed-js-work +2.4%); dropping `.stack` is
+  what removes the +21% contamination below (`v8.cpu_profiler` is not `.stack`: same order as the light
+  trace's own cost). The stream samples at a **fixed ~150us** it sets itself, read back from the chunk
+  deltas into `meta.cpuIntervalUs`/`CpuModel.sampleIntervalUs` (never the 200us default constant, which
+  does not describe this rung); it is not settable up without a CDP profiler, and ~150us is inside the
+  interval-stable band, so the reported percentages do not move. Being one pass it runs every iteration,
+  so counts total across `--iterations`; forced counts and blame need `.stack`, so this rung reports
   them `null`, never 0.
 - **--deep**: ONE full trace (`.stack` + `invalidationTracking`) with the sampler OFF: forced-layout
   blame (read-site), dirtied-by writes, the thrash detector, invalidation rollup, exact counts and
@@ -109,9 +118,13 @@ before the sampler starts (`runpass.ts` setup phase).
 
 Starting late is safe across navigation: the page CDP session outlives a cross-document navigation
 (the on-ramp `--url` load step navigates inside the run window with the sampler already open), so a
-`prepare()` that navigates is simply excluded, and a `run()` that navigates behaves as before -- V8
-still resets the profile on that navigation, and the `--breakdown` per-span coverage-gap note
-(buildBreakdowns) still fires for any pre-navigation step/measure window.
+`prepare()` that navigates is simply excluded, and a `run()` that navigates behaves as before -- on the
+default rung the CDP profiler resets in the new process, so page CPU work before the navigation is
+absent from `scriptingMs`. `--breakdown` does not have this loss: it sources samples from the trace's
+`v8.cpu_profiler` stream (below), which is continuous across the navigation. There the trace-sourced
+profile is instead windowed to the run onward (`windowTraceCpuProfile`, since the trace runs before
+`prepare()` in driver mode), which excludes `prepare()`/warmup by timestamp rather than by when the
+sampler opened.
 
 ### Why the sampler never rides a `.stack` trace
 
@@ -327,25 +340,32 @@ So the run span is the only span with CPU attribution on the default and node la
 under chrome `--breakdown`; measures get it under chrome `--breakdown` and firefox. `--deep` and
 `--precise-wall` run the sampler OFF, so no span carries a CPU number on them.
 
-### The sampler's window resets on a cross-process navigation
+### The CDP sampler's window resets on a cross-process navigation (the default rung); `--breakdown` does not
 
-**[measured]** The V8 sampling profiler restarts in the new renderer process on a cross-process
-navigation: `Profiler.stop` returns only the post-navigation process's samples. So the `CpuModel`, the
-run bar's `js` slice, the per-span hot list, and the "sampled window" cover **only the run after its
-last cross-process navigation**; page CPU work done in a prior renderer is absent from `selfMs` and the
-bar. A pre-navigation span can therefore hold zero samples while its own bar shows real
-trace-measured JS: the sampled window is the profiler's own `endTime − startTime`, not the run wall.
+**[measured]** The V8 CDP sampling profiler restarts in the new renderer process on a cross-process
+navigation: `Profiler.stop` returns only the post-navigation process's samples. So on the **default
+rung** (the only rung that runs the CDP sampler and can navigate: `--url` boots, driver flows) the
+`CpuModel`, the run bar's `js` slice, and the "sampled window" cover **only the run after its last
+cross-process navigation**; page CPU work done in a prior renderer is absent from `selfMs`.
 
 Probe: a driver module that burns ~150 ms of page CPU on the blank host page, then
 `page.goto()` to a different origin (a true renderer swap), reports **10.4 ms** total JS self-time and
 a **229 ms** sampled window that is entirely the post-navigation settle -- **zero** samples for the
 150 ms loop. A same-origin control (no process swap) loses nothing: `Σ timeDeltas` equals the window to
-0.1 ms. This bites only a driver flow that does page work *before* it navigates; the built-in on-ramp
-load flow navigates as its first action, so there is no pre-navigation window to lose. It is distinct
-from the trace-count re-anchor (`trace/main-thread.ts`, which follows the navigation for counts) and
-from the step-wall page-clock reset (`driver.ts`, which is about `performance.now()`, not samples).
-Firefox does not have this gap: its Gecko profiler runs for the whole browser lifetime and does not
-restart on navigation.
+0.1 ms. It is distinct from the trace-count re-anchor (`trace/main-thread.ts`, which follows the
+navigation for counts) and from the step-wall page-clock reset (`driver.ts`, which is about
+`performance.now()`, not samples).
+
+**`--breakdown` closes this gap**: it sources samples from the trace's `v8.cpu_profiler` stream, not
+the CDP sampler, and that stream is continuous across the navigation (probe: 3868 samples spanning two
+documents vs the CDP sampler's 689, post-nav only). `trace/profile-chunks.ts` merges the per-process
+ProfileChunk streams into one `RawCpuProfile` (each process restarts its node-id space at 1, so the
+merge renumbers node ids into disjoint ranges, inverts `parent` -> `children`, and stamps each sample
+with its absolute trace-clock timestamp). So a pre-navigation step or an early measure occurrence keeps
+its per-span hot list and js-by-package split, where the CDP sampler leaves them empty (the
+`samplerCoverageGap` note, still emitted on any window the stream genuinely could not reach, e.g. a
+browser build that emits no chunks). Firefox does not have the gap either: its Gecko profiler runs for
+the whole browser lifetime and does not restart on navigation.
 
 ## Per-span hot functions
 

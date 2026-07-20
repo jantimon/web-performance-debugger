@@ -1,0 +1,43 @@
+{
+  "_comment": "Trimmed disabled-by-default-v8.cpu_profiler stream across a cross-process navigation: two (pid, Profile id) groups, each restarting its node-id space at 1 (the collision the merge must renumber). Group A (pid 100) runs window.burn before the navigation; group B (pid 200) runs window.work after it. Shapes match the real trace: a Profile event carrying args.data.startTime, ProfileChunk events carrying incremental cpuProfile.nodes (parent link, not children[]) + samples + parallel timeDeltas.",
+  "traceEvents": [
+    { "cat": "disabled-by-default-v8.cpu_profiler", "name": "Profile", "ph": "P", "id": "0x1", "pid": 100, "tid": 1, "ts": 1000000, "args": { "data": { "startTime": 1000000 } } },
+    {
+      "cat": "disabled-by-default-v8.cpu_profiler", "name": "ProfileChunk", "ph": "P", "id": "0x1", "pid": 100, "tid": 1, "ts": 1000600,
+      "args": { "data": {
+        "cpuProfile": {
+          "nodes": [
+            { "id": 1, "callFrame": { "functionName": "(root)", "scriptId": 0, "url": "", "lineNumber": -1, "columnNumber": -1 } },
+            { "id": 2, "callFrame": { "functionName": "(program)", "scriptId": 0, "url": "", "lineNumber": -1, "columnNumber": -1 }, "parent": 1 },
+            { "id": 3, "callFrame": { "functionName": "burn", "scriptId": 6, "url": "http://before.example/app.js", "lineNumber": 1, "columnNumber": 14 }, "parent": 1 }
+          ],
+          "samples": [3, 3, 3, 2]
+        },
+        "timeDeltas": [150, 150, 150, 150]
+      } }
+    },
+    {
+      "cat": "disabled-by-default-v8.cpu_profiler", "name": "ProfileChunk", "ph": "P", "id": "0x1", "pid": 100, "tid": 1, "ts": 1001200,
+      "args": { "data": {
+        "cpuProfile": { "nodes": [], "samples": [3, 3] },
+        "timeDeltas": [150, 150]
+      } }
+    },
+    { "cat": "disabled-by-default-v8.cpu_profiler", "name": "Profile", "ph": "P", "id": "0x1", "pid": 200, "tid": 1, "ts": 2000000, "args": { "data": { "startTime": 2000000 } } },
+    {
+      "cat": "disabled-by-default-v8.cpu_profiler", "name": "ProfileChunk", "ph": "P", "id": "0x1", "pid": 200, "tid": 1, "ts": 2000600,
+      "args": { "data": {
+        "cpuProfile": {
+          "nodes": [
+            { "id": 1, "callFrame": { "functionName": "(root)", "scriptId": 0, "url": "", "lineNumber": -1, "columnNumber": -1 } },
+            { "id": 2, "callFrame": { "functionName": "(program)", "scriptId": 0, "url": "", "lineNumber": -1, "columnNumber": -1 }, "parent": 1 },
+            { "id": 3, "callFrame": { "functionName": "work", "scriptId": 9, "url": "http://after.example/app.js", "lineNumber": 2, "columnNumber": 8 }, "parent": 1 }
+          ],
+          "samples": [3, 3, 3]
+        },
+        "timeDeltas": [150, 150, 150]
+      } }
+    },
+    { "cat": "devtools.timeline", "name": "RunTask", "ph": "X", "pid": 100, "tid": 1, "ts": 1000000, "dur": 700 }
+  ]
+}

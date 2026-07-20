@@ -38,13 +38,15 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 
 CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
 unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). The **284** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
-`dist/` (classify/summarize/analysis/format, plus the breakdown engine, `query spans` adapter + its
+`test:e2e`). The **308** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+`dist/` (classify/summarize/analysis/format, plus the breakdown engine, the trace CPU-chunk merge
+(`profile-chunks`), `query spans` adapter + its
 flood filter, the `query span` anatomy + removed-verb stubs, the thrash detector, the firefox
 dirtied-by report, the gecko converter, the XDG pointer, frame side track, the trace-overflow/partial
-notes, and the `facts.md` ledger drift check). The **29** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
+notes, and the `facts.md` ledger drift check). The **34** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
 built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
-`--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`),
+`--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`), the
+trace-sourced CPU samples keeping per-step attribution across a navigation,
 `query spans` (incl. the `--min-wall`/`--filter` flood filter), `query span` (a run span's bar + hot
 functions, a --deep step's counts + forced), `--keep-partial` salvage, the
 digest/index removal, the frame side track, and the two-capture assert workflow (a forced budget on
@@ -135,9 +137,12 @@ cpu on/off, keepThreadIds, gecko) from the flags; there is no multi-pass plan an
 - **default** (no flag) — `categories: null` (no trace), CPU sampler on. The four-slice CPU bar, no
   rendering counts, cleanest wall (~1%).
 - **`--breakdown`** — light trace (`breakdownTraceCategories()`: the shipped set MINUS `.stack`, MINUS
-  `invalidationTracking`, plus gc, `keepThreadIds` on) fused with the sampler. `trace/breakdown.ts`
-  tiles the reconciling `js·style·layout·paint·gc·other·idle` bar per span, and layout/style/paint
-  counts come out exact. Cannot report forced counts/blame (needs `.stack`).
+  `invalidationTracking`, plus gc, plus `v8.cpu_profiler`, `keepThreadIds` on). CPU samples come from
+  the trace's `v8.cpu_profiler` ProfileChunk stream (`trace/profile-chunks.ts`), **not** the CDP
+  sampler (no CDP profiler runs here), so they are continuous across a cross-document navigation: a
+  navigating driver step keeps its CPU attribution. `trace/breakdown.ts` tiles the reconciling
+  `js·style·layout·paint·gc·other·idle` bar per span, and layout/style/paint counts come out exact.
+  Cannot report forced counts/blame (needs `.stack`).
 - **`--deep`** — full trace (`.stack` + `invalidationTracking`), sampler OFF. The attribution report:
   forced-by read-sites, dirtied-by writes, the thrash detector, invalidation rollup, exact counts,
   long tasks. No CPU model, and slice DURATIONS are suppressed (see below).
@@ -275,9 +280,13 @@ Two things this rule is **not**, both documented in
 
 For JS cost (render/reconcile/hot loops), the V8 sampling profiler runs via CDP
 `Profiler.start/stop` (`metrics/cdp.ts`, the only calls left there), bracketed around the timed
-window. It rides the ONE capture rung (default or `--breakdown`), never a pass of its own; it costs
-~1% on wall on the default rung, which `--precise-wall` buys back. It is OFF on `--deep` (the sampler
-cannot ride a `.stack` trace, +21%). `profile/cpuprofile.ts` turns the raw `.cpuprofile` into a
+window, on the **default rung**. On **`--breakdown`** the samples instead come from the trace's
+`v8.cpu_profiler` ProfileChunk stream (assembled by `trace/profile-chunks.ts` into the same
+`RawCpuProfile` shape, merging the per-process streams a navigation splits, windowed to the run
+onward) with NO CDP profiler running -- one profiler at a time, and the trace stream is continuous
+across navigation (the CDP sampler resets per navigation). The profiler rides the ONE capture rung,
+never a pass of its own; it costs ~1% on wall on the default rung, which `--precise-wall` buys back.
+It is OFF on `--deep` (the sampler cannot ride a `.stack` trace, +21%). `profile/cpuprofile.ts` turns the raw `.cpuprofile` into a
 **resolved, self-contained `CpuModel`**
 (per-function self/total time + a thresholded call graph), reusing `makeSourceResolver` +
 `SourceMapResolver` for source attribution. Self time rolls up by **package** (`packageRollup`,

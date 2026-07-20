@@ -37,6 +37,15 @@ export interface RawCpuProfile {
    * firefox dumps with an empty `threadCPUDelta` column (no honest idle signal, so no breakdown).
    */
   gecko?: { sampleSlices: GeckoSlice[] };
+  /**
+   * Trace-sourced (--breakdown chrome) only: the absolute trace-clock timestamp (us) of each sample,
+   * parallel to `samples`. The profile merges the per-process streams a cross-document navigation
+   * splits, so `startTime + Σ timeDeltas` no longer reconstructs a sample's real clock position; the
+   * per-span windowing reads these directly. Absent on the CDP/node/gecko single-stream profiles,
+   * where the cumulative reconstruction is exact, and stripped before the raw `.cpuprofile` is written
+   * (it is not part of the DevTools format).
+   */
+  sampleTimestampsUs?: number[];
 }
 
 export interface RawProfileNode {
@@ -166,6 +175,49 @@ function classifyWebpackRuntime(url: string): { package: string; label: string }
  * unit test asserts no lane redeclares it. See docs/dev/cpu-profiling.md for why 200.
  */
 export const DEFAULT_CPU_INTERVAL_US = 200;
+
+/**
+ * The standard `.cpuprofile` shape for DevTools/Speedscope from a trace-sourced (--breakdown) profile.
+ * A single-stream profile is returned unchanged (it already matches CDP). A profile that merged the
+ * per-process streams a navigation splits carries an extra `sampleTimestampsUs` (the absolute
+ * per-sample clock) and two structural quirks DevTools cannot read: more than one `(root)` (DevTools
+ * assumes a single-rooted tree), and per-sample `timeDeltas` that do not encode the cross-process gap
+ * (they are the model's per-sample self-time, not a continuous timeline). Fix both for the on-disk
+ * file only: recompute the deltas from the absolute timestamps so the timeline is faithful, and parent
+ * the process roots under one synthetic super-root. wpd's own model keeps the multi-root form and the
+ * per-sample deltas (it windows by `sampleTimestampsUs` directly), so nothing here touches the numbers.
+ */
+export function toDevtoolsCpuProfile(raw: RawCpuProfile): RawCpuProfile {
+  const timestamps = raw.sampleTimestampsUs;
+  if (timestamps == null) return raw;
+  const timeDeltas = timestamps.map((timestamp, index) =>
+    index === 0 ? 0 : timestamp - timestamps[index - 1],
+  );
+  return {
+    nodes: singleRootedNodes(raw.nodes),
+    startTime: timestamps[0] ?? raw.startTime,
+    endTime: timestamps[timestamps.length - 1] ?? raw.endTime,
+    samples: raw.samples,
+    timeDeltas,
+  };
+}
+
+/** Parent every root (a node no one is a child of) under one synthetic `(root)` super-root, so the
+ * DevTools-format tree is single-rooted. A profile that already has one root is returned as-is. */
+function singleRootedNodes(nodes: RawProfileNode[]): RawProfileNode[] {
+  const childIds = new Set<number>();
+  for (const node of nodes) for (const childId of node.children ?? []) childIds.add(childId);
+  const rootIds = nodes.filter((node) => !childIds.has(node.id)).map((node) => node.id);
+  if (rootIds.length <= 1) return nodes;
+  let maxId = 0;
+  for (const node of nodes) if (node.id > maxId) maxId = node.id;
+  const superRoot: RawProfileNode = {
+    id: maxId + 1,
+    callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+    children: rootIds,
+  };
+  return [superRoot, ...nodes];
+}
 
 /**
  * Ephemeral-port range: a `listen(0)` server (a dev or test server, e.g. the host page a
