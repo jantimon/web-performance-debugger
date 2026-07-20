@@ -38,7 +38,7 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 
 CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
 unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). The **368** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+`test:e2e`). The **372** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
 `dist/` (classify/summarize/analysis/format, plus the breakdown engine, the trace CPU-chunk merge
 (`profile-chunks`), `query spans` adapter + its bar-less counts overview + its
 flood filter, the `query span` anatomy + removed-verb stubs, the thrash detector, the firefox

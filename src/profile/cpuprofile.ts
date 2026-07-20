@@ -279,20 +279,7 @@ function packageFromNodeModules(filePath: string): string | null {
  * ...) a given file sits in, so a library whose off-disk sources span several source directories
  * collapses to one bucket instead of splitting one per directory.
  */
-const SOURCE_LAYOUT_DIRS = new Set([
-  "src",
-  "dist",
-  "lib",
-  "esm",
-  "cjs",
-  "build",
-  "out",
-  "source",
-  "sources",
-  "types",
-  "module",
-  "modules",
-]);
+const SOURCE_LAYOUT_DIRS = new Set(["src", "dist", "lib", "esm", "cjs", "build", "out"]);
 
 /**
  * Bucket for a frame whose sourcemap named an original source that is NOT on disk (a dependency
@@ -301,9 +288,10 @@ const SOURCE_LAYOUT_DIRS = new Set([
  * the user's own code, so name a package-looking segment of the phantom path instead:
  *
  *   - a `@scope/name` pair anywhere is an unambiguous owner (scoped design systems, component libs);
- *   - else the segment before the first conventional source-layout dir (`<pkg>/src/...`,
+ *   - else the segment before the LAST conventional source-layout dir (`<pkg>/src/...`,
  *     `<pkg>/dist/...`), so `<pkg>/src/runtime/a` and `<pkg>/src/core/b` share ONE `(unmapped: <pkg>)`
- *     bucket rather than splitting into `(unmapped: runtime)` + `(unmapped: core)`;
+ *     bucket rather than splitting into `(unmapped: runtime)` + `(unmapped: core)`. The LAST
+ *     occurrence wins so a nested `.../src/vendor/<pkg>/dist/x` names `<pkg>`, not the outer `src`;
  *   - else the immediate directory, the last resort that still never reads as "app".
  *
  * Parenthesized to match the other "not a real package" buckets ((unmapped)/(served)/...): the map
@@ -314,8 +302,9 @@ function offDiskSourceBucket(filePath: string): string {
   for (let index = 0; index < segments.length - 1; index++)
     if (segments[index].startsWith("@"))
       return `(unmapped: ${segments[index]}/${segments[index + 1]})`;
-  const rootAt = segments.findIndex((segment) => SOURCE_LAYOUT_DIRS.has(segment.toLowerCase()));
-  if (rootAt > 0) return `(unmapped: ${segments[rootAt - 1]})`;
+  for (let index = segments.length - 1; index >= 1; index--)
+    if (SOURCE_LAYOUT_DIRS.has(segments[index].toLowerCase()))
+      return `(unmapped: ${segments[index - 1]})`;
   const dir = segments.length >= 2 ? segments[segments.length - 2] : "";
   return dir && dir !== "." ? `(unmapped: ${dir})` : "(unmapped)";
 }

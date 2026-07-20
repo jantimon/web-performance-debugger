@@ -173,6 +173,19 @@ test("packageRollup: one library's off-disk sources under <pkg>/src/* collapse t
   assert.equal(rollup[0].key, "(unmapped: design-system)");
 });
 
+test("packageRollup: a nested off-disk path names the inner package, not the outer source dir", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wpd-offnest-"));
+  // A vendored dependency nested under an outer build dir: .../src/vendor/<pkg>/dist/x. The LAST
+  // source-layout dir (dist) wins, so the segment before it (widgets) names the package, not the
+  // outer `src`.
+  const off = path.join(os.tmpdir(), `wpd-off-${Date.now()}`, "src", "vendor", "widgets", "dist", "index.ts");
+  const model = await multiModel([["nestedFn", writeNamedBundle(path.join(root, "vendor"), "d", off, "nestedFn")]], root);
+  const nested = model.functions.find((fn) => fn.fn === "nestedFn");
+  assert.ok(nested, "the bundled function is ranked");
+  assert.equal(nested.package, "(unmapped: widgets)");
+  assert.notEqual(nested.package, "app");
+});
+
 test("packageRollup: a scoped package in an off-disk path is recovered as its @scope/name", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wpd-offscope-"));
   // No node_modules and no source-layout dir, but a @scope/name pair sits in the phantom path: an

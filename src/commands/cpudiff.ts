@@ -69,7 +69,12 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
       console.error(`    ${mismatch.axis}: ${mismatch.base} → ${mismatch.current}`);
     console.error("  Treat this cpu-diff as directional, not a like-for-like comparison.");
   }
-  const blocking = mismatches.filter((mismatch) => CPU_DIFF_BLOCKING_AXES.has(mismatch.axis));
+  // Gate on BOTH the axis membership and its `blocksGating`: the workload axis can be non-blocking
+  // when an ephemeral loopback port was folded (same workload, disclosed raw ports), and a folded
+  // port must not refuse a cpu-diff any more than it refuses a diff.
+  const blocking = mismatches.filter(
+    (mismatch) => mismatch.blocksGating && CPU_DIFF_BLOCKING_AXES.has(mismatch.axis),
+  );
   if (opts.failOnRegression && blocking.length) {
     console.error(
       `\nRefusing to gate (--fail-on-regression) across an incompatible capture (` +

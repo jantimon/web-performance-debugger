@@ -59,7 +59,10 @@ function isLoopbackHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
   if (host === "localhost" || host.endsWith(".localhost")) return true;
   if (host === "::1") return true;
-  return /^127\.\d/.test(host);
+  // A full dotted-quad in 127.0.0.0/8, anchored so a DNS name like "127.0.x.example.com" (or any
+  // host with a non-numeric label) is not read as loopback. Node normalizes short forms (127.1) to
+  // the quad before this sees them.
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
 /**
@@ -83,8 +86,8 @@ function stableWorkloadHost(host: string | null): string | null {
   const port = Number(parsed.port);
   if (port < EPHEMERAL_PORT_MIN || port > EPHEMERAL_PORT_MAX) return host;
   if (!isLoopbackHostname(parsed.hostname)) return host;
-  const hostPart = parsed.hostname.includes(":") ? `[${parsed.hostname}]` : parsed.hostname;
-  return `${parsed.protocol}//${hostPart}:<ephemeral>${parsed.pathname}${parsed.search}${parsed.hash}`;
+  // URL.hostname already carries the brackets for an IPv6 literal (`[::1]`), so use it verbatim.
+  return `${parsed.protocol}//${parsed.hostname}:<ephemeral>${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 /** One line naming lane + host + module, so two flows differ here whenever any of the three does. A

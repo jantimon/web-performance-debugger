@@ -445,6 +445,32 @@ test("cpu-diff: a structured-vs-absent pair WARNS but does not block (T02)", asy
   assert.equal(code, undefined, "the mixed pair warns but still compares");
 });
 
+// cpu-diff is the tool for comparing JS cost across bench/loopback runs, so the ephemeral-port fold
+// must reach it too: the workload axis stays in CPU_DIFF_BLOCKING_AXES but the gate honours its
+// blocksGating, so a folded loopback port does not refuse a cpu-diff any more than a diff.
+test("cpu-diff: a loopback ephemeral-port difference does NOT refuse the gate", async () => {
+  const base = writeCpuModel("cpudiff-lb-base.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:54927/app", "flow.mjs") }, 10);
+  const current = writeCpuModel("cpudiff-lb-cur.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:61003/app", "flow.mjs") }, 10);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "a re-picked ephemeral port is the same workload for cpu-diff too");
+  assert.equal(code, undefined, "the gate passes across the folded loopback port");
+});
+
+test("cpu-diff: a loopback REGISTERED-port difference still refuses the gate", async () => {
+  const base = writeCpuModel("cpudiff-reg-base.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:8080/app", "flow.mjs") }, 10);
+  const current = writeCpuModel("cpudiff-reg-cur.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:9090/app", "flow.mjs") }, 10);
+  const { code } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.equal(code, 1, "a registered port is a real deployment difference, folded for neither command");
+});
+
+test("cpu-diff: differing --variant labels REFUSE the gate", async () => {
+  const base = writeCpuModel("cpudiff-var-a.cpu.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "fast" }, 10);
+  const current = writeCpuModel("cpudiff-var-b.cpu.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "slow" }, 10);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(errs.some((line) => /variant: fast → slow/.test(line)));
+  assert.equal(code, 1, "two techniques behind one module path are not a like-for-like cpu-diff");
+});
+
 test("cpu-diff: a capture-mode mismatch WARNS but still compares (not a cpu-diff blocker) (R05)", async () => {
   const base = writeCpuModel("cpudiff-warn-base.cpu.json", { passes: ["default"] }, 10);
   const current = writeCpuModel("cpudiff-warn-cur.cpu.json", { passes: ["breakdown"] }, 10);
