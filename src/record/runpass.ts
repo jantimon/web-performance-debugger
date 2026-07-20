@@ -46,7 +46,7 @@ export interface PassResult {
   /**
    * Which clock priced the driver steps' walls: "trace" (t1-t0 on the trace clock between the step
    * marks, --breakdown/--deep), "page" (the page's own performance.now() delta, the no-trace default
-   * rung), or "none" (driver ran but no step produced a wall). Absent on non-driver passes.
+   * capture mode), or "none" (driver ran but no step produced a wall). Absent on non-driver passes.
    */
   stepWallClock?: "trace" | "page" | "none";
   /** raw V8 CPU sampling profile (only on the cpu pass) */
@@ -216,12 +216,12 @@ export async function runPass(
     // Teardown is deferred until after tracing stops, so it never inflates the measured counts.
     let runCleanup: (() => unknown | Promise<unknown>) | undefined;
     let cpuProfile: RawCpuProfile | undefined;
-    // The interval the samples actually ran at, for the CPU model. On the trace-sourced --breakdown
-    // rung it is read back from the ProfileChunk stream (a fixed rate we do not set); on the CDP
+    // The interval the samples actually ran at, for the CPU model. In the trace-sourced --breakdown
+    // capture mode it is read back from the ProfileChunk stream (a fixed rate we do not set); on the CDP
     // sampler it is what we requested.
     let cpuSampleIntervalUs: number | undefined;
     const cpuIntervalUs = opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
-    // The --breakdown rung sources CPU samples from the trace's v8.cpu_profiler stream, so the CDP
+    // The --breakdown capture mode sources CPU samples from the trace's v8.cpu_profiler stream, so the CDP
     // profiler must NOT also run (one profiler at a time); the samples are assembled after stopTrace.
     const cdpSampler = spec.cpu && spec.cpuSource === "cdp" && client != null && caps.cpuProfile;
 
@@ -230,7 +230,7 @@ export async function runPass(
       // The CPU sampler opens right before the run mark, from inside runDriver (after prepare and
       // warmup), NOT here: it is not windowed after the fact, so starting it before prepare bills
       // setup's page-side JS to the run. The trace, which IS windowed to the run marks, may start
-      // earlier. See runDriver's beforeRunWindow. The trace-sourced rung starts no CDP profiler.
+      // earlier. See runDriver's beforeRunWindow. The trace-sourced capture mode starts no CDP profiler.
       const startProfiler =
         cdpSampler && client ? () => startCpuProfile(client, cpuIntervalUs) : undefined;
       // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
@@ -304,7 +304,7 @@ export async function runPass(
         );
       }
       traceDataLoss = trace.dataLossOccurred;
-      // Parse the trace JSON once and feed both the event pipeline and (on the trace-sourced rung) the
+      // Parse the trace JSON once and feed both the event pipeline and (in the trace-sourced capture mode) the
       // CPU-sample assembly, so the large buffer is decoded a single time.
       const traceObject = JSON.parse(trace.text);
       events = parseTrace(traceObject, {
@@ -320,7 +320,7 @@ export async function runPass(
       // --breakdown sources CPU samples from the trace's v8.cpu_profiler ProfileChunk stream (no CDP
       // profiler ran). The stream runs for the whole trace, which in driver mode starts before
       // prepare()/warmup, so window it to the run onward: the CPU model must describe only the run,
-      // the same run-mark scope the CDP sampler opens at on the other rungs (bench starts the trace
+      // the same run-mark scope the CDP sampler opens at in the other capture modes (bench starts the trace
       // after setup, so the filter is a no-op there). Null means the browser emitted no chunk stream:
       // leave cpuProfile undefined so the caller falls back to honest not-covered reporting, never a
       // fabricated zero profile.
@@ -344,7 +344,7 @@ export async function runPass(
         stepWallClock = stepWallClockFor(driverSteps, true);
       }
     } else if (opts.driver && driverSteps) {
-      // No trace on this rung: the step wall stays the page-clock delta the driver measured.
+      // No trace in this capture mode: the step wall stays the page-clock delta the driver measured.
       stepWallClock = stepWallClockFor(driverSteps, false);
     }
 
@@ -364,7 +364,7 @@ export async function runPass(
     })) as { marks: TimingEntry[]; measures: TimingEntry[] };
 
     result = {
-      name: spec.rung,
+      name: spec.mode,
       events,
       windowStart,
       windowEnd,

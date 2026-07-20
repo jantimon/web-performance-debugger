@@ -2,7 +2,7 @@
 // every user `performance.measure`. This is where the three former artifacts (recording / digest /
 // step index) collapse into one shape -- a step is a span of `kind: "step"`, carrying the same
 // windowed counts the old per-step recording did (buildSummary over its window), and the reconciling
-// bar from `bars` when the rung built one.
+// bar from `bars` when the capture mode built one.
 
 import { buildSummary, type CaptureCapabilities } from "../metrics/summarize.js";
 import { mainThread } from "../trace/main-thread.js";
@@ -16,21 +16,21 @@ export interface SpansBuildInput {
   summary: RecordingSummary;
   /** driver steps (label/wall/INP/interaction/window); absent on bench/node */
   mergedSteps?: MergedStep[];
-  /** the trace event log, for windowing each step's counts (empty on rungs with no trace) */
+  /** the trace event log, for windowing each step's counts (empty in capture modes with no trace) */
   detailEvents: NormalizedEvent[];
-  /** what the rung could observe, so per-step counts gate to Measured null vs a number */
+  /** what the capture mode could observe, so per-step counts gate to Measured null vs a number */
   capabilities: CaptureCapabilities;
-  /** the reconciling per-span bars (run/step/measure) the rung built, or [] when it built none */
+  /** the reconciling per-span bars (run/step/measure) the capture mode built, or [] when it built none */
   bars: SpanBreakdown[];
   /** the run window's end (trace clock), so a step whose end mark was lost windows its counts to the
-   * run end exactly like its bar. null on rungs with no trace / an unclosed run window. */
+   * run end exactly like its bar. null in capture modes with no trace / an unclosed run window. */
   runWindowEnd: number | null;
 }
 
 /**
  * Build the recording's `Span[]`: one run span, one per driver step, one per user measure. The run
- * and step spans carry exact windowed counts; a bar (breakdown + frames) is attached when the rung
- * built one for that span, joined by the `${kind}:${label}` key. Measure spans come straight from the
+ * and step spans carry exact windowed counts; a bar (breakdown + frames) is attached when the capture
+ * mode built one for that span, joined by the `${kind}:${label}` key. Measure spans come straight from the
  * (already median-merged) measure bars. Always returns at least the run span.
  */
 export function buildRecordingSpans(input: SpansBuildInput): Span[] {

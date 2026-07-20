@@ -120,7 +120,7 @@ export async function resolveTarget(
     const target = kind === "cpu-model" ? pointer.cpuModel : pointer.cpuProfile;
     if (!target)
       throw new Error(
-        "Latest run has no CPU profile. Re-run `record` on a rung that samples CPU (the default or --breakdown, not --deep/--precise-wall).",
+        "Latest run has no CPU profile. Re-run `record` in a capture mode that samples CPU (the default or --breakdown, not --deep/--precise-wall).",
       );
     return path.resolve(target);
   }

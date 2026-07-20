@@ -7,7 +7,7 @@
 
 **Scope.** This file is the **raw dump format**: schemas, encodings, bases. For what the names
 *mean* against Chrome's vocabulary — and where the two engines look equivalent but are not — read
-[engine-mapping.md](./engine-mapping.md). For the rung ladder and sampler behaviour, read
+[engine-mapping.md](./engine-mapping.md). For the capture modes and sampler behaviour, read
 [cpu-profiling.md](./cpu-profiling.md); for the Firefox sampler config and its honest idle,
 [firefox-cpu.md](./firefox-cpu.md).
 
@@ -171,7 +171,7 @@ modes (both already emit those marks).
 - This lane runs inside the gecko pass (one browser launch yields both the CPU samples and the
   markers), which is **not optional**: without it a Firefox recording would report every rendering
   count as 0 — indistinguishable from a clean run — so there is no flag to turn the gecko pass off on
-  this lane (the CLI keeps the profiler on for every firefox rung). Both `query cpu` (self-time on the
+  this lane (the CLI keeps the profiler on for every firefox capture mode). Both `query cpu` (self-time on the
   forcing frame) and
   `query blame --forced` (the read-site samples) name the read on this lane; see
   [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).

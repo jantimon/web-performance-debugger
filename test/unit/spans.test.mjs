@@ -92,7 +92,7 @@ const firefoxMeasureBreakdowns = [
   },
 ];
 
-// A node rung-1 model: four slices (js/browser/gc/idle) -- no DOM, so style/layout are not split.
+// A node CPU-only model: four slices (js/browser/gc/idle) -- no DOM, so style/layout are not split.
 const nodeCpu = {
   wallMs: 10,
   slices: {
@@ -228,7 +228,7 @@ test("buildSpans: firefox stored measure breakdowns win over the CpuModel bar; p
   assert.equal(run.slices.paint, null, "the firefox run stored bar is also not-measured");
 });
 
-test("buildSpans: node rung-1 model splits nothing it cannot see; style/layout/paint are null, not 0", () => {
+test("buildSpans: node CPU-only model splits nothing it cannot see; style/layout/paint are null, not 0", () => {
   const result = buildSpans(undefined, nodeCpu, "node");
   assert.equal(result.source, "cpu-model");
   const run = result.spans[0];
@@ -377,7 +377,7 @@ test("query spans errors (non-zero) on a recording that holds no bar at all", as
 });
 
 // F35: a CORRUPT sibling CPU model must surface, not be swallowed into "no per-span breakdown" (which
-// reads as a rung that never sampled). Only the ENOCPUMODEL "no model here" case is the empty case.
+// reads as a capture mode that never sampled). Only the ENOCPUMODEL "no model here" case is the empty case.
 test("query spans surfaces a corrupt sibling cpu model instead of reporting 'no breakdown' (F35)", async () => {
   const file = writeRec("spans-corrupt-sibling.json", {
     meta: { schemaVersion: "3", target: "chrome" },

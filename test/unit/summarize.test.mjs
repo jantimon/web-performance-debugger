@@ -61,9 +61,9 @@ test("buildSummary: trace-sourced layoutCount is main-thread windowed, matching 
   const summary = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: TRACE_CAP });
   assert.equal(summary.layoutCount, 6);
 
-  // The default rung (no capabilities) captures no trace: the count is Measured null, never a fake 0.
-  const defaultRung = buildSummary({ detailEvents: events, detailWindowStart: null });
-  assert.equal(defaultRung.layoutCount, null, "no trace on the default rung, so no count");
+  // The default capture mode (no capabilities) captures no trace: the count is Measured null, never a fake 0.
+  const defaultMode = buildSummary({ detailEvents: events, detailWindowStart: null });
+  assert.equal(defaultMode.layoutCount, null, "no trace in the default capture mode, so no count");
 });
 
 // §26 probe F: CDP RecalcStyleDuration EXCLUDES the stylesheet parse. The excluded variant tracks

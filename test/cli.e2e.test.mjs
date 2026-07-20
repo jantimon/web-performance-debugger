@@ -97,8 +97,8 @@ const BOOT_WORK_HTML =
   "box.style.background='hsl('+(index*9%360)+',70%,50%)';root.appendChild(box);" +
   "box.style.width=(box.offsetWidth>0?41:40)+'px';}<\/script>";
 
-// Forced-layout blame is a --deep (rung 3) product: it needs the `.stack` trace category, which
-// only --deep captures (the default rung has no trace; --breakdown drops .stack).
+// Forced-layout blame is a --deep product: it needs the `.stack` trace category, which
+// only --deep captures (the default capture mode has no trace; --breakdown drops .stack).
 e2e("record --deep + query blame attributes forced layout to the source line", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "forced");
@@ -188,18 +188,18 @@ e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
 });
 
 // The single-axis capture invariant after the one-pass cutover. Every invocation is one pass, so
-// counts and wall come from the SAME run. The default rung (sampler only, no trace) measures no
+// counts and wall come from the SAME run. The default capture mode (sampler only, no trace) measures no
 // rendering counts at all -- Measured null, never a fake 0 -- while --deep captures the exact counts
 // (with slice durations suppressed, the .stack refusal). Wall is the axis that grows with
 // --iterations; the bench wall is exactly the sum of the timed samples.
-e2e("the capture ladder: default rung has no counts; --deep has exact counts with suppressed durations", { timeout: TIMEOUT_MS }, () => {
+e2e("the capture modes: default has no counts; --deep has exact counts with suppressed durations", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
 
-  // Default rung: no trace, so every rendering count is not-measured (null), never 0.
+  // Default capture mode: no trace, so every rendering count is not-measured (null), never 0.
   const dfltOut = path.join(dir, "default");
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--iterations", "1", "--out", dfltOut]);
   const dflt = JSON.parse(readFileSync(dfltOut, "utf8")).summary;
-  assert.equal(dflt.layoutCount, null, "default rung measures no layout count (—, never 0)");
+  assert.equal(dflt.layoutCount, null, "default capture mode measures no layout count (—, never 0)");
   assert.equal(dflt.forcedLayoutCount, null, "and no forced count");
   assert.equal(dflt.layoutMs, null, "and no durations");
   assert.ok(dflt.scriptingMs > 0, "but the CPU model still measures JS self-time");
@@ -237,7 +237,7 @@ e2e("the capture ladder: default rung has no counts; --deep has exact counts wit
 // this flow, the n=1 reading of "first increment" was 87ms while the median over 6 was 40ms with
 // a 255ms outlier -- the single sample was not merely imprecise, it was 2x off the typical value.
 // Per-step counts window to iteration 0, so they must NOT move with --iterations; only the sample
-// count may. Run under --deep, the rung whose full trace carries exact per-step counts.
+// count may. Run under --deep, the capture mode whose full trace carries exact per-step counts.
 e2e("driver --deep --iterations repeats the flow: per-step medians, per-step counts don't scale", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   // A committed fixture, not examples/react-counter, whose dist/ is git-ignored and never built in
@@ -410,10 +410,10 @@ e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed
 });
 
 // Per-step Long Animation Frame attribution: a step whose handler runs over the 50ms LoAF budget must
-// carry a StepLoaf naming the blamed script, on the DEFAULT rung (no trace, no per-step counts) -- the
+// carry a StepLoaf naming the blamed script, in the DEFAULT capture mode (no trace, no per-step counts) -- the
 // in-page observer is ungated by any capture cap, which is the point (attribution where the sampler
 // and trace cannot reach). Chrome-only, so this rides the chrome lane.
-e2e("record (default rung): a driver step carries LoAF script attribution", { timeout: TIMEOUT_MS }, () => {
+e2e("record (default capture mode): a driver step carries LoAF script attribution", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   // Committed host page whose click handler busy-waits ~120ms and forces a synchronous layout, so the
   // frame becomes a long animation frame with a non-zero forced style/layout duration.
@@ -435,13 +435,13 @@ e2e("record (default rung): a driver step carries LoAF script attribution", { ti
      }`,
   );
   const out = path.join(dir, "loaf-step");
-  // No --breakdown/--deep: the default rung has no trace, so counts are null. LoAF must still land.
+  // No --breakdown/--deep: the default capture mode has no trace, so counts are null. LoAF must still land.
   runCli(["record", flow, "--url", html, "--out", out]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
   const step = rec.spans.find((span) => span.kind === "step" && span.label === "slow-click");
   assert.ok(step, "the slow-click step span exists");
-  assert.equal(step.counts.layoutCount, null, "the default rung captured no trace, so counts are null");
+  assert.equal(step.counts.layoutCount, null, "the default capture mode captured no trace, so counts are null");
   assert.ok(step.loaf, "the step carries a StepLoaf even with no trace");
   assert.ok(step.loaf.observedFrames >= 1, "at least one long animation frame was observed");
   assert.ok(step.loaf.totalDurationMs > 50, `the long frame is over the 50ms budget, got ${step.loaf.totalDurationMs}`);
@@ -499,7 +499,7 @@ e2e("record (driver): waitForStable waits past a streamed transition the default
 });
 
 // prepare()/warmup page-side JS must NOT reach the CPU model. In driver mode the sampler is not
-// windowed after the fact (no trace clock to slice it by on the default rung), so it opens at the run
+// windowed after the fact (no trace clock to slice it by in the default capture mode), so it opens at the run
 // mark, after prepare and warmup. Here prepare() and one warmup each burn ~70 ms of page-side JS while
 // the timed run() does ~6 ms: scriptingMs must price the run only. Opened before prepare instead, it
 // bills all ~146 ms to the run with the setup loop as the top hot function.
@@ -621,7 +621,7 @@ e2e("record --breakdown: a navigating step keeps CPU attribution across the proc
 
 // prepare()/warmup page-side JS must stay out of the CPU model on --breakdown too. The trace (and its
 // v8.cpu_profiler stream) starts before prepare() in driver mode, so the assembled samples are
-// windowed to the run onward, the same run-mark scope the CDP sampler opens at on the default rung.
+// windowed to the run onward, the same run-mark scope the CDP sampler opens at in the default capture mode.
 e2e("record --breakdown (driver): prepare()/warmup page JS stays out of the trace-sourced CPU model", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const flow = path.join(dir, "bd-lifecycle.mjs");
@@ -949,15 +949,15 @@ e2e("record --breakdown: a per-span frame side track is recorded and printed", {
 
 // The zero-authoring on-ramp: `record --url` with NO module runs a built-in driver flow that
 // navigates to the url inside one "load" step and settles, so the boot lands in the run window. Every
-// rung works unchanged over it. Served from a local origin (no external network), on the default rung
-// and --breakdown.
+// capture mode works unchanged over it. Served from a local origin (no external network), in the default
+// capture mode and --breakdown.
 e2e("record --url with no module runs the built-in load flow (default + --breakdown)", { timeout: TIMEOUT_MS }, () => {
   const html = "<!doctype html><meta charset=utf-8><title>onramp</title><body><h1>hello</h1><p>on-ramp</p></body>";
   const server = startOnrampServer(html);
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   try {
-    // Default rung: the built-in "load" step span exists, INP is null (a load has no interaction), and
-    // the no-trace rung reports no rendering counts (null, never a fake 0). The CPU model still runs.
+    // Default capture mode: the built-in "load" step span exists, INP is null (a load has no interaction), and
+    // the no-trace capture mode reports no rendering counts (null, never a fake 0). The CPU model still runs.
     const dfltOut = path.join(dir, "onramp-default");
     runCli(["record", "--url", server.url, "--out", dfltOut]);
     const dflt = JSON.parse(readFileSync(dfltOut, "utf8"));
@@ -966,7 +966,7 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
     const loadStep = dflt.spans.find((span) => span.kind === "step" && span.label === "load");
     assert.ok(loadStep, "a 'load' step span is recorded");
     assert.equal(dflt.summary.inpMs, null, "a page load has no interaction, so INP is null");
-    assert.equal(loadStep.counts.layoutCount, null, "default rung measures no counts (—, never 0)");
+    assert.equal(loadStep.counts.layoutCount, null, "default capture mode measures no counts (—, never 0)");
     assert.ok(
       dflt.meta.notes.some((note) => /Built-in load flow/.test(note)),
       "the built-in flow is disclosed in the notes",
@@ -993,14 +993,14 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
     assert.ok(bd.summary.paintCount >= 1, "the boot painted at least once, counted on --breakdown");
     assert.equal(bd.summary.forcedLayoutCount, null, "forced is not-measured on --breakdown (no .stack)");
 
-    // F4: --iterations on the default (no-trace) rung yields no wall and no median, because the
+    // F4: --iterations in the default (no-trace) capture mode yields no wall and no median, because the
     // navigating load step resets the page clock and there is no trace clock to span it. The note must
     // say so and steer to --breakdown, NOT the warm/cold note that would promise a median.
     const iterOut = path.join(dir, "onramp-iter-default");
     runCli(["record", "--url", server.url, "--iterations", "2", "--out", iterOut]);
     const iter = JSON.parse(readFileSync(iterOut, "utf8"));
     const iterLoad = iter.spans.find((span) => span.kind === "step" && span.label === "load");
-    assert.equal(iterLoad.stats, null, "no median on the no-trace rung: the navigating step has no wall");
+    assert.equal(iterLoad.stats, null, "no median in the no-trace capture mode: the navigating step has no wall");
     assert.ok(
       iter.meta.notes.some((note) => /no per-iteration wall or median/.test(note)),
       "the no-median note fires and points to --breakdown",
@@ -1074,24 +1074,24 @@ test("record --headless-mode new errors on a firefox target (chrome-only flag)",
   assert.match(result.stderr, /--headless-mode is chrome-only \(target is firefox\)/);
 });
 
-// The rungs are mutually exclusive: two rungs are two captures / two questions, so wpd points at
-// running twice rather than fusing them. Guards fire before any browser launches.
+// The capture modes are mutually exclusive: two capture modes are two captures / two questions, so wpd
+// points at running twice rather than fusing them. Guards fire before any browser launches.
 const guardError = (args) =>
   spawnSync(process.execPath, [cli, "record", path.join(examples, "forces-layout.mjs"), ...args], {
     cwd: repoRoot,
     encoding: "utf8",
   });
 
-test("record --breakdown --deep is rejected (two rungs, two invocations)", () => {
+test("record --breakdown --deep is rejected (two capture modes, two invocations)", () => {
   const result = guardError(["--breakdown", "--deep"]);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /--breakdown and --deep are two different rungs/);
+  assert.match(result.stderr, /--breakdown and --deep are two different capture modes/);
 });
 
-test("record --precise-wall --breakdown is rejected (rung 1 minus sampler vs a higher rung)", () => {
+test("record --precise-wall --breakdown is rejected (the default capture mode minus sampler vs another capture mode)", () => {
   const result = guardError(["--precise-wall", "--breakdown"]);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /--precise-wall is rung 1 minus the sampler/);
+  assert.match(result.stderr, /--precise-wall is the default capture mode minus the sampler/);
 });
 
 test("record --breakdown on firefox is rejected (the gecko pass IS the firefox lane)", () => {
@@ -1111,13 +1111,13 @@ test("record --deep on node is rejected (CPU-only lane, no trace)", () => {
 });
 
 // The documented regression workflow ("Did my change regress a budget"): forced counts and slice ms
-// come from different rungs, so the README gates each on its own recording. This exercises that exact
+// come from different capture modes, so the README gates each on its own recording. This exercises that exact
 // sequence and both loud-n/a mistakes it steers users away from -- a forced budget on --breakdown, a
 // slice budget on --deep -- so the doc example and the fail-loud contract stay honest together.
 const runAssert = (args) =>
   spawnSync(process.execPath, [cli, "assert", ...args], { cwd: repoRoot, encoding: "utf8" });
 
-e2e("the two-capture assert workflow gates each metric on the rung that measured it", { timeout: TIMEOUT_MS }, () => {
+e2e("the two-capture assert workflow gates each metric on the capture mode that measured it", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const breakdownOut = path.join(dir, "after.json");
   const deepOut = path.join(dir, "after.deep.json");
@@ -1133,7 +1133,7 @@ e2e("the two-capture assert workflow gates each metric on the rung that measured
   const deepOk = runAssert([deepOut, "--max-forced", "1000000"]);
   assert.equal(deepOk.status, 0, `--deep forced budget should pass:\n${deepOk.stdout}`);
 
-  // The cross-rung mistakes fail LOUDLY, never a silent pass: --max-forced needs the --deep .stack
+  // The cross-capture-mode mistakes fail LOUDLY, never a silent pass: --max-forced needs the --deep .stack
   // trace, so it is n/a on --breakdown; --max-slice needs --breakdown, so it is n/a on --deep.
   const forcedOnBreakdown = runAssert([breakdownOut, "--max-forced", "0"]);
   assert.equal(forcedOnBreakdown.status, 1, "forced budget on a --breakdown recording must fail");

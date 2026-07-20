@@ -106,8 +106,8 @@ export async function diffCmd(
 
   // Comparability: name every capture axis that differs, so a reader never reads a config-driven
   // delta as a code change. Warn (not refuse) by default so cross-config exploration stays possible;
-  // but a --fail-on-regression gate REFUSES across an incompatible browser/runtime/rung, where an
-  // exact-count "regression" would be an artifact of the config, not the code.
+  // but a --fail-on-regression gate REFUSES across an incompatible browser/runtime/capture-mode, where
+  // an exact-count "regression" would be an artifact of the config, not the code.
   const mismatches = comparabilityMismatches(baselineRec.meta, currentRec.meta);
   if (mismatches.length) {
     console.log("\n⚠ WARNING: baseline and current were captured differently:");
@@ -125,7 +125,7 @@ export async function diffCmd(
     console.log(
       `\nRefusing to gate (--fail-on-regression) across an incompatible capture (${blocking} differ): ` +
         `a count delta would reflect the capture change, not a code regression. Re-record both sides ` +
-        `on the same lane and rung to gate.`,
+        `on the same lane and capture mode to gate.`,
     );
     process.exitCode = 1;
     return;

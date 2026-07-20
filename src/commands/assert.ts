@@ -26,8 +26,8 @@ export interface Thresholds {
 }
 
 interface Metrics {
-  /** Every gated metric is Measured (model/measured.ts): null when the rung did not observe it (the
-   * default rung captures no counts; --breakdown drops forced; a bench run captures no interaction),
+  /** Every gated metric is Measured (model/measured.ts): null when the capture mode did not observe it
+   * (the default mode captures no counts; --breakdown drops forced; a bench run captures no interaction),
    * which `gateMeasured` turns into a loud FAIL -- a gate you asked for but cannot evaluate has not passed. */
   forcedLayoutCount: Measured<number>;
   layoutCount: Measured<number>;
@@ -93,7 +93,7 @@ export async function assertCmd(
 
   // A stepped (driver) recording gates PER STEP, from its step spans: each step has its own wall,
   // INP and windowed counts, which is the per-interaction granularity a CI gate wants. A bench/node
-  // run gates its run summary. A step whose wall could not be priced (navigated on a no-trace rung)
+  // run gates its run summary. A step whose wall could not be priced (navigated in a no-trace capture mode)
   // is Measured null, so `--max-wall` there is a loud FAIL, not a silent pass.
   const rec = obj as Recording;
   const stepped = isSteppedRecording(rec);

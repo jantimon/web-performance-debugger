@@ -5,8 +5,8 @@
  * one file, and an e2e test matching a note substring has one place the text can change.
  *
  * The two algorithmic notes -- count scope (capture.ts `countScopeNote`) and sourcemap resolution
- * (record.ts `sourcemapNote`) -- are not here: their text is assembled from the rung's capabilities
- * and the diagnostics, so wording and logic are inseparable and already live in their own generators.
+ * (record.ts `sourcemapNote`) -- are not here: their text is assembled from the capture mode's
+ * capabilities and the diagnostics, so wording and logic are inseparable and live in their own generators.
  */
 
 // --- --breakdown lane ---
@@ -35,7 +35,7 @@ export function breakdownInvalidationNotMeasured(): string {
 
 /** The chrome run's rendering counts and its reconciling bar cover different windows, by design.
  * Counts are start-onward (analysis.ts inWindow), the bar tiles [run:start, run:end]. Pushed for the
- * chrome --breakdown rung (exact counts AND a bar with ms), where the two sit together and a count
+ * chrome --breakdown capture mode (exact counts AND a bar with ms), where the two sit together and a count
  * can read larger than its slice. Not firefox: the gecko lane windows its markers bounded on both
  * sides and reports paint as not-measured, so start-onward is not its count rule. */
 export function runCountWindow(): string {
@@ -61,7 +61,7 @@ export function samplerCoverageGap(spanCount: number, gapMs: number): string {
 
 /** The run window's rendering work landed on a different renderer process than the one wpd:run:start
  * was marked on: a top-level cross-process navigation (typical of a --url boot). Counts and the bar
- * follow the page to its new process. Pushed from record() for any counting rung (--breakdown/--deep). */
+ * follow the page to its new process. Pushed from record() for any counting capture mode (--breakdown/--deep). */
 export function reanchoredMainThread(): string {
   return "The run navigated to a new renderer process (a top-level cross-process navigation, typical of a --url boot): wpd:run:start was marked on the pre-navigation renderer, but the window's layout/paint/style work ran on the process the page navigated INTO. Counts and the breakdown bar are scoped to that post-navigation renderer main thread, so they describe the page you loaded, not the blank host page it started on.";
 }
@@ -100,25 +100,25 @@ export function firefoxNoCpuBreakdown(): string {
   return "No CPU time breakdown on Firefox: this Gecko dump carries no per-sample threadCPUDelta CPU signal (an older recording, or the profiler ran without the `cpu` feature), so idle cannot be told from engine work and a bar would fabricate it. CPU self-time (scriptingMs, query cpu) is still measured.";
 }
 
-// --- Chrome rung ladder ---
+// --- Chrome capture modes ---
 
-/** Default rung (rung 1): sampler only, no trace, so no rendering counts. */
-export function defaultRung(): string {
-  return "Default mode (rung 1): CPU sampler only, no DevTools trace, for the cleanest wall. Rendering counts (layout/style/paint/forced) and their durations are NOT measured here and are reported as not-measured (—), never 0. Add --breakdown for the reconciling js/style/layout/paint/gc/other/idle bar, or --deep for exact counts and forced-layout blame.";
+/** Default capture mode: sampler only, no trace, so no rendering counts. */
+export function defaultCaptureMode(): string {
+  return "Default capture mode: CPU sampler only, no DevTools trace, for the cleanest wall. Rendering counts (layout/style/paint/forced) and their durations are NOT measured here and are reported as not-measured (—), never 0. Add --breakdown for the reconciling js/style/layout/paint/gc/other/idle bar, or --deep for exact counts and forced-layout blame.";
 }
 
-export function cpuSamplerOnDefaultRung(): string {
-  return "The CPU sampler perturbs per-iteration wall by ~1% on this rung: it is systematic, so it cancels in `diff`. Use --precise-wall for a sampler-off benchmark wall (no CPU model).";
+export function cpuSamplerOnDefaultMode(): string {
+  return "The CPU sampler perturbs per-iteration wall by ~1% in this capture mode: it is systematic, so it cancels in `diff`. Use --precise-wall for a sampler-off benchmark wall (no CPU model).";
 }
 
-/** Rung 3 (--deep): full trace, sampler off; exact counts + blame, durations suppressed. */
-export function deepRung(): string {
-  return "Deep mode (rung 3): full trace (.stack + invalidationTracking) with the CPU sampler OFF. Exact counts (layout/style/paint/forced), forced-layout blame, the invalidation rollup and long tasks are the product. Slice DURATIONS (layoutMs/styleMs/paintMs) are suppressed (—): the .stack trace inflates them (style up to +38%), and a distorted number is worse than none. Run --breakdown for the reconciling bar and a CPU model; span wall (the window width) is still honest here.";
+/** --deep: full trace, sampler off; exact counts + blame, durations suppressed. */
+export function deepCaptureMode(): string {
+  return "Deep capture mode (--deep): full trace (.stack + invalidationTracking) with the CPU sampler OFF. Exact counts (layout/style/paint/forced), forced-layout blame, the invalidation rollup and long tasks are the product. Slice DURATIONS (layoutMs/styleMs/paintMs) are suppressed (—): the .stack trace inflates them (style up to +38%), and a distorted number is worse than none. Run --breakdown for the reconciling bar and a CPU model; span wall (the window width) is still honest here.";
 }
 
-/** --precise-wall: rung 1 minus the sampler. */
+/** --precise-wall: the default capture mode minus the sampler. */
 export function preciseWall(): string {
-  return "Precise-wall mode: the CPU sampler is OFF for a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts — the wall is the only product. Drop --precise-wall for the four-slice CPU bar.";
+  return "Precise-wall capture mode: the CPU sampler is OFF for a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts — the wall is the only product. Drop --precise-wall for the four-slice CPU bar.";
 }
 
 // --- Driver step wall ---
@@ -132,10 +132,10 @@ export function preciseWall(): string {
 export function driverStepWallClock(clock: "trace" | "page"): string {
   return clock === "trace"
     ? "Driver step walls are the trace-clock window between each step's marks (t1-t0 on the renderer's clock), so they price the page's own window and reconcile with the breakdown bar, not the node-side page.click bound."
-    : "Driver step walls are the page's own performance.now() delta between each step's marks (no trace on this rung), not the node-side page.click bound (~20ms of which is input dispatch in the tool process; docs/dev/driver-timing.md). A step that navigated cannot be priced this way and reports its wall as not measured — record with --breakdown or --deep for a trace-clock wall that spans navigation.";
+    : "Driver step walls are the page's own performance.now() delta between each step's marks (no trace in this capture mode), not the node-side page.click bound (~20ms of which is input dispatch in the tool process; docs/dev/driver-timing.md). A step that navigated cannot be priced this way and reports its wall as not measured — record with --breakdown or --deep for a trace-clock wall that spans navigation.";
 }
 
-/** A driver run on the no-trace rung whose steps all navigated: no step wall could be priced. */
+/** A driver run in a no-trace capture mode whose steps all navigated: no step wall could be priced. */
 export function driverStepWallUnmeasured(): string {
   return "Driver step walls are NOT measured on this run: every step navigated, which resets the page clock, and there is no trace to span it. Record with --breakdown or --deep for a trace-clock wall that survives navigation. See docs/dev/driver-timing.md.";
 }
@@ -159,10 +159,10 @@ export function pageSchemeAssumed(url: string): string {
   return `--url named a host with no scheme, so http:// was assumed: the target is ${url}. Pass an explicit https:// URL if the server is TLS.`;
 }
 
-/** Repeated on-ramp on a no-trace rung: the navigating load step has no wall, so --iterations makes
- * no median. Point to --breakdown, whose trace clock spans the navigation. */
+/** Repeated on-ramp in a no-trace capture mode: the navigating load step has no wall, so --iterations
+ * makes no median. Point to --breakdown, whose trace clock spans the navigation. */
 export function onrampIterationsNoMedian(iterations: number): string {
-  return `--iterations ${iterations} produced no per-iteration wall or median on this rung: the built-in 'load' step navigates, which resets the page clock, and this rung has no trace clock to span the navigation, so every iteration's wall is not measured (—, never 0) and there is no distribution to take a median of. Re-record with --breakdown (or --deep): the trace clock spans the navigation, so the load step gets a real per-iteration wall and median.`;
+  return `--iterations ${iterations} produced no per-iteration wall or median in this capture mode: the built-in 'load' step navigates, which resets the page clock, and this capture mode has no trace clock to span the navigation, so every iteration's wall is not measured (—, never 0) and there is no distribution to take a median of. Re-record with --breakdown (or --deep): the trace clock spans the navigation, so the load step gets a real per-iteration wall and median.`;
 }
 
 /** Repeated on-ramp: only iteration 1 boots cold, the rest reuse the one browser's caches. */

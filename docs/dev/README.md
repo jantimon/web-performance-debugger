@@ -15,7 +15,7 @@ permalink).
 
 | File | Read it before |
 | --- | --- |
-| [cpu-profiling.md](./cpu-profiling.md) | changing the rung ladder, the sampler interval, or how `selfMs` is described |
+| [cpu-profiling.md](./cpu-profiling.md) | changing the capture modes, the sampler interval, or how `selfMs` is described |
 | [cpu-attribution.md](./cpu-attribution.md) | changing which spans carry CPU samples, the per-span hot list, or the sourcemap warning |
 | [firefox-cpu.md](./firefox-cpu.md) | changing the `MOZ_PROFILER_*` config, the Gecko interval, or the firefox idle/bar computation |
 | [blame-semantics.md](./blame-semantics.md) | touching `markForced`, the thrash detector, a dirtied-by report, or any blame claim |
@@ -30,10 +30,10 @@ permalink).
 
 ## Find it by question
 
-**The CPU sampler and the rungs** — [cpu-profiling.md](./cpu-profiling.md)
+**The CPU sampler and the capture modes** — [cpu-profiling.md](./cpu-profiling.md)
 
 - What does `selfMs` include (spoiler: not pure JS)? -> [what self-time actually includes](./cpu-profiling.md#what-self-time-actually-includes)
-- What does each rung capture, and why is `--breakdown` one fused pass? -> [the rung ladder](./cpu-profiling.md#the-rung-ladder)
+- What does each capture mode capture, and why is `--breakdown` one fused pass? -> [the capture modes](./cpu-profiling.md#the-capture-modes)
 - Why does the sampler open at `wpd:run:start`, not before `prepare()`? -> [the sampler opens at the run mark](./cpu-profiling.md#the-sampler-opens-at-the-run-mark-not-before-prepare)
 - Why must the sampler never ride a `.stack` trace (+21%, ~4.6x)? -> [never rides `.stack`](./cpu-profiling.md#why-the-sampler-never-rides-a-stack-trace)
 - Are trace durations worse than CDP's counters? (No.) -> [trace durations vs CDP](./cpu-profiling.md#layoutmsstylemspaintms-are-trace-durations-and-cdp-would-be-no-finer)
@@ -42,8 +42,8 @@ permalink).
 
 **Where CPU samples land** — [cpu-attribution.md](./cpu-attribution.md)
 
-- Which span kinds carry CPU on which rung? -> [the coverage matrix](./cpu-attribution.md#which-spans-get-cpu-attribution)
-- Why does a navigating flow lose samples on the default rung but not `--breakdown`? -> [navigation reset vs continuity](./cpu-attribution.md#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-rung---breakdown-does-not)
+- Which span kinds carry CPU in which capture mode? -> [the coverage matrix](./cpu-attribution.md#which-spans-get-cpu-attribution)
+- Why does a navigating flow lose samples in the default capture mode but not `--breakdown`? -> [navigation reset vs continuity](./cpu-attribution.md#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-capture-mode---breakdown-does-not)
 - How does `query span` rank a span's hot functions honestly? -> [per-span hot functions](./cpu-attribution.md#per-span-hot-functions)
 - When can the package rollup be believed, and when must it warn? -> [sourcemap note gating](./cpu-attribution.md#sourcemap-note-gating)
 
@@ -89,10 +89,10 @@ permalink).
 
 ## The four things most likely to bite you
 
-1. **Counts TOTAL across `--iterations` on every counting rung.** Every invocation is exactly ONE
+1. **Counts TOTAL across `--iterations` on every counting capture mode.** Every invocation is exactly ONE
    pass, which runs every iteration for the wall samples, so `layout/style/paint/forced` are totals,
    not one iteration's work, so `assert --max-layouts` silently scales with `--iterations`.
-   `countScopeNote` says so; use `--iterations 1` to assert on counts. And a `Measured<>` field a rung
+   `countScopeNote` says so; use `--iterations 1` to assert on counts. And a `Measured<>` field a capture mode
    did not measure is `null`, never 0 (`--breakdown` reports `forcedLayoutCount`/`forcedLayoutMs` as
    `null`, since forced needs `.stack`): `assert` FAILs on `null`, so `assert --max-forced 0` fails
    under `--breakdown` by design, rather than passing on a fake 0. Firefox is the same model: its

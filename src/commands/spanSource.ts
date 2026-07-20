@@ -13,7 +13,7 @@ import type { SpanEntry } from "../model/query.js";
  * its sibling CpuModel run bar onto the unified `SpanEntry[]` shape `query spans` produces. This is
  * the SAME slice-reading path as `query spans` (`buildSpans`), so `assert --max-slice` and `diff`
  * never grow a second interpretation of a slice. Returns null when the recording carries no bar at
- * all (an older recording, or a sampler-off rung like --deep/--precise-wall), which the caller
+ * all (an older recording, or a sampler-off capture mode like --deep/--precise-wall), which the caller
  * treats as "no slice data".
  */
 export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null> {

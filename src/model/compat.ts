@@ -26,9 +26,9 @@ export interface CompatMismatch {
   blocksGating: boolean;
 }
 
-/** The one rung this recording captured, as a stable string (passes are single-element today, but
- * sort+join keeps an older multi-pass recording comparing deterministically). */
-function rungOf(meta: RecordingMeta): string {
+/** The one capture mode this recording captured, as a stable string (passes are single-element today,
+ * but sort+join keeps an older multi-pass recording comparing deterministically). */
+function captureModeOf(meta: RecordingMeta): string {
   return [...(meta.passes ?? [])].sort().join("+");
 }
 
@@ -90,8 +90,8 @@ function workloadMismatch(base: RecordingMeta, current: RecordingMeta): CompatMi
  * below differs. An axis `blocksGating` when a delta on it is provably the config talking, not the
  * code:
  *
- *   - browser/runtime/rung: different count provenance entirely (Gecko markers vs trace, a --deep
- *     exact count vs a --breakdown null).
+ *   - browser/runtime/capture-mode: different count provenance entirely (Gecko markers vs trace, a
+ *     --deep exact count vs a --breakdown null).
  *   - workload: a different lane, host page, or module was recorded (workloadMismatch), so the two
  *     are not the same flow. A mixed pair (one side predates the structured identity) warns under
  *     "workload-identity" instead of blocking, since its sameness cannot be verified either way.
@@ -124,7 +124,12 @@ export function comparabilityMismatches(
       current: current.runtime ?? "chrome",
       blocksGating: true,
     },
-    { axis: "rung", base: rungOf(base), current: rungOf(current), blocksGating: true },
+    {
+      axis: "capture-mode",
+      base: captureModeOf(base),
+      current: captureModeOf(current),
+      blocksGating: true,
+    },
     workloadMismatch(base, current),
     {
       axis: "iterations",
@@ -167,8 +172,8 @@ export function comparabilityMismatches(
  * throttling stretches the same self-time clock. `warmup` moves the workload's first-call state
  * (JIT tiers, caches, first-render code) into or out of the timed window, so an expensive first call
  * lands in the samples under `--warmup 0` and not under `--warmup 1` though the code is identical.
- * Each fabricates a self-time "regression" from pure config. Rung and headless move rendering counts
- * and the wall/INP floor, not the profiler's own self-time clock, so cpu-diff only WARNS on those. */
+ * Each fabricates a self-time "regression" from pure config. Capture mode and headless move rendering
+ * counts and the wall/INP floor, not the profiler's own self-time clock, so cpu-diff only WARNS on those. */
 export const CPU_DIFF_BLOCKING_AXES = new Set([
   "browser",
   "runtime",
