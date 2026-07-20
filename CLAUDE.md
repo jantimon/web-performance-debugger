@@ -219,7 +219,7 @@ map (surfaced under `query blame --forced` and `query span`) and the `ThrashRepo
 (write→read→write→read, the run-span thrash count). `firefox-dirtied.ts` (`firefoxDirtiedBy`) is the
 firefox `--deep` counterpart: Gecko cause stacks carry the write natively but only the FIRST
 invalidation since the last flush, so it emits a `first-invalidation` `DirtiedByWriteRollup` (no
-forced-by, no thrash — engine-mapping.md's never-fake-parity rule), reachable via `query blame
+forced-by, no thrash — blame-semantics.md's never-fake-parity rule), reachable via `query blame
 --dirtied`.
 
 **Forced-reflow detection** is the key feature and depends on a non-obvious config: layout/style
@@ -228,7 +228,7 @@ the `disabled-by-default-devtools.timeline.stack` category in `trace/categories.
 flags layout/style events that have a resolved user stack (`e.at`).
 
 Two things this rule is **not**, both documented in
-[docs/dev/engine-mapping.md](docs/dev/engine-mapping.md):
+[docs/dev/blame-semantics.md](docs/dev/blame-semantics.md):
 
 - **Not DevTools' rule.** DevTools ignores the stack entirely and requires nesting inside a JS
   invocation event *plus* a >=30ms per-task aggregate. Ours flags cheap forced layouts DevTools
@@ -256,7 +256,7 @@ Two things this rule is **not**, both documented in
   CPU-sampler scripting axis — the run span from the sibling CpuModel, a `--breakdown` chrome
   step/measure or firefox measure span from stored top-K `SpanHot` refs joined to the model by id
   (`profile/span-hot.ts`; MEASURE-pooled, share-denominated, floor-suppressed, never the bar's `js`
-  slice — docs/dev/cpu-profiling.md)). `<label>` is a bare label or a `kind:label` qualifier — span identity is
+  slice — docs/dev/cpu-attribution.md)). `<label>` is a bare label or a `kind:label` qualifier — span identity is
   kind+label, so a bare label matching more than one kind is a collision the caller resolves.
   **Agents/users should read `query spans` then drill with `query span`/`query get <id>`, not the
   multi-MB recording.** `assert.ts` gates the exact count thresholds (recording *or* per-step via the
@@ -446,9 +446,13 @@ all live there with the probes that establish them.
 - **Cross-engine / profiling work**: `docs/dev/` ([index](docs/dev/README.md)) holds the measured
   facts the code depends on but cannot state itself. Read the relevant one BEFORE touching that
   code: `gecko-profile-format.md` (raw v34 schemas, marker phases, cause-stack encoding, line/col
-  base) for the Gecko converter; `engine-mapping.md` (Gecko<->Blink names, blame semantics, what is
-  actually comparable) before any cross-engine claim; `cpu-profiling.md` (the rung ladder, sampler
-  contamination, what `selfMs` includes) before changing the rungs or the interval;
+  base) for the Gecko converter; `engine-mapping.md` (Gecko<->Blink names, what is actually
+  comparable) before any cross-engine claim; `blame-semantics.md` (read-site vs write-site blame,
+  the dirtied-by reports, the thrash detector) before touching `markForced`/`thrash.ts` or any blame
+  claim; `cpu-profiling.md` (the rung ladder, sampler contamination, what `selfMs` includes) before
+  changing the rungs or the interval; `cpu-attribution.md` (which spans carry CPU samples, per-span
+  hot functions, sourcemap trust) before changing span-level CPU output; `firefox-cpu.md` (the
+  Gecko profiler config and its honest idle) before touching the `MOZ_PROFILER_*` setup;
   `rendering-counts.md` (what each count counts, which ones reproduce, why there is no composite
   count) before adding a name to `classify.ts` or gating a count; `frame-floor.md` (the one-frame
   floor on `wall`/`INP`, and why the headless mode sets its height) before changing the headless

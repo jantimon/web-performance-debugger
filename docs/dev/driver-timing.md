@@ -187,7 +187,7 @@ to round the parts to whole ms where Chrome does not.
   emits becomes its own reconciling span with a full breakdown, keyed by the measure name. So a
   sub-`run()` phase (an app's `__hydrateMs` / `__mountMs`) is timed in-page on the page's own clock —
   no driver wall, no frame wait, and finer-grained than bench's single `run()` window. `query spans
-  latest` lists them; see [cpu-profiling.md](./cpu-profiling.md).
+  latest` lists them; see [cpu-attribution.md](./cpu-attribution.md#which-spans-get-cpu-attribution).
 - **A driver step's per-package/hot CPU can be empty even when its JS ms is real.** The V8 CPU
   profiler resets on each cross-document navigation, so a step window before the run's last navigation
   carries no samples: its bar shows JS ms (from the trace) but `js.byPackage` is `{}` and the hot list
