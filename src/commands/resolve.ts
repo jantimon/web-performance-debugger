@@ -103,7 +103,7 @@ export async function hintTarget(absPath: string): Promise<string> {
     // No resolvable pointer (never recorded from this cwd, or an unreadable one): fall back to the
     // relative display path rather than failing a hint line.
   }
-  return `"${displayPath(absPath)}"`;
+  return JSON.stringify(displayPath(absPath));
 }
 
 /**
