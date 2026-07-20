@@ -24,7 +24,7 @@ export function breakdownForcedNotMeasured(): string {
 }
 
 export function breakdownInvalidationNotMeasured(): string {
-  return "NOT measured in breakdown mode: invalidation counts (layout/style/paint), because the invalidationTracking category is dropped. A 0 there means unmeasured, not clean. Layout/style/paint counts, long tasks, and CPU self-time ARE measured.";
+  return "NOT measured in breakdown mode: invalidation counts (layout/style/paint), because the invalidationTracking category is dropped; reported as not measured (—), never 0. Layout/style/paint counts, long tasks, and CPU self-time ARE measured.";
 }
 
 /** The chrome run's rendering counts and its reconciling bar cover different windows, by design.
