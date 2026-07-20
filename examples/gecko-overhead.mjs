@@ -20,14 +20,15 @@
 //   WPD_ROUNDS=8 WPD_ITER=20 node examples/gecko-overhead.mjs   # the defaults the docs cite
 
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdtempSync, rmSync, readFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import puppeteer from "puppeteer";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist");
-const { parseGecko } = await import(join(dist, "profile/gecko.js"));
+// A file URL, not a raw path, so the dynamic import resolves on Windows too (matches runtime/node.ts).
+const { parseGecko } = await import(pathToFileURL(join(dist, "profile/gecko.js")).href);
 
 const ROUNDS = Number(process.env.WPD_ROUNDS ?? 8);
 const ITER = Number(process.env.WPD_ITER ?? 20);
@@ -86,7 +87,13 @@ const savedDumps = {}; // cellId -> last dump kept for the signal-loss check
 // The gecko env for a cell config; a null config launches plain Firefox (the baseline). Matches
 // geckoEnv() in src/browser/launch.ts, adding the FILTERS knob wpd does not set.
 function geckoEnv(config) {
-  if (!config) return { env: process.env, dumpPath: null };
+  if (!config) {
+    // Strip any MOZ_PROFILER_* the caller already has in their environment: a stray one would start
+    // the profiler on the baseline and quietly corrupt every delta computed against it.
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) if (key.startsWith("MOZ_PROFILER_")) delete env[key];
+    return { env, dumpPath: null };
+  }
   const dumpPath = join(geckoDumpDir, `dump-${dumpCount++}.json`);
   const env = {
     ...process.env,
@@ -121,7 +128,13 @@ async function runCell(cell) {
       const kept = join(geckoDumpDir, `keep-${cell.id}.json`);
       copyFileSync(dumpPath, kept);
       savedDumps[cell.id] = kept;
-    } catch {}
+    } catch (error) {
+      // Log rather than swallow: otherwise the later signal-loss check prints "no dump kept" with no
+      // hint why. Fall back to the original dump path so verification can still read it.
+      const reason = String(error instanceof Error ? error.message : error).split("\n")[0];
+      process.stderr.write(`keep-dump failed for ${cell.id}: ${reason}\n`);
+      savedDumps[cell.id] = dumpPath;
+    }
   }
   return samples;
 }
@@ -153,9 +166,10 @@ for (let round = 0; round < ROUNDS && !skipped; round++) {
         `round ${round + 1}/${ROUNDS} ${cell.id} median ${median(samples).toFixed(2)}ms\n`,
       );
     } catch (error) {
-      process.stderr.write(
-        `SKIP ${cell.id} (round ${round + 1}): ${error.message.split("\n")[0]}\n`,
-      );
+      // A thrown value is not guaranteed to be an Error, so coerce before reading a message: the
+      // self-skip must survive a non-Error throw rather than crash inside its own handler.
+      const reason = String(error instanceof Error ? error.message : error).split("\n")[0];
+      process.stderr.write(`SKIP ${cell.id} (round ${round + 1}): ${reason}\n`);
       // Firefox not installed (npx puppeteer browsers install firefox) => bail on the first baseline.
       if (collected.get(cell.id).length === 0 && cell.id.endsWith("baseline")) {
         skipped = true;
@@ -254,7 +268,7 @@ function verifyDump(id) {
     parseGecko(raw);
     parseOk = "ok";
   } catch (error) {
-    parseOk = `THREW: ${error.message.split(":")[0]}`;
+    parseOk = `THREW: ${String(error instanceof Error ? error.message : error).split(":")[0]}`;
   }
   const names = [...new Set(allThreads.map((thread) => thread.name))].join(", ");
   console.log(`\n[verify] ${id}: threads=${allThreads.length} [${names}]`);
