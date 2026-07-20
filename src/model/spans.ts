@@ -10,6 +10,7 @@ import type {
   RecordingMeta,
   Span,
   SpanAggregation,
+  SpanCounts,
   SpanKind,
 } from "./recording.js";
 import type { SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
@@ -170,6 +171,70 @@ export function buildSpans(
       spans: [runEntryFromCpuBreakdown(cpuBreakdown, iterations)],
     };
   return null;
+}
+
+// --- query spans: the bar-less counts overview ---
+
+/**
+ * One span's row when the capture built no reconciling bar (default/--deep/--precise-wall): its
+ * wall, aggregation and windowed Measured counts, with no slices. `--deep` carries exact counts here
+ * (its whole point); the default/--precise-wall rungs carry only the wall, with counts not-measured.
+ */
+export interface SpanCountsEntry {
+  label: string;
+  kind: SpanKind;
+  /** trace-clock window width; null when a navigating step could not be priced */
+  wallMs: number | null;
+  aggregation: SpanAggregation;
+  /** a step's position within its iteration; absent on run/measure spans */
+  index?: number;
+  counts: SpanCounts;
+  /** worst-interaction INP (ms) for a driver step; absent when none crossed the floor */
+  inpMs?: number | null;
+}
+
+/**
+ * The `query spans` overview for a bar-less recording: counts + wall per span, no reconciling bar at
+ * this capture. A separate shape from `SpansResult` on purpose -- a bar-less span has no honest
+ * `slices`, so it carries `counts` (Measured, null = not-measured) instead of a fabricated all-zero
+ * bar.
+ */
+export interface SpanCountsOverview {
+  target: string;
+  source: "counts";
+  iterations: number;
+  spans: SpanCountsEntry[];
+  /** how many spans the flood filter (--min-wall/--filter) hid; set by the emitter, never a silent cut */
+  hidden?: number;
+  filter?: { minWallMs?: number; labelIncludes?: string };
+}
+
+/**
+ * Project a recording's stored spans onto the bar-less counts overview -- what `query spans` shows
+ * honestly when no reconciling bar was captured, so the documented overview -> drill flow works on a
+ * --deep recording (its richest attribution) rather than refusing it. Returns null only when the
+ * recording carries no spans at all (an empty artifact).
+ */
+export function buildSpanCounts(
+  spans: Span[] | undefined,
+  target: string,
+  iterations: number,
+): SpanCountsOverview | null {
+  if (!spans || spans.length === 0) return null;
+  return {
+    target,
+    source: "counts",
+    iterations,
+    spans: spans.map((span) => ({
+      label: span.label,
+      kind: span.kind,
+      wallMs: span.wallMs,
+      aggregation: span.aggregation,
+      ...(span.index != null ? { index: span.index } : {}),
+      counts: span.counts,
+      ...(span.inpMs != null ? { inpMs: span.inpMs } : {}),
+    })),
+  };
 }
 
 // --- query spans: filtering the overview ---

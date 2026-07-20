@@ -4,6 +4,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildSpans,
+  buildSpanCounts,
   recordingLane,
   spanAggregation,
   gateSliceBudgets,
@@ -368,12 +369,79 @@ test("query spans synthesizes the run span from a sibling cpu model (never empty
   assert.equal(parsed.spans[0].slices.paint, null);
 });
 
-test("query spans errors (non-zero) on a recording that holds no bar at all", async () => {
+// A --deep recording carries no reconciling bar but DOES carry spans with exact counts. `query spans`
+// must render that overview -- label/kind/wall/aggregation/counts, bars not-measured -- so the
+// documented overview -> drill flow works on the capture with the richest attribution, never a refusal.
+const deepSpans = [
+  {
+    label: "run",
+    kind: "run",
+    aggregation: "sum",
+    wallMs: 19.5,
+    counts: {
+      layoutCount: 22,
+      styleCount: 23,
+      paintCount: 2,
+      forcedLayoutCount: 43,
+      layoutInvalidations: 58,
+      styleInvalidations: 46,
+      longTaskCount: 0,
+    },
+  },
+  {
+    label: "mount",
+    kind: "step",
+    aggregation: "first",
+    index: 0,
+    wallMs: 12.1,
+    counts: {
+      layoutCount: 10,
+      styleCount: 11,
+      paintCount: 1,
+      forcedLayoutCount: 20,
+      layoutInvalidations: 24,
+      styleInvalidations: 20,
+      longTaskCount: 0,
+    },
+  },
+];
+
+test("buildSpanCounts projects a bar-less recording's spans onto counts + wall (no fake slices)", () => {
+  const overview = buildSpanCounts(deepSpans, "chrome", 1);
+  assert.equal(overview.source, "counts");
+  assert.equal(overview.spans.length, 2);
+  const run = overview.spans.find((span) => span.kind === "run");
+  assert.equal(run.wallMs, 19.5);
+  assert.equal(run.aggregation, "sum");
+  assert.equal(run.counts.forcedLayoutCount, 43, "exact --deep counts survive");
+  assert.equal(run.slices, undefined, "no slices shape at all, never an all-zero bar");
+  // A spans-less artifact is the only true empty case.
+  assert.equal(buildSpanCounts([], "chrome", 1), null);
+});
+
+test("query spans on a --deep recording renders the counts overview instead of erroring", async () => {
+  const file = writeRec("spans-deep.json", {
+    meta: { schemaVersion: "3", target: "chrome", passes: ["deep"], iterations: 1 },
+    spans: deepSpans,
+  });
+  const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
+  assert.equal(parsed.source, "counts");
+  assert.equal(parsed.spans.length, 2);
+  assert.equal(parsed.spans[0].counts.layoutCount, 22);
+  assert.equal(parsed.spans[1].label, "mount");
+  // Human output shows the counts table + a not-measured-bar note, never a fabricated slice bar.
+  const human = await captureJson(() => querySpans(file, {}));
+  assert.match(human, /no reconciling bar at this capture/);
+  assert.match(human, /forced/);
+  assert.match(human, /suppressed on --deep/);
+});
+
+test("query spans errors (non-zero) only on a recording that holds no spans at all", async () => {
   const file = writeRec("spans-no-bar.json", {
     meta: { schemaVersion: "3", target: "chrome" },
     spans: [],
   });
-  await assert.rejects(() => querySpans(file, { json: true }), /no per-span breakdown/);
+  await assert.rejects(() => querySpans(file, { json: true }), /carries no spans/);
 });
 
 // F35: a CORRUPT sibling CPU model must surface, not be swallowed into "no per-span breakdown" (which

@@ -17,10 +17,13 @@ import type { BlameEntry, SpanAnatomy, SpanForced, SpanHotFunctions } from "../m
 import { MIN_POOLED_HOT_SAMPLES } from "../profile/span-hot.js";
 import {
   buildSpans,
+  buildSpanCounts,
   recordingLane,
   parseSpanKindLabel,
   filterSpanEntries,
   spanPassesFilter,
+  type SpanCountsEntry,
+  type SpanCountsOverview,
 } from "../model/spans.js";
 import { isFirefoxDeep, isGeckoRung } from "../model/rung.js";
 import { bold, cyan, dim } from "../output/color.js";
@@ -674,12 +677,19 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   }
   const iterations = rec.meta.iterations ?? 1;
   const result = buildSpans(rec.spans, cpuBreakdown, recordingLane(rec.meta), iterations);
-  if (!result)
-    throw new Error(
-      `${file} carries no per-span breakdown. Record with \`--breakdown\` (chrome), \`--target ` +
-        `firefox\`, or \`--target node\` to produce span bars; the default/--deep/--precise-wall ` +
-        `rungs and older recordings have none.`,
-    );
+  if (!result) {
+    // No reconciling bar at this capture (default/--deep/--precise-wall) and no CpuModel run bar to
+    // fall back on. The recording still carries spans with wall + (on --deep) exact counts, so render
+    // THAT overview -- label/kind/wall/aggregation/counts, bars not-measured -- rather than refusing
+    // the documented overview -> drill flow on the capture with the richest attribution. Only a
+    // spans-less artifact is the true empty case.
+    const counts = buildSpanCounts(rec.spans, recordingLane(rec.meta), iterations);
+    if (!counts)
+      throw new Error(
+        `${file} carries no spans. Re-record: every current recording holds at least the run span.`,
+      );
+    return printBarlessSpans(counts, rec.meta, file, query, abs);
+  }
 
   const label = query.label;
   // --label is an exact targeted selector; --min-wall/--filter cut the flood. Apply the selector
@@ -733,6 +743,86 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     ),
   );
   if (rec.meta.passes.includes("deep") || isGeckoRung(rec.meta.passes))
+    console.log(
+      dim(`  • The classified event log: wpd query events ${hintPath} (drill: query get)`),
+    );
+}
+
+/**
+ * `query spans` on a bar-less recording (default/--deep/--precise-wall): the overview it CAN render
+ * honestly -- label/kind/wall/aggregation and the Measured rendering counts -- with the reconciling
+ * bar shown as not-measured. --deep leads with its exact counts here; the sampler-off wall rungs carry
+ * only the wall (counts —). Never a fabricated all-zero bar.
+ */
+async function printBarlessSpans(
+  overview: SpanCountsOverview,
+  meta: RecordingMeta,
+  file: string,
+  query: SpansQuery,
+  abs: string,
+): Promise<void> {
+  const label = query.label;
+  const selected = label ? overview.spans.filter((span) => span.label === label) : overview.spans;
+  // A null-wall span (a navigating step on a no-trace rung) is honest, not sub-threshold: only a
+  // MEASURED wall below --min-wall hides. --filter matches the label the usual way.
+  const passes = (span: SpanCountsEntry): boolean => {
+    const needle = query.filter?.toLowerCase();
+    if (needle && !span.label.toLowerCase().includes(needle)) return false;
+    if (query.minWall != null && span.wallMs != null && span.wallMs < query.minWall) return false;
+    return true;
+  };
+  const spans = selected.filter(passes);
+  const hidden = selected.length - spans.length;
+  const spanFilter = { minWallMs: query.minWall, labelIncludes: query.filter };
+
+  const fmt = structuredFormat(query);
+  if (fmt) return emit({ ...overview, spans, hidden, filter: spanFilter }, fmt);
+
+  if (!spans.length) {
+    if (label) return void console.log(`No span labelled '${label}' in ${file}.`);
+    return void console.log(
+      `No spans matched the filter in ${file} (${hidden} hidden by --min-wall/--filter).`,
+    );
+  }
+
+  const count = (value: Measured<number>): string =>
+    formatMeasured(value, (measured) => String(measured));
+  const isDeep = meta.passes.includes("deep") || isGeckoRung(meta.passes);
+  console.log(
+    `\nspans overview ${dim(`(${overview.target} · no reconciling bar at this capture · counts Measured: — = not measured, never 0)`)}\n`,
+  );
+  console.log(
+    table(
+      ["span", "kind", "wall", "agg", "layout", "style", "paint", "forced", "long≥50ms"],
+      spans.map((span) => [
+        span.label,
+        span.kind,
+        span.wallMs == null ? "—" : `${num(span.wallMs, 1)} ms`,
+        span.aggregation,
+        count(span.counts.layoutCount),
+        count(span.counts.styleCount),
+        count(span.counts.paintCount),
+        count(span.counts.forcedLayoutCount),
+        count(span.counts.longTaskCount),
+      ]),
+    ),
+  );
+  printSpanFilterNote(hidden);
+  console.log(
+    dim(
+      isDeep
+        ? "\n  Slice ms (js/style/layout/paint) are suppressed on --deep: the .stack trace inflates them, so this capture leads with exact counts (record --breakdown for the reconciling bar)."
+        : "\n  No trace at this capture, so rendering counts and a reconciling bar are not measured (—). Record --breakdown for the bar, or --deep for exact counts and forced-layout blame.",
+    ),
+  );
+
+  const hintPath = await hintTarget(abs);
+  console.log(
+    dim(
+      `\n  • One span's anatomy (counts, forced, hot functions): wpd query span ${hintPath} <label>`,
+    ),
+  );
+  if (isDeep)
     console.log(
       dim(`  • The classified event log: wpd query events ${hintPath} (drill: query get)`),
     );

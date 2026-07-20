@@ -498,6 +498,56 @@ e2e("record (driver): waitForStable waits past a streamed transition the default
   assert.ok(stable.wallMs > 170, `waitForStable waits past the last chunk (~170ms), got ${stable.wallMs}`);
 });
 
+// waitForStable survives a HARD cross-document navigation mid-wait. The step lands on a page that
+// location.replaces to another document while the quiet check is observing; the destroyed-context
+// rejection is caught, the wait re-attaches to the new document, and the run completes there instead
+// of failing the whole record. The redirect (80ms) lands well inside the quiet window (400ms), so it
+// is always mid-wait.
+e2e("record (driver): waitForStable survives a hard cross-document redirect mid-wait", { timeout: TIMEOUT_MS }, () => {
+  const landing =
+    "<!doctype html><meta charset=utf-8><title>landed</title><div id=landed>done</div>" +
+    "<div id=root></div><script>const root=document.getElementById('root');" +
+    "for(let index=0;index<80;index++){const box=document.createElement('div');" +
+    "box.textContent=String(index);root.appendChild(box);void box.offsetWidth;}<\/script>";
+  const destination = startOnrampServer(landing, "127.0.0.1");
+  const redirector = startOnrampServer(
+    "<!doctype html><meta charset=utf-8><title>redir</title><div id=here>here</div>" +
+      `<script>setTimeout(()=>location.replace(${JSON.stringify(destination.url)}),80);<\/script>`,
+    "localhost",
+  );
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const helper = path.join(repoRoot, "dist", "index.js");
+  try {
+    const flow = path.join(dir, "redir-flow.mjs");
+    // No `selector`: the quiet check runs immediately on the REDIRECTOR, so the 80ms redirect destroys
+    // ITS execution context mid-evaluate (the exact failure the fix catches). A selector would gate on
+    // the destination and wait for the redirect to finish first, never exercising the retry.
+    writeFileSync(
+      flow,
+      `import { waitForStable } from ${JSON.stringify(helper)};
+       export async function run({ page, measureStep }) {
+         await measureStep("open", () => page.goto(${JSON.stringify(redirector.url)}, { waitUntil: "load" }), {
+           until: waitForStable(page, { quietMs: 400, timeout: 15000 }),
+         });
+       }`,
+    );
+    const out = path.join(dir, "redir");
+    // The bug: the hard redirect destroys the quiet check's context and throws
+    // "Execution context was destroyed", failing the whole record. runCli throws on a non-zero exit,
+    // so simply completing is the assertion; the destination's markup landing confirms re-attachment.
+    runCli(["record", flow, "--breakdown", "--iterations", "1", "--out", out]);
+    const rec = JSON.parse(readFileSync(out, "utf8"));
+    const open = rec.spans.find((span) => span.kind === "step" && span.label === "open");
+    assert.ok(open, "the navigating step completed instead of failing the record");
+    // waitForStable re-attached to the destination and waited for ITS content: the destination's 80
+    // laying-out boxes are counted, proving the wait followed the hard navigation across.
+    assert.ok(open.counts.layoutCount > 50, `the destination page's layout is counted, got ${open.counts.layoutCount}`);
+  } finally {
+    redirector.close();
+    destination.close();
+  }
+});
+
 // prepare()/warmup page-side JS must NOT reach the CPU model. In driver mode the sampler is not
 // windowed after the fact (no trace clock to slice it by on the default rung), so it opens at the run
 // mark, after prepare and warmup. Here prepare() and one warmup each burn ~70 ms of page-side JS while
@@ -616,6 +666,91 @@ e2e("record --breakdown: a navigating step keeps CPU attribution across the proc
     assert.equal(rootCount, 1, "the raw DevTools profile is single-rooted across the navigation");
   } finally {
     second.close();
+  }
+});
+
+// A driver flow that TOUCHES the blank host (one forced layout) before navigating cross-process must
+// still follow the page to its new renderer. The stray count on the pre-nav thread would defeat a
+// strict zero-work re-anchor and anchor the whole run to the husk, reporting the navigated page's
+// layout/style/js as ~0 (js:0/idle:100%). The share re-anchor treats a vanishing pre-nav count as the
+// husk it is. The target is a DIFFERENT SITE ("localhost") so the renderer process swaps.
+e2e("record --breakdown (driver): a stray pre-nav flush does not blank the navigated page's bar", { timeout: TIMEOUT_MS }, () => {
+  const target = startOnrampServer(BOOT_WORK_HTML, "localhost");
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  try {
+    const flow = path.join(dir, "stray-nav.mjs");
+    writeFileSync(
+      flow,
+      `export async function run({ page, measureStep }) {
+         await measureStep("touch", () => page.evaluate(() => {
+           const box = document.createElement("div"); box.textContent = "x";
+           document.body.appendChild(box); return box.offsetWidth; // one forced layout on the blank host
+         }));
+         await measureStep("load", () => page.goto(${JSON.stringify(target.url)}, { waitUntil: "load" }));
+       }`,
+    );
+    const out = path.join(dir, "stray-nav");
+    runCli(["record", flow, "--breakdown", "--iterations", "1", "--out", out]);
+    const rec = JSON.parse(readFileSync(out, "utf8"));
+    // The navigated page laid out ~200 boxes; the run counts and the load step's bar must reflect it,
+    // not the blank host's single stray flush. The whole bug is this reading 0/1.
+    assert.ok(rec.summary.layoutCount > 20, `the navigated page's layout is counted, got ${rec.summary.layoutCount}`);
+    const load = rec.spans.find((span) => span.kind === "step" && span.label === "load");
+    assert.ok(load?.breakdown, "the load step carries a reconciling bar");
+    assert.ok(load.breakdown.slices.js.ms > 0, `the navigated step's js slice is non-zero, got ${load.breakdown.slices.js.ms}`);
+    assert.ok(load.breakdown.slices.layout.ms > 0, `the navigated step's layout slice is non-zero, got ${load.breakdown.slices.layout.ms}`);
+    assert.ok(load.counts.layoutCount > 20, `the navigated step's counts follow the process, got ${load.counts.layoutCount}`);
+    // The re-anchor is disclosed, not silent.
+    assert.ok(
+      (rec.meta.notes || []).some((note) => /navigated to a new renderer process/.test(note)),
+      "the cross-process re-anchor is disclosed in a note",
+    );
+  } finally {
+    target.close();
+  }
+});
+
+// Successive cross-process navigations in one run leave the boot flushes split across two renderer
+// processes, so no single main thread holds the whole run. The second-process step cannot be tiled
+// from the selected thread and reads as idle -- that MUST be disclosed loudly, never a silent
+// js:0/idle:100%. Two different sites ("localhost" then "127.0.0.1", cross-site from each other) swap
+// the process twice.
+e2e("record --breakdown (driver): successive cross-process navigations warn, never a silent zero bar", { timeout: TIMEOUT_MS }, () => {
+  const siteA = startOnrampServer(BOOT_WORK_HTML, "localhost");
+  const siteB = startOnrampServer(BOOT_WORK_HTML, "127.0.0.1");
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  try {
+    const flow = path.join(dir, "two-nav.mjs");
+    writeFileSync(
+      flow,
+      `export async function run({ page, measureStep }) {
+         await measureStep("loadA", () => page.goto(${JSON.stringify(siteA.url)}, { waitUntil: "load" }));
+         await measureStep("loadB", () => page.goto(${JSON.stringify(siteB.url)}, { waitUntil: "load" }));
+       }`,
+    );
+    const out = path.join(dir, "two-nav");
+    const result = spawnSync(process.execPath, [cli, "record", flow, "--breakdown", "--iterations", "1", "--out", out], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    assert.equal(result.status, 0, `record exits 0\n${result.stderr}`);
+    const rec = JSON.parse(readFileSync(out, "utf8"));
+    // Whichever renderer swap Chrome actually performs, if the work landed on two processes the split
+    // note fires loudly (recording + stderr). When a given CI keeps both navigations in one process
+    // (no swap), there is one main thread and no split -- so the assertion is conditional on the swap,
+    // never flaky: it only checks that a split is DISCLOSED, never silent.
+    const splitNoted = (rec.meta.notes || []).some((note) => /split across more than one renderer process/.test(note));
+    if (splitNoted) {
+      assert.match(result.stderr, /split across more than one renderer process/, "the split is loud on stderr too");
+    } else {
+      // No split: both navigations stayed in one process, so both steps' counts are real (never a fake 0).
+      const loadB = rec.spans.find((span) => span.kind === "step" && span.label === "loadB");
+      assert.ok(loadB?.counts.layoutCount > 0, "with no split, the second step's counts are real");
+    }
+  } finally {
+    siteA.close();
+    siteB.close();
   }
 });
 

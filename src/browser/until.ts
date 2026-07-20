@@ -66,14 +66,62 @@ export interface WaitForStableOptions {
  *   await measureStep("open-product", () => page.click(sel), {
  *     until: waitForStable(page, { selector: "#addToCartButton" }),
  *   });
+ *
+ * A HARD cross-document navigation mid-wait (a `window.location` swap, a meta refresh, a server
+ * redirect the step lands on) destroys the execution context the quiet check runs in. That is a
+ * transition to observe, not a failure, so the destroyed-context rejection is caught and the wait
+ * re-attaches to the new document, bounded by the same deadline.
  */
+/** Pause before a selector-less retry so a page that keeps hard-redirecting cannot spin the quiet
+ * check against CDP; the shared deadline still bounds the whole wait. */
+const RETRY_BACKOFF_MS = 50;
+
 export function waitForStable(page: Page, options: WaitForStableOptions = {}): () => Promise<void> {
   const quietMs = options.quietMs ?? 200;
   const timeout = options.timeout ?? 30000;
   return async () => {
-    const startedMs = Date.now();
+    const deadlineMs = Date.now() + timeout;
     if (options.selector) await page.waitForSelector(options.selector, { timeout });
-    const remainingMs = Math.max(0, timeout - (Date.now() - startedMs));
-    await page.evaluate(QUIET_SOURCE, quietMs, remainingMs);
+    // A hard navigation while the quiet check runs destroys its execution context; re-attach to the
+    // new document and keep waiting for IT to go quiet. The deadline is shared across attempts, so a
+    // page that keeps hard-redirecting cannot outlast the caller's timeout.
+    for (;;) {
+      const remainingMs = Math.max(0, deadlineMs - Date.now());
+      if (remainingMs === 0) return;
+      try {
+        await page.evaluate(QUIET_SOURCE, quietMs, remainingMs);
+        return;
+      } catch (error) {
+        if (!isDestroyedContextError(error) || Date.now() >= deadlineMs) throw error;
+        // The document navigated out from under the quiet check. If a content selector gates the
+        // wait, let the new document reach it before retrying (swallow its own timeout: the shared
+        // deadline is the real bound); otherwise pause briefly so a redirect storm cannot spin the
+        // retry against CDP, still bounded by the shared deadline.
+        if (options.selector) {
+          const untilDeadlineMs = Math.max(0, deadlineMs - Date.now());
+          await page
+            .waitForSelector(options.selector, { timeout: untilDeadlineMs })
+            .catch(() => {});
+        } else {
+          const backoffMs = Math.min(RETRY_BACKOFF_MS, Math.max(0, deadlineMs - Date.now()));
+          if (backoffMs > 0) await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        }
+      }
+    }
   };
+}
+
+/**
+ * Whether a thrown error is Puppeteer's "the execution context went away under me because the frame
+ * navigated" family, as opposed to a real failure (a closed target, a broken evaluate). A hard
+ * cross-document navigation raises one of these while `page.evaluate` is mid-flight; matching the
+ * message is the only signal Puppeteer gives (it does not type these).
+ */
+export function isDestroyedContextError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /execution context was destroyed/i.test(message) ||
+    /execution context is not available/i.test(message) ||
+    /cannot find context with specified id/i.test(message)
+  );
 }
