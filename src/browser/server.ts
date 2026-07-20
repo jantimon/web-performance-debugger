@@ -17,21 +17,52 @@ const MIME: Record<string, string> = {
   ".wasm": "application/wasm",
 };
 
+/** Is the request's Host header a loopback hostname we accept ("127.0.0.1", "localhost", "[::1]")?
+ * The optional `:port` is ignored: only the hostname decides. A missing Host (HTTP/1.0) is rejected. */
+function isLoopbackHost(hostHeader: string | undefined): boolean {
+  if (!hostHeader) return false;
+  const hostname = hostHeader.replace(/:\d+$/, "").toLowerCase();
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
+}
+
 export interface StaticServer {
   url: string;
   port: number;
   close: () => Promise<void>;
 }
 
-/** Serve `root` over http so the browser can ESM-import() modules (file:// can't). */
-export async function startStaticServer(root: string): Promise<StaticServer> {
+/**
+ * Serve `root` over http so the browser can ESM-import() modules (file:// can't).
+ *
+ * `allowedOrigin` is the single cross-origin host page permitted to read from this server: in
+ * `--url` bench mode the host page is a different origin than this loopback server, so the browser's
+ * cross-origin module import() needs an `Access-Control-Allow-Origin` naming exactly that origin.
+ * Every other mode serves the host page from this same server (same-origin, no CORS needed), so
+ * `allowedOrigin` is left undefined and NO CORS header is sent. A wildcard `*` would instead let any
+ * website open in the operator's browser read cwd files (source, .env) off this port while a run is
+ * live; naming one origin closes that. The server still binds loopback only.
+ */
+export async function startStaticServer(
+  root: string,
+  allowedOrigin?: string,
+): Promise<StaticServer> {
   const absRoot = path.resolve(root);
 
   const server = http.createServer(async (req, res) => {
     try {
+      // Reject any request whose Host is not the loopback address this server binds. Every legitimate
+      // request comes from the controlled browser navigating/importing `http://127.0.0.1:<port>`, so
+      // the Host is always loopback. A remote page using DNS rebinding (attacker.com -> 127.0.0.1)
+      // would carry its own hostname here; refusing it closes the same-origin read that rebinding
+      // would otherwise get past CORS.
+      if (!isLoopbackHost(req.headers.host)) {
+        res.statusCode = 403;
+        return res.end("Forbidden");
+      }
       const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0]);
-      // CORS so modules can be imported into a cross-origin host page (--url mode).
-      res.setHeader("Access-Control-Allow-Origin", "*");
+      // Allow the one cross-origin host page (--url bench mode) to import modules, and nobody else.
+      // No `allowedOrigin` => same-origin host => no CORS header at all.
+      if (allowedOrigin) res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
 
       // A same-origin blank host page so module-mode import() isn't cross-origin.
       if (urlPath === "/__wpd_blank__") {

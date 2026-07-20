@@ -3,6 +3,7 @@ import path from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
 import { recordAndReport, type RecordOptions } from "./commands/record.js";
 import { resolvePageOption } from "./record/page-option.js";
+import { isPrivateHostname } from "./trace/sourcemap.js";
 import { queryBlame, queryEvents, queryGet, querySpan, querySpans } from "./commands/query.js";
 import { queryCpu, queryFrame } from "./commands/cpu.js";
 import { assertCmd, type Thresholds } from "./commands/assert.js";
@@ -269,6 +270,34 @@ program
       if (bench)
         program.error(
           "--bench imports the module inside a page; --target node has no page. Drop --bench (--iterations already repeats run() on this lane).",
+        );
+    }
+    // --disable-browser-sandbox drops the renderer's OS process containment (chrome-only; firefox and
+    // node reject the flag above, so reaching here means chrome). What that unsandboxed renderer is
+    // then allowed to touch decides whether the combination is merely reduced-containment or actively
+    // dangerous.
+    if (cmdOpts.disableBrowserSandbox && !firefox && !node) {
+      // A persistent real profile behind an unsandboxed renderer has no safe use: a renderer
+      // compromise reaches the profile's cookies and logins with nothing in the way. Refuse.
+      if (cmdOpts.userDataDir)
+        program.error(
+          "--disable-browser-sandbox with --user-data-dir runs page content in a renderer with no OS containment AND gives it your persistent Chrome profile (its cookies and logins). There is no safe way to combine them: drop one.",
+        );
+      // A public --url loads content you do not control into that unsandboxed renderer. This is
+      // legitimate inside an already-isolated container (the reason the opt-out exists), so warn
+      // loudly before launch rather than refuse -- the point is that the composition is not silent.
+      let publicUrlHost: string | undefined;
+      if (cmdOpts.url) {
+        try {
+          const candidateHost = new URL(cmdOpts.url).hostname;
+          if (!isPrivateHostname(candidateHost)) publicUrlHost = candidateHost;
+        } catch {
+          publicUrlHost = undefined;
+        }
+      }
+      if (publicUrlHost)
+        console.error(
+          `WARNING: --disable-browser-sandbox loads ${cmdOpts.url} (a public host) in a renderer with no OS containment. Only do this in a trusted, isolated environment such as a container or CI, never on a machine holding data worth protecting.`,
         );
     }
     // toInt already rejected non-numbers, so these are range checks only. 0 iterations would run

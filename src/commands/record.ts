@@ -205,6 +205,26 @@ export function positionMissNote(diagnostics: SourceMapDiagnostics): string | nu
   return `NOTE: ${scripts.length} script(s) in meta.sourcemaps.positionMisses (the worst by miss count, capped) had a resolved sourcemap that still returned no mapping for some frame lookups, so those frames kept their minified/remote identity and bucketed by origin, not their real source: ${detail}.`;
 }
 
+/**
+ * The origin the static server grants CORS read access to, or undefined for none. Only a `--url`
+ * BENCH run imports the served module cross-origin into the remote host page; driver mode import()s
+ * the module in Node and loads nothing from the loopback server into the page, so it needs no grant.
+ * html/module mode serves the host page from the same server (same-origin). An unparseable `--url`
+ * yields undefined, so a bad value never widens access.
+ */
+function hostPageOrigin(
+  mode: "module" | "html" | "url",
+  bench: boolean,
+  url?: string,
+): string | undefined {
+  if (mode !== "url" || !bench || !url) return undefined;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function record(opts: RecordOptions): Promise<{
   recording: Recording;
   outPath: string;
@@ -247,7 +267,11 @@ export async function record(opts: RecordOptions): Promise<{
   const capabilities = capabilitiesFor(capture, browserName);
   const wantTrace = capture.categories != null;
 
-  const server = await startStaticServer(root);
+  // In --url bench mode the host page is a remote origin that import()s the served module cross-origin,
+  // so that one origin is granted CORS read access; every other mode serves the host page same-origin
+  // and needs none. Never a wildcard: it would expose cwd files to any site open in the operator's
+  // browser for the life of the run.
+  const server = await startStaticServer(root, hostPageOrigin(mode, !opts.driver, opts.url));
   // One resolver for the whole run: stack resolution and the CPU model share its cache (a remote
   // script + map is fetched once) and its diagnostics, so `maps.diagnostics()` below sees every
   // script the run tried to map.
