@@ -19,6 +19,7 @@ const MIME: Record<string, string> = {
 
 /** Is the request's Host header a loopback hostname we accept ("127.0.0.1", "localhost", "[::1]")?
  * The optional `:port` is ignored: only the hostname decides. A missing Host (HTTP/1.0) is rejected. */
+function isLoopbackHost(hostHeader: string | undefined): boolean {
   if (!hostHeader) return false;
   const hostname = hostHeader.replace(/:\d+$/, "").toLowerCase();
   return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
