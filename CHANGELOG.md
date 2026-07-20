@@ -1,5 +1,24 @@
 # @jantimon/web-performance-debugger
 
+## 0.13.1
+
+### Patch Changes
+
+- b7ff550: Fix four terminal-output defects surfaced dogfooding against a production site:
+
+  - `query cpu` / `query span` / `cpu-diff` now compact an unmapped remote script URL (origin + truncated path, query string dropped) so a long third-party config URL no longer blows out the source column.
+  - The per-span compositor frame side track collapses its dropped/janky frames to a one-line count; `query spans`/`query span --frames` lists each. JSON output keeps every per-frame record.
+  - Drill-in hint lines print the recording as `latest` (or a cwd-relative path) instead of an absolute home/scratch path.
+  - `query span <measure>` discloses that rendering counts do not window to a `performance.measure` span, so a bar with real style/layout/paint ms beside `—` counts no longer reads as a contradiction.
+
+- dd008cd: Tighten the serving and launch surfaces. The `--bench` static server no longer sends a wildcard
+  `Access-Control-Allow-Origin`: it grants CORS read access only to the one cross-origin host page a
+  remote `--url` bench run needs, so no other site open in your browser can read cwd files off the
+  loopback port while a run is live. It also rejects requests whose `Host` is not loopback, closing a
+  DNS-rebinding read. `--disable-browser-sandbox` now refuses to combine with `--user-data-dir` (an
+  unsandboxed renderer with your real profile has no safe use) and warns before launch when combined
+  with a public `--url`.
+
 ## 0.13.0
 
 ### Minor Changes
