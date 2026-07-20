@@ -1,5 +1,64 @@
 # @jantimon/web-performance-debugger
 
+## 0.12.0
+
+### Minor Changes
+
+- c063a6c: `diff`/`cpu-diff` now compare the executed flow, not just the host page. A recording carries a
+  structured workload identity (lane + host + module), so a `--fail-on-regression` gate refuses when a
+  different module — or the built-in `--url` load flow — ran against the same host page, instead of
+  subtracting two different programs and reporting a false pass.
+
+  To gate, re-record both sides with the same module/flow. Recordings written before this field still
+  diff against each other on the old target comparison; a new-vs-old pair warns that it cannot verify
+  the flow.
+
+- bf039c8: **`--warmup` now blocks a regression gate.** A `--warmup` difference between two recordings carries
+  workload state (cache priming, JIT tiers, lazy CSS, memoization, first-render code): moving a call
+  across the warmup boundary changes which counts and self-time land in the timed window, so a
+  first-call layout can read as `0 -> 1` from config alone. `diff --fail-on-regression` and
+  `cpu-diff --fail-on-regression` now REFUSE to gate across mismatched `--warmup` (they used to warn
+  and gate anyway), naming the mismatch. Re-record both sides with the same `--warmup` to gate.
+
+### Patch Changes
+
+- 38b5c7c: Fix the `--breakdown` invalidation-count note, which told readers "a 0 there means unmeasured".
+  Unmeasured counts render as `—`, never 0, so the note now says the counts are reported as not
+  measured (—), never 0, matching every other not-measured note and the `Measured` model.
+- 12f902c: `--deep` now captures far heavier journeys and never reports silently truncated counts. The trace runs
+  on a raised 1 GB buffer (Chrome's default drops events past ~485k, a few steps into a production page),
+  and wpd reads Chrome's `dataLossOccurred` verdict that Puppeteer discarded: on the rare trace that
+  overflows even the raised buffer, `record` pushes a loud note (in the recording and on stderr) that
+  counts are a floor, not exact. A trace past the ~512 MB a single string can hold now fails with a clear
+  message naming the size and the remedy, instead of an unhandled `ERR_STRING_TOO_LONG`.
+- 9c8edac: Keeps driver-mode `prepare()` and warmup out of the CPU model. The V8 sampler opened before
+  `prepare()` ran, and the CPU model spans the whole profile, so page-side JS from setup inflated
+  `scriptingMs`, the package rollup, the run-span hot functions and `cpu-diff` (measured: a `run()`
+  doing ~5 ms beside a `prepare()` doing ~80 ms read `scriptingMs` ~88 ms with the setup loop as the top
+  hot function). The sampler now opens at the `wpd:run:start` mark, pricing the run only (~9 ms on that
+  probe), matching bench. Trace counts and `--breakdown` bars are unchanged; `cleanup()` was already
+  excluded.
+- 12f902c: New `record --keep-partial` (driver mode): when a later `--iterations` iteration fails on a flaky
+  production site, keep the iterations that completed instead of discarding the whole run. The salvaged
+  recording carries a loud note naming the failed iteration and the step it died on, and `meta.iterations`
+  becomes the completed count. A failure in the FIRST iteration still errors: a flow that never completed
+  once has nothing honest to salvage.
+- 12f902c: `query spans` gains two filters for when a tag manager floods the overview with hundreds of tiny
+  `performance.measure` spans: `--min-wall <ms>` hides spans below a wall threshold, and `--filter <text>`
+  keeps only labels containing `<text>` (case-insensitive substring). Both combine with `--label` and with
+  each other, and the output always states how many spans the filter hid, so a filtered view is never
+  mistaken for the whole recording.
+- 5f6a093: Fix the documented regression-gate example. It recorded one `--breakdown` run and then asserted
+  `--max-forced` against it, but forced counts need the `--deep` `.stack` trace, so that budget always
+  failed as a loud `n/a`. The README now records both rungs and gates each threshold on the rung that
+  measured it: `--max-layouts`/`--max-slice` on `--breakdown`, `--max-forced` on `--deep`. An e2e test
+  runs the two-capture workflow and checks both cross-rung mistakes still fail loudly.
+- a25eb6d: Disclose that a chrome run's rendering counts (start-onward from `run:start`, so they catch the
+  frame that paints just after `run:end`) and its `[run:start, run:end]` reconciling bar cover
+  different windows, so a run `paintCount`/`layoutCount` above its bar slice reads as the trailing
+  frame, not a bug. Shown as a `meta.notes` line under `--breakdown` and in `query span run`. No
+  numbers changed.
+
 ## 0.11.1
 
 ### Patch Changes
