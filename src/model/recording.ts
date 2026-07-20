@@ -303,6 +303,31 @@ export interface InteractionTiming {
  */
 export type BlameSemantic = "flush-site" | "invalidation-site";
 
+/**
+ * Which way the run executed the flow:
+ *   - "driver": a module drove the page via Puppeteer (measureStep).
+ *   - "bench": a module was import()'d inside the browser (--bench).
+ *   - "builtin-load": no module; the built-in on-ramp navigated a host page and settled.
+ *   - "node": the module ran in-process (--target node), CPU only.
+ */
+export type WorkloadLane = "driver" | "bench" | "builtin-load" | "node";
+
+/**
+ * The executed flow's identity, kept SEPARATE from `target` (a single display string that a host
+ * page overwrites with itself, dropping the module). Two recordings share a workload only when all
+ * three axes match: the same lane ran the same module against the same host. A different module (or
+ * the built-in load flow) against the same host is a DIFFERENT workload, so a `diff`/`cpu-diff` gate
+ * across it refuses instead of subtracting two programs.
+ */
+export interface WorkloadIdentity {
+  lane: WorkloadLane;
+  /** the host page a module drove or the on-ramp loaded: a URL, a root-relative HTML path, or null
+   * (blank page / node lane). */
+  host: string | null;
+  /** the executed module, root-relative (stableWorkloadPath), or null on the built-in load flow. */
+  module: string | null;
+}
+
 export interface RecordingMeta {
   tool: string;
   /** the package version that wrote this artifact (e.g. "0.1.0") */
@@ -312,6 +337,13 @@ export interface RecordingMeta {
   createdAt: string;
   mode: "module" | "html" | "url";
   target: string;
+  /**
+   * The executed flow's structured identity (lane + host + module), so a diff distinguishes two
+   * different programs run against the same host page, which `target` alone cannot. Absent on
+   * recordings written before this field: a pair that both lack it falls back to the `target`
+   * comparison; a structured-vs-absent pair cannot verify the flow and warns rather than blocking.
+   */
+  workload?: WorkloadIdentity;
   fn: string;
   iterations: number;
   warmup: number;

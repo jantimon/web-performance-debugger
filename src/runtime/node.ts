@@ -125,6 +125,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     createdAt: new Date().toISOString(),
     mode: "module",
     target: stableWorkloadPath(root, opts.module),
+    workload: { lane: "node", host: null, module: stableWorkloadPath(root, opts.module) },
     fn: opts.fn,
     iterations: opts.iterations,
     warmup: opts.warmup,
