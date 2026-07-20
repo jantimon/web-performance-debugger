@@ -409,6 +409,44 @@ e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed
   );
 });
 
+// prepare()/warmup page-side JS must NOT reach the CPU model. In driver mode the sampler is not
+// windowed after the fact (no trace clock to slice it by on the default rung), so it opens at the run
+// mark, after prepare and warmup. Here prepare() and one warmup each burn ~70 ms of page-side JS while
+// the timed run() does ~6 ms: scriptingMs must price the run only. Opened before prepare instead, it
+// bills all ~146 ms to the run with the setup loop as the top hot function.
+e2e("record (driver): prepare()/warmup page-side JS stays out of the CPU model", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const flow = path.join(dir, "lifecycle.mjs");
+  writeFileSync(
+    flow,
+    `export async function prepare({ page }) {
+       await page.evaluate((ms) => { const end = performance.now() + ms; let acc = 0;
+         while (performance.now() < end) acc += Math.sqrt(acc + 1); window.__s = acc; }, 70);
+     }
+     export async function run({ page, measureStep }) {
+       await measureStep("work", () =>
+         page.evaluate((ms) => { const end = performance.now() + ms; let acc = 0;
+           while (performance.now() < end) acc += Math.sqrt(acc + 1); window.__s = acc; }, 6));
+     }`,
+  );
+  const out = path.join(dir, "lifecycle");
+  // One warmup so the warmup path is exercised too; both prepare and warmup precede the sampler.
+  runCli(["record", flow, "--iterations", "1", "--warmup", "1", "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+
+  const scriptingMs = rec.summary.scriptingMs;
+  assert.ok(scriptingMs != null && scriptingMs > 0.5, `run()'s own JS is measured, got ${scriptingMs}`);
+  assert.ok(
+    scriptingMs < 35,
+    `prepare()+warmup (~140 ms of page JS) must not leak into scriptingMs, got ${scriptingMs}`,
+  );
+
+  // And no single function bills anywhere near the ~70 ms setup loop.
+  const model = JSON.parse(readFileSync(`${out}.cpu.json`, "utf8"));
+  const topSelfMs = Math.max(0, ...model.functions.map((fn) => fn.selfMs));
+  assert.ok(topSelfMs < 35, `no function carries the setup loop's ~70 ms, top self ${topSelfMs} ms`);
+});
+
 // The idle edge probe C left untested: a run() that only awaits is ~pure waiting, so idle must
 // dominate the window and the sum must still close.
 e2e("record --breakdown: a waiting-dominated span is mostly idle and still closes", { timeout: TIMEOUT_MS }, () => {
