@@ -274,14 +274,39 @@ function packageFromNodeModules(filePath: string): string | null {
 }
 
 /**
+ * Conventional build/source-layout directory a published package ships its output under. The path
+ * segment PRECEDING the LAST of these names the package, whichever sub-directory (runtime/, core/,
+ * ...) a given file sits in, so a library whose off-disk sources span several source directories
+ * collapses to one bucket instead of splitting one per directory (and a nested
+ * `.../src/vendor/<pkg>/dist/x` names `<pkg>`, not the outer `src`).
+ */
+const SOURCE_LAYOUT_DIRS = new Set(["src", "dist", "lib", "esm", "cjs", "build", "out"]);
+
+/**
  * Bucket for a frame whose sourcemap named an original source that is NOT on disk (a dependency
  * built from a workspace/source checkout, or a stale map). The path is the map's claim, not a real
  * file, so it cannot be fs-walked to a package.json. Calling it "app" blames a dependency's cost on
- * the user's own code; instead name the phantom's containing directory so the bucket points at the
- * broken map. Parenthesized to match the other "not a real package" buckets ((unmapped)/(served)/...).
+ * the user's own code, so name a package-looking segment of the phantom path instead:
+ *
+ *   - a `@scope/name` pair anywhere is an unambiguous owner (scoped design systems, component libs);
+ *   - else the segment before the LAST conventional source-layout dir (`<pkg>/src/...`,
+ *     `<pkg>/dist/...`), so `<pkg>/src/runtime/a` and `<pkg>/src/core/b` share ONE `(unmapped: <pkg>)`
+ *     bucket rather than splitting into `(unmapped: runtime)` + `(unmapped: core)`. The LAST
+ *     occurrence wins so a nested `.../src/vendor/<pkg>/dist/x` names `<pkg>`, not the outer `src`;
+ *   - else the immediate directory, the last resort that still never reads as "app".
+ *
+ * Parenthesized to match the other "not a real package" buckets ((unmapped)/(served)/...): the map
+ * pointed off-disk, so the identity is inferred from the path, not confirmed against a package.json.
  */
 function offDiskSourceBucket(filePath: string): string {
-  const dir = path.basename(path.dirname(filePath));
+  const segments = filePath.split(/[\\/]+/).filter(Boolean);
+  for (let index = 0; index < segments.length - 1; index++)
+    if (segments[index].startsWith("@"))
+      return `(unmapped: ${segments[index]}/${segments[index + 1]})`;
+  for (let index = segments.length - 1; index >= 1; index--)
+    if (SOURCE_LAYOUT_DIRS.has(segments[index].toLowerCase()))
+      return `(unmapped: ${segments[index - 1]})`;
+  const dir = segments.length >= 2 ? segments[segments.length - 2] : "";
   return dir && dir !== "." ? `(unmapped: ${dir})` : "(unmapped)";
 }
 

@@ -43,11 +43,60 @@ function throttleOf(meta: RecordingMeta): string {
   return meta.throttle?.cpuRate ? `${meta.throttle.cpuRate}x` : "off";
 }
 
+/**
+ * Widest common OS ephemeral-port range (the same floor cpuprofile.ts uses for its unmapped-origin
+ * bucket, and for the same reason): Linux `listen(0)` starts at 32768, macOS/BSD/Windows at 49152.
+ * A dev/test server on a loopback host picks one of these fresh every run, so it carries no cross-run
+ * identity and must not read as a different workload.
+ */
+const EPHEMERAL_PORT_MIN = 32768;
+const EPHEMERAL_PORT_MAX = 65535;
+
+/** A loopback host literal (127.0.0.0/8, ::1, localhost), by hostname or IP. The narrow set the
+ * ephemeral-port fold applies to: a real service on :8080 vs :9090 can be a genuinely different
+ * deployment, so only loopback hosts drop their port. */
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host === "::1") return true;
+  // A full dotted-quad in 127.0.0.0/8, anchored so a DNS name like "127.0.x.example.com" (or any
+  // host with a non-numeric label) is not read as loopback. Node normalizes short forms (127.1) to
+  // the quad before this sees them.
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/**
+ * A workload host stabilized for cross-run identity. A loopback host on an OS-assigned ephemeral port
+ * (a `listen(0)` bench/test server: 127.0.0.1, localhost, [::1]) gets its port replaced with the
+ * literal `<ephemeral>`, so the same page served on a fresh random port each run reads as ONE
+ * workload rather than refusing a gate that is actually fine. The token stays IN the canonical so a
+ * reader who sees the host understands the port was folded. Non-loopback hosts and registered ports
+ * pass through unchanged: those name a service the user runs on purpose. Non-URL hosts (a
+ * root-relative HTML path) and null are returned as-is.
+ */
+function stableWorkloadHost(host: string | null): string | null {
+  if (host == null) return host;
+  let parsed: URL;
+  try {
+    parsed = new URL(host);
+  } catch {
+    return host;
+  }
+  if (parsed.port === "") return host;
+  const port = Number(parsed.port);
+  if (port < EPHEMERAL_PORT_MIN || port > EPHEMERAL_PORT_MAX) return host;
+  if (!isLoopbackHostname(parsed.hostname)) return host;
+  // URL.hostname already carries the brackets for an IPv6 literal (`[::1]`), so use it verbatim.
+  return `${parsed.protocol}//${parsed.hostname}:<ephemeral>${parsed.pathname}${parsed.search}${parsed.hash}`;
+}
+
 /** One line naming lane + host + module, so two flows differ here whenever any of the three does. A
  * real value is quoted (JSON.stringify), a null one is the bare word `null`, so a host page or module
- * literally named "null" cannot read as absent and collide with a blank-page run. */
-function workloadCanonical(identity: WorkloadIdentity): string {
-  const host = identity.host === null ? "null" : JSON.stringify(identity.host);
+ * literally named "null" cannot read as absent and collide with a blank-page run. `stableHost` folds
+ * an ephemeral loopback port to `<ephemeral>` (identity comparison); the raw form is for disclosure. */
+function workloadCanonical(identity: WorkloadIdentity, stableHost = false): string {
+  const rawHost = stableHost ? stableWorkloadHost(identity.host) : identity.host;
+  const host = rawHost === null ? "null" : JSON.stringify(rawHost);
   const workloadModule = identity.module === null ? "null" : JSON.stringify(identity.module);
   return `${identity.lane} host=${host} module=${workloadModule}`;
 }
@@ -62,15 +111,28 @@ function workloadCanonical(identity: WorkloadIdentity): string {
  *     present, so the flow cannot be verified. WARN under a distinct axis name rather than block:
  *     refusing every gate against a pre-upgrade baseline would be heavier than the risk, but the
  *     reader must know the sameness is unverified.
+ *
+ * Host identity folds an ephemeral loopback port (stableWorkloadHost): the same page served on a
+ * fresh `listen(0)` port each run is ONE workload. When that fold makes two otherwise-identical
+ * workloads match, the raw hosts (with their differing ports) are surfaced as a NON-blocking note, so
+ * a reader sees why the gate did not refuse rather than a silent pass.
  */
 function workloadMismatch(base: RecordingMeta, current: RecordingMeta): CompatMismatch {
-  if (base.workload && current.workload)
+  if (base.workload && current.workload) {
+    const baseStable = workloadCanonical(base.workload, true);
+    const currentStable = workloadCanonical(current.workload, true);
+    if (baseStable !== currentStable)
+      return { axis: "workload", base: baseStable, current: currentStable, blocksGating: true };
+    // Same workload once the ephemeral loopback port is folded. Report the RAW hosts so a differing
+    // port is visible (base !== current keeps the entry) but does not block; an exact match (raw
+    // hosts equal too) collapses to base === current and is filtered out upstream.
     return {
       axis: "workload",
-      base: workloadCanonical(base.workload),
-      current: workloadCanonical(current.workload),
-      blocksGating: true,
+      base: workloadCanonical(base.workload, false),
+      current: workloadCanonical(current.workload, false),
+      blocksGating: false,
     };
+  }
   if (!base.workload && !current.workload)
     return { axis: "workload", base: base.target, current: current.target, blocksGating: true };
   return {
@@ -103,6 +165,12 @@ function workloadMismatch(base: RecordingMeta, current: RecordingMeta): CompatMi
  *     tiers, lazy CSS, memoization, first-render code). Moving a call across that boundary changes
  *     which counts land in the timed window, so a first-call layout can read as 0 -> 1 from a
  *     `--warmup` change alone. It is workload state, not sampling noise, so it blocks the gate.
+ *   - variant: an opt-in `--variant <label>` the user attaches when ONE module path runs several
+ *     techniques switched by an env var, which `workload` cannot tell apart (same lane/host/module).
+ *     A different label is a different technique, so gating across it subtracts apples from oranges.
+ *     A present label vs an absent one also blocks: the flow the absent side ran cannot be verified
+ *     to be the same technique, so it refuses rather than fabricating a pass. Both-absent (the
+ *     default, nobody uses variants) matches and never appears here.
  *
  * The sampler interval only WARNS: it moves sampling density and steady-state, not the gated exact
  * counts.
@@ -156,6 +224,12 @@ export function comparabilityMismatches(
       blocksGating: true,
     },
     {
+      axis: "variant",
+      base: base.variant ?? "(none)",
+      current: current.variant ?? "(none)",
+      blocksGating: true,
+    },
+    {
       axis: "sampler-interval",
       base: base.cpuIntervalUs != null ? `${base.cpuIntervalUs}us` : "?",
       current: current.cpuIntervalUs != null ? `${current.cpuIntervalUs}us` : "?",
@@ -172,13 +246,16 @@ export function comparabilityMismatches(
  * throttling stretches the same self-time clock. `warmup` moves the workload's first-call state
  * (JIT tiers, caches, first-render code) into or out of the timed window, so an expensive first call
  * lands in the samples under `--warmup 0` and not under `--warmup 1` though the code is identical.
- * Each fabricates a self-time "regression" from pure config. Capture mode and headless move rendering
- * counts and the wall/INP floor, not the profiler's own self-time clock, so cpu-diff only WARNS on those. */
+ * Each fabricates a self-time "regression" from pure config. A differing `variant` is a different
+ * technique behind one module path, so a self-time delta across it is not a code change either.
+ * Capture mode and headless move rendering counts and the wall/INP floor, not the profiler's own
+ * self-time clock, so cpu-diff only WARNS on those. */
 export const CPU_DIFF_BLOCKING_AXES = new Set([
   "browser",
   "runtime",
   "workload",
   "iterations",
   "warmup",
+  "variant",
   "cpu-throttle",
 ]);

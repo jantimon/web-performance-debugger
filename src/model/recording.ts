@@ -400,6 +400,13 @@ export interface RecordingMeta {
    * comparison; a structured-vs-absent pair cannot verify the flow and warns rather than blocking.
    */
   workload?: WorkloadIdentity;
+  /**
+   * Opt-in variant label (`--variant <label>`), for when ONE module path runs several techniques
+   * switched by an env var so `workload` reads them as the same flow. A diff/cpu-diff gate refuses
+   * across differing (or present-vs-absent) variants. Absent by default, so old recordings and runs
+   * without the flag stay valid and compare as before.
+   */
+  variant?: string;
   fn: string;
   iterations: number;
   warmup: number;

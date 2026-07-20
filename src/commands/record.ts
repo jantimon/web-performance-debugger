@@ -105,6 +105,9 @@ export interface RecordOptions {
   deep?: boolean;
   /** The default capture mode minus the sampler: a pristine benchmark wall, no profiler, no counts. */
   preciseWall?: boolean;
+  /** Opt-in variant label stamped on meta, so a diff/cpu-diff gate refuses across two techniques
+   * that run through one module path (env-switched). Absent by default. */
+  variant?: string;
 }
 
 /** Bounded retries for a transient cross-process navigation failure (fresh browser each attempt). */
@@ -516,6 +519,8 @@ export async function record(opts: RecordOptions): Promise<{
         mode === "url" ? opts.url! : mode === "html" ? stableWorkloadPath(root, opts.html!) : null,
       module: opts.module ? stableWorkloadPath(root, opts.module) : null,
     },
+    // Opt-in only; absent unless --variant was passed, so old recordings and unflagged runs are unchanged.
+    variant: opts.variant,
     fn: opts.fn,
     // --keep-partial salvaged a run whose later iteration failed: the recording covers only the
     // iterations that completed, so meta.iterations is that count, not the requested one (the note
@@ -794,7 +799,8 @@ function printNodeReport(result: {
   cpuModel: CpuModel;
 }): void {
   const meta = result.recording.meta;
-  console.log(`\n${bold(meta.tool)} — node:${meta.target}  ${dim(`(fn: ${meta.fn})`)}`);
+  const variant = meta.variant ? ` ${dim(`· variant ${meta.variant}`)}` : "";
+  console.log(`\n${bold(meta.tool)} — node:${meta.target}  ${dim(`(fn: ${meta.fn})`)}${variant}`);
   printCpuHeadline(result.cpuModel);
   printCpuBreakdown(result.cpuModel);
 

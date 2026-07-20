@@ -268,6 +268,77 @@ test("diff: a structured-vs-absent pair WARNS but does not block (T02)", async (
   assert.equal(code, undefined, "the mixed pair warns but still compares");
 });
 
+// A bench-style consumer serves the SAME logical page on a fresh `listen(0)` port each run, so the
+// loopback host differs only by an ephemeral port. That is one workload, not two, so the gate must
+// not refuse; the raw ports are disclosed non-blocking so a reader sees why they matched.
+test("diff: a loopback ephemeral-port difference does NOT refuse the gate (loopback identity)", async () => {
+  const base = writeRecMeta("lb-eph-base.json", { target: "host.html", driver: false, ...workload("bench", "http://127.0.0.1:54927/app", "flow.mjs") }, { layoutCount: 1 });
+  const current = writeRecMeta("lb-eph-cur.json", { target: "host.html", driver: false, ...workload("bench", "http://127.0.0.1:61003/app", "flow.mjs") }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(!logs.some((line) => /Refusing to gate/.test(line)), "same loopback origin+path, ephemeral port folded: not a workload mismatch");
+  assert.ok(logs.some((line) => /workload: .*127\.0\.0\.1:54927.* → .*127\.0\.0\.1:61003/.test(line)), "the raw ports are disclosed so the reader sees why they matched");
+  assert.equal(code, undefined, "the gate passes across a re-picked ephemeral port when the workload is otherwise identical");
+});
+
+test("diff: an identical loopback ephemeral host raises no workload note at all", async () => {
+  const base = writeRecMeta("lb-same-base.json", { target: "host.html", driver: false, ...workload("bench", "http://localhost:54927/app", "flow.mjs") }, { layoutCount: 1 });
+  const current = writeRecMeta("lb-same-cur.json", { target: "host.html", driver: false, ...workload("bench", "http://localhost:54927/app", "flow.mjs") }, { layoutCount: 1 });
+  const { logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(!logs.some((line) => /workload/.test(line)), "an exact host match carries no ephemeral-fold note");
+});
+
+// A registered port names a service the user runs on purpose, and a non-loopback host is a real
+// remote: both keep their port, so a port difference there is a genuine workload difference.
+test("diff: a loopback REGISTERED-port difference still refuses the gate", async () => {
+  const base = writeRecMeta("lb-reg-base.json", { target: "host.html", driver: false, ...workload("bench", "http://127.0.0.1:8080/app", "flow.mjs") }, { layoutCount: 1 });
+  const current = writeRecMeta("lb-reg-cur.json", { target: "host.html", driver: false, ...workload("bench", "http://127.0.0.1:9090/app", "flow.mjs") }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /Refusing to gate/.test(line)), "a :8080 vs :9090 deployment is a real difference");
+  assert.equal(code, 1);
+});
+
+test("diff: a NON-loopback ephemeral-port difference still refuses the gate", async () => {
+  const base = writeRecMeta("nl-eph-base.json", { target: "host.html", driver: false, ...workload("bench", "http://example.com:54927/app", "flow.mjs") }, { layoutCount: 1 });
+  const current = writeRecMeta("nl-eph-cur.json", { target: "host.html", driver: false, ...workload("bench", "http://example.com:61003/app", "flow.mjs") }, { layoutCount: 1 });
+  const { code } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.equal(code, 1, "only loopback hosts fold their port; a remote host keeps it");
+});
+
+// --variant labels a technique behind ONE module path (env-switched), which `workload` cannot tell
+// apart. A different (or present-vs-absent) variant is a different technique, so the gate refuses;
+// identical or both-absent variants pass. Decision: present-vs-absent REFUSES, because the absent
+// side's technique cannot be verified to match the labelled one.
+test("diff: differing --variant labels REFUSE the gate", async () => {
+  const base = writeRecMeta("var-a.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "fast" }, { layoutCount: 1 });
+  const current = writeRecMeta("var-b.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "slow" }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /variant: fast → slow/.test(line)), "the variant mismatch is disclosed");
+  assert.ok(logs.some((line) => /Refusing to gate/.test(line)));
+  assert.equal(code, 1, "two techniques behind one module path must not gate silently");
+});
+
+test("diff: a present-vs-absent --variant REFUSES the gate", async () => {
+  const base = writeRecMeta("var-present.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "fast" }, { layoutCount: 1 });
+  const current = writeRecMeta("var-absent.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs") }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /variant: fast → \(none\)/.test(line)), "the absent side reads as (none), a distinct value");
+  assert.equal(code, 1, "an unlabelled recording's technique cannot be verified to match the labelled one");
+});
+
+test("diff: an identical --variant gates a real regression, not the variant", async () => {
+  const base = writeRecMeta("var-same-base.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "fast" }, { layoutCount: 1 });
+  const regressed = writeRecMeta("var-same-cur.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "fast" }, { layoutCount: 9 });
+  const regression = await runDiffCapture(base, regressed, { failOnRegression: true });
+  assert.ok(!regression.logs.some((line) => /variant:/.test(line)), "no variant note when the labels match");
+  assert.equal(regression.code, 1, "a real regression on the same variant still gates");
+  // Both-absent is the default and must never surface a variant axis.
+  const plainBase = writeRecMeta("var-none-base.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs") }, { layoutCount: 1 });
+  const plainClean = writeRecMeta("var-none-cur.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs") }, { layoutCount: 1 });
+  const pass = await runDiffCapture(plainBase, plainClean, { failOnRegression: true });
+  assert.ok(!pass.logs.some((line) => /variant/.test(line)), "both-absent never mentions variant");
+  assert.equal(pass.code, undefined, "the common no-variant case compares as before");
+});
+
 test("diff: headless-flavour and cpu-throttle mismatches REFUSE the gate (R05)", async () => {
   const headlessBase = writeRecMeta("r05-hl-base.json", { headless: true, headlessMode: "shell" }, { layoutCount: 1 });
   const headlessCur = writeRecMeta("r05-hl-cur.json", { headless: true, headlessMode: "new" }, { layoutCount: 1 });
@@ -372,6 +443,32 @@ test("cpu-diff: a structured-vs-absent pair WARNS but does not block (T02)", asy
   assert.ok(errs.some((line) => /workload-identity/.test(line)), "the unverifiable identity is disclosed");
   assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "a pre-upgrade baseline is not blocked");
   assert.equal(code, undefined, "the mixed pair warns but still compares");
+});
+
+// cpu-diff is the tool for comparing JS cost across bench/loopback runs, so the ephemeral-port fold
+// must reach it too: the workload axis stays in CPU_DIFF_BLOCKING_AXES but the gate honours its
+// blocksGating, so a folded loopback port does not refuse a cpu-diff any more than a diff.
+test("cpu-diff: a loopback ephemeral-port difference does NOT refuse the gate", async () => {
+  const base = writeCpuModel("cpudiff-lb-base.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:54927/app", "flow.mjs") }, 10);
+  const current = writeCpuModel("cpudiff-lb-cur.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:61003/app", "flow.mjs") }, 10);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "a re-picked ephemeral port is the same workload for cpu-diff too");
+  assert.equal(code, undefined, "the gate passes across the folded loopback port");
+});
+
+test("cpu-diff: a loopback REGISTERED-port difference still refuses the gate", async () => {
+  const base = writeCpuModel("cpudiff-reg-base.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:8080/app", "flow.mjs") }, 10);
+  const current = writeCpuModel("cpudiff-reg-cur.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:9090/app", "flow.mjs") }, 10);
+  const { code } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.equal(code, 1, "a registered port is a real deployment difference, folded for neither command");
+});
+
+test("cpu-diff: differing --variant labels REFUSE the gate", async () => {
+  const base = writeCpuModel("cpudiff-var-a.cpu.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "fast" }, 10);
+  const current = writeCpuModel("cpudiff-var-b.cpu.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "slow" }, 10);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(errs.some((line) => /variant: fast → slow/.test(line)));
+  assert.equal(code, 1, "two techniques behind one module path are not a like-for-like cpu-diff");
 });
 
 test("cpu-diff: a capture-mode mismatch WARNS but still compares (not a cpu-diff blocker) (R05)", async () => {

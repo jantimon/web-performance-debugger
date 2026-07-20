@@ -143,9 +143,10 @@ export function printSummary(rec: Recording): void {
   const title = meta.step
     ? `step ${meta.step.index} "${meta.step.label}"`
     : `${meta.mode}:${meta.target}`;
+  const variant = meta.variant ? `   variant: ${meta.variant}` : "";
   console.log(`\n${meta.tool} — ${title}  (fn: ${meta.fn})`);
   console.log(
-    `browser: ${meta.browser ?? "chrome"}   passes: ${meta.passes.join(" + ")}   driver: ${meta.driver}   lifecycle: ${meta.lifecycle.join("→") || "run"}`,
+    `browser: ${meta.browser ?? "chrome"}   passes: ${meta.passes.join(" + ")}   driver: ${meta.driver}${variant}   lifecycle: ${meta.lifecycle.join("→") || "run"}`,
   );
 
   // A Measured count/ms renders as its number, or "—" when the capture mode did not measure it (never 0).

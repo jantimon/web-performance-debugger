@@ -155,6 +155,10 @@ program
     "--headless-mode <mode>",
     "chrome headless flavour: shell (default, chrome-headless-shell, ~120Hz frames) | new (full Chrome, ~60Hz frames). See docs/dev/frame-floor.md",
   )
+  .option(
+    "--variant <label>",
+    "label this recording's technique (e.g. when one module runs several, switched by an env var), so a diff/cpu-diff --fail-on-regression gate refuses to compare two different variants",
+  )
   .option("--format <fmt>", "on-disk format: json | toon", "json")
   .action(async (module: string | undefined, cmdOpts: any) => {
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
@@ -336,6 +340,10 @@ program
       breakdown: !!cmdOpts.breakdown,
       deep: !!cmdOpts.deep,
       preciseWall: !!cmdOpts.preciseWall,
+      // Trim to a non-empty label or drop it: an empty/whitespace --variant would otherwise persist
+      // into meta and block a comparability gate while every truthiness-guarded output omitted it,
+      // so gating and disclosure would disagree.
+      variant: cmdOpts.variant?.trim() || undefined,
     };
     try {
       await recordAndReport(opts);
