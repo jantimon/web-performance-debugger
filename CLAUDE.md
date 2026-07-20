@@ -42,12 +42,13 @@ unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrom
 `dist/` (classify/summarize/analysis/format, plus the breakdown engine, `query spans` adapter + its
 flood filter, the `query span` anatomy + removed-verb stubs, the thrash detector, the firefox
 dirtied-by report, the gecko converter, the XDG pointer, frame side track, the trace-overflow/partial
-notes, and the `facts.md` ledger drift check). The **28** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
+notes, and the `facts.md` ledger drift check). The **29** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
 built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
 `--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`),
 `query spans` (incl. the `--min-wall`/`--filter` flood filter), `query span` (a run span's bar + hot
 functions, a --deep step's counts + forced), `--keep-partial` salvage, the
-digest/index removal, and the frame side track. They **self-skip when Chrome is not installed** (so
+digest/index removal, the frame side track, and the two-capture assert workflow (a forced budget on
+`--breakdown` and a slice budget on `--deep` each fail loudly). They **self-skip when Chrome is not installed** (so
 `npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a
 missing browser into a hard failure so the e2e job can't silently pass. **11** firefox e2e tests
 (`test/firefox.e2e.test.mjs`, self-skipping) cover the gecko lane end-to-end.

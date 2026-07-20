@@ -902,6 +902,40 @@ test("record --deep on node is rejected (CPU-only lane, no trace)", () => {
   assert.match(result.stderr, /CPU-only lane/);
 });
 
+// The documented regression workflow ("Did my change regress a budget"): forced counts and slice ms
+// come from different rungs, so the README gates each on its own recording. This exercises that exact
+// sequence and both loud-n/a mistakes it steers users away from -- a forced budget on --breakdown, a
+// slice budget on --deep -- so the doc example and the fail-loud contract stay honest together.
+const runAssert = (args) =>
+  spawnSync(process.execPath, [cli, "assert", ...args], { cwd: repoRoot, encoding: "utf8" });
+
+e2e("the two-capture assert workflow gates each metric on the rung that measured it", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const breakdownOut = path.join(dir, "after.json");
+  const deepOut = path.join(dir, "after.deep.json");
+  const probe = path.join(examples, "forces-layout.mjs");
+  runCli(["record", probe, "--bench", "--breakdown", "--iterations", "1", "--out", breakdownOut]);
+  runCli(["record", probe, "--bench", "--deep", "--iterations", "1", "--out", deepOut]);
+
+  // --breakdown measures layout counts and slice ms: generous budgets pass (exit 0), no n/a.
+  const breakdownOk = runAssert([breakdownOut, "--max-layouts", "1000000", "--max-slice", "layout=1000000"]);
+  assert.equal(breakdownOk.status, 0, `--breakdown counts+slice should pass:\n${breakdownOk.stdout}`);
+
+  // --deep measures forced counts: a generous budget passes (exit 0), no n/a.
+  const deepOk = runAssert([deepOut, "--max-forced", "1000000"]);
+  assert.equal(deepOk.status, 0, `--deep forced budget should pass:\n${deepOk.stdout}`);
+
+  // The cross-rung mistakes fail LOUDLY, never a silent pass: --max-forced needs the --deep .stack
+  // trace, so it is n/a on --breakdown; --max-slice needs --breakdown, so it is n/a on --deep.
+  const forcedOnBreakdown = runAssert([breakdownOut, "--max-forced", "0"]);
+  assert.equal(forcedOnBreakdown.status, 1, "forced budget on a --breakdown recording must fail");
+  assert.match(forcedOnBreakdown.stdout, /was not measured/);
+
+  const sliceOnDeep = runAssert([deepOut, "--max-slice", "layout=2"]);
+  assert.equal(sliceOnDeep.status, 1, "slice budget on a --deep recording must fail");
+  assert.match(sliceOnDeep.stdout, /no per-span breakdown/);
+});
+
 // --keep-partial: a flaky production site can fail one iteration. The flag keeps the iterations that
 // completed instead of discarding the whole run; examples/flaky-iteration.mjs throws partway through
 // the iteration named by FAIL_AT (1-based). run() imports once in Node, so its counter survives.
