@@ -17,7 +17,7 @@ const MIME: Record<string, string> = {
   ".wasm": "application/wasm",
 };
 
-/** Is the request's Host header the loopback address this server binds (127.0.0.1 / localhost / ::1)?
+/** Is the request's Host header a loopback hostname we accept ("127.0.0.1", "localhost", "[::1]")?
  * The optional `:port` is ignored: only the hostname decides. A missing Host (HTTP/1.0) is rejected. */
 function isLoopbackHost(hostHeader: string | undefined): boolean {
   if (!hostHeader) return false;
