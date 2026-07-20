@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8" /><title>streamed soft-nav probe</title>
+<button id="go">go</button><div id="app"></div>
+<script>
+  document.getElementById("go").addEventListener("click", () => {
+    const app = document.getElementById("app");
+    // Content streams in over ~170ms; the default settle resolves before the last chunk lands.
+    [0, 60, 120, 170].forEach((delay, index) => setTimeout(() => {
+      const para = document.createElement("p");
+      para.textContent = "chunk " + index;
+      if (index === 3) para.id = "landed";
+      app.appendChild(para);
+    }, delay));
+  });
+</script>

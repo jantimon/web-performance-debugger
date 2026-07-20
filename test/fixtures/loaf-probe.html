@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>wpd long-animation-frame probe</title>
+<!--
+  Host page for the per-step LoAF e2e. Committed (not generated into a temp dir) because --url is
+  served by a static server rooted at the cwd, so the file has to live under the repo.
+
+  Clicking #slow runs a handler that busy-waits well over the 50ms Long-Animation-Frame budget AND
+  forces a synchronous layout, so the frame becomes a long animation frame whose one attributed
+  script names this listener with a non-zero forced style/layout duration. That is what lets a step
+  span carry a StepLoaf with a real script list: the regression guard for per-step LoAF attribution.
+-->
+<button id="slow">slow</button>
+<div id="sink"></div>
+<script>
+  document.getElementById("slow").addEventListener("click", () => {
+    const sink = document.getElementById("sink");
+    const start = performance.now();
+    // ~120 ms of handler, deliberately over the 50ms LoAF budget.
+    while (performance.now() - start < 120) {
+      sink.textContent = "x".repeat((performance.now() | 0) % 7);
+      sink.offsetHeight; // force a synchronous layout inside the handler
+    }
+    window.__done = (window.__done || 0) + 1;
+  });
+</script>

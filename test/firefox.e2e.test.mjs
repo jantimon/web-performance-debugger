@@ -187,6 +187,9 @@ e2e(
       assert.equal(recording.meta.driver, true, "the built-in flow is a driver flow");
       const loadStep = recording.spans.find((span) => span.kind === "step" && span.label === "load");
       assert.ok(loadStep, "a 'load' step span is recorded");
+      // Long Animation Frames are Chrome-only: Firefox has no such API, so the step stores nothing
+      // rather than a fabricated zero (the in-page supportedEntryTypes guard degrades honestly).
+      assert.equal(loadStep.loaf, undefined, "a firefox step carries no LoAF (no fake zero)");
       // The gecko pass windows layout/style counts to the boot, so the load step carries real counts.
       assert.ok(loadStep.counts.layoutCount >= 1, "the boot's layout is counted from the gecko markers");
       assert.equal(recording.summary.inpMs, null, "a page load has no interaction, so INP is null");

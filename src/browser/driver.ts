@@ -2,7 +2,7 @@ import { pathToFileURL } from "node:url";
 import type { Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
 import { duplicateLabelError } from "../trace/steps.js";
-import type { InteractionTiming } from "../model/recording.js";
+import type { InteractionTiming, LoafFrame, StepLoaf } from "../model/recording.js";
 
 export interface DriverStep {
   /** this step's position WITHIN its iteration; the same label gets the same index every time */
@@ -53,6 +53,29 @@ export interface DriverStep {
   inpMs: number | null;
   /** in-page CWV split of `inpMs`; null when no interaction crossed the 16ms Event Timing floor */
   interaction: InteractionTiming | null;
+  /**
+   * Long Animation Frames observed in this step's window (Chrome only). Absent when none were
+   * observed, or the browser has no `long-animation-frame` support (Firefox): nothing is stored, so
+   * a firefox step never reports a fabricated zero. See summarizeLoaf.
+   */
+  loaf?: StepLoaf;
+}
+
+/** One `long-animation-frame` entry's script attribution, as read back out of the page. */
+export interface RawLoafScript {
+  invoker: string;
+  invokerType: string;
+  sourceURL: string;
+  sourceFunctionName: string;
+  durationMs: number;
+  forcedStyleLayoutMs: number;
+}
+
+/** One `long-animation-frame` entry, as read back out of the page. */
+export interface RawLoafFrame {
+  durationMs: number;
+  blockingDurationMs: number;
+  scripts: RawLoafScript[];
 }
 
 /** One Event Timing entry, as read back out of the page. */
@@ -124,6 +147,50 @@ export function interactionBreakdown(entries: RawEventTiming[]): InteractionTimi
     processingMs: processingEnd - processingStart,
     presentationDelayMs: paintTime - processingEnd,
   };
+}
+
+/** Keep the step's LoAF field small: the worst few frames, each naming its worst few scripts. */
+export const LOAF_FRAME_CAP = 3;
+export const LOAF_SCRIPT_CAP = 5;
+/** Scripts shorter than this that forced no style/layout are noise, dropped from a frame's list. */
+export const LOAF_SCRIPT_MIN_MS = 0.5;
+
+/**
+ * Shape the raw `long-animation-frame` entries observed in a step window into the stored `StepLoaf`.
+ *
+ * The headline totals (`totalDurationMs`/`totalBlockingMs`/`observedFrames`) count EVERY observed
+ * frame, before the cap, so the summary is honest about how much long-frame time the step spent even
+ * when only the worst frames keep their script lists. Frames are worst-first by duration; within each,
+ * scripts are worst-first by duration and pruned of sub-`LOAF_SCRIPT_MIN_MS` noise that forced no
+ * style/layout. Returns null when nothing was observed (the step ran no long frame, OR the browser has
+ * no LoAF support), so the caller stores nothing rather than a fabricated zero.
+ */
+export function summarizeLoaf(rawFrames: RawLoafFrame[]): StepLoaf | null {
+  if (!rawFrames.length) return null;
+  const totalDurationMs = rawFrames.reduce((sum, frame) => sum + frame.durationMs, 0);
+  const totalBlockingMs = rawFrames.reduce((sum, frame) => sum + frame.blockingDurationMs, 0);
+  const frames: LoafFrame[] = [...rawFrames]
+    .sort((left, right) => right.durationMs - left.durationMs)
+    .slice(0, LOAF_FRAME_CAP)
+    .map((frame) => ({
+      durationMs: frame.durationMs,
+      blockingDurationMs: frame.blockingDurationMs,
+      scripts: [...frame.scripts]
+        .filter(
+          (script) => script.durationMs >= LOAF_SCRIPT_MIN_MS || script.forcedStyleLayoutMs > 0,
+        )
+        .sort((left, right) => right.durationMs - left.durationMs)
+        .slice(0, LOAF_SCRIPT_CAP)
+        .map((script) => ({
+          invoker: script.invoker,
+          invokerType: script.invokerType,
+          sourceURL: script.sourceURL,
+          ...(script.sourceFunctionName ? { sourceFunctionName: script.sourceFunctionName } : {}),
+          durationMs: script.durationMs,
+          forcedStyleLayoutMs: script.forcedStyleLayoutMs,
+        })),
+    }));
+  return { frames, totalDurationMs, totalBlockingMs, observedFrames: rawFrames.length };
 }
 
 /** A timed iteration failed partway and --keep-partial salvaged the ones that completed. */
@@ -278,6 +345,42 @@ export async function runDriver(
   await page.evaluateOnNewDocument(installInpObserver);
   await page.evaluate(installInpObserver);
 
+  // Observe Long Animation Frames so we can attribute a step's slow frames to the scripts the browser
+  // blamed. Same re-arm-on-navigation install as the INP observer. Chrome-only: `supportedEntryTypes`
+  // gates it, so on Firefox `win.__cpLoaf` stays [] and the step stores no loaf (never a fake zero).
+  // A `PerformanceScriptTiming`'s fields must be read explicitly: its `toJSON()` returns {}.
+  const installLoafObserver = () => {
+    const win = window as any;
+    win.__cpLoaf = [];
+    const supported =
+      typeof PerformanceObserver !== "undefined" &&
+      (PerformanceObserver.supportedEntryTypes || []).includes("long-animation-frame");
+    if (!supported) return;
+    try {
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const frame = entry as any;
+          win.__cpLoaf.push({
+            durationMs: frame.duration,
+            blockingDurationMs: frame.blockingDuration,
+            scripts: (frame.scripts || []).map((script: any) => ({
+              invoker: script.invoker || "",
+              invokerType: script.invokerType || "",
+              sourceURL: script.sourceURL || "",
+              sourceFunctionName: script.sourceFunctionName || "",
+              durationMs: script.duration,
+              forcedStyleLayoutMs: script.forcedStyleAndLayoutDuration || 0,
+            })),
+          });
+        }
+      }).observe({ type: "long-animation-frame", buffered: true } as any);
+    } catch {
+      /* long-animation-frame unsupported */
+    }
+  };
+  await page.evaluateOnNewDocument(installLoafObserver);
+  await page.evaluate(installLoafObserver);
+
   async function waitDone(until: Until): Promise<void> {
     if (until == null) return void (await settle());
     if (typeof until === "string") await page.waitForSelector(until);
@@ -332,7 +435,10 @@ export async function runDriver(
     activeStepLabel = label;
     const index = indexInIteration++;
     const stepMark = markIndex++;
-    await page.evaluate(() => ((window as any).__cpInp = []));
+    await page.evaluate(() => {
+      (window as any).__cpInp = [];
+      (window as any).__cpLoaf = [];
+    });
     const startClock = await stepClock(`wpd:step:${stepMark}:start`);
     await action();
     await waitDone(until);
@@ -345,14 +451,25 @@ export async function runDriver(
     // presented. Flush a frame + a macrotask so a slow interaction's entry lands before
     // we read it, rather than being dropped or misattributed to the next step. null
     // (not 0) means "no interaction measured"; keep them distinct.
-    const observed = (await page.evaluate(
+    // LoAF entries land on a later task too, so read them in the same frame+macrotask flush as the
+    // Event-Timing entries: one round trip, both signals settled.
+    const flushed = (await page.evaluate(
       () =>
-        new Promise<RawEventTiming[]>((resolve) => {
+        new Promise<{ inp: RawEventTiming[]; loaf: RawLoafFrame[] }>((resolve) => {
           requestAnimationFrame(() =>
-            setTimeout(() => resolve(((window as any).__cpInp as RawEventTiming[]) ?? []), 0),
+            setTimeout(
+              () =>
+                resolve({
+                  inp: ((window as any).__cpInp as RawEventTiming[]) ?? [],
+                  loaf: ((window as any).__cpLoaf as RawLoafFrame[]) ?? [],
+                }),
+              0,
+            ),
           );
         }),
-    )) as RawEventTiming[];
+    )) as { inp: RawEventTiming[]; loaf: RawLoafFrame[] };
+    const observed = flushed.inp;
+    const loaf = summarizeLoaf(flushed.loaf);
     // INP stays max-over-every-entry, deliberately: Chrome emits the whole pointer sequence with
     // every entry sharing one duration to the same next paint, and Firefox emits only the events
     // that did work, so this finds the interaction's latency in both. Verified in both engines:
@@ -372,6 +489,7 @@ export async function runDriver(
       pageWallMs,
       inpMs: inp,
       interaction,
+      ...(loaf ? { loaf } : {}),
     });
     activeStepLabel = null;
   }
