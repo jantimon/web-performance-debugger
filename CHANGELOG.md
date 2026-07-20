@@ -1,5 +1,28 @@
 # @jantimon/web-performance-debugger
 
+## 0.14.0
+
+### Minor Changes
+
+- 1176299: Make CPU attribution and diff comparability honest for three real-world shapes:
+
+  - New `record --variant <label>`: when one module path runs several techniques (env-switched), label
+    each so a `diff`/`cpu-diff --fail-on-regression` gate refuses to compare two different variants
+    (or a labelled vs an unlabelled recording). Absent by default; old recordings compare as before.
+  - A dependency whose sourcemapped originals are off-disk (a common published-package shape) no longer
+    splits its self-time across `(unmapped: <src-dir>)` buckets; it collapses to one bucket named for
+    the package (a `@scope/name` pair, or the segment before `src`/`dist`/...), never `app`.
+  - A loopback host (127.0.0.1/localhost/[::1]) on an ephemeral `listen(0)` port no longer reads as a
+    different workload each run: the port is folded for identity, so the same bench page keeps its gate.
+    Non-loopback hosts and registered ports keep their port.
+
+### Patch Changes
+
+- d6bb19b: Document the measured wall-time overhead of each capture mode. The README's capture-mode table now
+  carries a Speed column rating each mode against a new no-measurement baseline row (`--precise-wall`
+  ~0%, default ~4-7%, `--breakdown` ~25%, `--deep` ~70%, Firefox's gecko pass ~150%), with the numbers
+  from a re-runnable probe (`examples/capture-mode-speed.mjs`). Directional and machine-dependent.
+
 ## 0.13.2
 
 ### Patch Changes
