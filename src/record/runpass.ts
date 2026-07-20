@@ -12,11 +12,12 @@ import {
 } from "../profile/gecko.js";
 import type { GeckoMeasureWindow } from "../profile/gecko-breakdown.js";
 import { runHarness } from "../browser/harness.js";
-import { runDriver, type DriverStep } from "../browser/driver.js";
+import { runDriver, type DriverStep, type PartialRun } from "../browser/driver.js";
 import { applyCpuThrottle } from "../browser/throttle.js";
 import { parseTrace, findWindow, findSteps, type StepWindow } from "../trace/parse.js";
 import { labelWindows, type LabelledWindow } from "../trace/steps.js";
 import { attachStacks } from "../trace/stacks.js";
+import { startTrace, stopTrace } from "../trace/tracing.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { markForced } from "../trace/analysis.js";
 import { startCpuProfile, stopCpuProfile } from "../metrics/cdp.js";
@@ -37,6 +38,8 @@ export interface PassResult {
   measures: TimingEntry[];
   /** driver mode: per-step wall time + INP */
   driverSteps?: DriverStep[];
+  /** driver mode: set when --keep-partial salvaged a run whose later iteration failed */
+  partial?: PartialRun;
   /** driver mode: this pass's own trace windows, already re-keyed from index to label */
   stepWindows?: LabelledWindow[];
   /**
@@ -57,6 +60,8 @@ export interface PassResult {
   geckoMeasures?: GeckoMeasureWindow[];
   /** WARNING when chrome-headless-shell was missing and the launch fell back to new-headless */
   headlessFallback?: string;
+  /** Chrome reported the trace buffer dropped events (overflow). Drives a loud not-silent note. */
+  traceDataLoss?: boolean;
 }
 
 function toServedUrl(server: StaticServer, root: string, absFile: string): string {
@@ -206,13 +211,14 @@ export async function runPass(
     let perIteration: number[];
     let lifecycle: string[];
     let driverSteps: DriverStep[] | undefined;
+    let partial: PartialRun | undefined;
     // Teardown is deferred until after tracing stops, so it never inflates the measured counts.
     let runCleanup: (() => unknown | Promise<unknown>) | undefined;
     let cpuProfile: RawCpuProfile | undefined;
     const cpuIntervalUs = opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
 
     if (opts.driver) {
-      if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
+      if (spec.categories && caps.trace && client) await startTrace(client, spec.categories);
       // The CPU sampler opens right before the run mark, from inside runDriver (after prepare and
       // warmup), NOT here: it is not windowed after the fact, so starting it before prepare bills
       // setup's page-side JS to the run. The trace, which IS windowed to the run marks, may start
@@ -228,11 +234,12 @@ export async function runPass(
         page,
         absModule,
         opts.fn,
-        { iterations: opts.iterations, warmup: opts.warmup },
+        { iterations: opts.iterations, warmup: opts.warmup, keepPartial: opts.keepPartial },
         onramp ? { navigateUrl: onrampNavigateUrl! } : undefined,
         startProfiler,
       );
       driverSteps = driverResult.steps;
+      partial = driverResult.partial;
       lifecycle = driverResult.lifecycle;
       // Driver pass-level perIteration is unused (record.ts sums step samples instead), but keep it
       // a clean number[]: an unpriced (navigated) step contributes no sample.
@@ -256,7 +263,7 @@ export async function runPass(
       // window-scoped forced/paint counts (warmup especially would inflate them).
       const setup = await page.evaluate(runHarness, { ...harnessArg, phase: "setup" as const });
       lifecycle = setup.lifecycle;
-      if (spec.categories && caps.trace) await page.tracing.start({ categories: spec.categories });
+      if (spec.categories && caps.trace && client) await startTrace(client, spec.categories);
       if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
       // One timed page.evaluate over the whole loop: with no CDP counter bracket to close mid-loop,
       // there is nothing to split. Bench wall is the sum of these timed samples (record.ts).
@@ -278,9 +285,20 @@ export async function runPass(
     let windowEnd: number | null = null;
     let stepWindows: LabelledWindow[] | undefined;
     let stepWallClock: "trace" | "page" | "none" | undefined;
-    if (spec.categories && caps.trace) {
-      const buf = await page.tracing.stop();
-      events = parseTrace(buf ? new TextDecoder("utf-8").decode(buf) : "[]", {
+    let traceDataLoss = false;
+    if (spec.categories && caps.trace && client) {
+      const trace = await stopTrace(client);
+      if (trace.tooLargeToParse) {
+        const mb = Math.round((trace.byteLength ?? 0) / 1e6);
+        throw new Error(
+          `The trace grew to ${mb}MB, past the ~512MB a single string can hold, so it cannot be ` +
+            `parsed and no counts are available. --deep (.stack + invalidationTracking) is the ` +
+            `heaviest trace; reduce the measured work (fewer steps per run, or scope the flow), or ` +
+            `use --breakdown (a lighter trace) if you do not need forced-layout blame.`,
+        );
+      }
+      traceDataLoss = trace.dataLossOccurred;
+      events = parseTrace(trace.text, {
         keepThreadIds: spec.keepThreadIds,
       });
       // Rewrite trace stack urls back to local source files for blame/source lookup.
@@ -329,10 +347,12 @@ export async function runPass(
       marks: entries.marks,
       measures: entries.measures,
       driverSteps,
+      partial,
       stepWindows,
       stepWallClock,
       cpuProfile,
       headlessFallback,
+      traceDataLoss,
     };
   } finally {
     // Closing Firefox flushes the Gecko shutdown dump, so the parse below must run after this.

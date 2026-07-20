@@ -172,6 +172,48 @@ export function buildSpans(
   return null;
 }
 
+// --- query spans: filtering the overview ---
+
+/**
+ * How `query spans` narrows a flooded overview. A production tag manager can emit hundreds of tiny
+ * `performance.measure` spans that bury the run/steps/app measures; these two knobs cut the noise.
+ * Both are optional and combine with AND. Read-only: filtering never mutates or re-stores a recording.
+ */
+export interface SpanFilterOptions {
+  /** hide spans whose wall is below this many ms (the sub-N-ms tracking noise) */
+  minWallMs?: number;
+  /** keep only spans whose label contains this text (case-insensitive substring) */
+  labelIncludes?: string;
+}
+
+/** The kept spans plus how many the filter removed. `hidden` is always disclosed, never a silent cut. */
+export interface FilteredSpans {
+  spans: SpanEntry[];
+  hidden: number;
+}
+
+/**
+ * Whether one span survives the filter. Shared by the unified `query spans` view and its human bar
+ * table so both hide exactly the same spans. An empty/absent `labelIncludes` matches everything; a
+ * span whose wall equals `minWallMs` is kept (the threshold is a floor, not a strict cut).
+ */
+export function spanPassesFilter(
+  label: string,
+  wallMs: number,
+  filter: SpanFilterOptions,
+): boolean {
+  const needle = filter.labelIncludes?.toLowerCase();
+  if (needle && !label.toLowerCase().includes(needle)) return false;
+  if (filter.minWallMs != null && wallMs < filter.minWallMs) return false;
+  return true;
+}
+
+/** Apply `spanPassesFilter` across the unified entries, returning the survivors and the hidden count. */
+export function filterSpanEntries(spans: SpanEntry[], filter: SpanFilterOptions): FilteredSpans {
+  const kept = spans.filter((span) => spanPassesFilter(span.label, span.wallMs, filter));
+  return { spans: kept, hidden: spans.length - kept.length };
+}
+
 // --- Slice reading: the vocabulary and ms accessor `assert --max-slice` and `diff` share ---
 
 /**
