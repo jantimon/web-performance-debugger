@@ -33,7 +33,8 @@ export interface TraceResult {
   dataLossOccurred: boolean;
   /**
    * The trace outgrew the ~512MB a single JS string can hold, so it could not be decoded for parsing
-   * (`text` is empty). A harder failure than dataLoss: not one count is available. Drives a hard error.
+   * (`text` is the empty-trace sentinel `"[]"`, same as an empty run). A harder failure than
+   * dataLoss: not one count is available. Drives a hard error.
    */
   tooLargeToParse?: boolean;
   /** bytes streamed from Chrome, for the too-large error message. */
@@ -84,7 +85,9 @@ async function readStream(client: CDPSession, handle: string): Promise<Uint8Arra
         handle,
         size: 1 << 20,
       })) as { data: string; base64Encoded?: boolean; eof: boolean };
-      chunks.push(Uint8Array.from(Buffer.from(data, base64Encoded ? "base64" : "utf8")));
+      // Buffer.from(string, encoding) already allocates a fresh Uint8Array we own; keep it as-is
+      // (a Buffer IS a Uint8Array) rather than copying it a second time through Uint8Array.from.
+      chunks.push(Buffer.from(data, base64Encoded ? "base64" : "utf8"));
       if (eof) break;
     }
   } finally {

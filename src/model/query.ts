@@ -175,9 +175,11 @@ export interface SpansResult {
   source: "breakdowns" | "cpu-model";
   spans: SpanEntry[];
   /** how many spans the `query spans` flood filter (--min-wall/--filter) hid; 0 when no filter was
-   * passed. Always present on the emitted view, so a filtered result is never a silent cut. */
+   * passed. The `query spans` emitter always sets it (0 included), so a filtered result is never a
+   * silent cut; optional only because the intermediate builder result omits it before emit. */
   hidden?: number;
-  /** the flood filter that produced `spans`; `{}` when none was passed. */
+  /** the flood filter that produced `spans` (`{}` when none was passed). Set by the `query spans`
+   * emitter alongside `hidden`; optional for the same reason. */
   filter?: { minWallMs?: number; labelIncludes?: string };
 }
 
