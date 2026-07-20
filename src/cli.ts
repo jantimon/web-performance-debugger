@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { Command, InvalidArgumentError, Option } from "commander";
-import { recordAndReport, type RecordOptions } from "./commands/record.js";
+import { recordAndReport, recordMembersAndReport, type RecordOptions } from "./commands/record.js";
+import { GROUP_MEMBER_MODES, isGroupMemberMode, type GroupMemberMode } from "./record/group.js";
 import { resolvePageOption } from "./record/page-option.js";
 import { isPrivateHostname } from "./trace/sourcemap.js";
 import { queryBlame, queryEvents, queryGet, querySpan, querySpans } from "./commands/query.js";
@@ -159,6 +160,14 @@ program
     "--variant <label>",
     "label this recording's technique (e.g. when one module runs several, switched by an env var), so a diff/cpu-diff --fail-on-regression gate refuses to compare two different variants",
   )
+  .option(
+    "--group <name>",
+    "append this recording to a named run-group manifest (siblings under <name>.group.json), so a two-question flow (record --breakdown, then record --deep) reads as one group. The join refuses a member whose workload/iterations/etc differ (only the capture mode may)",
+  )
+  .option(
+    "--members <modes>",
+    `record several capture modes back-to-back into ONE --group (${GROUP_MEMBER_MODES.join(",")}; comma-separated, e.g. --members breakdown,deep). Runs N browser launches, applies all other flags identically. chrome only; needs --group`,
+  )
   .option("--format <fmt>", "on-disk format: json | toon", "json")
   .action(async (module: string | undefined, cmdOpts: any) => {
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
@@ -231,7 +240,7 @@ program
     // capture, and every invocation is exactly one pass. Two capture modes means two invocations.
     if (cmdOpts.breakdown && cmdOpts.deep)
       program.error(
-        "--breakdown and --deep are two different capture modes (two captures, two questions): --breakdown is the reconciling bar, --deep is the attribution report. Run wpd twice to get both.",
+        "--breakdown and --deep are two different capture modes (two captures, two questions): --breakdown is the reconciling bar, --deep is the attribution report. Record both into one group: `record --members breakdown,deep --group <name>`.",
       );
     if (cmdOpts.preciseWall && (cmdOpts.breakdown || cmdOpts.deep))
       program.error(
@@ -308,6 +317,43 @@ program
     // the flow zero times and report a page's worth of zeros.
     if (cmdOpts.iterations < 1) program.error("--iterations must be at least 1");
     if (cmdOpts.warmup < 0) program.error("--warmup cannot be negative");
+    // --group appends this recording to a named manifest; --members records several capture modes
+    // into ONE group in one invocation. The runner sets the capture mode per member, so it is chrome
+    // only (firefox is one gecko pass at every mode, node is one lane) and rejects the single-mode
+    // flags. --group alone stays allowed on every target.
+    const groupName = cmdOpts.group?.trim() || undefined;
+    if (cmdOpts.group != null && !groupName) program.error("--group needs a non-empty name.");
+    let memberModes: GroupMemberMode[] | undefined;
+    if (cmdOpts.members != null) {
+      if (!groupName)
+        program.error("--members records into a group; pass --group <name> to name it.");
+      if (firefox || node)
+        program.error(
+          `--members is chrome only: --target ${cmdOpts.target} is one capture at every mode (firefox is one gecko pass, node is one lane). Use --group <name> to add this single recording to a group.`,
+        );
+      if (cmdOpts.breakdown || cmdOpts.deep || cmdOpts.preciseWall)
+        program.error(
+          "--members sets the capture mode per member: drop --breakdown/--deep/--precise-wall (list them in --members instead).",
+        );
+      const rawModes = String(cmdOpts.members)
+        .split(",")
+        .map((mode: string) => mode.trim())
+        .filter(Boolean);
+      const invalid = rawModes.filter((mode: string) => !isGroupMemberMode(mode));
+      if (invalid.length)
+        program.error(
+          `--members: unknown capture mode(s) ${invalid.join(", ")}. Valid: ${GROUP_MEMBER_MODES.join(", ")}.`,
+        );
+      const seen = new Set<string>();
+      for (const mode of rawModes) {
+        if (seen.has(mode))
+          program.error(`--members lists '${mode}' twice; each capture mode is one member.`);
+        seen.add(mode);
+      }
+      if (!rawModes.length)
+        program.error("--members needs at least one capture mode, e.g. --members breakdown,deep.");
+      memberModes = rawModes as GroupMemberMode[];
+    }
     const opts: RecordOptions = {
       module,
       // `run` is the sole export the harness/driver look for (plus prepare/cleanup); there is no
@@ -344,9 +390,11 @@ program
       // into meta and block a comparability gate while every truthiness-guarded output omitted it,
       // so gating and disclosure would disagree.
       variant: cmdOpts.variant?.trim() || undefined,
+      group: groupName,
     };
     try {
-      await recordAndReport(opts);
+      if (memberModes) await recordMembersAndReport(opts, memberModes);
+      else await recordAndReport(opts);
     } catch (err) {
       const error = err as Error;
       // Set a non-zero exit code so CI/scripts detect the failure. process.exitCode (not a hard

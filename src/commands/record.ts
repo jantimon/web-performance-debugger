@@ -26,6 +26,12 @@ import { runPass, type PassResult } from "../record/runpass.js";
 import { buildBreakdowns, userMeasureSpans } from "../record/breakdown-spans.js";
 import { buildRecordingSpans } from "../record/spans-build.js";
 import { writeRecording, writeCpuModel } from "../record/artifacts.js";
+import {
+  appendMember,
+  groupManifestPathFor,
+  runMembers,
+  type GroupMemberMode,
+} from "../record/group.js";
 import * as notesCatalog from "../record/notes.js";
 import { RUN_START_MARK, RUN_END_MARK, RUN_MEASURE } from "../model/marks.js";
 import { printCpuHeadline, printCpuBreakdown, printSpanBreakdowns } from "./cpu.js";
@@ -108,6 +114,10 @@ export interface RecordOptions {
   /** Opt-in variant label stamped on meta, so a diff/cpu-diff gate refuses across two techniques
    * that run through one module path (env-switched). Absent by default. */
   variant?: string;
+  /** Append this recording to a named run-group manifest (`--group <name>`), so a two-question flow
+   * (e.g. --breakdown AND --deep) records as siblings under one manifest. The join refuses an
+   * incompatible member (see model/group.ts). Absent for a plain single recording. */
+  group?: string;
 }
 
 /** Bounded retries for a transient cross-process navigation failure (fresh browser each attempt). */
@@ -234,6 +244,8 @@ export async function record(opts: RecordOptions): Promise<{
   cpuProfilePath?: string;
   cpuModelPath?: string;
   cpuModel?: CpuModel;
+  /** the group manifest this member was appended to, when --group was set */
+  groupManifestPath?: string;
 }> {
   const root = process.cwd();
   // No module = the built-in on-ramp: a driver flow that loads --url/--html and settles, so a first
@@ -779,15 +791,41 @@ export async function record(opts: RecordOptions): Promise<{
     cpuModelPath = path.join(outDir, `${base}.cpu${extFor(opts.format)}`);
     await writeCpuModel(cpuModelPath, cpuModel, opts.format);
   }
-  // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime). One artifact kind, so
-  // every verb resolves to the same recording, from which its view is built.
+  // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime). Written recording-only
+  // first, so a group append that refuses (throws below) still leaves `latest` on this valid
+  // recording, and a NON-group record clears any prior `group` pointer.
   await writePointer({
     recording: outPath,
     cpuProfile: cpuProfilePath,
     cpuModel: cpuModelPath,
   });
 
-  return { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel };
+  // --group: append this recording to the named manifest (creating it on the first member). The join
+  // validates workload identity and refuses an incompatible member (appendMember throws). On success,
+  // repoint `latest` at the group so a group-aware verb resolves it, keeping `recording` as the
+  // last-member fallback.
+  let groupManifestPath: string | undefined;
+  if (opts.group) {
+    groupManifestPath = groupManifestPathFor(outDir, opts.group, opts.format);
+    await appendMember({
+      name: opts.group,
+      manifestPath: groupManifestPath,
+      format: opts.format,
+      recordingPath: outPath,
+      cpuModelPath,
+      cpuProfilePath,
+      meta,
+      summary: recording.summary,
+    });
+    await writePointer({
+      recording: outPath,
+      cpuProfile: cpuProfilePath,
+      cpuModel: cpuModelPath,
+      group: groupManifestPath,
+    });
+  }
+
+  return { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel, groupManifestPath };
 }
 
 /** Terminal report for a --target node run: CPU headline + per-iteration timing, no DOM tables. */
@@ -858,9 +896,36 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     const { recordNode } = await import("../runtime/node.js");
     const result = await recordNode(opts);
     printNodeReport(result);
+    // --group is allowed on the node lane (a single-lane group), so append here: recordNode returns
+    // before record(), where the chrome append lives.
+    if (opts.group) {
+      const manifestPath = groupManifestPathFor(
+        path.dirname(result.outPath),
+        opts.group,
+        opts.format,
+      );
+      await appendMember({
+        name: opts.group,
+        manifestPath,
+        format: opts.format,
+        recordingPath: result.outPath,
+        cpuModelPath: result.cpuModelPath,
+        cpuProfilePath: result.cpuProfilePath,
+        meta: result.recording.meta,
+        summary: result.recording.summary,
+      });
+      await writePointer({
+        recording: result.outPath,
+        cpuProfile: result.cpuProfilePath,
+        cpuModel: result.cpuModelPath,
+        group: manifestPath,
+      });
+      console.log(`\nGroup:      ${dim(`${displayPath(manifestPath)}  ← member '${opts.group}'`)}`);
+    }
     return;
   }
-  const { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel } = await record(opts);
+  const { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel, groupManifestPath } =
+    await record(opts);
   printSummary(recording);
   // When CPU profiling was requested, lead with its headline; the layout/paint summary
   // above is not the signal the user asked for (and its scripting-ms can read 0).
@@ -893,4 +958,36 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
         : "opens in Chrome DevTools / Speedscope";
     console.log(`CPU raw:    ${dim(`${displayPath(cpuProfilePath)}  ← ${rawHint}`)}`);
   }
+  if (groupManifestPath)
+    console.log(
+      `Group:      ${dim(`${displayPath(groupManifestPath)}  ← member '${opts.group}'; 'query spans latest' / 'query span latest <label>' stitch across members`)}`,
+    );
+}
+
+/**
+ * The `record --members <modes> --group <name>` runner: record each capture mode back-to-back into one
+ * group. Each member prints its own report (recordAndReport), then a group summary points the reader
+ * at the stitched verbs. A partial failure (a later member's capture) keeps the members that
+ * completed, with a loud note on the manifest and on stderr (keep-partial precedent).
+ */
+export async function recordMembersAndReport(
+  opts: RecordOptions,
+  modes: GroupMemberMode[],
+): Promise<void> {
+  const outcome = await runMembers((memberOpts) => recordAndReport(memberOpts), opts, modes);
+  if (outcome.partial) {
+    const message = `record --members: the '${outcome.partial.failedMode}' capture failed; kept the ${outcome.completed} member(s) that completed. Failure: ${outcome.partial.reason}`;
+    console.error(message);
+    console.log(`\n⚠ ${message}`);
+  }
+  console.log(
+    `\nGroup '${opts.group}': ${outcome.completed}/${outcome.requested} members recorded ${dim(
+      `(${displayPath(outcome.manifestPath)})`,
+    )}`,
+  );
+  console.log(
+    dim(
+      "  Stitched across members: 'query spans latest', 'query span latest <label>', 'assert latest', 'diff <groupA> <groupB>'.",
+    ),
+  );
 }
