@@ -64,6 +64,21 @@ async function captureJson(runner) {
   return JSON.parse(out);
 }
 
+/** Capture the human report (no --json) as one string, for asserting presentation notes. */
+async function captureText(runner) {
+  const priorLog = console.log;
+  let out = "";
+  console.log = (line = "") => {
+    out += `${line}\n`;
+  };
+  try {
+    await runner();
+  } finally {
+    console.log = priorLog;
+  }
+  return out;
+}
+
 // --- the bar present, and the run-window hot list from a sibling CPU model ---
 
 test("query span run: the reconciling bar is present, and hot functions come from the sibling CPU model", async () => {
@@ -427,4 +442,98 @@ test("query span: an unknown label errors, listing the available spans", async (
     spans: [{ label: "run", kind: "run", aggregation: "sum", wallMs: 1, counts: nullCounts, breakdown: breakdown(1) }],
   });
   await assert.rejects(() => querySpan(file, "nope", { json: true }), /No span 'nope'.*run:run/s);
+});
+
+// --- presentation: the one-frame floor surfaces the sub-frame spread (frame-floor.md) ---
+
+test("query span: a wall/INP median at the frame floor surfaces the min sample and js slice", async () => {
+  const file = writeRec("anatomy-floor.json", {
+    // new-headless => 16.6ms one-frame floor; the median pins to it, the min sample escapes it.
+    meta: {
+      schemaVersion: "3",
+      target: "chrome",
+      iterations: 5,
+      passes: ["breakdown"],
+      headless: true,
+      headlessMode: "new",
+    },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      {
+        label: "inp:frame",
+        kind: "measure",
+        aggregation: "median",
+        wallMs: 16.6,
+        counts: nullCounts,
+        breakdown: breakdown(16.6),
+        inpMs: 16.6,
+        stats: { samples: 5, minMs: 2.7, medianMs: 16.6, meanMs: 13.8, maxMs: 16.7 },
+      },
+    ],
+  });
+  const text = await captureText(() => querySpan(file, "inp:frame", {}));
+  assert.match(text, /wall sits on the ~16\.6 ms frame floor/, "names the floor under wall");
+  assert.match(text, /min sample 2\.7 ms/, "surfaces the faster sample the median hid");
+  assert.match(text, /js 1 ms/, "surfaces the js slice as the sub-frame work signal");
+  assert.match(text, /INP sits on the ~16\.6 ms one-frame floor/, "names the floor under INP");
+});
+
+test("query span: real sub-frame-or-above work prints no floor note", async () => {
+  const file = writeRec("anatomy-nofloor.json", {
+    meta: {
+      schemaVersion: "3",
+      target: "chrome",
+      iterations: 5,
+      passes: ["breakdown"],
+      headless: true,
+      headlessMode: "new",
+    },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      {
+        label: "heavy",
+        kind: "measure",
+        aggregation: "median",
+        wallMs: 25,
+        counts: nullCounts,
+        breakdown: breakdown(25),
+        stats: { samples: 5, minMs: 24, medianMs: 25, meanMs: 25, maxMs: 26 },
+      },
+    ],
+  });
+  const text = await captureText(() => querySpan(file, "heavy", {}));
+  assert.doesNotMatch(text, /one-frame floor/, "25ms is real work above the frame, not floored");
+});
+
+// --- presentation: firefox forced count carries the marker-derived / sampled-site caveat ---
+
+test("query span: firefox forced count discloses it is marker-derived with a sampled read site", async () => {
+  const firefoxCounts = { ...nullCounts, forcedLayoutCount: 1 };
+  const file = writeRec("anatomy-ffforced.json", {
+    meta: {
+      schemaVersion: "3",
+      target: "firefox",
+      browser: "firefox",
+      iterations: 1,
+      passes: ["gecko"],
+      headless: true,
+    },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      {
+        label: "mount",
+        kind: "measure",
+        aggregation: "first",
+        wallMs: 8,
+        counts: firefoxCounts,
+        breakdown: breakdown(8),
+      },
+    ],
+  });
+  const text = await captureText(() => querySpan(file, "mount", {}));
+  assert.match(text, /forced layout\/style is marker-derived/, "names the count provenance");
+  assert.match(text, /sampled estimate.*can miss cheap reads/s, "warns the site can be missed");
 });
