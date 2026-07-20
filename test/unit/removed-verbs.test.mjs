@@ -17,12 +17,18 @@ for (const [removed, replacement] of [
   ["digest", "query spans"],
   ["index", "query spans"],
 ]) {
-  test(`query ${removed} exits 1 with a helpful message naming the replacement`, () => {
+  test(`query ${removed} exits 1 with the removal notice on stderr, not stdout`, () => {
     const result = runCli(["query", removed, "latest", "--json"]);
     assert.equal(result.status, 1, `query ${removed} exits non-zero`);
-    const output = `${result.stdout}${result.stderr}`;
-    assert.match(output, new RegExp(`\`query ${removed}\` was removed`), "names the removed verb");
-    assert.match(output, new RegExp(replacement), "names the replacement verb");
-    assert.doesNotMatch(output, /at Object\.|at Module\.|node:internal/, "no stack trace");
+    // The notice must go to STDERR with an empty STDOUT: a script that captures stdout and pipes it
+    // to JSON.parse then gets clean-empty + a real exit code, not a prose line that parses as garbage.
+    assert.equal(result.stdout, "", `query ${removed} writes nothing to stdout`);
+    assert.match(
+      result.stderr,
+      new RegExp(`\`query ${removed}\` was removed`),
+      "stderr names the removed verb",
+    );
+    assert.match(result.stderr, new RegExp(replacement), "stderr names the replacement verb");
+    assert.doesNotMatch(result.stderr, /at Object\.|at Module\.|node:internal/, "no stack trace");
   });
 }

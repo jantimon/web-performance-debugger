@@ -536,6 +536,118 @@ e2e("record (driver): prepare()/warmup page-side JS stays out of the CPU model",
   assert.ok(topSelfMs < 35, `no function carries the setup loop's ~70 ms, top self ${topSelfMs} ms`);
 });
 
+// Trace-sourced CPU samples (--breakdown) close the navigation gap. On --breakdown the samples come
+// from the trace's v8.cpu_profiler ProfileChunk stream, which is continuous across a cross-document
+// navigation, unlike the CDP sampler that restarts in the new renderer process. So a step that runs
+// page JS BEFORE the flow navigates keeps its CPU attribution -- the exact window the CDP sampler
+// drops (reported not-covered today). The start page is on 127.0.0.1 (wpd's static server) and the
+// flow navigates to a DIFFERENT SITE ("localhost"), which swaps the renderer process.
+e2e("record --breakdown: a navigating step keeps CPU attribution across the process swap", { timeout: TIMEOUT_MS }, () => {
+  const workPage =
+    "<!doctype html><meta charset=utf-8><title>nav-target</title><button id=work>work</button>" +
+    "<script>function hotLoop(iterations){let accumulator=0;" +
+    "for(let inner=0;inner<iterations;inner++)accumulator+=Math.sqrt(inner*1.7+1)*Math.sin(inner)+Math.cos(accumulator);" +
+    "return accumulator;}" +
+    "document.getElementById('work').addEventListener('click',()=>{" +
+    "document.title=String(hotLoop(3000000));window.__done=(window.__done||0)+1;});<\/script>";
+  const second = startOnrampServer(workPage, "localhost");
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  try {
+    // The start page (127.0.0.1, served by wpd) also carries a #work hot loop; the committed fixture.
+    const html = path.join(repoRoot, "test", "fixtures", "driver-cpu-probe.html");
+    assert.ok(existsSync(html), "driver-cpu-probe.html is committed, so this test cannot silently skip");
+    const flow = path.join(dir, "nav-flow.mjs");
+    writeFileSync(
+      flow,
+      `export async function run({ page, measureStep }) {
+         await page.waitForSelector("#work");
+         await measureStep("work-before-nav", async () => {
+           await page.click("#work");
+           await page.waitForFunction(() => (window.__done || 0) >= 1, { timeout: 20000 });
+         });
+         await measureStep("navigate", () => page.goto(${JSON.stringify(second.url)}, { waitUntil: "load" }));
+         await page.waitForSelector("#work");
+         await measureStep("work-after-nav", async () => {
+           await page.click("#work");
+           await page.waitForFunction(() => (window.__done || 0) >= 1, { timeout: 20000 });
+         });
+       }`,
+    );
+    const out = path.join(dir, "nav-breakdown");
+    runCli(["record", flow, "--html", html, "--breakdown", "--iterations", "1", "--out", out]);
+    const rec = JSON.parse(readFileSync(out, "utf8"));
+
+    // THE proof: the pre-navigation step carries real CPU attribution. Under the CDP sampler this
+    // window is entirely lost (the later navigation resets the profiler), so its hot list would be
+    // suppressed with zero pooled samples. The trace stream keeps it.
+    const before = rec.spans.find((span) => span.kind === "step" && span.label === "work-before-nav");
+    assert.ok(before, "the pre-navigation step span exists");
+    assert.ok(before.breakdown.slices.js.ms > 5, `the pre-nav step ran real JS, got ${before.breakdown.slices.js.ms} ms`);
+    assert.notEqual(before.hot.suppressed, true, "the pre-nav step's hot list is NOT suppressed (the gap is closed)");
+    assert.ok(before.hot.pooledSamples >= 10, `the pre-nav step pooled real samples, got ${before.hot.pooledSamples}`);
+    assert.ok(before.hot.functions.length > 0, "the pre-nav step names at least one hot function");
+
+    // And the post-navigation step still attributes (no regression on the covered window).
+    const after = rec.spans.find((span) => span.kind === "step" && span.label === "work-after-nav");
+    assert.ok(after, "the post-navigation step span exists");
+    assert.notEqual(after.hot.suppressed, true, "the post-nav step's hot list is present too");
+    assert.ok(after.hot.pooledSamples >= 10, `the post-nav step pooled real samples, got ${after.hot.pooledSamples}`);
+
+    // The continuous stream leaves no coverage gap to disclose.
+    assert.ok(
+      !(rec.meta.notes || []).some((note) => /Per-span CPU attribution.*empty/.test(note)),
+      "no sampler-coverage-gap note: the trace stream covered both documents",
+    );
+    // The interval is read back from the stream (a fixed ~150us it sets itself), not the 200us default.
+    assert.ok(rec.meta.cpuIntervalUs > 0 && rec.meta.cpuIntervalUs < 200, `observed stream interval recorded, got ${rec.meta.cpuIntervalUs}`);
+    assert.ok(
+      (rec.meta.notes || []).some((note) => /v8\.cpu_profiler stream/.test(note)),
+      "the CPU sample source is disclosed",
+    );
+    // The raw .cpuprofile still imports (DevTools/Speedscope): standard shape, no lane-only field, and
+    // a SINGLE root even though the run merged two renderer processes (DevTools assumes one root).
+    assert.ok(existsSync(`${out}.cpuprofile`), "the raw .cpuprofile sibling is written");
+    const raw = JSON.parse(readFileSync(`${out}.cpuprofile`, "utf8"));
+    assert.ok(Array.isArray(raw.nodes) && Array.isArray(raw.samples), "raw profile has nodes + samples");
+    assert.equal(raw.sampleTimestampsUs, undefined, "the trace-lane-only sampleTimestampsUs is stripped from the raw file");
+    assert.equal(raw.timeDeltas.length, raw.samples.length, "one delta per sample");
+    const childIds = new Set(raw.nodes.flatMap((node) => node.children ?? []));
+    const rootCount = raw.nodes.filter((node) => !childIds.has(node.id)).length;
+    assert.equal(rootCount, 1, "the raw DevTools profile is single-rooted across the navigation");
+  } finally {
+    second.close();
+  }
+});
+
+// prepare()/warmup page-side JS must stay out of the CPU model on --breakdown too. The trace (and its
+// v8.cpu_profiler stream) starts before prepare() in driver mode, so the assembled samples are
+// windowed to the run onward, the same run-mark scope the CDP sampler opens at on the default rung.
+e2e("record --breakdown (driver): prepare()/warmup page JS stays out of the trace-sourced CPU model", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const flow = path.join(dir, "bd-lifecycle.mjs");
+  writeFileSync(
+    flow,
+    `export async function prepare({ page }) {
+       await page.evaluate((ms) => { const end = performance.now() + ms; let acc = 0;
+         while (performance.now() < end) acc += Math.sqrt(acc + 1); window.__s = acc; }, 70);
+     }
+     export async function run({ page, measureStep }) {
+       await measureStep("work", () =>
+         page.evaluate((ms) => { const end = performance.now() + ms; let acc = 0;
+           while (performance.now() < end) acc += Math.sqrt(acc + 1); window.__s = acc; }, 6));
+     }`,
+  );
+  const out = path.join(dir, "bd-lifecycle");
+  runCli(["record", flow, "--breakdown", "--iterations", "1", "--warmup", "1", "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+  const scriptingMs = rec.summary.scriptingMs;
+  assert.ok(scriptingMs != null && scriptingMs > 0.5, `run()'s own JS is measured, got ${scriptingMs}`);
+  assert.ok(scriptingMs < 35, `prepare()+warmup (~140 ms of page JS) must not leak into scriptingMs, got ${scriptingMs}`);
+  const model = JSON.parse(readFileSync(`${out}.cpu.json`, "utf8"));
+  const topSelfMs = Math.max(0, ...model.functions.map((fn) => fn.selfMs));
+  assert.ok(topSelfMs < 35, `no function carries the setup loop's ~70 ms, top self ${topSelfMs} ms`);
+});
+
 // The idle edge probe C left untested: a run() that only awaits is ~pure waiting, so idle must
 // dominate the window and the sum must still close.
 e2e("record --breakdown: a waiting-dominated span is mostly idle and still closes", { timeout: TIMEOUT_MS }, () => {

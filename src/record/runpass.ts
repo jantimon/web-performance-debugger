@@ -21,6 +21,7 @@ import { startTrace, stopTrace } from "../trace/tracing.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { markForced } from "../trace/analysis.js";
 import { startCpuProfile, stopCpuProfile } from "../metrics/cdp.js";
+import { assembleTraceCpuProfile, windowTraceCpuProfile } from "../trace/profile-chunks.js";
 import { DEFAULT_CPU_INTERVAL_US, type RawCpuProfile } from "../profile/cpuprofile.js";
 import { usToMs, msToUs } from "../model/time.js";
 import type { NormalizedEvent, TimingEntry } from "../model/recording.js";
@@ -215,18 +216,23 @@ export async function runPass(
     // Teardown is deferred until after tracing stops, so it never inflates the measured counts.
     let runCleanup: (() => unknown | Promise<unknown>) | undefined;
     let cpuProfile: RawCpuProfile | undefined;
+    // The interval the samples actually ran at, for the CPU model. On the trace-sourced --breakdown
+    // rung it is read back from the ProfileChunk stream (a fixed rate we do not set); on the CDP
+    // sampler it is what we requested.
+    let cpuSampleIntervalUs: number | undefined;
     const cpuIntervalUs = opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
+    // The --breakdown rung sources CPU samples from the trace's v8.cpu_profiler stream, so the CDP
+    // profiler must NOT also run (one profiler at a time); the samples are assembled after stopTrace.
+    const cdpSampler = spec.cpu && spec.cpuSource === "cdp" && client != null && caps.cpuProfile;
 
     if (opts.driver) {
       if (spec.categories && caps.trace && client) await startTrace(client, spec.categories);
       // The CPU sampler opens right before the run mark, from inside runDriver (after prepare and
       // warmup), NOT here: it is not windowed after the fact, so starting it before prepare bills
       // setup's page-side JS to the run. The trace, which IS windowed to the run marks, may start
-      // earlier. See runDriver's beforeRunWindow.
+      // earlier. See runDriver's beforeRunWindow. The trace-sourced rung starts no CDP profiler.
       const startProfiler =
-        spec.cpu && client && caps.cpuProfile
-          ? () => startCpuProfile(client, cpuIntervalUs)
-          : undefined;
+        cdpSampler && client ? () => startCpuProfile(client, cpuIntervalUs) : undefined;
       // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
       // just won't resolve through makeSourceResolver (which keys off the served-url prefix),
       // so its own frames stay unresolved; the page's frames are unaffected.
@@ -264,7 +270,7 @@ export async function runPass(
       const setup = await page.evaluate(runHarness, { ...harnessArg, phase: "setup" as const });
       lifecycle = setup.lifecycle;
       if (spec.categories && caps.trace && client) await startTrace(client, spec.categories);
-      if (spec.cpu && client && caps.cpuProfile) await startCpuProfile(client, cpuIntervalUs);
+      if (cdpSampler && client) await startCpuProfile(client, cpuIntervalUs);
       // One timed page.evaluate over the whole loop: with no CDP counter bracket to close mid-loop,
       // there is nothing to split. Bench wall is the sum of these timed samples (record.ts).
       const timed = await page.evaluate(runHarness, {
@@ -278,7 +284,7 @@ export async function runPass(
     // Let asynchronous paint/composite work flush before we stop tracing.
     await sleep(opts.settleMs);
 
-    if (spec.cpu && client && caps.cpuProfile) cpuProfile = await stopCpuProfile(client);
+    if (cdpSampler && client) cpuProfile = await stopCpuProfile(client);
 
     let events: NormalizedEvent[] = [];
     let windowStart: number | null = null;
@@ -298,7 +304,10 @@ export async function runPass(
         );
       }
       traceDataLoss = trace.dataLossOccurred;
-      events = parseTrace(trace.text, {
+      // Parse the trace JSON once and feed both the event pipeline and (on the trace-sourced rung) the
+      // CPU-sample assembly, so the large buffer is decoded a single time.
+      const traceObject = JSON.parse(trace.text);
+      events = parseTrace(traceObject, {
         keepThreadIds: spec.keepThreadIds,
       });
       // Rewrite trace stack urls back to local source files for blame/source lookup.
@@ -308,6 +317,23 @@ export async function runPass(
       const runWindow = findWindow(events);
       windowStart = runWindow.startTs;
       windowEnd = runWindow.endTs;
+      // --breakdown sources CPU samples from the trace's v8.cpu_profiler ProfileChunk stream (no CDP
+      // profiler ran). The stream runs for the whole trace, which in driver mode starts before
+      // prepare()/warmup, so window it to the run onward: the CPU model must describe only the run,
+      // the same run-mark scope the CDP sampler opens at on the other rungs (bench starts the trace
+      // after setup, so the filter is a no-op there). Null means the browser emitted no chunk stream:
+      // leave cpuProfile undefined so the caller falls back to honest not-covered reporting, never a
+      // fabricated zero profile.
+      if (spec.cpu && spec.cpuSource === "trace") {
+        const assembled = assembleTraceCpuProfile(traceObject);
+        if (assembled) {
+          cpuProfile =
+            windowStart != null
+              ? windowTraceCpuProfile(assembled.profile, windowStart)
+              : assembled.profile;
+          cpuSampleIntervalUs = assembled.sampleIntervalUs;
+        }
+      }
       // Re-key this pass's step windows from index to label; both sides come from this one pass.
       // The trace clock also prices each step's wall (t1-t0 between its marks): the honest window,
       // in place of the page-clock value the driver captured.
@@ -351,6 +377,7 @@ export async function runPass(
       stepWindows,
       stepWallClock,
       cpuProfile,
+      cpuSampleIntervalUs,
       headlessFallback,
       traceDataLoss,
     };

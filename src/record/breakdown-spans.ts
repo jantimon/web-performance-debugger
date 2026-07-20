@@ -76,19 +76,28 @@ export async function buildBreakdowns(
     (event) => event.pid === main.pid && event.tid === main.tid && event.dur > 0,
   );
 
-  // Project every sample onto the trace clock: absolute ts = startTime + cumulative timeDeltas. The
-  // same projection feeds the bar's js-by-package split (packagesByNode) and the per-span hot tally
-  // (functionByNode -> the ranked CpuModel function id), so both read the identical sample clock.
+  // Place every sample on the trace clock. A trace-sourced profile (--breakdown) carries per-sample
+  // absolute timestamps because it merges the per-process streams a navigation splits, where the
+  // `startTime + Σ timeDeltas` cumsum no longer reconstructs a sample's real position; a single-stream
+  // profile has none, so the cumsum is exact. The same clock feeds the bar's js-by-package split
+  // (packagesByNode) and the per-span hot tally (functionByNode -> the ranked CpuModel function id).
   const packagesByNode = await packagesByProfileNode(raw, context);
   const functionByNode = functionIdByNode(raw);
+  const sampleTimestampsUs = raw.sampleTimestampsUs;
   const samples: BreakdownSample[] = [];
   const hotSamples: SpanHotSample[] = [];
   let clock = raw.startTime;
   for (let index = 0; index < raw.samples.length; index++) {
-    clock += raw.timeDeltas[index] ?? 0;
+    let traceTs: number;
+    if (sampleTimestampsUs) {
+      traceTs = sampleTimestampsUs[index];
+    } else {
+      clock += raw.timeDeltas[index] ?? 0;
+      traceTs = clock;
+    }
     const nodeId = raw.samples[index];
-    samples.push({ traceTs: clock, package: packagesByNode.get(nodeId) ?? null });
-    hotSamples.push({ ts: clock, functionId: functionByNode.get(nodeId) ?? null });
+    samples.push({ traceTs, package: packagesByNode.get(nodeId) ?? null });
+    hotSamples.push({ ts: traceTs, functionId: functionByNode.get(nodeId) ?? null });
   }
 
   const spans: { label: string; kind: SpanBreakdown["kind"]; startTs: number; endTs: number }[] = [

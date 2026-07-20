@@ -29,7 +29,7 @@ test("summarizeLoaf returns null when nothing was observed (no fabricated zero)"
 });
 
 test("summarizeLoaf sums totals over EVERY frame before capping the list", () => {
-  const raw = Array.from({ length: LOAF_FRAME_CAP + 2 }, (_, index) =>
+  const raw = Array.from({ length: LOAF_FRAME_CAP + 2 }, (_unused, index) =>
     frame(60 + index, [script(55)]),
   );
   const loaf = summarizeLoaf(raw);
@@ -62,7 +62,7 @@ test("summarizeLoaf keeps the worst frames and worst scripts, worst-first", () =
 });
 
 test("summarizeLoaf caps scripts per frame and keeps a small forced script", () => {
-  const many = Array.from({ length: LOAF_SCRIPT_CAP + 3 }, (_, index) => script(50 - index));
+  const many = Array.from({ length: LOAF_SCRIPT_CAP + 3 }, (_unused, index) => script(50 - index));
   const loaf = summarizeLoaf([frame(300, many)]);
   assert.equal(loaf.frames[0].scripts.length, LOAF_SCRIPT_CAP, "scripts are capped per frame");
 

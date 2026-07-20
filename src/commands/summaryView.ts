@@ -227,7 +227,16 @@ export function printSummary(rec: Recording): void {
   } else if (meta.passes.includes("deep")) {
     printForcedAttribution(rec);
   } else if (summary.forcedLayoutCount != null && summary.forcedLayoutCount > 0) {
-    console.log("  ⚠ layout thrashing — run `query blame --forced` to see the source lines");
+    // The remaining lane with a forced count is firefox non-deep (chrome default/--breakdown report
+    // null). Its count is marker-derived and the read site is sampled, so it can locate fewer sites
+    // than the count; do not repeat Chrome's "thrashing" framing over a single batched Gecko flush.
+    if (meta.browser === "firefox")
+      console.log(
+        dim(
+          "  forced layout/style is marker-derived; the read that forced it is a sampled estimate (query blame --forced) that can miss cheap reads.",
+        ),
+      );
+    else console.log("  ⚠ layout thrashing — run `query blame --forced` to see the source lines");
   }
 
   // Detect a run that recorded no layout/paint/style/event activity at all. A null count (the rung

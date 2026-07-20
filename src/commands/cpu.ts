@@ -23,6 +23,28 @@ function aggregationSuffix(kind: SpanKind, iterations?: number, samples?: number
 const heat = (pct: number, text: string): string =>
   pct >= 25 ? red(text) : pct >= 10 ? yellow(text) : text;
 
+/**
+ * The "what the js slice includes" footer, engine-conditioned. Chrome folds synchronous engine work
+ * (a forced layout) into the forcing JS frame, so js is not pure JS. Firefox does NOT: its bar is
+ * sampled from Layout-category frames, so a forced layout bills to the style/layout slices and js can
+ * read near 0 on a JS-driven flush (docs/dev/engine-mapping.md). Node has no DOM, so its js really is
+ * pure JS, and it prints no footer.
+ */
+function jsSliceFooter(engine: "chrome" | "firefox" | "node"): string | null {
+  if (engine === "node") return null;
+  if (engine === "firefox")
+    return "on firefox the js slice is sampled JS only; synchronous engine work JS triggered (e.g. a forced layout) bills to the style/layout slices, not js, so a JS-driven forced layout can read js near 0.";
+  return "js includes synchronous engine work JS triggered (e.g. forced layout bills to the forcing frame); it is not pure JS.";
+}
+
+/**
+ * Firefox bars come off the Gecko sampler, clamped to a ~1ms interval (GECKO_MIN_INTERVAL_MS), so a 0
+ * or 1 ms slice is a sample count, not a precise duration. Disclosed so per-package ties and binary
+ * 0/1 ms slices are not read as exact.
+ */
+const FIREFOX_QUANTIZATION_NOTE =
+  "firefox slices quantize to the ~1 ms Gecko sampler interval; read a 0 or 1 ms slice as at-or-below sampler resolution, not precise.";
+
 const HEAD = (labels: string[]): string[] => labels.map((label) => bold(label));
 import {
   packageRollup,
@@ -102,14 +124,12 @@ export function printCpuBreakdown(model: CpuModel, iterations?: number): void {
       ]),
     ),
   );
-  // Browser lanes fold synchronous engine work (a forced layout) into the forcing JS frame, so the
-  // js slice is not pure JS. --target node has no DOM, so its js slice really is pure JS.
-  if (!isNode)
-    console.log(
-      dim(
-        "js includes synchronous engine work JS triggered (e.g. forced layout bills to the forcing frame); it is not pure JS.",
-      ),
-    );
+  // The js-slice footer is engine-conditioned: on firefox the forced-layout cost lands in
+  // style/layout, not js (see jsSliceFooter), and the gecko bar quantizes to the ~1ms sampler.
+  const engine = isNode ? "node" : model.meta.browser === "firefox" ? "firefox" : "chrome";
+  const footer = jsSliceFooter(engine);
+  if (footer) console.log(dim(footer));
+  if (engine === "firefox") console.log(dim(FIREFOX_QUANTIZATION_NOTE));
 }
 
 /**
@@ -118,7 +138,11 @@ export function printCpuBreakdown(model: CpuModel, iterations?: number): void {
  * visible and `idle` is annotated; the js slice carries a compact by-package annotation. In
  * --breakdown mode this replaces the single js/browser/gc/idle profile bar (printCpuBreakdown).
  */
-export function printSpanBreakdowns(spans: Span[], iterations?: number): void {
+export function printSpanBreakdowns(
+  spans: Span[],
+  iterations?: number,
+  browser?: "chrome" | "firefox",
+): void {
   const bars = spans.filter((span) => span.breakdown);
   if (!bars.length) return;
   console.log(`\nCPU time breakdown ${dim("(per span: Σ slices + idle = wall)")}`);
@@ -173,11 +197,11 @@ export function printSpanBreakdowns(spans: Span[], iterations?: number): void {
       console.log(dim(`  residual ${num(residualMs, 3)} ms (tiling did not fully close)`));
     if (span.frames) printFrameSideTrack(span.frames);
   }
-  console.log(
-    dim(
-      "\njs includes synchronous engine work JS triggered (e.g. forced layout bills to the forcing frame); it is not pure JS.",
-    ),
-  );
+  // Engine-conditioned footer: firefox bills forced layout to style/layout (js can read ~0) and its
+  // slices quantize to the ~1ms Gecko sampler; chrome folds the forced layout into the js frame.
+  const engine = browser === "firefox" ? "firefox" : "chrome";
+  console.log(dim(`\n${jsSliceFooter(engine)}`));
+  if (engine === "firefox") console.log(dim(FIREFOX_QUANTIZATION_NOTE));
 }
 
 /**

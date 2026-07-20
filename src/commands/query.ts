@@ -8,9 +8,11 @@ import type {
   EventKind,
   NormalizedEvent,
   Recording,
+  RecordingMeta,
   Span,
   SpanHot,
 } from "../model/recording.js";
+import { matchedFrameFloorMs } from "../model/frame-floor.js";
 import type { BlameEntry, SpanAnatomy, SpanForced, SpanHotFunctions } from "../model/query.js";
 import { MIN_POOLED_HOT_SAMPLES } from "../profile/span-hot.js";
 import {
@@ -175,7 +177,7 @@ export async function querySpan(file: string, label: string, query: SpanQuery): 
 
   const fmt = structuredFormat(query);
   if (fmt) return emit(anatomy, fmt);
-  printSpanAnatomy(anatomy, span, model);
+  printSpanAnatomy(anatomy, span, model, rec.meta);
 }
 
 /** Load the sibling CPU model if one exists; a missing/absent model is not an error for the anatomy.
@@ -362,7 +364,12 @@ function resolveStoredHot(
 }
 
 /** Human report for `query span`: the bar, wall/counts/interaction, forced attribution, hot list. */
-function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | undefined): void {
+function printSpanAnatomy(
+  anatomy: SpanAnatomy,
+  span: Span,
+  model: CpuModel | undefined,
+  meta: RecordingMeta,
+): void {
   const count = (value: Measured<number>): string =>
     formatMeasured(value, (measured) => String(measured));
   console.log(
@@ -376,10 +383,27 @@ function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | un
         )
       : "";
   console.log(`wall: ${bold(wall)}${spread}`);
+  // A wall pinned to a frame-cadence floor hides sub-frame work: libraries whose real re-render is
+  // each under the floor all report the floor (a measure floors at one frame, a driver step at the
+  // 2-rAF settle, docs/dev/frame-floor.md). Surface the faster sample and the js slice beside it so
+  // the floored number is not read as "no difference". "frame floor", not "one-frame", since the
+  // step case is two frames.
+  const wallFloor = matchedFrameFloorMs(anatomy.wallMs, meta);
+  if (wallFloor != null) {
+    const minMs = span.stats?.minMs ?? span.wallMinMs;
+    const belowFloor: string[] = [];
+    if (minMs != null && minMs < anatomy.wallMs! - 0.5)
+      belowFloor.push(`min sample ${num(minMs, 1)} ms`);
+    if (anatomy.slices?.js) belowFloor.push(`js ${num(anatomy.slices.js.ms, 1)} ms`);
+    const detail = belowFloor.length ? `; sub-frame work reads on ${belowFloor.join(" / ")}` : "";
+    console.log(
+      dim(`  wall sits on the ~${num(wallFloor, 1)} ms frame floor${detail} (frame-floor.md)`),
+    );
+  }
 
   // The reconciling bar, when the rung built one. A stored bar prints the seven-slice per-span table;
   // a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled).
-  if (span.breakdown) printSpanBreakdowns([span], anatomy.iterations);
+  if (span.breakdown) printSpanBreakdowns([span], anatomy.iterations, meta.browser);
   else if (span.kind === "run" && model?.breakdown) printCpuBreakdown(model, anatomy.iterations);
   else console.log(dim("\n(no reconciling bar at this rung; record with --breakdown for one)"));
 
@@ -398,6 +422,16 @@ function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | un
       ],
     ),
   );
+  // Firefox forced counts come from the Reflow/Styles markers, and the read that forced each flush is
+  // a sampled estimate: a cheap read can be missed, so `query blame --forced` can locate fewer sites
+  // than the count (or none). Say so, so a count with no locatable site is not read as a contradiction.
+  const firefoxForced = anatomy.counts.forcedLayoutCount;
+  if (meta.browser === "firefox" && firefoxForced != null && firefoxForced > 0)
+    console.log(
+      dim(
+        "\nforced layout/style is marker-derived; the read that forced each flush is a sampled estimate (query blame --forced) that can miss cheap reads, so the located sites can number fewer than the count.",
+      ),
+    );
   // The chrome run counts and the run bar cover different windows, on purpose, so disclose it where
   // both are on screen. Counts are start-onward from run:start with no upper bound, so a paint the
   // run commits just after run:end (the trailing frame paints on the next tick) is counted; the bar
@@ -422,6 +456,18 @@ function printSpanAnatomy(anatomy: SpanAnatomy, span: Span, model: CpuModel | un
           `  input delay ${num(inputDelayMs, 2)} ms · processing ${num(processingMs, 2)} ms · presentation ${num(presentationDelayMs, 2)} ms`,
         ),
       );
+    }
+    // A floored INP is the frame boundary, not the interaction's own cost; point at the sub-frame
+    // signal (the processing split above, the js slice) so it is not read as "every tech is equal".
+    const inpFloor = matchedFrameFloorMs(anatomy.inpMs, meta);
+    if (inpFloor != null) {
+      const signal = anatomy.interaction
+        ? "the processing split above"
+        : anatomy.slices?.js
+          ? `js ${num(anatomy.slices.js.ms, 1)} ms`
+          : null;
+      const detail = signal ? `; the sub-frame cost is ${signal}` : "";
+      console.log(dim(`  INP sits on the ~${num(inpFloor, 1)} ms one-frame floor${detail}`));
     }
   }
 
@@ -630,7 +676,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
         `No spans matched the filter in ${file} (${hidden} hidden by --min-wall/--filter).`,
       );
     }
-    printSpanBreakdowns(bars, iterations);
+    printSpanBreakdowns(bars, iterations, rec.meta.browser);
     printSpanFilterNote(hidden);
   } else if (label && label !== "run") {
     return void console.log(
@@ -789,6 +835,23 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     return emit(entries, fmt);
   }
   if (!rows.length) {
+    // Firefox counts forced flushes from markers but blames the read by SAMPLING it, so a cheap read
+    // can go uncaught: an empty --forced beside a nonzero count is a sampling miss, NOT "no forced
+    // layout". Say which, so the count is not read as a contradiction of the empty result.
+    const firefoxForced = rec.summary.forcedLayoutCount;
+    if (
+      query.forced &&
+      rec.meta.browser === "firefox" &&
+      firefoxForced != null &&
+      firefoxForced > 0
+    ) {
+      console.log(
+        `No forced read-site located, but the recording counts ${firefoxForced} forced layout/style flush(es). ` +
+          "Firefox blames the read by sampling it at the ~1ms Gecko interval, so a cheap read can be missed; " +
+          "the count is real (marker-derived), the site is what sampling did not catch.",
+      );
+      return;
+    }
     console.log(
       query.forced
         ? "No forced (synchronous) layout/style — no layout thrashing. 🎉"

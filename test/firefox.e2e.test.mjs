@@ -89,7 +89,7 @@ e2e(
   () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
     const out = path.join(dir, "default");
-    runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "3", "--out", out]);
+    const report = runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "3", "--out", out]);
     assert.ok(existsSync(out), "recording file written");
 
     const recording = JSON.parse(readFileSync(out, "utf8"));
@@ -102,6 +102,12 @@ e2e(
     assert.ok(recording.summary.wallMs != null && recording.summary.wallMs >= 0, "wall time reported");
     // The point of the change: these were 0 before, which was indistinguishable from a clean run.
     assert.ok(recording.summary.forcedLayoutCount > 0, "forced layout counted without --cpu-profile");
+    // The bar footer is engine-conditioned: on firefox a forced layout bills to style/layout, so the
+    // report must NOT repeat Chrome's "bills to the forcing frame" (js) sentence, and must disclose
+    // the ~1ms sampler granularity.
+    assert.match(report, /bills to the style\/layout slices, not js/, "firefox footer, not the chrome one");
+    assert.doesNotMatch(report, /bills to the forcing frame/, "the chrome js-fold sentence is absent on firefox");
+    assert.match(report, /quantize to the ~1 ms Gecko sampler interval/, "sampler granularity disclosed");
   },
 );
 
