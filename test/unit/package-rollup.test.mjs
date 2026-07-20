@@ -131,7 +131,7 @@ function writeNamedBundle(dir, name, source, fnName) {
 /** A profile whose leaves are the given (fnName, bundlePath) frames under one (root). */
 function multiFrameProfile(frames) {
   const nodes = [
-    { id: 1, callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 }, children: frames.map((_, index) => index + 2) },
+    { id: 1, callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 }, children: frames.map((frame, index) => index + 2) },
   ];
   frames.forEach(([fnName, bundlePath], index) => {
     nodes.push({
@@ -140,7 +140,7 @@ function multiFrameProfile(frames) {
       children: [],
     });
   });
-  return { startTime: 0, endTime: frames.length * 1000, nodes, samples: frames.map((_, index) => index + 2), timeDeltas: frames.map(() => 1000) };
+  return { startTime: 0, endTime: frames.length * 1000, nodes, samples: frames.map((frame, index) => index + 2), timeDeltas: frames.map(() => 1000) };
 }
 
 async function multiModel(frames, root) {

@@ -340,7 +340,10 @@ program
       breakdown: !!cmdOpts.breakdown,
       deep: !!cmdOpts.deep,
       preciseWall: !!cmdOpts.preciseWall,
-      variant: cmdOpts.variant,
+      // Trim to a non-empty label or drop it: an empty/whitespace --variant would otherwise persist
+      // into meta and block a comparability gate while every truthiness-guarded output omitted it,
+      // so gating and disclosure would disagree.
+      variant: cmdOpts.variant?.trim() || undefined,
     };
     try {
       await recordAndReport(opts);

@@ -275,9 +275,10 @@ function packageFromNodeModules(filePath: string): string | null {
 
 /**
  * Conventional build/source-layout directory a published package ships its output under. The path
- * segment PRECEDING the first of these names the package, whichever sub-directory (runtime/, core/,
+ * segment PRECEDING the LAST of these names the package, whichever sub-directory (runtime/, core/,
  * ...) a given file sits in, so a library whose off-disk sources span several source directories
- * collapses to one bucket instead of splitting one per directory.
+ * collapses to one bucket instead of splitting one per directory (and a nested
+ * `.../src/vendor/<pkg>/dist/x` names `<pkg>`, not the outer `src`).
  */
 const SOURCE_LAYOUT_DIRS = new Set(["src", "dist", "lib", "esm", "cjs", "build", "out"]);
 
