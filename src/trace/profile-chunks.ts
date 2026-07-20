@@ -146,9 +146,9 @@ export function assembleTraceCpuProfile(
 
   const nodes: RawProfileNode[] = [];
   const childrenById = new Map<number, number[]>();
-  const samples: number[] = [];
-  const timeDeltas: number[] = [];
-  const sampleTimestampsUs: number[] = [];
+  let samples: number[] = [];
+  let timeDeltas: number[] = [];
+  let sampleTimestampsUs: number[] = [];
   let nextId = 1;
   let earliestStart = Infinity;
 
@@ -203,12 +203,12 @@ export function assembleTraceCpuProfile(
   if (orderedGroups.length > 1) {
     const order = sampleTimestampsUs.map((_timestamp, index) => index);
     order.sort((left, right) => sampleTimestampsUs[left] - sampleTimestampsUs[right]);
-    const sortedSamples = order.map((index) => samples[index]);
-    const sortedDeltas = order.map((index) => timeDeltas[index]);
-    const sortedTimestamps = order.map((index) => sampleTimestampsUs[index]);
-    samples.splice(0, samples.length, ...sortedSamples);
-    timeDeltas.splice(0, timeDeltas.length, ...sortedDeltas);
-    sampleTimestampsUs.splice(0, sampleTimestampsUs.length, ...sortedTimestamps);
+    // Reassign to the reordered arrays. Spreading them back in place with
+    // `splice(0, len, ...sorted)` passes a per-sample-sized array (hundreds of thousands of entries on
+    // a heavy page) as call arguments, which overflows the stack (`Maximum call stack size exceeded`).
+    samples = order.map((index) => samples[index]);
+    timeDeltas = order.map((index) => timeDeltas[index]);
+    sampleTimestampsUs = order.map((index) => sampleTimestampsUs[index]);
   }
 
   const startTime = Number.isFinite(earliestStart) ? earliestStart : 0;

@@ -165,6 +165,43 @@ test("toDevtoolsCpuProfile: a single-stream profile is returned unchanged (alrea
   assert.equal(toDevtoolsCpuProfile(singleStream), singleStream, "no sampleTimestampsUs => returned as-is");
 });
 
+test("assembleTraceCpuProfile: a navigation with hundreds of thousands of samples does not overflow the stack", () => {
+  // A heavy page's cold boot samples the profiler hundreds of thousands of times, and a --url boot is
+  // a cross-process navigation (two streams => the timestamp reorder runs). The reorder must not spread
+  // the merged arrays as call arguments (`splice(0, len, ...sorted)`): past ~125k entries that throws
+  // `Maximum call stack size exceeded`, taking `record --url <heavy page> --breakdown` down with it.
+  const perStream = 100_000; // 200k merged: comfortably past the spread-argument stack limit
+  const oneStream = (pid, base) => {
+    const node = { id: 1, callFrame: { functionName: "hot", scriptId: 1, url: "u", lineNumber: 1, columnNumber: 1 } };
+    return [
+      { name: "Profile", pid, id: "0x1", ts: base, args: { data: { startTime: base } } },
+      {
+        name: "ProfileChunk",
+        pid,
+        id: "0x1",
+        ts: base + 1,
+        args: {
+          data: {
+            cpuProfile: { nodes: [node], samples: new Array(perStream).fill(1) },
+            timeDeltas: new Array(perStream).fill(200),
+          },
+        },
+      },
+    ];
+  };
+  const traceEvents = [...oneStream(100, 1_000_000), ...oneStream(200, 5_000_000)];
+
+  const assembled = assembleTraceCpuProfile({ traceEvents });
+  assert.ok(assembled, "the two-stream trace assembles");
+  const { profile } = assembled;
+  assert.equal(profile.samples.length, perStream * 2, "every sample from both streams survives");
+  for (let index = 1; index < profile.sampleTimestampsUs.length; index++)
+    assert.ok(
+      profile.sampleTimestampsUs[index] >= profile.sampleTimestampsUs[index - 1],
+      "the merged per-sample clock is non-decreasing after the reorder",
+    );
+});
+
 test("windowTraceCpuProfile: drops samples before the run start (prepare/warmup exclusion)", () => {
   const { profile } = assembleTraceCpuProfile(fixture);
   // Keep only stream B (>= 2_000_000): the pre-navigation samples are dropped, as prepare()/warmup
