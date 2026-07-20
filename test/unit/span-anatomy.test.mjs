@@ -537,3 +537,124 @@ test("query span: firefox forced count discloses it is marker-derived with a sam
   assert.match(text, /forced layout\/style is marker-derived/, "names the count provenance");
   assert.match(text, /sampled estimate.*can miss cheap reads/s, "warns the site can be missed");
 });
+
+// --- Defect: a measure span's bar shows real style/layout/paint ms but its counts are not windowed ---
+
+test("query span <measure>: discloses that counts are not windowed to a performance.measure span", async () => {
+  const file = writeRec("anatomy-measure-counts.json", {
+    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["breakdown"] },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      { label: "run", kind: "run", aggregation: "sum", wallMs: 30, counts: measuredCounts, breakdown: breakdown(30) },
+      {
+        label: "render list",
+        kind: "measure",
+        aggregation: "first",
+        wallMs: 12,
+        counts: nullCounts,
+        breakdown: breakdown(12),
+      },
+    ],
+  });
+  const text = await captureText(() => querySpan(file, "measure:render list", {}));
+  assert.match(text, /counts are not windowed to a performance\.measure span/, "the disclosure prints");
+  // The bar is present with real style/layout ms while the counts table reads "—": the disclosure is
+  // the bridge, not a fabricated count.
+  assert.match(text, /style recalc\s+—/, "counts still read not-measured, never a fake 0");
+});
+
+test("query span <measure>: no disclosure over an all-idle bar (no real style/layout/paint to explain)", async () => {
+  const idleBar = (wallMs) => ({
+    wallMs,
+    slices: {
+      js: jsSlice(0),
+      style: slice(0),
+      layout: slice(0),
+      paint: slice(0),
+      gc: slice(0),
+      other: slice(0),
+      idle: slice(wallMs),
+    },
+  });
+  const file = writeRec("anatomy-measure-idle.json", {
+    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["breakdown"] },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      { label: "wait", kind: "measure", aggregation: "first", wallMs: 20, counts: nullCounts, breakdown: idleBar(20) },
+    ],
+  });
+  const text = await captureText(() => querySpan(file, "measure:wait", {}));
+  assert.doesNotMatch(
+    text,
+    /counts are not windowed to a performance\.measure span/,
+    "an all-idle bar measured no style/layout/paint, so there is no contradiction to disclose",
+  );
+});
+
+// --- Defect: the per-frame jank flood collapses to one line by default, expands under --frames ---
+
+// A consistent FrameSideTrack: `frames[]` lists every frame, the tallies are its derived counts.
+// Three of the six are jank (2 dropped + 1 smoothness-affecting partial); the three clean presented
+// frames are the rest. On a real page `frames[]` runs to dozens, which is the flood being collapsed.
+const frameRecords = [
+  { sequence: 10, state: "presented", affectsSmoothness: false, durMs: 8 },
+  { sequence: 11, state: "dropped", affectsSmoothness: true, durMs: 22 },
+  { sequence: 12, state: "dropped", affectsSmoothness: true, durMs: 19 },
+  { sequence: 13, state: "presentedPartial", affectsSmoothness: true, durMs: 17 },
+  { sequence: 14, state: "presented", affectsSmoothness: false, durMs: 7 },
+  { sequence: 15, state: "presented", affectsSmoothness: false, durMs: 9 },
+];
+const jankFrames = {
+  presented: 3,
+  presentedPartial: 1,
+  dropped: 2,
+  noUpdate: 0,
+  total: 6,
+  frames: frameRecords,
+};
+
+function frameRec(name) {
+  return {
+    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["breakdown"] },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      {
+        label: "scroll",
+        kind: "measure",
+        aggregation: "first",
+        wallMs: 40,
+        counts: nullCounts,
+        breakdown: breakdown(40),
+        frames: jankFrames,
+      },
+    ],
+  };
+}
+
+test("query span: the frame side track collapses jank to one line by default", async () => {
+  const file = writeRec("anatomy-frames-default.json", frameRec());
+  const text = await captureText(() => querySpan(file, "scroll", {}));
+  assert.match(text, /frames: 3 presented · 1 partial · 2 dropped/, "the tally line stays");
+  assert.match(text, /3 frame\(s\) dropped or affecting smoothness/, "one summary line, not one per frame");
+  assert.doesNotMatch(text, /⚠ frame 11:/, "no per-frame line by default");
+  assert.match(text, /--frames to list each/, "points at the opt-in");
+});
+
+test("query span --frames: lists each dropped/smoothness-affecting frame", async () => {
+  const file = writeRec("anatomy-frames-verbose.json", frameRec());
+  const text = await captureText(() => querySpan(file, "scroll", { frames: true }));
+  assert.match(text, /⚠ frame 11: dropped/, "each jank frame prints under --frames");
+  assert.match(text, /⚠ frame 12: dropped/);
+  assert.match(text, /⚠ frame 13: presentedPartial/);
+  assert.doesNotMatch(text, /frame\(s\) dropped or affecting smoothness/, "no summary line when expanded");
+});
+
+test("query span --json: the frame track keeps every per-frame record regardless of --frames", async () => {
+  const file = writeRec("anatomy-frames-json.json", frameRec());
+  const anatomy = await captureJson(() => querySpan(file, "scroll", { json: true }));
+  assert.equal(anatomy.frames.frames.length, 6, "JSON carries the full per-frame data");
+  assert.equal(anatomy.frames.dropped, 2);
+});

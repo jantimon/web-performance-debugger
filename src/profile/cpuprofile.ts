@@ -971,9 +971,38 @@ export function tailPath(filePath: string, segments = 2): string {
   return parts.length <= segments ? filePath : parts.slice(-segments).join("/");
 }
 
+/** Longest path tail a compacted remote URL keeps before it is ellipsized (its origin is separate). */
+const REMOTE_TAIL_MAX = 40;
+
+/**
+ * Compact an unmapped remote script URL for a table cell: origin + the last path segment(s), with the
+ * query string and hash dropped. An unmapped third-party frame's `file` is its full URL, which can run
+ * hundreds of chars (a config endpoint with a long query string), sizing the source column to a wall
+ * of dashes. The origin is kept whole -- it is the attribution signal such a frame buckets by -- and
+ * the path tail is capped so one long segment cannot blow the column out either.
+ */
+export function shortRemoteUrl(url: string, segments = 2): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  const pathParts = parsed.pathname.split("/").filter(Boolean);
+  let tail = pathParts.slice(-segments).join("/");
+  if (tail.length > REMOTE_TAIL_MAX) tail = `${tail.slice(0, REMOTE_TAIL_MAX)}…`;
+  if (!tail) return parsed.origin;
+  const elided = pathParts.length > segments ? "…/" : "";
+  return `${parsed.origin}/${elided}${tail}`;
+}
+
+const REMOTE_URL = /^https?:\/\//i;
+
 /**
  * Compact "dir/file:line" for tables (the full absolute path is kept in the model and
- * shown by `query frame`). Pairs with the package column, which carries the owner.
+ * shown by `query frame`). Pairs with the package column, which carries the owner. A remote URL
+ * (an unmapped third-party frame) is compacted to origin + truncated path via `shortRemoteUrl`, so a
+ * long config URL does not size the column to hundreds of chars.
  */
 export function shortSource(
   file: string | undefined,
@@ -982,7 +1011,7 @@ export function shortSource(
 ): string {
   if (!file) return source ?? "";
   const line = source && source.length > file.length ? source.slice(file.length + 1) : "";
-  const tail = tailPath(file, segments);
+  const tail = REMOTE_URL.test(file) ? shortRemoteUrl(file, segments) : tailPath(file, segments);
   return line ? `${tail}:${line}` : tail;
 }
 

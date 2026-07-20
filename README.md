@@ -656,8 +656,8 @@ and a new-vs-old pair warns that it cannot verify the flow.
 
 | Verb | Shows |
 | --- | --- |
-| `spans <file>` | per-span reconciling bars (run + steps + `performance.measure`), one shape across targets (`--label <L>`, `--min-wall <ms>`, `--filter <text>`) |
-| `span <file> <label>` | one span's full anatomy: bar, counts, INP, LoAF scripts (driver steps, Chrome), forced/dirtied-by, thrash, hot functions. `<label>` is bare or `kind:label`. Which CPU fields fill depends on the kind: a step's `byPackage`/hot can be empty across a navigation, where a `performance.measure` or the LoAF scripts attribute it instead |
+| `spans <file>` | per-span reconciling bars (run + steps + `performance.measure`), one shape across targets (`--label <L>`, `--min-wall <ms>`, `--filter <text>`, `--frames`) |
+| `span <file> <label>` | one span's full anatomy: bar, counts, INP, LoAF scripts (driver steps, Chrome), forced/dirtied-by, thrash, hot functions. `<label>` is bare or `kind:label`. `--frames` lists each dropped/janky compositor frame (default: a one-line count). Which CPU fields fill depends on the kind: a step's `byPackage`/hot can be empty across a navigation, where a `performance.measure` or the LoAF scripts attribute it instead |
 | `blame <file>` | events grouped by source line (`--forced`, `--all`, `--kind`, `--dirtied` on firefox `--deep`, `--top`) |
 | `cpu <file>` | hot functions + rollup (`--by package\|file\|function`, `--top`) |
 | `frame <file> <id>` | one CPU function: its callers and callees |

@@ -72,6 +72,41 @@ async function readPointer(): Promise<LastPointer> {
 }
 
 /**
+ * An artifact path as a report or a copy-pasteable hint should show it: relative to cwd when that is
+ * shorter, else the absolute path unchanged.
+ *
+ * Display only. The stored back-pointers stay absolute so a recording reopens from any directory;
+ * this is purely the terminal, where an absolute path is both harder to scan and something you may
+ * not want on screen -- a pasted report or a recorded terminal otherwise carries your home directory.
+ *
+ * Falls back to absolute when relativizing does not help: an --out outside cwd would otherwise become
+ * a worse `../../../tmp/x.json`.
+ */
+export function displayPath(absPath: string): string {
+  const relative = path.relative(process.cwd(), absPath);
+  return relative && !relative.startsWith("..") && relative.length < absPath.length
+    ? relative
+    : absPath;
+}
+
+/**
+ * A paste-ready target token for a copy-pasteable drill-in hint: the bare literal `latest` when this
+ * path IS the current cwd's `latest` pointer target, else the `displayPath` DOUBLE-QUOTED so a path
+ * with spaces (a home dir, a spaced project name) stays one shell argument. Keeps a pasted hint free
+ * of absolute home/scratch paths and runnable verbatim.
+ */
+export async function hintTarget(absPath: string): Promise<string> {
+  try {
+    const pointer = await readPointer();
+    if (path.resolve(pointer.recording) === path.resolve(absPath)) return "latest";
+  } catch {
+    // No resolvable pointer (never recorded from this cwd, or an unreadable one): fall back to the
+    // relative display path rather than failing a hint line.
+  }
+  return `"${displayPath(absPath)}"`;
+}
+
+/**
  * Resolve a file argument. The literal `latest` resolves to the most recent
  * recording via the pointer file, never by mtime.
  */
