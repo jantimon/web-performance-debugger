@@ -431,7 +431,7 @@ e2e("record --breakdown: a waiting-dominated span is mostly idle and still close
 // The run's rendering COUNTS are start-onward (they catch the trailing frame that paints after
 // run:end), the run BAR tiles [run:start, run:end]. So a run count can exceed its bar slice, and the
 // tool must disclose that rather than let it read as a bug. Here run() schedules a paint+layout burst
-// on a setTimeout(150) (well after run:end, inside the 200ms drain): its paints land in the run
+// on a setTimeout(100) (well after run:end, inside the 200ms drain): its paints land in the run
 // paintCount but not the run bar's paint slice. Assert the gap is real AND that both the note and the
 // `query span run` anatomy disclose the two windows.
 e2e("record --breakdown: run counts are start-onward and the window gap is disclosed", { timeout: TIMEOUT_MS }, () => {
