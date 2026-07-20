@@ -95,6 +95,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       counts: countsFromSummary(stepSummary),
       inpMs: step.inpMs,
       interaction: step.interaction,
+      ...(step.loaf ? { loaf: step.loaf } : {}),
       perIteration: step.perIteration,
       stats: stepSummary.stats,
       ...(stepBar?.frames ? { frames: stepBar.frames } : {}),

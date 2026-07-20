@@ -287,6 +287,62 @@ export interface InteractionTiming {
 }
 
 /**
+ * One script the browser attributed inside a long animation frame (a `PerformanceScriptTiming`
+ * entry). This is where a slow interaction's cost is named at the source: which listener/callback
+ * ran, from which script, and how much of its time went to synchronous style/layout it forced.
+ *
+ * `sourceURL` is the SERVED script url, not rewritten to a local source path: LoAF gives a
+ * character offset (`sourceCharPosition`, not stored) rather than a line, so a line-level rewrite
+ * would be a guess. Read it as "this script", cross-referenced with the hot-function list for the
+ * source line. Chrome-only: no Firefox equivalent ships today, so a firefox recording carries none.
+ */
+export interface LoafScript {
+  /** what invoked the script, e.g. "BUTTON#btn.onclick" or a classic script url */
+  invoker: string;
+  /** how it was invoked: "event-listener" | "user-callback" | "resolve-promise" | "classic-script" | ... */
+  invokerType: string;
+  /** the served script url (not a local source path; LoAF gives a char offset, not a line) */
+  sourceURL: string;
+  /** the function name LoAF attributed, when it carried one (often empty for an inline listener) */
+  sourceFunctionName?: string;
+  /** ms this script ran inside the frame */
+  durationMs: number;
+  /** ms of that spent in synchronous (forced) style/layout the script triggered */
+  forcedStyleLayoutMs: number;
+}
+
+/**
+ * One long animation frame (a `long-animation-frame` entry): a frame that ran over the 50ms budget,
+ * with the scripts the browser blamed for it.
+ */
+export interface LoafFrame {
+  /** the frame's total duration, ms */
+  durationMs: number;
+  /** the frame's blocking time over the 50ms budget, ms (LoAF's own `blockingDuration`) */
+  blockingDurationMs: number;
+  /** the scripts LoAF attributed, worst-first, capped and noise-filtered; may be empty */
+  scripts: LoafScript[];
+}
+
+/**
+ * Long Animation Frames observed in a driver step's window (Chrome only). A LoAF names the scripts
+ * that made a frame slow, so it attributes a step's cost to source EVEN on rungs with no CPU sampler
+ * and no trace: the in-page `long-animation-frame` observer is ungated by any capture cap. Chrome
+ * ships the API today and Firefox does not, so a firefox/node step carries none (absent, never a
+ * fabricated zero). See browser/driver.ts.
+ */
+export interface StepLoaf {
+  /** the observed long animation frames, worst-first, capped */
+  frames: LoafFrame[];
+  /** total long-animation-frame duration across all observed frames, ms (before the frame cap) */
+  totalDurationMs: number;
+  /** total blocking time over budget across all observed frames, ms (before the frame cap) */
+  totalBlockingMs: number;
+  /** how many long animation frames were observed before the frame cap */
+  observedFrames: number;
+}
+
+/**
  * What a forced-layout blame line names:
  *
  * - "flush-site": the geometry READ that forced the pending layout to flush synchronously, e.g.
@@ -607,6 +663,13 @@ export interface Span {
   inpMs?: number | null;
   /** in-page CWV split of `inpMs` (a driver step); absent when no interaction was observed */
   interaction?: InteractionTiming | null;
+  /**
+   * Long Animation Frames observed in a driver step's window, with the scripts the browser blamed
+   * (Chrome only; absent on firefox/node steps, run/measure spans, and older recordings). This
+   * attributes a step's cost to source even on rungs the CPU sampler cannot reach (the in-page
+   * observer is ungated by any capture cap). See StepLoaf.
+   */
+  loaf?: StepLoaf;
   /**
    * Per-iteration wall samples in run order (a driver step under --iterations, or a bench run). Raw,
    * not just the aggregate: a median hides the bimodality that says "the first iteration was cold".

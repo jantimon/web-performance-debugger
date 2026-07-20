@@ -150,7 +150,16 @@ to round the parts to whole ms where Chrome does not.
   ~171 ms until the route actually painted, on a production Next.js site. The step wall then prices an
   empty frame, not the transition. Pass an explicit `until:` (a selector matching the landed content,
   or an async predicate) for any soft-nav step; the heuristic is only safe when the whole update lands
-  in one rAF.
+  in one rAF. **`waitForStable(page, { selector, quietMs })`** (exported from the package, `until.ts`)
+  is the ready-made opt-in: it waits for `selector`, then for the DOM to go `quietMs` (default 200) with
+  no mutation, which the default settle cannot see because a streamed route keeps mutating past the
+  first idle gap. Reproduced against a streamed injection: the default settle resolves ~24 ms in while
+  the last chunk lands ~173 ms in; `waitForStable` resolves after it. It is opt-in, never the default:
+  the default settle is the measured trade-off above, and `waitForStable` trades a longer, more
+  variable wall (the `quietMs` tail rides on every step) for catching the whole transition. There is
+  no `soft-navigation` performance entry to lean on: it ships only behind Chrome's
+  `SoftNavigationHeuristics` flag (measured: absent from `supportedEntryTypes` by default), and setting
+  an experimental flag would change the browser under test.
 - **On a re-rendering SPA, drive the action with a plain `page.click('#stable-id')`.** Locator-style
   waits (`page.locator(sel).click()`, or `waitForSelector` then a click) re-resolve the element and
   hit **detached-node timeouts** when the framework replaces the node between the wait and the click.
@@ -179,6 +188,24 @@ to round the parts to whole ms where Chrome does not.
   sub-`run()` phase (an app's `__hydrateMs` / `__mountMs`) is timed in-page on the page's own clock —
   no driver wall, no frame wait, and finer-grained than bench's single `run()` window. `query spans
   latest` lists them; see [cpu-profiling.md](./cpu-profiling.md).
+- **A driver step's per-package/hot CPU can be empty even when its JS ms is real.** The V8 CPU
+  profiler resets on each cross-document navigation, so a step window before the run's last navigation
+  carries no samples: its bar shows JS ms (from the trace) but `js.byPackage` is `{}` and the hot list
+  is suppressed with reason `not-covered` (raising `--iterations` cannot recover it; `breakdown-spans.ts`
+  pushes one coverage-gap note when the symptom is present). The per-step "where did the JS go" then
+  comes from two other signals: a `performance.measure` the app emits for that phase (a hydration /
+  mount span DOES carry `byPackage` and hot functions, since a measure pools samples across its own
+  in-`run()` occurrences), and the LoAF script list below. State this in user copy: the `query span`
+  anatomy is uniform in shape across span kinds, not in which CPU fields each kind can fill.
+- **A driver step carries Long Animation Frames (Chrome), attributing slow frames to scripts.** The
+  driver arms an in-page `long-animation-frame` observer, reset per step (`driver.ts`), and stores the
+  step's frames on `Span.loaf` (`summarizeLoaf`: worst-first frames, each naming its worst scripts by
+  duration with the forced style/layout ms). Unlike the CPU sampler and the trace, the observer is
+  **ungated by any capture cap**, so a step gets script-level attribution even on the default rung (no
+  trace, no per-step counts) and even when the sampler could not cover its window. `sourceURL` is the
+  served script url, not a source line: LoAF gives a character offset, not a line, so a line-level
+  rewrite would be a guess. Chrome-only (measured: absent from Firefox's `supportedEntryTypes`), so a
+  firefox/node step stores nothing rather than a fabricated zero.
 - **A measure label that repeats gets a median, not iteration 1.** `--iterations`/`--warmup` re-run
   `run()`, so a label emitted inside `run()` recurs once per iteration (and can recur within one),
   mirroring `mergeSteps`. `mergeSpanOccurrences` (`model/span-merge.ts`) keys those occurrences by

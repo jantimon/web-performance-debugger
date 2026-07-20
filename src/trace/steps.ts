@@ -1,6 +1,6 @@
 import type { DriverStep } from "../browser/driver.js";
 import type { StepWindow } from "./parse.js";
-import type { InteractionTiming } from "../model/recording.js";
+import type { InteractionTiming, StepLoaf } from "../model/recording.js";
 
 /**
  * A step's trace window keyed by label instead of index. The one pass produces both the step
@@ -38,6 +38,12 @@ export interface MergedStep {
   inpMs: number | null;
   /** each part medianed across the iterations that measured an interaction; null if none did */
   interaction: InteractionTiming | null;
+  /**
+   * Long Animation Frames from the FIRST timed iteration (Chrome only), matching the per-step counts
+   * windowing: LoAF frames carry script attribution that cannot be medianed like a scalar, so the
+   * step reports iteration 0's frames rather than a synthetic merge. Absent when none were observed.
+   */
+  loaf?: StepLoaf;
   startTs: number | null;
   endTs: number | null;
 }
@@ -277,6 +283,7 @@ export function mergeSteps(
       ...(wallClock ? { wallClock } : {}),
       inpMs: inpSamples.length ? median(inpSamples) : null,
       interaction,
+      ...(first.loaf ? { loaf: first.loaf } : {}),
       startTs: window?.startTs ?? null,
       endTs: window?.endTs ?? null,
     });

@@ -16,6 +16,9 @@ export type {
   TimingEntry,
   BenchStats,
   InteractionTiming,
+  LoafScript,
+  LoafFrame,
+  StepLoaf,
   StepTiming,
   RecordingSummary,
   RecordingWindow,
@@ -65,3 +68,8 @@ export type { RawCpuProfile } from "./profile/cpuprofile.js";
 
 // The `latest` pointer file (cwd-keyed, under the XDG state dir).
 export type { LastPointer } from "./commands/resolve.js";
+
+// Driver helpers a user's module can import. `waitForStable` is a `measureStep` `until` that waits
+// for a streamed / soft-navigating transition to finish (the default settle can end before it does).
+export { waitForStable } from "./browser/until.js";
+export type { WaitForStableOptions } from "./browser/until.js";

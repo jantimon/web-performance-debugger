@@ -38,17 +38,18 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 
 CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
 unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). The **308** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+`test:e2e`). The **329** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
 `dist/` (classify/summarize/analysis/format, plus the breakdown engine, the trace CPU-chunk merge
 (`profile-chunks`), `query spans` adapter + its
 flood filter, the `query span` anatomy + removed-verb stubs, the thrash detector, the firefox
 dirtied-by report, the gecko converter, the XDG pointer, frame side track, the trace-overflow/partial
-notes, and the `facts.md` ledger drift check). The **34** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
+notes, the LoAF shaper (`summarizeLoaf`), and the `facts.md` ledger drift check). The **34** cli e2e tests (`test/cli.e2e.test.mjs`) spawn the
 built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
 `--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`), the
 trace-sourced CPU samples keeping per-step attribution across a navigation,
 `query spans` (incl. the `--min-wall`/`--filter` flood filter), `query span` (a run span's bar + hot
-functions, a --deep step's counts + forced), `--keep-partial` salvage, the
+functions, a --deep step's counts + forced), per-step LoAF script attribution on the default rung,
+`waitForStable` catching a streamed transition, `--keep-partial` salvage, the
 digest/index removal, the frame side track, and the two-capture assert workflow (a forced budget on
 `--breakdown` and a slice budget on `--deep` each fail loudly). They **self-skip when Chrome is not installed** (so
 `npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a
@@ -96,7 +97,11 @@ contracts** — keep them straight:
 - **Driver mode** (default): the module runs *in Node* and `run({ page, ctx, measureStep })`
   drives the page via Puppeteer. Implemented by `browser/driver.ts`. Steps are defined by
   `measureStep(label, action, { until })`; each becomes a `kind: "step"` span on the one recording.
-  Per-step INP is captured via an injected Event Timing `PerformanceObserver`. A
+  Per-step INP is captured via an injected Event Timing `PerformanceObserver`, and per-step Long
+  Animation Frames via an injected `long-animation-frame` observer (`summarizeLoaf` -> `Span.loaf`,
+  Chrome-only, ungated by any capture cap, so it attributes a step's slow frames to scripts even on
+  the default rung). Both observers are in-page, not CDP. `browser/until.ts` `waitForStable` is an
+  opt-in `until` for streamed/soft navigations the default settle ends before. A
   `page.goto` inside a `measureStep` is traced, so a navigation step measures a cold boot.
 - **Bench mode** (`--bench`): the module is served over http and `import()`'d *inside the
   browser*; `run(ctx)` gets no `page` handle (there is nothing to drive from inside) but has live

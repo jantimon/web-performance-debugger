@@ -409,6 +409,95 @@ e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed
   );
 });
 
+// Per-step Long Animation Frame attribution: a step whose handler runs over the 50ms LoAF budget must
+// carry a StepLoaf naming the blamed script, on the DEFAULT rung (no trace, no per-step counts) -- the
+// in-page observer is ungated by any capture cap, which is the point (attribution where the sampler
+// and trace cannot reach). Chrome-only, so this rides the chrome lane.
+e2e("record (default rung): a driver step carries LoAF script attribution", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  // Committed host page whose click handler busy-waits ~120ms and forces a synchronous layout, so the
+  // frame becomes a long animation frame with a non-zero forced style/layout duration.
+  const html = path.join(repoRoot, "test", "fixtures", "loaf-probe.html");
+  assert.ok(existsSync(html), "loaf-probe.html is committed, so this test cannot silently skip");
+  const flow = path.join(dir, "loaf-flow.mjs");
+  writeFileSync(
+    flow,
+    `export async function run({ page, measureStep }) {
+       await page.waitForSelector("#slow");
+       await measureStep("slow-click", async () => {
+         await page.click("#slow");
+         await page.waitForFunction(() => (window.__done || 0) >= 1, { timeout: 20000 });
+       });
+       // A trivial step after the slow one: its window must NOT inherit the slow step's frames.
+       await measureStep("quick", async () => {
+         await page.evaluate(() => void 0);
+       });
+     }`,
+  );
+  const out = path.join(dir, "loaf-step");
+  // No --breakdown/--deep: the default rung has no trace, so counts are null. LoAF must still land.
+  runCli(["record", flow, "--url", html, "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+
+  const step = rec.spans.find((span) => span.kind === "step" && span.label === "slow-click");
+  assert.ok(step, "the slow-click step span exists");
+  assert.equal(step.counts.layoutCount, null, "the default rung captured no trace, so counts are null");
+  assert.ok(step.loaf, "the step carries a StepLoaf even with no trace");
+  assert.ok(step.loaf.observedFrames >= 1, "at least one long animation frame was observed");
+  assert.ok(step.loaf.totalDurationMs > 50, `the long frame is over the 50ms budget, got ${step.loaf.totalDurationMs}`);
+  const worst = step.loaf.frames[0];
+  assert.ok(worst.scripts.length >= 1, "the frame names at least one blamed script");
+  const blamed = worst.scripts[0];
+  assert.match(blamed.invoker, /slow/, `the blamed script names the click listener, got ${blamed.invoker}`);
+  assert.ok(blamed.durationMs > 50, `the blamed script ran over the budget, got ${blamed.durationMs}`);
+  assert.ok(blamed.forcedStyleLayoutMs > 0, "the handler forced synchronous style/layout, attributed to the script");
+
+  // The trivial step must not inherit the slow step's frames (the per-step reset works).
+  const quick = rec.spans.find((span) => span.kind === "step" && span.label === "quick");
+  assert.ok(quick, "the quick step span exists");
+  assert.equal(quick.loaf, undefined, "a trivial step carries no LoAF: the slow step's frames did not leak forward");
+
+  // The full anatomy surfaces the same LoAF frames (JSON contract).
+  const anatomy = JSON.parse(runCli(["query", "span", out, "step:slow-click", "--json"]));
+  assert.ok(anatomy.loaf, "query span --json carries the loaf field");
+  assert.ok(anatomy.loaf.frames[0].scripts[0].invoker, "and it names the blamed script");
+});
+
+// waitForStable catches a streamed transition the default settle ends before. Two steps click the
+// same streamed injection: the default-settle step resolves during the stream, the waitForStable step
+// waits past the last chunk, so its wall is materially larger.
+e2e("record (driver): waitForStable waits past a streamed transition the default settle misses", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const html = path.join(repoRoot, "test", "fixtures", "streamed-nav.html");
+  assert.ok(existsSync(html), "streamed-nav.html is committed, so this test cannot silently skip");
+  const helper = path.join(repoRoot, "dist", "index.js");
+  const flow = path.join(dir, "stable-flow.mjs");
+  writeFileSync(
+    flow,
+    `import { waitForStable } from ${JSON.stringify(helper)};
+     export async function run({ page, measureStep }) {
+       await page.waitForSelector("#go");
+       await measureStep("default-settle", () => page.click("#go"));
+       await page.evaluate(() => (document.getElementById("app").innerHTML = ""));
+       await measureStep("wait-stable", () => page.click("#go"), {
+         until: waitForStable(page, { selector: "#landed", quietMs: 150 }),
+       });
+     }`,
+  );
+  const out = path.join(dir, "stable");
+  runCli(["record", flow, "--url", html, "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+  const settle = rec.spans.find((span) => span.kind === "step" && span.label === "default-settle");
+  const stable = rec.spans.find((span) => span.kind === "step" && span.label === "wait-stable");
+  assert.ok(settle && stable, "both step spans exist");
+  // The stream runs ~170ms; the default settle resolves well before it, waitForStable well after.
+  assert.ok(
+    stable.wallMs > settle.wallMs + 100,
+    `waitForStable outlasts the default settle by the streamed tail: stable ${stable.wallMs} vs settle ${settle.wallMs}`,
+  );
+  assert.ok(stable.wallMs > 170, `waitForStable waits past the last chunk (~170ms), got ${stable.wallMs}`);
+});
+
 // prepare()/warmup page-side JS must NOT reach the CPU model. In driver mode the sampler is not
 // windowed after the fact (no trace clock to slice it by on the default rung), so it opens at the run
 // mark, after prepare and warmup. Here prepare() and one warmup each burn ~70 ms of page-side JS while

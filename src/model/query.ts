@@ -17,6 +17,7 @@ import type {
   SpanAggregation,
   SpanCounts,
   SpanKind,
+  StepLoaf,
   ThrashReport,
 } from "./recording.js";
 import type { Measured } from "./measured.js";
@@ -274,6 +275,9 @@ export interface SpanAnatomy {
   inpMs?: number | null;
   /** in-page CWV split of `inpMs` (a driver step); absent when no interaction was observed */
   interaction?: InteractionTiming | null;
+  /** Long Animation Frames observed in a driver step's window (Chrome only); absent otherwise. Names
+   * the scripts that made a frame slow, so a step attributes to source even with no CPU sampler. */
+  loaf?: StepLoaf;
   /** forced read-sites in this span's window; present only on an event-log rung (chrome/firefox --deep) */
   forced?: SpanForced[];
   /** the layout-thrashing rollup for the run window (chrome --deep only, run span) */

@@ -391,6 +391,12 @@ That is the standard triage: a slow interaction is slow because the main thread 
 input landed, because your handler ran long, or because rendering the result did. A `—` means no
 interaction crossed the 16 ms floor the Event Timing spec sets, so nothing was measured.
 
+A step also carries any **Long Animation Frames** it triggered (Chrome), naming the scripts that made
+a frame slow — the listener/callback, its script url, its duration, and the ms it spent in forced
+style/layout. This attributes a step's cost to source even on the default rung (no trace, no CPU
+sampler window): `query span <step>` prints the blamed scripts under the interaction split. It is
+Chrome-only today; a Firefox step omits it rather than reporting a fake zero.
+
 `inp ms` and the CWV split are measured **in-page**, so they describe the page, not the driver. A
 step's `wallMs` is the page's own window too: the trace-clock span between the step's marks under
 `--breakdown`/`--deep`, or the page's `performance.now` delta on the default rung — never the node-side
@@ -404,6 +410,22 @@ settle floor is two frames — ~16 ms on the default headless mode (chrome-headl
 ~31 ms under `--headless-mode new` (full Chrome, ~60 Hz). `wall`/`INP` carry this one-frame floor, so a
 sub-frame re-render reads as the frame time; read the counts, the bar, or `interaction.processingMs`
 for the work itself. See [docs/dev/frame-floor.md](docs/dev/frame-floor.md).
+
+**Streamed / soft navigations.** The default settle resolves the moment the page goes briefly idle,
+which on a streamed SPA route change (markup arriving in chunks) can be *before* the content lands.
+For a navigation-like step, wait on the landed content — or use the exported `waitForStable`, which
+waits for a selector and then for the DOM to stop mutating:
+
+```js
+import { waitForStable } from "@jantimon/web-performance-debugger";
+
+await measureStep("open product", () => page.click(".product-link"), {
+  until: waitForStable(page, { selector: "#add-to-cart", quietMs: 200 }),
+});
+```
+
+It is opt-in, not the default: it trades a longer, more variable wall (the `quietMs` tail rides on
+every step) for catching the whole transition.
 
 **Clicking a page that never stops re-rendering.** Prefer a stable selector and `page.click('#id')`.
 A raw element handle (`evaluateHandle(...).asElement().click()`) throws `Node is detached from
@@ -635,7 +657,7 @@ and a new-vs-old pair warns that it cannot verify the flow.
 | Verb | Shows |
 | --- | --- |
 | `spans <file>` | per-span reconciling bars (run + steps + `performance.measure`), one shape across targets (`--label <L>`, `--min-wall <ms>`, `--filter <text>`) |
-| `span <file> <label>` | one span's full anatomy: bar, counts, INP, forced/dirtied-by, thrash, hot functions. `<label>` is bare or `kind:label` |
+| `span <file> <label>` | one span's full anatomy: bar, counts, INP, LoAF scripts (driver steps, Chrome), forced/dirtied-by, thrash, hot functions. `<label>` is bare or `kind:label`. Which CPU fields fill depends on the kind: a step's `byPackage`/hot can be empty across a navigation, where a `performance.measure` or the LoAF scripts attribute it instead |
 | `blame <file>` | events grouped by source line (`--forced`, `--all`, `--kind`, `--dirtied` on firefox `--deep`, `--top`) |
 | `cpu <file>` | hot functions + rollup (`--by package\|file\|function`, `--top`) |
 | `frame <file> <id>` | one CPU function: its callers and callees |

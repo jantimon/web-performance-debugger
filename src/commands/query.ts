@@ -282,6 +282,7 @@ function buildSpanAnatomy(
     counts: span.counts,
     ...(span.inpMs != null ? { inpMs: span.inpMs } : {}),
     ...(span.interaction ? { interaction: span.interaction } : {}),
+    ...(span.loaf ? { loaf: span.loaf } : {}),
     ...(forced ? { forced } : {}),
     ...(thrash ? { thrash } : {}),
     ...(firefoxDirtied ? { firefoxDirtiedBy: firefoxDirtied } : {}),
@@ -467,6 +468,31 @@ function printSpanAnatomy(
           : null;
       const detail = signal ? `; the sub-frame cost is ${signal}` : "";
       console.log(dim(`  INP sits on the ~${num(inpFloor, 1)} ms one-frame floor${detail}`));
+    }
+  }
+
+  if (anatomy.loaf?.frames.length) {
+    const loaf = anatomy.loaf;
+    console.log(
+      `\nLong animation frames: ${bold(String(loaf.observedFrames))} ${dim(
+        `(${num(loaf.totalDurationMs, 1)} ms total, ${num(loaf.totalBlockingMs, 1)} ms blocking over the 50ms budget)`,
+      )}`,
+    );
+    console.log(dim("  scripts the browser blamed (source url is the served script, not a line):"));
+    for (const frame of loaf.frames) {
+      console.log(`  frame ${num(frame.durationMs, 1)} ms:`);
+      for (const script of frame.scripts) {
+        const forced =
+          script.forcedStyleLayoutMs > 0
+            ? dim(` · ${num(script.forcedStyleLayoutMs, 1)} ms forced style/layout`)
+            : "";
+        const name = script.sourceFunctionName ? ` ${script.sourceFunctionName}` : "";
+        console.log(
+          `    ${num(script.durationMs, 1)} ms  ${script.invoker}${name} ${dim(`(${script.invokerType})`)}`,
+        );
+        console.log(`      ${dim(script.sourceURL || "(no source url)")}${forced}`);
+      }
+      if (!frame.scripts.length) console.log(dim("    (no script attribution)"));
     }
   }
 
