@@ -252,7 +252,10 @@ profiler startup), so the capture modes are reporting tiers over that one captur
 `--breakdown`/`--precise-wall` are rejected there and `--deep` adds a dirtied-by write report. That pass has
 no sampler-free counterpart — the Gecko profiler is a startup feature for the whole browser lifetime — so
 even Firefox's fastest capture pays for it: **🐌🐌🐌 Δ ~150%** over a plain Firefox launch on the same
-workload, and `--deep` is the same capture at the same cost. Chrome can buy the sampler back with
+workload, and `--deep` is the same capture at the same cost. That tax is reflow-weighted, not flat:
+each synchronous reflow's marker captures a JS cause stack (the blame signal), so the probe's
+reflow-heavy workload pays ~150% while pure-JS work pays ~5%
+([details](docs/dev/firefox-cpu.md)). Chrome can buy the sampler back with
 `--precise-wall`; Firefox cannot, so its numbers are a floor, not a benchmark wall.
 `--target node` is a CPU-only lane with the four-slice bar. See [the lanes](#what-each-target-gives-you).
 
