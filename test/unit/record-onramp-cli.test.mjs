@@ -60,6 +60,47 @@ test("--url is documented, --html is absent from --help", () => {
   assert.doesNotMatch(result.stdout, /--html <file>/, "the alias is hidden");
 });
 
+test("--disable-browser-sandbox with --user-data-dir is refused (unsandboxed renderer + real profile)", () => {
+  const result = runCli([
+    "record",
+    "examples/forces-layout.mjs",
+    "--bench",
+    "--disable-browser-sandbox",
+    "--user-data-dir",
+    "/tmp/profile",
+  ]);
+  assert.equal(result.status, 1, "exits non-zero");
+  assert.match(result.stderr, /--disable-browser-sandbox with --user-data-dir/, "names the combo");
+  assert.match(result.stderr, /no safe way to combine them/, "refuses rather than warns");
+});
+
+test("--disable-browser-sandbox with a public --url warns loudly before launch", () => {
+  // --iterations 0 aborts before any browser launches, so the warning is the only browser-free signal
+  // to assert on; a private/localhost --url stays quiet (only public content is the risk).
+  const result = runCli([
+    "record",
+    "--url",
+    "https://example.com",
+    "--disable-browser-sandbox",
+    "--iterations",
+    "0",
+  ]);
+  assert.match(result.stderr, /WARNING: --disable-browser-sandbox loads https:\/\/example\.com/, "warns about the public host");
+  assert.match(result.stderr, /no OS containment/, "names the risk");
+});
+
+test("--disable-browser-sandbox with a localhost --url does not warn (only public content is the risk)", () => {
+  const result = runCli([
+    "record",
+    "--url",
+    "http://localhost:1/x",
+    "--disable-browser-sandbox",
+    "--iterations",
+    "0",
+  ]);
+  assert.doesNotMatch(result.stderr, /WARNING: --disable-browser-sandbox loads/, "stays quiet for a private host");
+});
+
 test("programmatic record() without module or url/html rejects instead of crashing later", async () => {
   const { record } = await import("../../dist/commands/record.js");
   await assert.rejects(() => record({}), /needs a module to run, or url\/html/);
