@@ -706,6 +706,9 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   // Disclose the filter and how many spans it hid in the structured output too, never a silent cut.
   if (fmt) return emit({ ...result, spans, hidden, filter: spanFilter }, fmt);
 
+  // Surface an opt-in variant label next to the recording identity, so a reader knows which technique
+  // this recording is (and why a diff gate against another variant would refuse).
+  if (rec.meta.variant) console.log(dim(`\nvariant: ${rec.meta.variant}`));
   // Human output reuses the existing bar renderers. The stored-bars path prints the seven-slice
   // per-span table; the synthesized run bar prints the CpuModel bar, which already labels
   // style/layout and browser/native honestly for its lane.
@@ -792,7 +795,7 @@ async function printBarlessSpans(
     formatMeasured(value, (measured) => String(measured));
   const isDeep = meta.passes.includes("deep") || isGeckoCaptureMode(meta.passes);
   console.log(
-    `\nspans overview ${dim(`(${overview.target} · no reconciling bar at this capture · counts Measured: — = not measured, never 0)`)}\n`,
+    `\nspans overview ${dim(`(${overview.target}${meta.variant ? ` · variant ${meta.variant}` : ""} · no reconciling bar at this capture · counts Measured: — = not measured, never 0)`)}\n`,
   );
   console.log(
     table(

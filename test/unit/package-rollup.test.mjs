@@ -118,3 +118,69 @@ test("packageRollup: a map to an existing on-disk source still uses the nearest 
   assert.equal(styled.package, "@acme/ui");
   assert.equal(model.unmappedFrames, 0);
 });
+
+/** A bundle + map naming ONE off-disk source, plus a named hot function. Returns the bundle path. */
+function writeNamedBundle(dir, name, source, fnName) {
+  mkdirSync(dir, { recursive: true });
+  const bundlePath = path.join(dir, `${name}.js`);
+  writeFileSync(bundlePath, `function minified(){}\n//# sourceMappingURL=${name}.js.map\n`);
+  writeFileSync(`${bundlePath}.map`, sourcemapFor(source, fnName));
+  return bundlePath;
+}
+
+/** A profile whose leaves are the given (fnName, bundlePath) frames under one (root). */
+function multiFrameProfile(frames) {
+  const nodes = [
+    { id: 1, callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 }, children: frames.map((_, index) => index + 2) },
+  ];
+  frames.forEach(([fnName, bundlePath], index) => {
+    nodes.push({
+      id: index + 2,
+      callFrame: { functionName: fnName, scriptId: String(index + 2), url: pathToFileURL(bundlePath).href, lineNumber: 0, columnNumber: 0 },
+      children: [],
+    });
+  });
+  return { startTime: 0, endTime: frames.length * 1000, nodes, samples: frames.map((_, index) => index + 2), timeDeltas: frames.map(() => 1000) };
+}
+
+async function multiModel(frames, root) {
+  return buildCpuModel(multiFrameProfile(frames), {
+    profilePath: "probe.cpuprofile",
+    meta: META,
+    sampleIntervalUs: 200,
+    root,
+    runtime: "node",
+  });
+}
+
+test("packageRollup: one library's off-disk sources under <pkg>/src/* collapse to ONE bucket", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wpd-offsplit-"));
+  // A published package "design-system" whose compiled output ships in the app bundle but whose
+  // sourcemapped originals (design-system/src/runtime, design-system/src/core) are NOT on disk. The
+  // segment before the first source-layout dir (src) names the package, so the two sub-directories
+  // must NOT split into (unmapped: runtime) + (unmapped: core).
+  const off = path.join(os.tmpdir(), `wpd-off-${Date.now()}`, "design-system", "src");
+  const model = await multiModel([
+    ["tokensFn", writeNamedBundle(path.join(root, "vendor"), "a", path.join(off, "runtime", "tokens.ts"), "tokensFn")],
+    ["themeFn", writeNamedBundle(path.join(root, "vendor"), "b", path.join(off, "core", "theme.ts"), "themeFn")],
+  ], root);
+
+  const packages = new Set(model.functions.map((fn) => fn.package));
+  assert.deepEqual([...packages], ["(unmapped: design-system)"], "the library is ONE bucket, not one per source directory");
+  assert.ok(!model.functions.some((fn) => fn.package === "app"), "nothing mis-buckets as app");
+  const rollup = packageRollup(model);
+  assert.equal(rollup.length, 1, "the per-package story is one row for the library");
+  assert.equal(rollup[0].key, "(unmapped: design-system)");
+});
+
+test("packageRollup: a scoped package in an off-disk path is recovered as its @scope/name", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wpd-offscope-"));
+  // No node_modules and no source-layout dir, but a @scope/name pair sits in the phantom path: an
+  // unambiguous owner, so the bucket names the scoped package rather than a stray directory.
+  const off = path.join(os.tmpdir(), `wpd-off-${Date.now()}`, "@acme", "widgets", "internal", "grid.ts");
+  const model = await multiModel([["gridFn", writeNamedBundle(path.join(root, "vendor"), "c", off, "gridFn")]], root);
+  const grid = model.functions.find((fn) => fn.fn === "gridFn");
+  assert.ok(grid, "the bundled function is ranked");
+  assert.equal(grid.package, "(unmapped: @acme/widgets)");
+  assert.notEqual(grid.package, "app");
+});
