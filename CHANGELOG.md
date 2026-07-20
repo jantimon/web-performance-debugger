@@ -1,5 +1,32 @@
 # @jantimon/web-performance-debugger
 
+## 0.13.2
+
+### Patch Changes
+
+- 745fd56: Fix `record --url <heavy page> --breakdown` crashing with `Maximum call stack size exceeded` while
+  merging the CPU-sample streams a navigation splits. A failed `record` now always exits non-zero so CI
+  and scripts can detect it, and `WPD_DEBUG=1` prints the error stack.
+- 2ac97fb: Rename the "rung" vocabulary to "capture mode" across the README, CLI help, error messages, notes,
+  and reports. The chrome capture modes are default, `--breakdown`, `--deep`, and `--precise-wall`.
+
+  No behavior or artifact-format change: `meta.passes` values and `meta.schemaVersion` are unchanged,
+  so existing recordings still read. Note prose changed wording only.
+
+- 4db0cca: Three fixes for driver flows that navigate cross-process.
+
+  - **`--breakdown` no longer reports all-zero bars when a step touches the page before navigating.** A
+    stray flush on the pre-navigation renderer used to defeat the cross-process re-anchor, tiling the
+    whole run on the blank host thread and reporting the loaded page as ~100% idle. It now re-anchors on
+    the marker thread's rendering SHARE, so the counts and bar follow the page to its new process.
+    Successive cross-process navigations, which no single thread can hold, now emit a loud WARNING
+    instead of a silent zero bar for the un-tiled process.
+  - **`waitForStable` survives a hard cross-document navigation mid-wait** (a `location` swap, meta
+    refresh, or redirect the step lands on): it re-attaches to the new document instead of failing the
+    whole record with "Execution context was destroyed".
+  - **`query spans` renders a --deep recording** (label/kind/wall/aggregation/counts, bars not-measured)
+    instead of erroring, so the overview-then-drill flow works on the capture with the richest counts.
+
 ## 0.13.1
 
 ### Patch Changes
