@@ -65,6 +65,47 @@ test("assembleTraceCpuProfile: reads the interval back from the chunk deltas", (
   assert.equal(sampleIntervalUs, 150, "median inter-sample delta, not the 200us default constant");
 });
 
+test("assembleTraceCpuProfile: the interval is an actual observed delta, never an averaged fraction", () => {
+  // An even count of distinct deltas: the two middle values are 150 and 152. An averaging median
+  // would report 151us, an interval no sample ran at, which then prints verbatim in the cpu headline.
+  // The lower median names a real observed delta and stays an integer microsecond.
+  const node = { id: 1, callFrame: { functionName: "f", scriptId: 1, url: "u", lineNumber: 1, columnNumber: 1 } };
+  const evenStream = {
+    traceEvents: [
+      { name: "Profile", pid: 1, id: "0x1", ts: 0, args: { data: { startTime: 0 } } },
+      {
+        name: "ProfileChunk",
+        pid: 1,
+        id: "0x1",
+        ts: 1,
+        args: { data: { cpuProfile: { nodes: [node], samples: [1, 1, 1, 1] }, timeDeltas: [150, 150, 152, 152] } },
+      },
+    ],
+  };
+  const { sampleIntervalUs } = assembleTraceCpuProfile(evenStream);
+  assert.equal(sampleIntervalUs, 150, "lower median: an observed delta, not the 151 average of the two middles");
+  assert.ok(Number.isInteger(sampleIntervalUs), "the reported interval is an integer microsecond");
+});
+
+test("assembleTraceCpuProfile: the model's cumsum does NOT reconstruct the clock; sampleTimestampsUs does", () => {
+  // The invariant a navigation-merged model rests on: the per-sample timeDeltas are intra-stream
+  // (relative to each process's own startTime), so `startTime + Σ timeDeltas` COMPRESSES the
+  // cross-process navigation gap away. The true clock lives only in the parallel sampleTimestampsUs
+  // field, which windowTraceCpuProfile (and every other windowing consumer) must read. This test
+  // fails loudly if someone makes the model's timeDeltas absolute, tempting a cumsum shortcut.
+  const { profile } = assembleTraceCpuProfile(fixture);
+  const cumsum = profile.timeDeltas.reduce((sum, delta) => sum + delta, profile.startTime);
+  const realLastClock = profile.sampleTimestampsUs.at(-1);
+  assert.ok(
+    realLastClock - cumsum > 100000,
+    "cumsum lands ~1s short of the real clock: the navigation gap is absent from the model's deltas",
+  );
+  // The field consumers must read reconstructs the clock exactly, and windowing uses it.
+  const windowed = windowTraceCpuProfile(profile, realLastClock);
+  assert.equal(windowed.samples.length, 1, "windowing by the real clock keeps only the final sample");
+  assert.equal(windowed.sampleTimestampsUs[0], realLastClock, "it filtered on sampleTimestampsUs, not a cumsum");
+});
+
 test("assembleTraceCpuProfile: buildCpuModel runs UNCHANGED and attributes BOTH documents", async () => {
   const { profile, sampleIntervalUs } = assembleTraceCpuProfile(fixture);
   const model = await buildCpuModel(profile, {

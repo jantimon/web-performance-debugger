@@ -84,13 +84,15 @@ function startOf(group: ProfileGroup): number {
   return Number.isFinite(earliest) ? earliest : 0;
 }
 
-/** The interval the stream ran at, as the median inter-sample delta. The stream runs at a fixed rate
- * (no CDP profiler to coarsen it), so the median is the honest per-sample time each `selfMs` prices. */
+/** The interval the stream ran at, as the lower-median inter-sample delta. The stream runs at a fixed
+ * rate (no CDP profiler to coarsen it), so the median is the honest per-sample time each `selfMs`
+ * prices. Picking the lower of the two middle deltas (never their average) keeps the result an actual
+ * observed integer-microsecond delta: it is printed verbatim (`query cpu` headline), and an averaged
+ * "150.5us" would name an interval no sample ran at. */
 function medianInterval(timeDeltas: number[]): number {
   const positive = timeDeltas.filter((delta) => delta > 0).sort((left, right) => left - right);
   if (positive.length === 0) return DEFAULT_CPU_INTERVAL_US;
-  const mid = positive.length >> 1;
-  return positive.length % 2 === 1 ? positive[mid] : (positive[mid - 1] + positive[mid]) / 2;
+  return positive[(positive.length - 1) >> 1];
 }
 
 /**
