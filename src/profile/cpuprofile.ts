@@ -274,6 +274,18 @@ function packageFromNodeModules(filePath: string): string | null {
 }
 
 /**
+ * Bucket for a frame whose sourcemap named an original source that is NOT on disk (a dependency
+ * built from a workspace/source checkout, or a stale map). The path is the map's claim, not a real
+ * file, so it cannot be fs-walked to a package.json. Calling it "app" blames a dependency's cost on
+ * the user's own code; instead name the phantom's containing directory so the bucket points at the
+ * broken map. Parenthesized to match the other "not a real package" buckets ((unmapped)/(served)/...).
+ */
+function offDiskSourceBucket(filePath: string): string {
+  const dir = path.basename(path.dirname(filePath));
+  return dir && dir !== "." ? `(unmapped: ${dir})` : "(unmapped)";
+}
+
+/**
  * Owning package for a resolved local file: the node_modules package (pnpm-safe), else
  * the nearest package.json `name` (catches monorepo workspace packages like next-yak),
  * else "app". Directory results are cached so each tree is read at most once.
@@ -481,21 +493,49 @@ async function resolveCallFrame(
     };
   }
   const isLocalPath = frame.source != null;
-  // Resolve the owning package from the absolute path (reads package.json), then store the
-  // path relative to root: smaller model, portable, and a stable cpu-diff join key.
+  const relFile = relativizeSource(file, root) ?? file;
+  const lineSuffix = frame.line != null ? `:${frame.line}` : "";
   // Not-on-disk and not flagged remote means the frame was never rewritten to a local path
   // (e.g. --target node handed an http url): unknown owner, so bucket it rather than guess "app".
-  const owner = isLocalPath
-    ? await packageForFile(file, packageCache)
-    : unmappedOriginBucket(frame.url);
-  const relFile = relativizeSource(file, root) ?? file;
+  if (!isLocalPath) {
+    return {
+      fn,
+      minified,
+      source: `${relFile}${lineSuffix}`,
+      file: relFile,
+      package: unmappedOriginBucket(frame.url),
+      unmapped: true,
+    };
+  }
+  // A sourcemap remapped this frame (frame.bundled is set only then) to an absolute source that is
+  // NOT on disk: the map named an original source the recorder does not have (a dependency built
+  // from a workspace/source checkout, or a stale map). fs-walking that phantom path up to the
+  // nearest package.json lands on whatever sits above it -- usually the user's own root -- and blames
+  // a dependency's cost on "app". Instead derive the owner from the path string: the node_modules
+  // package the phantom source or its original bundle url names (the code really is that dependency),
+  // else an honest off-disk bucket that names the phantom directory, never "app". A frame that was
+  // NEVER remapped points at its own url and is the app's own file even when that file is absent, so
+  // it is left to packageForFile. The off-disk bucket is not counted in `unmapped`: that flag drives
+  // the map-LOAD-health warning (origin-bucketed frames from a failed map), and this map loaded fine;
+  // the parenthesized bucket name is the rollup's own honest "owner unknown" signal.
+  if (frame.bundled != null && path.isAbsolute(file) && !sourceExists) {
+    const dependency = packageFromNodeModules(file) ?? packageFromNodeModules(frame.url ?? "");
+    return {
+      fn,
+      minified,
+      source: `${relFile}${lineSuffix}`,
+      file: relFile,
+      package: dependency ?? offDiskSourceBucket(file),
+    };
+  }
+  // Resolve the owning package from the on-disk path (reads package.json), then store the path
+  // relative to root: smaller model, portable, and a stable cpu-diff join key.
   return {
     fn,
     minified,
-    source: `${relFile}${frame.line != null ? `:${frame.line}` : ""}`,
+    source: `${relFile}${lineSuffix}`,
     file: relFile,
-    package: owner,
-    unmapped: !isLocalPath,
+    package: await packageForFile(file, packageCache),
   };
 }
 
