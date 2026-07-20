@@ -30,9 +30,8 @@ permalink).
    `countScopeNote` says so; use `--iterations 1` to assert on counts. And a `Measured<>` field a rung
    did not measure is `null`, never 0 (`--breakdown` reports `forcedLayoutCount`/`forcedLayoutMs` as
    `null`, since forced needs `.stack`): `assert` FAILs on `null`, so `assert --max-forced 0` fails
-   under `--breakdown` by design, rather than passing on a fake 0. Firefox's unmeasured plain-number
-   counts cannot hold `null` — paint reports a literal `0` disclosed by a loud `meta.notes` entry
-   ("A 0 in those means unmeasured, not clean"), which is exactly why that note exists.
+   under `--breakdown` by design, rather than passing on a fake 0. Firefox is the same model: its
+   unmeasured counts (paint, invalidations, long tasks) report `null`/`—`, never a fake 0.
 2. **`selfMs` on the browser lanes is not pure JS.** It is JS *plus the synchronous engine work JS
    triggered* — a forced layout shows up as self-time on the line that forced it (~85% of the
    probe's "JS" time is reflow). Only `--target node` measures pure JS.
