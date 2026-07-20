@@ -13,7 +13,7 @@ import { mainThread } from "./main-thread.js";
  *
  * The signature of thrashing is write->read->write->read on one frame: each geometry read re-flushes
  * a layout an intervening write dirtied. The rule, per top-level `RunTask` window, main thread, in
- * `ts` order (measured against `examples/forces-layout.mjs`; docs/dev/engine-mapping.md):
+ * `ts` order (measured against `examples/forces-layout.mjs`; docs/dev/blame-semantics.md):
  *
  *   - A forced flush is a `layout`/`style` event with a resolved read-site stack (`event.forced`).
  *   - A write is an `invalidation`-kind event of layout or style kind (`invalidationKind`).
@@ -30,7 +30,7 @@ import { mainThread } from "./main-thread.js";
  * (a synchronous DOM detach stamps the record at mutation time; [measured] byte-stable, and pure
  * removeChild emits no style-kind write at all, so this is its only write signal). Every other
  * layout-kind reason ("Added to layout", "Style changed") stamps at the forced recalc and names the
- * READ, so trusting those would mis-label the write as the read. docs/dev/engine-mapping.md.
+ * READ, so trusting those would mis-label the write as the read. docs/dev/blame-semantics.md.
  */
 
 /** N: a run at/over this many thrash steps earns the "layout thrashed Nx" headline. A named constant. */
@@ -138,7 +138,7 @@ function annotateForcedFlushes(events: NormalizedEvent[], start: number | null):
           // "Removed from layout" entry whose `at` equals this flush's read-site is not a write: it
           // is the recalc-time stamp of a display:none removal, named at the read line. Drop it; a
           // genuine removeChild names a distinct write line and stays. The thrash count is read from
-          // gapLayoutWrites above and untouched. See docs/dev/engine-mapping.md.
+          // gapLayoutWrites above and untouched. See docs/dev/blame-semantics.md.
           const dirtiedBy = dedupeWrites(gapDirtiedBy).filter(
             (write) => !(write.reason === LAYOUT_WRITE_REASON && write.at === event.at),
           );

@@ -8,7 +8,8 @@
 **Scope.** This file is the **raw dump format**: schemas, encodings, bases. For what the names
 *mean* against Chrome's vocabulary — and where the two engines look equivalent but are not — read
 [engine-mapping.md](./engine-mapping.md). For the rung ladder and sampler behaviour, read
-[cpu-profiling.md](./cpu-profiling.md).
+[cpu-profiling.md](./cpu-profiling.md); for the Firefox sampler config and its honest idle,
+[firefox-cpu.md](./firefox-cpu.md).
 
 Everything below was verified against a
 real Gecko shutdown dump (Firefox 152.0.2 via Puppeteer 25 / WebDriver BiDi), not from docs alone.
@@ -73,7 +74,7 @@ Started at launch and dumped on browser exit via `launch({ env })`:
   set, so it must name everything wpd needs: `js` gives JS stacks, UserTiming markers, and
   Reflow/Styles markers with JS cause stacks; `cpu` populates the per-sample `threadCPUDelta` column
   (`js` alone leaves it structurally empty), whose ~0 values are the honest idle signal the
-  reconciling bar tiles ([cpu-profiling.md](./cpu-profiling.md)). `stackwalk` is NOT added (zero
+  reconciling bar tiles ([firefox-cpu.md](./firefox-cpu.md)). `stackwalk` is NOT added (zero
   signal on the shallow JIT stacks, and it would only add native C++ frames we collapse); neither is
   `cpuallthreads` (`cpu` reproduces the idle result sampling only registered threads).
 - `MOZ_PROFILER_STARTUP_INTERVAL=1` (ms floor; the real sample delta measured was ~1ms median)
@@ -165,7 +166,7 @@ modes (both already emit those marks).
   **read**. So `geckoReadSiteBlameEvents` samples the read site instead: a DOM-accessor over a
   Layout-category flush, attributed to the JS ancestor's executing `frameTable.line` + property, as
   `sampled` events the summary skips. Both engines then name the read. Read
-  [engine-mapping.md](./engine-mapping.md#forced-layout-blame-differs-by-engine) before touching or
+  [blame-semantics.md](./blame-semantics.md#forced-layout-blame-differs-by-engine) before touching or
   trusting this path.
 - This lane runs inside the gecko pass (one browser launch yields both the CPU samples and the
   markers), which is **not optional**: without it a Firefox recording would report every rendering

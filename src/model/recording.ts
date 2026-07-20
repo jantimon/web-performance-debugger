@@ -355,7 +355,7 @@ export interface StepLoaf {
  *   assignment. The legacy Firefox semantic (Gecko cause stacks, first invalidator since the last
  *   flush), present only on older recordings.
  *
- * See docs/dev/engine-mapping.md.
+ * See docs/dev/blame-semantics.md.
  */
 export type BlameSemantic = "flush-site" | "invalidation-site";
 
@@ -764,7 +764,7 @@ export interface Recording {
  * The WRITE end of a forced flush: a DOM mutation that dirtied layout/style so a later geometry read
  * had to flush it synchronously. `at` is the mutation's source line.
  *
- * Both browser lanes reach it, by different routes (docs/dev/engine-mapping.md):
+ * Both browser lanes reach it, by different routes (docs/dev/blame-semantics.md):
  *  - Chrome `--deep`: from the STYLE-kind invalidation records the trace's invalidationTracking
  *    carries, with the invalidation `reason` (e.g. "Inline CSS style declaration was mutated"). The
  *    layout-kind `LayoutInvalidationTracking` stack names the forcing READ on style-driven

@@ -922,7 +922,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   // one being present rather than on the --forced flag: plain `blame` and `--all` show forced and
   // unforced rows together, and an unforced scripting/invalidation row is not a geometry read at
   // all. Saying so over such a table would print the exact read/write confusion the semantic
-  // exists to prevent (Chrome's invalidation stacks name the WRITE: docs/dev/engine-mapping.md).
+  // exists to prevent (Chrome's invalidation stacks name the WRITE: docs/dev/blame-semantics.md).
   if (rows.some((row) => row.forced > 0)) {
     const semantic = blameSemanticLine(rec.meta.blameSemantic, rec.meta.browser);
     if (semantic) console.log(`\n${semantic}`);

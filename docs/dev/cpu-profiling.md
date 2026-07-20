@@ -4,8 +4,18 @@
 > file records why the rung ladder is shaped the way it is, with the measurements behind it, so the
 > next person does not "optimise" the structure into a wrong number.
 
-Related: [engine-mapping.md](./engine-mapping.md) (Gecko <-> Blink names and semantics),
-[gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas).
+**In this file:** [what self-time includes](#what-self-time-actually-includes)
+· [the rung ladder](#the-rung-ladder)
+· [the sampler opens at the run mark](#the-sampler-opens-at-the-run-mark-not-before-prepare)
+· [never ride a `.stack` trace](#why-the-sampler-never-rides-a-stack-trace)
+· [trace durations vs CDP](#layoutmsstylemspaintms-are-trace-durations-and-cdp-would-be-no-finer)
+· [the interval: why 200us](#the-sampler-interval-why-200us)
+· [sub-frame resolution](#sub-frame-cpu-work-is-measurable-on-both-engines-off-the-frame-floor-axis)
+
+Split out: [firefox-cpu.md](./firefox-cpu.md) (the Gecko sampler lane: shared pass, honest idle,
+the 1 ms floor), [cpu-attribution.md](./cpu-attribution.md) (which spans get samples, hot
+functions, sourcemap trust). Related: [engine-mapping.md](./engine-mapping.md) (Gecko <-> Blink
+names and semantics), [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas).
 
 **Provenance.** Rung-structure numbers are 5 interleaved runs per arm, after a discarded warmup, of
 `examples/forces-layout.mjs --bench` on chrome 150 / firefox 152; interval numbers are 3 runs per arm
@@ -35,7 +45,7 @@ Firefox does the same thing, and lands in the same place (`run()` at **8.79ms**)
 This is **correct and useful**, not a bug: "delete this line and the page gets ~8ms faster" is
 exactly the actionable answer. It also means `query cpu` already gives forced-layout attribution to
 the *forcing* line on both engines — including on Firefox, where `query blame` gets it wrong (see
-[engine-mapping.md](./engine-mapping.md#forced-layout-blame-differs-by-engine)).
+[blame-semantics.md](./blame-semantics.md#forced-layout-blame-differs-by-engine)).
 
 But it constrains what may be claimed:
 
@@ -89,7 +99,8 @@ node:                  [node-cpu]                     in-process V8, four-slice 
 - **gecko**: firefox only; one Gecko-profiler run yields CPU samples *and* layout/style markers. It
   is the firefox lane at every rung (the profiler is a whole-browser-lifetime startup feature), so
   the rungs are reporting tiers over this one capture. `--deep` adds a dirtied-by write report from
-  Gecko's native cause stacks; `meta.passes` is `gecko` or `gecko-deep`.
+  Gecko's native cause stacks; `meta.passes` is `gecko` or `gecko-deep`. See
+  [firefox-cpu.md](./firefox-cpu.md).
 - **node**: `--target node`; the in-process V8 sampler (`runtime/node.ts`), CPU-only, four-slice bar
   with the engine slice labeled `native`.
 
@@ -121,10 +132,11 @@ Starting late is safe across navigation: the page CDP session outlives a cross-d
 `prepare()` that navigates is simply excluded, and a `run()` that navigates behaves as before -- on the
 default rung the CDP profiler resets in the new process, so page CPU work before the navigation is
 absent from `scriptingMs`. `--breakdown` does not have this loss: it sources samples from the trace's
-`v8.cpu_profiler` stream (below), which is continuous across the navigation. There the trace-sourced
-profile is instead windowed to the run onward (`windowTraceCpuProfile`, since the trace runs before
-`prepare()` in driver mode), which excludes `prepare()`/warmup by timestamp rather than by when the
-sampler opened.
+`v8.cpu_profiler` stream, which is continuous across the navigation
+([cpu-attribution.md](./cpu-attribution.md#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-rung---breakdown-does-not)).
+There the trace-sourced profile is instead windowed to the run onward (`windowTraceCpuProfile`, since
+the trace runs before `prepare()` in driver mode), which excludes `prepare()`/warmup by timestamp
+rather than by when the sampler opened.
 
 ### Why the sampler never rides a `.stack` trace
 
@@ -238,48 +250,7 @@ into agreement, so a change to the interval lands on one lane while the other ke
 old rate and `--help` describes neither. A unit test asserts no lane redeclares it. If you add a
 lane, import the constant.
 
-## Firefox: samples and markers share a pass, unavoidably
-
-The gecko pass collects markers *and* samples together — structurally the thing warned against
-above, since `profiler_capture_backtrace()` fires on every invalidation. It cannot be separated:
-the Gecko profiler is started via `MOZ_PROFILER_STARTUP*` env vars for the whole browser lifetime,
-and the `js` feature that yields JS stacks for cause chains is the same feature that yields
-samples. So Firefox's CPU model may carry contamination of the same shape as Chrome's `.stack`.
-
-**This has not been measured.** It should be, before Firefox CPU numbers are described as clean.
-The one data point that argues against a large effect: firefox `run()` = 8.79ms vs chrome's
-uncontaminated 8.41ms, a 5% gap — but that is one probe and the two engines differ for other
-reasons too.
-
-### Firefox idle is on the CPU axis, not the category axis
-
-**[measured]** Idle is NOT in Gecko's category axis: a fully-idle window records 0 Idle-category
-and 0 null-stack samples, because the leaf frame while waiting is a native frame categorized `Other`
-(so `geckoToRawCpuProfile` alone would bill the whole wait to `(program)`). The idle information
-lives on a different axis: the per-sample `threadCPUDelta` column (how much CPU the thread actually
-consumed since the previous sample). A descheduled thread reads ~0 there while wall-time advances, so
-`idleMs = Σ(wall-delta where threadCPUDelta ~= 0)`.
-
-That column is present only when the profiler runs with the `cpu` feature. An explicit
-`MOZ_PROFILER_STARTUP_FEATURES` string REPLACES the default set, so `js` alone leaves the column
-**0% populated**; `js,cpu` populates it **100%**. Probe:
-`examples/awaits-only.mjs`, a `run()` that only awaits (`setTimeout` 20ms x 20, `--bench`), a
-~pure-wait window:
-
-| lane | window | idle reported |
-| --- | --- | --- |
-| Chrome (CDP, 200us) | 614 ms | **610 ms (99%)** — `(idle)` samples fill the wait |
-| Firefox (Gecko js,cpu, ~1ms) | 470 ms | **95.7% idle** — samples with `threadCPUDelta ~= 0` |
-
-So the reconciling bar IS emitted on Firefox: `geckoToRawCpuProfile` routes each ~0-CPU sample to
-`(idle)` (honest `scriptingMs`), and `computeGeckoCpuBreakdown` tiles the window
-`js · style · layout · browser · gc · idle`, with style/layout from each sample's nearest-to-leaf
-Layout-category frame. A dump without the CPU signal (an older recording, or js-only) carries no
-idle signal, so no bar is emitted rather than a fabricated one. `cpuallthreads` is unnecessary
-(`js,cpu` reproduces the idle result, sampling only registered threads) and `stackwalk` adds zero
-signal. Paint stays off the bar: it is off-main-thread compositor work (a side track), never summed.
-
-### Sub-frame CPU work IS measurable on both engines, off the frame-floor axis
+## Sub-frame CPU work IS measurable on both engines, off the frame-floor axis
 
 **[measured]** `wall`/`INP` cannot resolve below one display frame ([frame-floor.md](./frame-floor.md)),
 but CPU self-time can, in both engines, and reconciles with the independent `--bench` wall (the
@@ -298,163 +269,3 @@ Firefox is pinned to Gecko's ~1ms floor
 (`GECKO_MIN_INTERVAL_MS`), so a near-zero window reads a fixed ~5ms of a handful of samples and needs
 higher `--iterations` before the number is trustworthy. Both prove the point: the work axis reports
 what the one-frame `wall`/`INP` floor hides.
-
-### The Firefox sampler config: `js,cpu`, 1 ms, and what not to chase
-
-**[measured]** `examples/cpu-busywork.mjs --bench --target firefox`, interleaved arms, RAW dumps.
-
-- **The 1 ms floor is a measured choice, not the OS limit.** Requesting 0.5 ms *is* delivered on
-  macOS — achieved **0.50 ms** median (0.499-0.50 raw over 5 runs), so the `usleep()` floor does
-  not hold — but it is declined: it doubles samples for resolution wpd does not use (function lists +
-  self-% are interval-stable, above), and it *worsens* the two things that matter — scriptingMs-vs-
-  bench-wall reconciliation **+4%->+7%**, dump size **+1.5 MB**, with no fidelity gain. Sub-frame
-  fidelity comes from `--iterations` + measure-spans instead.
-- **Profiler self-overhead is 0.03-0.13% on the category axis — nothing to subtract.** wpd's dumps
-  are unsymbolicated, so sample leaves are raw JIT addresses with no category and the `Profiler`
-  category survives only on a handful of pseudo-frames. The sampler's real cost shows up as wall
-  (~4% in reconciliation), not as a category slice, so `selfMs` needs no overhead correction.
-- **ENTRIES is not a dump-size lever.** The 16M-entry ring is a ~128 MB ceiling never approached;
-  size scales with samples *used* (threads x whole-browser-lifetime x features: `cpu` +0.5 MB,
-  `stackwalk` +0.7 MB), so a dump is ~15-23 MB regardless of workload. Do NOT shrink it by lowering
-  ENTRIES: undersizing silently overwrites (drops) the window's *earliest* samples. `stackwalk`
-  stays off (zero signal on shallow JIT stacks, +0.7 MB).
-
-## Which spans get CPU attribution
-
-CPU attribution (the sampler's scripting axis: the run bar's `js` slice and the per-span hot list)
-reaches a span only where a sampler rung ran AND that span kind carries a window the samples can be
-tallied over. The run span reads the sibling `CpuModel` at query time; a step or measure span carries
-stored top-K `SpanHot` refs, which exist only where the fused `--breakdown` trace (or the gecko pass)
-gave that span its own window.
-
-| lane / rung | run span | step span | measure span |
-| --- | --- | --- | --- |
-| chrome default | yes (CpuModel) | no | no (no trace = no measure spans) |
-| chrome `--breakdown` | yes (CpuModel) | yes (`SpanHot`) | yes (`SpanHot`) |
-| chrome `--deep` | no (sampler OFF) | no | no |
-| chrome `--precise-wall` | no (sampler OFF) | no | no |
-| firefox (`gecko`/`gecko-deep`) | yes (CpuModel) | no | yes (`SpanHot`) |
-| node | yes (CpuModel) | n/a (no steps) | n/a (no measures) |
-
-So the run span is the only span with CPU attribution on the default and node lanes; steps get it only
-under chrome `--breakdown`; measures get it under chrome `--breakdown` and firefox. `--deep` and
-`--precise-wall` run the sampler OFF, so no span carries a CPU number on them.
-
-### The CDP sampler's window resets on a cross-process navigation (the default rung); `--breakdown` does not
-
-**[measured]** The V8 CDP sampling profiler restarts in the new renderer process on a cross-process
-navigation: `Profiler.stop` returns only the post-navigation process's samples. So on the **default
-rung** (the only rung that runs the CDP sampler and can navigate: `--url` boots, driver flows) the
-`CpuModel`, the run bar's `js` slice, and the "sampled window" cover **only the run after its last
-cross-process navigation**; page CPU work done in a prior renderer is absent from `selfMs`.
-
-Probe: a driver module that burns ~150 ms of page CPU on the blank host page, then
-`page.goto()` to a different origin (a true renderer swap), reports **10.4 ms** total JS self-time and
-a **229 ms** sampled window that is entirely the post-navigation settle -- **zero** samples for the
-150 ms loop. A same-origin control (no process swap) loses nothing: `Σ timeDeltas` equals the window to
-0.1 ms. It is distinct from the trace-count re-anchor (`trace/main-thread.ts`, which follows the
-navigation for counts) and from the step-wall page-clock reset (`driver.ts`, which is about
-`performance.now()`, not samples).
-
-**`--breakdown` closes this gap**: it sources samples from the trace's `v8.cpu_profiler` stream, not
-the CDP sampler, and that stream is continuous across the navigation (probe: 3868 samples spanning two
-documents vs the CDP sampler's 689, post-nav only). `trace/profile-chunks.ts` merges the per-process
-ProfileChunk streams into one `RawCpuProfile` (each process restarts its node-id space at 1, so the
-merge renumbers node ids into disjoint ranges, inverts `parent` -> `children`, and stamps each sample
-with its absolute trace-clock timestamp). So a pre-navigation step or an early measure occurrence keeps
-its per-span hot list and js-by-package split, where the CDP sampler leaves them empty (the
-`samplerCoverageGap` note, still emitted on any window the stream genuinely could not reach, e.g. a
-browser build that emits no chunks). Firefox does not have the gap either: its Gecko profiler runs for
-the whole browser lifetime and does not restart on navigation.
-
-## Per-span hot functions
-
-`query span <label>` shows a per-span hot list on the sampler rungs: the run span reads it from the
-CpuModel at query time; a `--breakdown` chrome step/measure span and a firefox measure span carry
-stored top-K refs (`SpanHot`, `profile/span-hot.ts`), joined to `CpuModel.functions[]` by id. The
-join is `functionIdByNode`, which reproduces the model's rank purely from the raw profile (same
-`isRankableFrame` filter, same self-time-desc + frameKey tiebreak), so a per-span sample lands on the
-exact function `query cpu` names.
-
-Four constraints are load-bearing (**[measured]**, probe on a forced-layout driver flow + a repeated
-`performance.measure`):
-
-- **The hot list is a separate panel on the CPU-sampler SCRIPTING axis, never the bar's `js` slice.**
-  The two are different axes: the sampler bills a forced layout to the JS frame that forced it, so on
-  a layout-forcing span the list exceeds the bar's `js.ms` by ~1000x, and even a pure-JS loop exceeds
-  it. Reconciling the list to `js.ms` is therefore wrong; the invariant is **`Σ per-function selfMs <=
-  the span's window wall`**, not `<= js.ms`.
-- **Display unit is the SHARE of the span's pooled JS samples**, with `selfMs = samples * interval`
-  only as a secondary figure. The panel discloses `pooledSamples` and `occurrences`, because a pooled
-  measure's `scriptingMs` sums every occurrence and can dwarf the median-occurrence bar wall the span
-  header shows (measured: pooled 20.4 ms JS over 6 occurrences beside a 3.9 ms median bar) -- the
-  disclosure is what stops a reader dividing a pooled ms by one iteration.
-- **Pooling is MEASURE-only.** A step tallies its single iteration-0 window (already how step windows
-  work); a measure label pools across all its occurrences. Pooling a step across iterations would let
-  a trivial click step clear the floor on puppeteer-frame samples alone (below), so steps stay
-  single-window.
-- **Floors, not fabrication.** Below ~10 pooled JS samples the ranked list is suppressed
-  (`suppressed: true` + a raise-`--iterations` hint), never a top-N invented from noise; a function
-  below ~3 pooled samples is dropped from the list.
-
-**Caveat (pre-existing, inherited, not widened here):** puppeteer's own `page.click` machinery injects
-`pptr:evaluate;<method>` frames (`isIntersectingViewport`, `visibleRatio`, ...) whose call-site file
-is `puppeteer-core`, not one of wpd's four injection sites in `WPD_EVALUATE_SITES`, so `isToolFrameUrl`
-does not drop them and they rank like user code (they already appear in `query cpu`). Negligible on a
-heavy step (a handful of samples), but they are the ENTIRE ranked set on a click-only step -- which is
-exactly the case the 10-sample suppression floor covers. Widening the tool-frame filter is its own
-risky change and is deliberately NOT done for this feature.
-
-## Sourcemap note gating
-
-The note answers "can the package rollup be believed?", which is a **different question** from "did
-any sourcemap resolve?". Gating it on `resolved === 0` ("no sourcemap resolved") conflates the two
-and lies in the most common case:
-
-```
-$ wpd record examples/forces-layout.mjs --bench
-• WARNING: no sourcemap resolved ... CPU self-time is attributed to minified bundle names
-Sourcemaps: 0/1 resolved ← packages below are minified bundles, not real packages
-```
-
-`forces-layout.mjs` is hand-written unbundled ESM. Nothing is minified, and every frame resolves to
-`forces-layout.mjs:24`. It has no sourcemap because **it needs none**.
-
-### The trigger needs TWO signals
-
-Worth reading before touching this, because the obvious narrowing is wrong and its wrongness is
-silent.
-
-Gating on `CpuModel.unmappedFrames` alone — frames that fell back to an origin bucket — kills the
-false positive **and the true positive**: a local frame *always* resolves to a path
-(`makeSourceResolver` sets `frame.source` for every served file), so `unmapped: !isLocalPath` can
-never fire for a local script. A minified `app.min.mjs` with no map — precisely what `vite build`
-emits, since `build.sourcemap` defaults to `false` — is attributed to whatever `package.json` sits
-above it and warns about **nothing**. That gap is invisible from the output, because "we know the
-file path" and "we know whose code this is" are different facts and one flag cannot carry both.
-
-So the condition is measured twice, at the two places the damage is actually done:
-
-| signal | where | catches |
-| --- | --- | --- |
-| `SourceMapDiagnostics.unmappedBundles` | `SourceMapResolver.diagnostics()` | a script that **is build output** (minified) whose map did not resolve — local *or* remote |
-| `CpuModel.unmappedFrames` | `resolveCallFrame` | a frame with **no determinable owner**, bucketed by origin — remote only |
-
-Neither alone is enough: a local minified bundle has `unmappedFrames === 0` (its path is known), and
-an unminified remote script has `unmappedBundles === 0` (yet we still cannot say whose it is). The
-note fires on either.
-
-`unmapped` is set in `resolveCallFrame` at the point it falls back to `unmappedOriginBucket`, **not**
-inferred afterwards from the package string: `(cdn.example.com)` is unmapped while `(native)` and
-`(node)` are not, and telling those apart by pattern breaks on a dotless host (`(localhost)`).
-
-**Known false negative:** `looksMinified` tests for a line over 500 chars, so a *small* minified
-bundle whose lines all stay short reads as plain source and does not warn. Real build output is
-nowhere near that (bundlers join whole modules onto one line — the repo's own test fixture lands at
-1114 chars, and a react-dom bundle is orders beyond), so the gap is narrow and deliberate: the
-alternative is guessing, and a warning that cries wolf on every hand-written module is worse than
-one that misses a toy bundle.
-
-Four unit tests pin all of it — remote unmapped bundle counts, node builtin does not, minified local
-bundle counts, plain local source does not. Keep both directions genuinely covered: **when you
-remove a false positive, the test that matters is the one proving the true positive still fires.**

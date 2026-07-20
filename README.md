@@ -690,7 +690,7 @@ labels it `sampled window`, and the JSON marks it `source: "cpu-model"`.
 
 Not every span carries a CPU/hot-functions number: the run span does on every sampler rung, steps only
 under chrome `--breakdown`, measures under chrome `--breakdown` and firefox, and none under `--deep`/
-`--precise-wall` (see [docs/dev/cpu-profiling.md](docs/dev/cpu-profiling.md#which-spans-get-cpu-attribution)).
+`--precise-wall` (see [docs/dev/cpu-attribution.md](docs/dev/cpu-attribution.md#which-spans-get-cpu-attribution)).
 
 #### What a span's numbers represent
 
