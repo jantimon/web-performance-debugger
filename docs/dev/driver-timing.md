@@ -18,12 +18,12 @@ A step's stored wall (`Span.wallMs`) is measured on **the page's own clock**, be
 - on `--breakdown` / `--deep`, where a trace is captured, it is the **trace-clock window** between
   those marks (`t1 - t0`, in `applyTraceWall`), so it shares the clock the breakdown bar tiles and
   `Σ slices + idle = wall` holds;
-- on the default rung, where there is no trace, it is the page's **`performance.now()` delta** between
+- in the default capture mode, where there is no trace, it is the page's **`performance.now()` delta** between
   the marks.
 
-`Span.wallClock` records which clock priced it: `"trace"` or `"page"`. A step that navigated on a
-no-trace rung reports `wallMs` null: the two marks sit on documents with different `timeOrigin`s, so
-their `performance.now()` delta is not one interval; on a trace rung the trace-clock window spans the
+`Span.wallClock` records which clock priced it: `"trace"` or `"page"`. A step that navigated in a
+no-trace capture mode reports `wallMs` null: the two marks sit on documents with different `timeOrigin`s, so
+their `performance.now()` delta is not one interval; in a trace capture mode the trace-clock window spans the
 navigation and prices it.
 
 ### Why not the node-side bound
@@ -80,7 +80,7 @@ All of these are drive-independent. Measured, identical work via `page.click` vs
 | `layoutCount` / `forcedLayoutCount` | 41 / 80 | 41 / 80 | identical |
 | `wallMs` | 40.5 | 31.9 | **not** |
 
-The per-step counts are trace-derived, windowed to the step's own trace window (on a trace rung), so
+The per-step counts are trace-derived, windowed to the step's own trace window (in a trace capture mode), so
 they never carried the driver's overhead in the first place. Only the wall does.
 
 ## The CWV split, and why it needs `interactionId`
@@ -201,7 +201,7 @@ to round the parts to whole ms where Chrome does not.
   driver arms an in-page `long-animation-frame` observer, reset per step (`driver.ts`), and stores the
   step's frames on `Span.loaf` (`summarizeLoaf`: worst-first frames, each naming its worst scripts by
   duration with the forced style/layout ms). Unlike the CPU sampler and the trace, the observer is
-  **ungated by any capture cap**, so a step gets script-level attribution even on the default rung (no
+  **ungated by any capture cap**, so a step gets script-level attribution even in the default capture mode (no
   trace, no per-step counts) and even when the sampler could not cover its window. `sourceURL` is the
   served script url, not a source line: LoAF gives a character offset, not a line, so a line-level
   rewrite would be a guess. Chrome-only (measured: absent from Firefox's `supportedEntryTypes`), so a

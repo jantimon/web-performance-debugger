@@ -6,22 +6,22 @@
 > `profile/span-hot.ts`, `trace/profile-chunks.ts`, or the sourcemap warning.
 
 **In this file:** [the span-kind coverage matrix](#which-spans-get-cpu-attribution)
-· [navigation resets the CDP sampler; `--breakdown` is continuous](#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-rung---breakdown-does-not)
+· [navigation resets the CDP sampler; `--breakdown` is continuous](#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-capture-mode---breakdown-does-not)
 · [per-span hot functions](#per-span-hot-functions)
 · [when the package rollup can be believed](#sourcemap-note-gating)
 
 **Provenance.** As in [cpu-profiling.md](./cpu-profiling.md), which also holds the sampler physics
-(rung ladder, contamination, interval) these attribution rules sit on.
+(capture modes, contamination, interval) these attribution rules sit on.
 
 ## Which spans get CPU attribution
 
 CPU attribution (the sampler's scripting axis: the run bar's `js` slice and the per-span hot list)
-reaches a span only where a sampler rung ran AND that span kind carries a window the samples can be
+reaches a span only where a sampling capture mode ran AND that span kind carries a window the samples can be
 tallied over. The run span reads the sibling `CpuModel` at query time; a step or measure span carries
 stored top-K `SpanHot` refs, which exist only where the fused `--breakdown` trace (or the gecko pass)
 gave that span its own window.
 
-| lane / rung | run span | step span | measure span |
+| lane / capture mode | run span | step span | measure span |
 | --- | --- | --- | --- |
 | chrome default | yes (CpuModel) | no | no (no trace = no measure spans) |
 | chrome `--breakdown` | yes (CpuModel) | yes (`SpanHot`) | yes (`SpanHot`) |
@@ -34,11 +34,11 @@ So the run span is the only span with CPU attribution on the default and node la
 under chrome `--breakdown`; measures get it under chrome `--breakdown` and firefox. `--deep` and
 `--precise-wall` run the sampler OFF, so no span carries a CPU number on them.
 
-## The CDP sampler's window resets on a cross-process navigation (the default rung); `--breakdown` does not
+## The CDP sampler's window resets on a cross-process navigation (the default capture mode); `--breakdown` does not
 
 **[measured]** The V8 CDP sampling profiler restarts in the new renderer process on a cross-process
-navigation: `Profiler.stop` returns only the post-navigation process's samples. So on the **default
-rung** (the only rung that runs the CDP sampler and can navigate: `--url` boots, driver flows) the
+navigation: `Profiler.stop` returns only the post-navigation process's samples. So in the **default
+capture mode** (the only capture mode that runs the CDP sampler and can navigate: `--url` boots, driver flows) the
 `CpuModel`, the run bar's `js` slice, and the "sampled window" cover **only the run after its last
 cross-process navigation**; page CPU work done in a prior renderer is absent from `selfMs`.
 
@@ -63,7 +63,7 @@ the whole browser lifetime and does not restart on navigation.
 
 ## Per-span hot functions
 
-`query span <label>` shows a per-span hot list on the sampler rungs: the run span reads it from the
+`query span <label>` shows a per-span hot list on the sampling capture modes: the run span reads it from the
 CpuModel at query time; a `--breakdown` chrome step/measure span and a firefox measure span carry
 stored top-K refs (`SpanHot`, `profile/span-hot.ts`), joined to `CpuModel.functions[]` by id. The
 join is `functionIdByNode`, which reproduces the model's rank purely from the raw profile (same

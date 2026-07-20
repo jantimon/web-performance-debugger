@@ -92,18 +92,18 @@ export interface RecordOptions {
   /** CDP protocol timeout (ms); raise above the 180s default for heavy traced interactions */
   protocolTimeoutMs?: number;
   /**
-   * Rung 2 (chrome only): a light trace (no `.stack`, no invalidationTracking) fused with the CPU
-   * sampler in ONE pass, producing a reconciling js/style/layout/paint/gc/other/idle bar per span.
-   * Cannot report forced-layout counts or blame (they need `.stack`).
+   * The --breakdown capture mode (chrome only): a light trace (no `.stack`, no invalidationTracking)
+   * fused with the CPU sampler in ONE pass, producing a reconciling js/style/layout/paint/gc/other/idle
+   * bar per span. Cannot report forced-layout counts or blame (they need `.stack`).
    */
   breakdown?: boolean;
   /**
-   * Rung 3 (chrome only): ONE full-trace pass (`.stack` + invalidationTracking) with the sampler
-   * OFF. The attribution report -- exact forced-layout blame, invalidation rollup, exact counts --
-   * with slice durations suppressed (the `.stack` trace distorts them). No CPU model, no bar.
+   * The --deep capture mode (chrome only): ONE full-trace pass (`.stack` + invalidationTracking) with
+   * the sampler OFF. The attribution report -- exact forced-layout blame, invalidation rollup, exact
+   * counts -- with slice durations suppressed (the `.stack` trace distorts them). No CPU model, no bar.
    */
   deep?: boolean;
-  /** Rung 1 minus the sampler: a pristine benchmark wall, no profiler, no counts. */
+  /** The default capture mode minus the sampler: a pristine benchmark wall, no profiler, no counts. */
   preciseWall?: boolean;
 }
 
@@ -261,7 +261,7 @@ export async function record(opts: RecordOptions): Promise<{
   const base = path.basename(outPath, path.extname(outPath));
   await fs.mkdir(outDir, { recursive: true });
 
-  // The one capture that runs for this invocation (rung/lane). Every invocation is exactly one
+  // The one capture that runs for this invocation (capture mode/lane). Every invocation is exactly one
   // pass: one browser launch, one run of the flow, one recording.
   const capture = captureFor(opts, browserName);
   const capabilities = capabilitiesFor(capture, browserName);
@@ -305,7 +305,7 @@ export async function record(opts: RecordOptions): Promise<{
   // and the `latest` pointer exist: a run that failed after writing artifacts but before repointing
   // `latest` would leave `assert latest` silently gating the PREVIOUS run instead. Pair by LABEL:
   // the step timings and the trace windows come from the same pass. No window (default/precise-wall
-  // rung, or lost markers) means nothing to pair with -- pass undefined rather than an empty list,
+  // capture mode, or lost markers) means nothing to pair with -- pass undefined rather than an empty list,
   // which would read as divergence.
   const mergedSteps =
     opts.driver && timing.driverSteps?.length
@@ -331,13 +331,13 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(notesCatalog.breakdownForcedNotMeasured());
     notes.push(notesCatalog.breakdownInvalidationNotMeasured());
   } else if (opts.deep && browserName !== "firefox") {
-    // Chrome rung 3: exact counts + forced-layout blame are the product; slice durations are
+    // Chrome --deep: exact counts + forced-layout blame are the product; slice durations are
     // suppressed (null) because the `.stack` trace distorts them. Say so, and that there is no
-    // bar/CPU model. Firefox --deep is NOT this rung -- it is the gecko pass plus a report tier, so
-    // it falls to the firefox branch below (which adds the dirtied-by note).
-    notes.push(notesCatalog.deepRung());
+    // bar/CPU model. Firefox --deep is NOT this capture mode -- it is the gecko pass plus a report
+    // tier, so it falls to the firefox branch below (which adds the dirtied-by note).
+    notes.push(notesCatalog.deepCaptureMode());
   } else if (opts.preciseWall) {
-    // Rung 1 minus the sampler: only the wall is measured. No counts, no CPU model.
+    // The default capture mode minus the sampler: only the wall is measured. No counts, no CPU model.
     notes.push(notesCatalog.preciseWall());
   } else if (browserName === "firefox") {
     notes.push(notesCatalog.firefoxBackend());
@@ -369,16 +369,17 @@ export async function record(opts: RecordOptions): Promise<{
     // The reconciling CPU breakdown note is pushed AFTER the CPU model is built (below), where its
     // presence is known: it is produced when the Gecko dump carried the threadCPUDelta CPU signal.
   } else {
-    // Default rung (chrome): the CPU sampler alone, no trace, for the cleanest wall (~1%). No
+    // Default capture mode (chrome): the CPU sampler alone, no trace, for the cleanest wall (~1%). No
     // rendering counts at all -- reported not-measured, never 0 -- and the sampler perturbs wall.
-    notes.push(notesCatalog.defaultRung());
-    notes.push(notesCatalog.cpuSamplerOnDefaultRung());
+    notes.push(notesCatalog.defaultCaptureMode());
+    notes.push(notesCatalog.cpuSamplerOnDefaultMode());
   }
   // The built-in on-ramp flow: disclose what the single "load" step measures, and (when repeated)
-  // either the warm/cold caveat on the resulting wall median, or -- when this rung priced no wall at
-  // all (the navigating load step resets the page clock and the default/precise-wall rung has no trace
-  // clock to span it) -- that there IS no median here and --breakdown is what produces one. Emitting
-  // the warm/cold note on the no-wall rung would promise a median (`stats`) the recording does not carry.
+  // either the warm/cold caveat on the resulting wall median, or -- when this capture mode priced no
+  // wall at all (the navigating load step resets the page clock and the default/precise-wall capture
+  // mode has no trace clock to span it) -- that there IS no median here and --breakdown is what produces
+  // one. Emitting the warm/cold note in the no-wall capture mode would promise a median (`stats`) the
+  // recording does not carry.
   if (isOnramp) {
     notes.push(notesCatalog.onrampBuiltinFlow());
     if (opts.iterations > 1) {
@@ -393,8 +394,8 @@ export async function record(opts: RecordOptions): Promise<{
   // the target the run actually navigated to, whether or not a module drove it.
   if (opts.urlSchemeAssumed && opts.url) notes.push(notesCatalog.pageSchemeAssumed(opts.url));
   // Which clock priced the driver step walls (§17.3.1): the trace clock under --breakdown/--deep, the
-  // page's own performance.now on the no-trace rung, never the node-side page.click bound. "none"
-  // means every step navigated on a no-trace rung, so no wall could be priced.
+  // page's own performance.now in a no-trace capture mode, never the node-side page.click bound. "none"
+  // means every step navigated in a no-trace capture mode, so no wall could be priced.
   if (opts.driver && pass.stepWallClock) {
     const clock = pass.stepWallClock;
     if (clock === "none") notes.push(notesCatalog.driverStepWallUnmeasured());
@@ -408,8 +409,8 @@ export async function record(opts: RecordOptions): Promise<{
   // user_timing category got dropped). Without a window, inWindow() would count the ENTIRE trace
   // (page load, nav, prepare, teardown) as the measured region, silently inflating every
   // trace-derived count. The rendering capture degrades to not-measured and the note says so.
-  // Firefox has its own honest notes (above); the default/precise-wall rung has no trace, so a
-  // missing window there is the rung working, not a buffer overflow.
+  // Firefox has its own honest notes (above); the default/precise-wall capture mode has no trace, so a
+  // missing window there is the capture mode working, not a buffer overflow.
   const traceWindowMissing = detail.windowStart == null && browserName !== "firefox" && wantTrace;
   const effectiveCapabilities = capabilitiesAfterParse(capabilities, !traceWindowMissing);
   const countScope = countScopeNote(effectiveCapabilities, opts);
@@ -418,8 +419,8 @@ export async function record(opts: RecordOptions): Promise<{
   // pre-navigation renderer while the window's rendering work lands on the process the page navigated
   // into. mainThread re-anchors the counts/bar to that thread; disclose it so a reader knows the
   // numbers describe the loaded page, not the blank host it started on. Fires for any counting chrome
-  // rung (--breakdown/--deep); firefox is single-process (no CDP trace) and the no-trace rungs count
-  // nothing. Skipped when the window was lost (counts already downgraded to not-measured).
+  // capture mode (--breakdown/--deep); firefox is single-process (no CDP trace) and the no-trace
+  // capture modes count nothing. Skipped when the window was lost (counts already downgraded to not-measured).
   const threadSelection =
     effectiveCapabilities.counts && browserName !== "firefox" ? mainThread(detail.events) : null;
   if (threadSelection?.via === "reanchored") notes.push(notesCatalog.reanchoredMainThread());
@@ -528,8 +529,8 @@ export async function record(opts: RecordOptions): Promise<{
     cpuIntervalUs: opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
     userDataDir: shorterPath(root, opts.userDataDir),
     lifecycle: detail.lifecycle,
-    // The one capture that ran, by rung name (there is no multi-pass plan).
-    passes: [capture.rung],
+    // The one capture that ran, by capture-mode name (there is no multi-pass plan).
+    passes: [capture.mode],
     notes,
     driver: opts.driver,
     // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome".
@@ -582,8 +583,8 @@ export async function record(opts: RecordOptions): Promise<{
 
   // The deep event log is stored ONLY where a reader consumes it: --deep (`.stack` + invalidation
   // records for blame/dirtied-by) and firefox (gecko rendering events with sampled blame). Every
-  // other rung leaves it empty, which keeps the default artifact digest-sized; `query events`/`get`/
-  // `blame` there report "not captured at this rung". buildBreakdowns and per-step counts still read
+  // other capture mode leaves it empty, which keeps the default artifact digest-sized; `query events`/`get`/
+  // `blame` there report "not captured in this capture mode". buildBreakdowns and per-step counts still read
   // the full `detail.events` at record time regardless -- this gates only what is STORED.
   const storeEventLog = opts.deep || browserName === "firefox";
   const recording: Recording = {
@@ -615,8 +616,8 @@ export async function record(opts: RecordOptions): Promise<{
       // No window => not measured (see traceWindowMissing note); don't count the whole trace.
       detailEvents: traceWindowMissing ? [] : detail.events,
       detailWindowStart: detail.windowStart,
-      // What this rung could observe (per capture): gates each count/duration to Measured null vs a
-      // number, so the default rung reports no counts and --deep reports counts but null durations.
+      // What this capture mode could observe (per capture): gates each count/duration to Measured null
+      // vs a number, so the default mode reports no counts and --deep reports counts but null durations.
       capabilities: effectiveCapabilities,
       // scriptingMs is patched in after the CPU model is built below (it is the model's JS
       // self-time); null here, and stays null on --deep, which has no sampler and no model.
@@ -662,7 +663,7 @@ export async function record(opts: RecordOptions): Promise<{
     });
   }
   // scriptingMs is the CPU model's JS self-time. Patched onto the summary here (the model exists
-  // now, and `recording.summary` is shared by reference), so a rung with no sampler (--deep) keeps
+  // now, and `recording.summary` is shared by reference), so a capture mode with no sampler (--deep) keeps
   // the null it was built with -- a distinct not-measured, never a fake 0.
   if (cpuModel) recording.summary.scriptingMs = cpuModel.scriptingMs;
   // On the trace-sourced --breakdown lane the sampler interval is the v8.cpu_profiler stream's own
@@ -691,13 +692,13 @@ export async function record(opts: RecordOptions): Promise<{
     );
   }
 
-  // The reconciling per-span bars (run + driver steps + user measures), when the rung built any.
+  // The reconciling per-span bars (run + driver steps + user measures), when the capture mode built any.
   // --breakdown: built here because it needs both the trace events (with pid/tid) and the raw CPU
   // samples, sharing the run's one resolver so a sample's package matches `query cpu --by package`.
-  // Firefox: the mark-bridge measure bars from the Gecko sample slices. Every other rung leaves it
+  // Firefox: the mark-bridge measure bars from the Gecko sample slices. Every other capture mode leaves it
   // empty (no bar), so a span's `breakdown` is simply absent there.
   // The sampler interval a per-span hot ref's selfMs is priced in (firefox reports what it actually
-  // ran at; V8 honours the request). The model exists on any rung that built bars, so this is set.
+  // ran at; V8 honours the request). The model exists in any capture mode that built bars, so this is set.
   const sampleIntervalUs =
     cpuModel?.sampleIntervalUs ?? opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
   let bars: SpanBreakdown[] = [];
@@ -730,7 +731,7 @@ export async function record(opts: RecordOptions): Promise<{
   }
 
   // Collapse the run, every driver step, and every user measure into the stored Span[]. Steps carry
-  // their windowed counts (from detail.events, iteration 0); bars attach where the rung built one.
+  // their windowed counts (from detail.events, iteration 0); bars attach where the capture mode built one.
   recording.spans = buildRecordingSpans({
     summary: recording.summary,
     mergedSteps,
@@ -748,7 +749,7 @@ export async function record(opts: RecordOptions): Promise<{
   // ALWAYS record the diagnostics when any script was attempted: a trace resolves stacks through
   // this same resolver, so `blame`'s source attribution depends on it just as `query cpu` does.
   // Gating the data on a CPU model existing would silently drop the only evidence a sampler-off
-  // rung (--deep) has about its own blame.
+  // capture mode (--deep) has about its own blame.
   if (sourcemaps.scripts > 0) meta.sourcemaps = sourcemaps;
   // The NOTE is CPU-worded ("query cpu --by package"), so it needs a model to be about anything;
   // and it returns null when a missing map cost nothing at all.

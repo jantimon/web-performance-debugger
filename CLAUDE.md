@@ -22,7 +22,7 @@ This is a feature — it prices "delete this line" — but do not describe it as
 
 Read `README.md` for the user-facing surface; this file is the internal map; **`docs/dev/` holds the
 measured facts behind the non-obvious choices** ([index](docs/dev/README.md)) and is the first stop
-before changing the rung ladder, the Gecko converter, or any cross-engine claim.
+before changing the capture modes, the Gecko converter, or any cross-engine claim.
 
 ## Commands
 
@@ -51,7 +51,7 @@ trace-sourced CPU samples keeping per-step attribution across a navigation, the 
 re-anchor surviving a stray pre-nav flush and the loud split note on successive navigations,
 `waitForStable` surviving a hard cross-document redirect, `query spans` (incl. the `--min-wall`/
 `--filter` flood filter, and the bar-less counts overview on --deep), `query span` (a run span's bar +
-hot functions, a --deep step's counts + forced), per-step LoAF script attribution on the default rung,
+hot functions, a --deep step's counts + forced), per-step LoAF script attribution in the default capture mode,
 `waitForStable` catching a streamed transition, `--keep-partial` salvage, the
 digest/index removal, the frame side track, and the two-capture assert workflow (a forced budget on
 `--breakdown` and a slice budget on `--deep` each fail loudly). They **self-skip when Chrome is not installed** (so
@@ -78,13 +78,13 @@ mark namespace), `time.ts` (clock/us↔ms helpers), `measured.ts` (the `Measured
 honesty wrapper), `reconcile.ts` (slice-sum-vs-wall residual), `span-merge.ts`
 (`mergeSpanOccurrences`: collapse a repeated `measure` label to its lower-median-by-wall occurrence,
 verbatim), `span.ts`/`spans.ts` (the stored `Span` count projection + the `query spans` adapter),
-`rung.ts` (rung/passes predicates like `isFirefoxDeep`/`isGeckoRung`), `artifact.ts` (the
+`capture-mode.ts` (capture-mode/passes predicates like `isFirefoxDeep`/`isGeckoCaptureMode`), `artifact.ts` (the
 schema-version + recording-shape gates every reader passes through), `query.ts` (the derived view
 shapes the `query`/`cpu-diff` verbs emit under `--format json|toon`, kept off the stored types so the
 JSON contract cannot silently drift), and `compat.ts` (`comparabilityMismatches`: the capture axes
 that make a `diff`/`cpu-diff` `--fail-on-regression` gate meaningless, so it refuses instead of
 fabricating a pass/fail). `record` orchestration lives in
-`src/record/`: `capture.ts` (`captureFor` picks the ONE capture rung + `capabilitiesFor`/
+`src/record/`: `capture.ts` (`captureFor` picks the ONE capture mode + `capabilitiesFor`/
 `blameSemanticFor`/`countScopeNote`), `page-option.ts` (`PageResolution`: resolves the `--url <value>`
 host page, or its hidden `--html` alias, to a live URL to navigate or a local HTML file to serve),
 `runpass.ts` (runs that one capture), `artifacts.ts`
@@ -103,7 +103,7 @@ contracts** — keep them straight:
   Per-step INP is captured via an injected Event Timing `PerformanceObserver`, and per-step Long
   Animation Frames via an injected `long-animation-frame` observer (`summarizeLoaf` -> `Span.loaf`,
   Chrome-only, ungated by any capture cap, so it attributes a step's slow frames to scripts even on
-  the default rung). Both observers are in-page, not CDP. `browser/until.ts` `waitForStable` is an
+  the default capture mode). Both observers are in-page, not CDP. `browser/until.ts` `waitForStable` is an
   opt-in `until` for streamed/soft navigations the default settle ends before. A
   `page.goto` inside a `measureStep` is traced, so a navigation step measures a cold boot.
 - **Bench mode** (`--bench`): the module is served over http and `import()`'d *inside the
@@ -135,12 +135,12 @@ failure (`net::ERR_INVALID_HANDLE`, "detached Frame", common on a heavy `--url` 
 fresh browser, up to a bounded limit (`retryTransientNav`); `notes.ts` records that the numbers are
 from the successful attempt.
 
-### One capture per run: the rung ladder (why numbers are trustworthy)
+### One capture per run: the capture modes (why numbers are trustworthy)
 
 Every invocation is **exactly one capture pass** — one browser launch, one run of the flow, one
 recording. `record/capture.ts` `captureFor(opts, browser)` picks the ONE `CaptureConfig` (categories,
 cpu on/off, keepThreadIds, gecko) from the flags; there is no multi-pass plan and no pass windowing.
-`meta.passes` is a single-element array naming the rung. The chrome rungs:
+`meta.passes` is a single-element array naming the capture mode. The chrome capture modes:
 
 - **default** (no flag) — `categories: null` (no trace), CPU sampler on. The four-slice CPU bar, no
   rendering counts, cleanest wall (~1%).
@@ -154,10 +154,10 @@ cpu on/off, keepThreadIds, gecko) from the flags; there is no multi-pass plan an
 - **`--deep`** — full trace (`.stack` + `invalidationTracking`), sampler OFF. The attribution report:
   forced-by read-sites, dirtied-by writes, the thrash detector, invalidation rollup, exact counts,
   long tasks. No CPU model, and slice DURATIONS are suppressed (see below).
-- **`--precise-wall`** — default rung minus the sampler: a pristine benchmark wall, nothing else.
+- **`--precise-wall`** — default capture mode minus the sampler: a pristine benchmark wall, nothing else.
 
-Firefox is one gecko pass at every rung (`gecko`/`gecko-deep`); node is the in-process `node-cpu`
-lane. The rungs are mutually exclusive (`--breakdown --deep` is rejected: two questions, two
+Firefox is one gecko pass at every capture mode (`gecko`/`gecko-deep`); node is the in-process `node-cpu`
+lane. The capture modes are mutually exclusive (`--breakdown --deep` is rejected: two questions, two
 invocations), and the CLI rejects `--breakdown`/`--precise-wall` on firefox/node.
 
 **Why the split, present-tense [measured] constraints** (docs/dev/cpu-profiling.md):
@@ -183,14 +183,14 @@ so `wpd:run:start` lands on the pre-navigation renderer; `main-thread.ts` **re-a
 that carried the post-navigation work (and `notes.ts` says the counts describe the loaded page, not
 the blank host). `layoutMs`/`styleMs`/`paintMs` are now **wall-tier** trace `base::TimeTicks` ms (~1%
 directional), valid only on the light trace. Because every invocation is one pass that runs every
-iteration for the wall samples, a counting rung's counts **total across `--iterations`**
+iteration for the wall samples, a counting capture mode's counts **total across `--iterations`**
 (`countScopeNote` says so); a driver step's counts window to iteration 0 (`labelWindows`), so per-step
 counts stay one iteration's work. Bench `wallMs` is the **sum of the timed samples**, not a window.
 
 **The artifact is one file (schema 3).** `Recording` = the run summary + the collapsed `Span[]` (the
 run window, each driver step, and every user `performance.measure`) + meta. Siblings: the raw
 `.cpuprofile` and the resolved `.cpu.json` `CpuModel`. The classified `events[]` DEEP EVENT LOG is
-written INTO the recording only under `--deep` (chrome) and firefox — every other rung leaves it
+written INTO the recording only under `--deep` (chrome) and firefox — every other capture mode leaves it
 empty, which keeps the default artifact digest-sized. `model/artifact.ts` REJECTS any artifact whose
 `meta.schemaVersion !== SCHEMA_VERSION` with a re-record message rather than mis-parsing it. A
 `measure` label emitted every `--iteration` recurs, and `mergeSpanOccurrences` reports the
@@ -247,7 +247,7 @@ Two things this rule is **not**, both documented in
 ### Output & consumption
 
 - `metrics/summarize.ts` builds `RecordingSummary` from trace events alone (counts main-thread
-  windowed, durations wall-tier on the light trace, `Measured` null where the rung observed nothing).
+  windowed, durations wall-tier on the light trace, `Measured` null where the capture mode observed nothing).
 - `commands/query.ts` = 6 verbs: `spans`, `span`, `events`, `blame`, `get`, and the `--dirtied` mode
   of `blame` (plus `cpu`/`frame` in `commands/cpu.ts`). `query spans` (via `model/spans.ts`) is the
   compact **overview**: a read-only OUTPUT ADAPTER that folds whatever bar a recording already holds
@@ -255,7 +255,7 @@ Two things this rule is **not**, both documented in
   new stored type — surfacing each span's `aggregation` (`first`/`sum`/`median`) and, for a merged
   measure, its `samples`/wall spread. **`query span <label>`** is the drill-in: one span's full
   anatomy (bar, wall/aggregation/spread, Measured counts, INP/interaction, the forced read-sites +
-  dirtied-by writes + thrash rollup an event-log rung carries, and per-span hot functions on the
+  dirtied-by writes + thrash rollup an event-log capture mode carries, and per-span hot functions on the
   CPU-sampler scripting axis — the run span from the sibling CpuModel, a `--breakdown` chrome
   step/measure or firefox measure span from stored top-K `SpanHot` refs joined to the model by id
   (`profile/span-hot.ts`; MEASURE-pooled, share-denominated, floor-suppressed, never the bar's `js`
@@ -265,7 +265,7 @@ Two things this rule is **not**, both documented in
   multi-MB recording.** `assert.ts` gates the exact count thresholds (recording *or* per-step via the
   step spans in `model/step-view.ts`) AND per-slice budgets (`--max-slice <name>=<ms>`, parsed by
   `model/spans.ts` `parseSliceBudgets`, gating a target span's reconciling-bar slice ms; a slice the
-  rung did not measure is a loud `n/a` FAIL, never a silent pass). `diff.ts` compares two recordings:
+  capture mode did not measure is a loud `n/a` FAIL, never a silent pass). `diff.ts` compares two recordings:
   the gated exact-count deltas plus advisory per-span slice-ms deltas (`diffSpanSlices`), matched by
   `kind:label`, with comparability warnings when a metric is measured on one side only.
 - `commands/resolve.ts`: the `latest` keyword resolves via a **cwd-keyed** pointer file under the XDG
@@ -284,16 +284,16 @@ Two things this rule is **not**, both documented in
   `commands/record.ts`): heat-colored `self %`, cyan packages, dimmed paths/source/secondary counts,
   bold headline numbers.
 
-### CPU profiling (on by default on the sampler rungs; `--precise-wall` opts out)
+### CPU profiling (on by default on the sampling capture modes; `--precise-wall` opts out)
 
 For JS cost (render/reconcile/hot loops), the V8 sampling profiler runs via CDP
 `Profiler.start/stop` (`metrics/cdp.ts`, the only calls left there), bracketed around the timed
-window, on the **default rung**. On **`--breakdown`** the samples instead come from the trace's
+window, in the **default capture mode**. On **`--breakdown`** the samples instead come from the trace's
 `v8.cpu_profiler` ProfileChunk stream (assembled by `trace/profile-chunks.ts` into the same
 `RawCpuProfile` shape, merging the per-process streams a navigation splits, windowed to the run
 onward) with NO CDP profiler running -- one profiler at a time, and the trace stream is continuous
-across navigation (the CDP sampler resets per navigation). The profiler rides the ONE capture rung,
-never a pass of its own; it costs ~1% on wall on the default rung, which `--precise-wall` buys back.
+across navigation (the CDP sampler resets per navigation). The profiler rides the ONE capture mode,
+never a pass of its own; it costs ~1% on wall in the default capture mode, which `--precise-wall` buys back.
 It is OFF on `--deep` (the sampler cannot ride a `.stack` trace, +21%). `profile/cpuprofile.ts` turns the raw `.cpuprofile` into a
 **resolved, self-contained `CpuModel`**
 (per-function self/total time + a thresholded call graph), reusing `makeSourceResolver` +
@@ -364,7 +364,7 @@ site (throttle/`page.tracing`/`startCpuProfile`) is gated by the caps or a null 
 never came from CDP, it is an in-page Event Timing observer in `driver.ts`, ungated by caps, and it
 works. `meta.browser` is `"firefox"` (absent = chrome, so old recordings stay valid).
 
-The lane is ONE gecko pass at every rung (`captureFor` returns `rung: "gecko"`, or `"gecko-deep"` when
+The lane is ONE gecko pass at every capture mode (`captureFor` returns `mode: "gecko"`, or `"gecko-deep"` when
 `--deep` requests the dirtied-by write report — same capture, a reporting tier over it). The CLI
 refuses to turn the profiler off here, because the gecko pass is this lane's *only* source of CPU
 samples, layout/style markers, the reconciling bar, AND read-site blame — without it a firefox
@@ -452,8 +452,8 @@ all live there with the probes that establish them.
   base) for the Gecko converter; `engine-mapping.md` (Gecko<->Blink names, what is actually
   comparable) before any cross-engine claim; `blame-semantics.md` (read-site vs write-site blame,
   the dirtied-by reports, the thrash detector) before touching `markForced`/`thrash.ts` or any blame
-  claim; `cpu-profiling.md` (the rung ladder, sampler contamination, what `selfMs` includes) before
-  changing the rungs or the interval; `cpu-attribution.md` (which spans carry CPU samples, per-span
+  claim; `cpu-profiling.md` (the capture modes, sampler contamination, what `selfMs` includes) before
+  changing the capture modes or the interval; `cpu-attribution.md` (which spans carry CPU samples, per-span
   hot functions, sourcemap trust) before changing span-level CPU output; `firefox-cpu.md` (the
   Gecko profiler config and its honest idle) before touching the `MOZ_PROFILER_*` setup;
   `rendering-counts.md` (what each count counts, which ones reproduce, why there is no composite

@@ -143,8 +143,8 @@ function runEntryFromCpuBreakdown(cpu: CpuBreakdown, iterations: number): SpanEn
  * Build the unified `query spans` result. Prefers the recording's spans that carry a reconciling bar
  * (`span.breakdown`); falls back to synthesizing a single `run` span from a
  * `CpuModel.breakdown` so the verb never comes back empty when any bar exists. Returns null when the
- * recording holds neither (an old recording, or a sampler-off rung like --deep/--precise-wall), which
- * the caller turns into a non-zero error. `iterations` (the recording's `meta.iterations`) is stamped on
+ * recording holds neither (an old recording, or a sampler-off capture mode like --deep/--precise-wall),
+ * which the caller turns into a non-zero error. `iterations` (the recording's `meta.iterations`) is stamped on
  * every entry alongside its `aggregation`, so a consumer can read what a span's numbers represent.
  */
 export function buildSpans(
@@ -153,8 +153,8 @@ export function buildSpans(
   target: string,
   iterations = 1,
 ): SpansResult | null {
-  // Only spans the rung built a reconciling bar for carry slices; a step/run on the default or --deep
-  // rung has counts but no bar, so it is not a `query spans` entry (the CpuModel run bar is the
+  // Only spans the capture mode built a reconciling bar for carry slices; a step/run in the default or
+  // --deep capture mode has counts but no bar, so it is not a `query spans` entry (the CpuModel run bar is the
   // fallback below). buildRecordingSpans always emits at least the run span, so `spans.length` alone
   // is not the test -- a bar must be present.
   const barSpans = (spans ?? []).filter((span): span is BarSpan => span.breakdown != null);
@@ -178,7 +178,7 @@ export function buildSpans(
 /**
  * One span's row when the capture built no reconciling bar (default/--deep/--precise-wall): its
  * wall, aggregation and windowed Measured counts, with no slices. `--deep` carries exact counts here
- * (its whole point); the default/--precise-wall rungs carry only the wall, with counts not-measured.
+ * (its whole point); the default/--precise-wall capture modes carry only the wall, with counts not-measured.
  */
 export interface SpanCountsEntry {
   label: string;

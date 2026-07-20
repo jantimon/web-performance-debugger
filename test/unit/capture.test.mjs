@@ -9,28 +9,28 @@ import {
 } from "../../dist/record/capture.js";
 import * as notes from "../../dist/record/notes.js";
 
-// The one-pass ladder: which capture config each flag combination yields. Every rung is exactly one
-// pass (one categories set, one cpu decision), so the whole capture story is this pure function.
+// The one-pass capture modes: which capture config each flag combination yields. Every capture mode is
+// exactly one pass (one categories set, one cpu decision), so the whole capture story is this pure function.
 const opts = (over = {}) => ({ iterations: 1, driver: false, cpuProfile: true, ...over });
 
-test("captureFor: chrome default rung is the sampler alone, no trace", () => {
+test("captureFor: chrome default capture mode is the sampler alone, no trace", () => {
   const config = captureFor(opts(), "chrome");
-  assert.equal(config.rung, "default");
-  assert.equal(config.categories, null, "no trace on the default rung");
-  assert.equal(config.cpu, true, "the sampler rides the default rung");
+  assert.equal(config.mode, "default");
+  assert.equal(config.categories, null, "no trace in the default capture mode");
+  assert.equal(config.cpu, true, "the sampler rides the default capture mode");
   assert.equal(config.gecko, false);
 });
 
-test("captureFor: --precise-wall is rung 1 minus the sampler", () => {
+test("captureFor: --precise-wall is the default capture mode minus the sampler", () => {
   const config = captureFor(opts({ preciseWall: true }), "chrome");
-  assert.equal(config.rung, "precise-wall");
+  assert.equal(config.mode, "precise-wall");
   assert.equal(config.categories, null, "no trace");
   assert.equal(config.cpu, false, "the sampler is off for a pristine wall");
 });
 
 test("captureFor: --breakdown is the light trace fused with the sampler (no .stack, no invalidationTracking)", () => {
   const config = captureFor(opts({ breakdown: true }), "chrome");
-  assert.equal(config.rung, "breakdown");
+  assert.equal(config.mode, "breakdown");
   assert.ok(Array.isArray(config.categories));
   assert.ok(
     !config.categories.includes("disabled-by-default-devtools.timeline.stack"),
@@ -49,8 +49,8 @@ test("captureFor: --breakdown is the light trace fused with the sampler (no .sta
   assert.equal(config.keepThreadIds, true, "the bar windows to the main thread");
 });
 
-test("captureFor: cpuSource is 'cdp' on every rung but --breakdown (only that one runs a trace profiler)", () => {
-  assert.equal(captureFor(opts(), "chrome").cpuSource, "cdp", "default rung uses the CDP sampler");
+test("captureFor: cpuSource is 'cdp' in every capture mode but --breakdown (only that one runs a trace profiler)", () => {
+  assert.equal(captureFor(opts(), "chrome").cpuSource, "cdp", "default capture mode uses the CDP sampler");
   assert.equal(captureFor(opts({ deep: true }), "chrome").cpuSource, "cdp");
   assert.equal(captureFor(opts({ preciseWall: true }), "chrome").cpuSource, "cdp");
   assert.equal(captureFor(opts(), "firefox").cpuSource, "cdp", "firefox samples come from the gecko dump");
@@ -59,16 +59,16 @@ test("captureFor: cpuSource is 'cdp' on every rung but --breakdown (only that on
 
 test("captureFor: --deep is the full trace with the sampler OFF", () => {
   const config = captureFor(opts({ deep: true }), "chrome");
-  assert.equal(config.rung, "deep");
+  assert.equal(config.mode, "deep");
   assert.ok(config.categories.includes("disabled-by-default-devtools.timeline.stack"), "keeps .stack for forced blame");
   assert.ok(config.categories.includes("disabled-by-default-devtools.timeline.invalidationTracking"), "keeps invalidationTracking");
   assert.equal(config.cpu, false, "the sampler must NEVER ride a .stack trace (+21% self-time inflation)");
   assert.equal(config.keepThreadIds, true, "counts window to the main thread");
 });
 
-test("captureFor: firefox is always the one gecko pass (the rungs are reporting tiers over it)", () => {
+test("captureFor: firefox is always the one gecko pass (the capture modes are reporting tiers over it)", () => {
   const config = captureFor(opts(), "firefox");
-  assert.equal(config.rung, "gecko");
+  assert.equal(config.mode, "gecko");
   assert.equal(config.gecko, true, "the gecko profiler runs");
   assert.equal(config.categories, null, "no DevTools trace on firefox");
   // A programmatic cpuProfile:false yields a timing-only pass that counts nothing.
@@ -76,12 +76,12 @@ test("captureFor: firefox is always the one gecko pass (the rungs are reporting 
   assert.equal(off.gecko, false);
 });
 
-test("captureFor: firefox --deep is the SAME gecko capture, only the rung name records the report tier", () => {
+test("captureFor: firefox --deep is the SAME gecko capture, only the capture-mode name records the report tier", () => {
   const deep = captureFor(opts({ deep: true }), "firefox");
-  assert.equal(deep.rung, "gecko-deep", "the --deep reporting tier is named in the rung");
+  assert.equal(deep.mode, "gecko-deep", "the --deep reporting tier is named in the capture-mode name");
   assert.equal(deep.gecko, true, "the gecko profiler still runs (capture is unchanged)");
   assert.equal(deep.categories, null, "still no DevTools trace: --deep adds no .stack on firefox");
-  // The capture is byte-identical to the default gecko pass apart from the rung label, so what the
+  // The capture is byte-identical to the default gecko pass apart from the capture-mode label, so what the
   // pass can observe (capabilities) and what blame names are unchanged.
   const dflt = captureFor(opts(), "firefox");
   assert.deepEqual(
@@ -93,8 +93,8 @@ test("captureFor: firefox --deep is the SAME gecko capture, only the rung name r
 });
 
 // capabilitiesFor gates each count/duration to Measured. The HARD GUARD: durations are refusable on
-// a .stack trace (--deep counts yes, durations no), and the default rung measures nothing.
-test("capabilitiesFor: default rung measures nothing; --breakdown counts+durations; --deep counts, no durations", () => {
+// a .stack trace (--deep counts yes, durations no), and the default capture mode measures nothing.
+test("capabilitiesFor: default capture mode measures nothing; --breakdown counts+durations; --deep counts, no durations", () => {
   const dflt = capabilitiesFor(captureFor(opts(), "chrome"), "chrome");
   assert.deepEqual(dflt, {
     counts: false,
@@ -127,10 +127,10 @@ test("capabilitiesFor: firefox counts layout/style/forced from markers, never pa
   assert.equal(caps.longTasks, false);
 });
 
-test("blameSemanticFor: --deep and firefox name the read (flush-site); the default rung has no blame", () => {
+test("blameSemanticFor: --deep and firefox name the read (flush-site); the default capture mode has no blame", () => {
   assert.equal(blameSemanticFor(captureFor(opts({ deep: true }), "chrome")), "flush-site");
   assert.equal(blameSemanticFor(captureFor(opts(), "firefox")), "flush-site");
-  assert.equal(blameSemanticFor(captureFor(opts(), "chrome")), undefined, "default rung: no trace, no blame");
+  assert.equal(blameSemanticFor(captureFor(opts(), "chrome")), undefined, "default capture mode: no trace, no blame");
   assert.equal(blameSemanticFor(captureFor(opts({ breakdown: true }), "chrome")), undefined, "light trace has no .stack, so no blame");
 });
 
@@ -138,7 +138,7 @@ test("countScopeNote: null at one iteration or with no counts; a TOTAL disclosur
   const light = capabilitiesFor(captureFor(opts({ breakdown: true }), "chrome"), "chrome");
   assert.equal(countScopeNote(light, opts({ breakdown: true, iterations: 1 })), null, "nothing to scale at 1");
   const dflt = capabilitiesFor(captureFor(opts(), "chrome"), "chrome");
-  assert.equal(countScopeNote(dflt, opts({ iterations: 8 })), null, "the default rung counts nothing to scope");
+  assert.equal(countScopeNote(dflt, opts({ iterations: 8 })), null, "the default capture mode counts nothing to scope");
 
   const note = countScopeNote(light, opts({ breakdown: true, iterations: 8 }));
   assert.match(note, /TOTALS across all 8/);

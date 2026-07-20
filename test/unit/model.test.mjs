@@ -81,7 +81,7 @@ test("published types declare the documented public shapes", () => {
 
 // --- Count provenance (the same number means different things per target) ---
 
-test("countProvenance distinguishes exact trace counts, Gecko markers, and a rung that measured none", () => {
+test("countProvenance distinguishes exact trace counts, Gecko markers, and a capture mode that measured none", () => {
   const recording = (meta, summary = {}) => ({ meta: { passes: ["default"], ...meta }, summary });
 
   // Chrome with a trace (breakdown/deep): counts come from the trace, main-thread windowed, exact.
@@ -95,7 +95,7 @@ test("countProvenance distinguishes exact trace counts, Gecko markers, and a run
   assert.match(gecko, /Gecko markers/);
   assert.match(gecko, /not comparable to Chrome/);
 
-  // The default rung captures no trace: layoutCount is null, so the header says NOT measured, never 0.
+  // The default capture mode captures no trace: layoutCount is null, so the header says NOT measured, never 0.
   const none = countProvenance(recording({ passes: ["default"] }, { layoutCount: null }));
   assert.match(none, /NOT measured/);
 });
@@ -115,7 +115,7 @@ test("notes: a lost run-end / step-end mark is disclosed, not silent (F26/F27)",
 });
 
 // F4: on a no-trace --url boot, --iterations produces no wall and no median (the navigating load step
-// resets the page clock, and the rung has no trace clock to span it). The note must say so plainly and
+// resets the page clock, and the capture mode has no trace clock to span it). The note must say so plainly and
 // point to --breakdown, rather than the warm/cold note promising a median (`stats`) that is not there.
 test("notes: the no-median on-ramp note names iterations and steers to --breakdown (F4)", () => {
   const note = notesCatalog.onrampIterationsNoMedian(3);
@@ -123,7 +123,7 @@ test("notes: the no-median on-ramp note names iterations and steers to --breakdo
   assert.match(note, /no per-iteration wall or median/);
   assert.match(note, /--breakdown/);
   // The warm/cold note, by contrast, DOES describe a wall median, so it must only fire where a wall
-  // exists -- the two are mutually exclusive by rung (record.ts picks by pass.stepWallClock).
+  // exists -- the two are mutually exclusive by capture mode (record.ts picks by pass.stepWallClock).
   assert.match(notesCatalog.onrampWarmVsCold(3), /median/);
 });
 
@@ -304,13 +304,13 @@ test("diff: a sampler-interval mismatch WARNS but still compares (R05)", async (
   assert.equal(interval.code, undefined, "the sampler interval alone does not refuse the gate");
 });
 
-test("diff: --fail-on-regression REFUSES across a mismatched rung/browser (F31)", async () => {
+test("diff: --fail-on-regression REFUSES across a mismatched capture-mode/browser (F31)", async () => {
   const base = writeRecMeta("f31-refuse-base.json", { passes: ["deep"], browser: undefined }, { layoutCount: 1 });
   const current = writeRecMeta("f31-refuse-cur.json", { passes: ["gecko"], browser: "firefox" }, { layoutCount: 1 });
   const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
-  assert.equal(code, 1, "gating across an incompatible browser/rung refuses");
+  assert.equal(code, 1, "gating across an incompatible browser/capture-mode refuses");
   assert.ok(logs.some((line) => /Refusing to gate/.test(line)));
-  assert.ok(logs.some((line) => /browser/.test(line) && /rung/.test(line)));
+  assert.ok(logs.some((line) => /browser/.test(line) && /capture-mode/.test(line)));
 });
 
 // R05: cpu-diff had NO comparability check. It joins per-function self-time across two models as if
@@ -374,13 +374,13 @@ test("cpu-diff: a structured-vs-absent pair WARNS but does not block (T02)", asy
   assert.equal(code, undefined, "the mixed pair warns but still compares");
 });
 
-test("cpu-diff: a rung mismatch WARNS but still compares (not a cpu-diff blocker) (R05)", async () => {
+test("cpu-diff: a capture-mode mismatch WARNS but still compares (not a cpu-diff blocker) (R05)", async () => {
   const base = writeCpuModel("cpudiff-warn-base.cpu.json", { passes: ["default"] }, 10);
   const current = writeCpuModel("cpudiff-warn-cur.cpu.json", { passes: ["breakdown"] }, 10);
   const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
   assert.ok(errs.some((line) => /captured differently/.test(line)), "the mismatch is disclosed");
-  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "the rung does not block cpu-diff");
-  assert.equal(code, undefined, "equal self-time, and the rung does not refuse the gate");
+  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "the capture mode does not block cpu-diff");
+  assert.equal(code, undefined, "equal self-time, and the capture mode does not refuse the gate");
 });
 
 // F02: CPU self-time TOTALS across every sampled iteration and STRETCHES under cpu-throttle, so a

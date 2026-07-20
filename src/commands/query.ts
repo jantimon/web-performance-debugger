@@ -25,7 +25,7 @@ import {
   type SpanCountsEntry,
   type SpanCountsOverview,
 } from "../model/spans.js";
-import { isFirefoxDeep, isGeckoRung } from "../model/rung.js";
+import { isFirefoxDeep, isGeckoCaptureMode } from "../model/capture-mode.js";
 import { bold, cyan, dim } from "../output/color.js";
 import { num, table } from "../output/ascii.js";
 import { analyzeThrash } from "../trace/thrash.js";
@@ -73,15 +73,15 @@ function eventsInWindow(rec: Recording): NormalizedEvent[] {
 
 /**
  * The deep event log (`rec.events`) is stored only where a reader consumes it: --deep (chrome) and
- * firefox. On every other rung it is empty by design, so `query events`/`get`/`blame` say "not
- * captured at this rung" rather than reporting an empty result as if the page did nothing. A --deep
- * run that genuinely observed nothing still has the log (it just came back empty), so the rung, not
- * the array length, is the test.
+ * firefox. In every other capture mode it is empty by design, so `query events`/`get`/`blame` say "not
+ * captured in this capture mode" rather than reporting an empty result as if the page did nothing. A --deep
+ * run that genuinely observed nothing still has the log (it just came back empty), so the capture mode,
+ * not the array length, is the test.
  */
 function requireEventLog(rec: Recording, file: string): void {
-  if (rec.meta.passes.includes("deep") || isGeckoRung(rec.meta.passes)) return;
+  if (rec.meta.passes.includes("deep") || isGeckoCaptureMode(rec.meta.passes)) return;
   throw new Error(
-    `${file}: the event log was not captured at this rung (${rec.meta.passes.join("+")}). Events, ` +
+    `${file}: the event log was not captured in this capture mode (${rec.meta.passes.join("+")}). Events, ` +
       `forced-layout blame, and invalidation records are stored only under --deep (chrome) or ` +
       `--target firefox. Re-record with --deep.`,
   );
@@ -103,8 +103,8 @@ export interface SpanQuery extends OutOpts {
  * The trace-clock window of one span, recovered from the stored event log so forced read-sites can be
  * scoped to the span. The run window is `rec.window`; a step's edges are its `wpd:step:N:start|end`
  * marks; a user measure's are its first in-window `performance.measure` begin/end. Falls back to the
- * run window when the span's own marks are not in this log (a rung with no event log never reaches
- * here). endTs null leaves the window open-ended, which the start-onward `forcedLayouts` handles.
+ * run window when the span's own marks are not in this log (a capture mode with no event log never
+ * reaches here). endTs null leaves the window open-ended, which the start-onward `forcedLayouts` handles.
  */
 function spanWindow(rec: Recording, span: Span): { startTs: number | null; endTs: number | null } {
   if (span.kind === "step" && span.index != null) {
@@ -144,9 +144,9 @@ function measureWindow(
  * `query span <label>`: one span's full anatomy. `<label>` is a bare label (matched across kinds) or a
  * `kind:label` qualifier, since span identity is kind+label; a bare label that matches more than one
  * kind is a collision the caller resolves rather than a silent join. The anatomy carries the bar (when
- * the rung built one, else rung-honest null), the wall/aggregation/samples/spread, the Measured
- * counts, INP/interaction when the span had one, the forced-layout read-sites + dirtied-by writes +
- * thrash rollup an event-log rung (chrome --deep, firefox) captured, and the hot functions within the
+ * the capture mode built one, else capture-mode-honest null), the wall/aggregation/samples/spread, the
+ * Measured counts, INP/interaction when the span had one, the forced-layout read-sites + dirtied-by
+ * writes + thrash rollup an event-log capture mode (chrome --deep, firefox) captured, and the hot functions within the
  * span's window (run span only; per-step/measure windowing is not reconstructable at read time).
  */
 export async function querySpan(file: string, label: string, query: SpanQuery): Promise<void> {
@@ -191,7 +191,7 @@ export async function querySpan(file: string, label: string, query: SpanQuery): 
 
 /** Load the sibling CPU model if one exists; a missing/absent model is not an error for the anatomy.
  * Only the "no model here" case (ENOCPUMODEL) is swallowed: a corrupt or unreadable sibling surfaces
- * rather than masquerading as "no CPU model", which would read as a rung that never sampled. */
+ * rather than masquerading as "no CPU model", which would read as a capture mode that never sampled. */
 async function tryLoadCpuModel(recordingPath: string): Promise<CpuModel | undefined> {
   try {
     return await loadCpuModel(recordingPath);
@@ -214,16 +214,16 @@ function buildSpanAnatomy(
   const target = recordingLane(rec.meta);
 
   // Unified slices: prefer the stored bar; a run span with no stored bar falls back to the sibling
-  // CpuModel run bar (the same source rule as `query spans`). null when this rung built no bar.
+  // CpuModel run bar (the same source rule as `query spans`). null when this capture mode built no bar.
   const spansResult = buildSpans(rec.spans, model?.breakdown, target, iterations);
   const entry = spansResult?.spans.find(
     (candidate) => candidate.label === span.label && candidate.kind === span.kind,
   );
 
   // Forced read-sites, thrash, and the firefox write report come from the deep event log, scoped to
-  // this span's window. Absent on every rung that captured no log (the empty array is that lane's
-  // "not captured", so the rung gates it, not the array length).
-  const hasEventLog = rec.meta.passes.includes("deep") || isGeckoRung(rec.meta.passes);
+  // this span's window. Absent in every capture mode that captured no log (the empty array is that lane's
+  // "not captured", so the capture mode gates it, not the array length).
+  const hasEventLog = rec.meta.passes.includes("deep") || isGeckoCaptureMode(rec.meta.passes);
   let forced: SpanForced[] | undefined;
   let thrash: SpanAnatomy["thrash"];
   let firefoxDirtied: SpanAnatomy["firefoxDirtiedBy"];
@@ -250,7 +250,7 @@ function buildSpanAnatomy(
 
   // Hot functions within the span window, on the CPU-sampler scripting axis. The run span reads them
   // from the resolved CpuModel (which IS the run window); a step/measure span reads its stored
-  // `SpanHot` refs and resolves names via the sibling model. A rung/kind with neither reports null.
+  // `SpanHot` refs and resolves names via the sibling model. A capture-mode/kind with neither reports null.
   let hot: SpanHotFunctions | null = null;
   if (span.kind === "run" && model)
     hot = {
@@ -270,8 +270,8 @@ function buildSpanAnatomy(
   }
   if (model && span.kind !== "run" && !span.hot)
     hints.push(`Run-window hot functions: wpd query cpu ${hintPath}`);
-  // Only suggest `query spans` when this rung actually has a bar/CpuModel for it to fold; on the
-  // default/--deep rungs it would error, so a not-available hint would send the reader in a circle.
+  // Only suggest `query spans` when this capture mode actually has a bar/CpuModel for it to fold; in the
+  // default/--deep capture modes it would error, so a not-available hint would send the reader in a circle.
   if (spansResult) hints.push(`All spans at a glance: wpd query spans ${hintPath}`);
 
   const residualMs = entry?.residualMs ?? span.breakdown?.residualMs;
@@ -412,13 +412,16 @@ function printSpanAnatomy(
     );
   }
 
-  // The reconciling bar, when the rung built one. A stored bar prints the seven-slice per-span table;
-  // a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled).
+  // The reconciling bar, when the capture mode built one. A stored bar prints the seven-slice per-span
+  // table; a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled).
   if (span.breakdown) printSpanBreakdowns([span], anatomy.iterations, meta.browser, showFrames);
   else if (span.kind === "run" && model?.breakdown) printCpuBreakdown(model, anatomy.iterations);
-  else console.log(dim("\n(no reconciling bar at this rung; record with --breakdown for one)"));
+  else
+    console.log(
+      dim("\n(no reconciling bar in this capture mode; record with --breakdown for one)"),
+    );
 
-  console.log("\nRendering counts (Measured: — = not measured on this rung, never 0)\n");
+  console.log("\nRendering counts (Measured: — = not measured in this capture mode, never 0)\n");
   console.log(
     table(
       ["metric", "count"],
@@ -620,7 +623,7 @@ function printSpanAnatomy(
       anatomy.target === "firefox"
         ? "step spans carry no hot list on firefox; wrap the work in a performance.measure"
         : "record with --breakdown for per-span hot functions";
-    console.log(dim(`\nHot functions: not available at this rung (${remedy}).${pointer}`));
+    console.log(dim(`\nHot functions: not available in this capture mode (${remedy}).${pointer}`));
   }
 
   if (anatomy.hints.length) {
@@ -660,7 +663,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   const abs = await resolveTarget(file, "recording");
   const rec = await load(abs);
   // Prefer the recording's spans that carry a bar; reach for the sibling CPU model only when none do
-  // (firefox/node without measures, or a rung-1 chrome run), where the run bar lives on
+  // (firefox/node without measures, or a default-mode chrome run), where the run bar lives on
   // CpuModel.breakdown instead of on the stored spans.
   const hasBar = rec.spans?.some((span) => span.breakdown);
   let model: CpuModel | undefined;
@@ -671,7 +674,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
       cpuBreakdown = model.breakdown;
     } catch (error) {
       // Only "no model here" (ENOCPUMODEL) is the empty case buildSpans reports below; a corrupt or
-      // unreadable sibling surfaces rather than reading as "no breakdown at this rung".
+      // unreadable sibling surfaces rather than reading as "no breakdown in this capture mode".
       if ((error as NodeJS.ErrnoException)?.code !== "ENOCPUMODEL") throw error;
     }
   }
@@ -742,7 +745,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
       `\n  • One span's anatomy (counts, forced, hot functions): wpd query span ${hintPath} <label>`,
     ),
   );
-  if (rec.meta.passes.includes("deep") || isGeckoRung(rec.meta.passes))
+  if (rec.meta.passes.includes("deep") || isGeckoCaptureMode(rec.meta.passes))
     console.log(
       dim(`  • The classified event log: wpd query events ${hintPath} (drill: query get)`),
     );
@@ -751,8 +754,8 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
 /**
  * `query spans` on a bar-less recording (default/--deep/--precise-wall): the overview it CAN render
  * honestly -- label/kind/wall/aggregation and the Measured rendering counts -- with the reconciling
- * bar shown as not-measured. --deep leads with its exact counts here; the sampler-off wall rungs carry
- * only the wall (counts —). Never a fabricated all-zero bar.
+ * bar shown as not-measured. --deep leads with its exact counts here; the sampler-off wall capture modes
+ * carry only the wall (counts —). Never a fabricated all-zero bar.
  */
 async function printBarlessSpans(
   overview: SpanCountsOverview,
@@ -763,7 +766,7 @@ async function printBarlessSpans(
 ): Promise<void> {
   const label = query.label;
   const selected = label ? overview.spans.filter((span) => span.label === label) : overview.spans;
-  // A null-wall span (a navigating step on a no-trace rung) is honest, not sub-threshold: only a
+  // A null-wall span (a navigating step on a no-trace capture mode) is honest, not sub-threshold: only a
   // MEASURED wall below --min-wall hides. --filter matches the label the usual way.
   const passes = (span: SpanCountsEntry): boolean => {
     const needle = query.filter?.toLowerCase();
@@ -787,7 +790,7 @@ async function printBarlessSpans(
 
   const count = (value: Measured<number>): string =>
     formatMeasured(value, (measured) => String(measured));
-  const isDeep = meta.passes.includes("deep") || isGeckoRung(meta.passes);
+  const isDeep = meta.passes.includes("deep") || isGeckoCaptureMode(meta.passes);
   console.log(
     `\nspans overview ${dim(`(${overview.target} · no reconciling bar at this capture · counts Measured: — = not measured, never 0)`)}\n`,
   );
@@ -1107,7 +1110,7 @@ function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
     return "Firefox captures cause stacks for layout/style via the Gecko profiler";
   if (semantic === "flush-site")
     return "the run captures the geometry read that forced the flush (Chrome via the trace's `.stack`, Firefox via the sampled DOM-accessor stacks)";
-  return "this run captured no blame: the default and --precise-wall rungs run no trace, and --target node has no DOM; record with --deep (chrome) or --target firefox";
+  return "this run captured no blame: the default and --precise-wall capture modes run no trace, and --target node has no DOM; record with --deep (chrome) or --target firefox";
 }
 
 /**

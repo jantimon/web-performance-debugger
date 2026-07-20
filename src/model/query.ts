@@ -125,7 +125,7 @@ export interface SpanEntry {
   kind: SpanKind;
   /**
    * Headline wall (ms). On a stored per-span bar it is the trace-clock window the slices tile. On a
-   * run span SYNTHESIZED from `CpuModel.breakdown` (`SpansResult.source === "cpu-model"`: default-rung
+   * run span SYNTHESIZED from `CpuModel.breakdown` (`SpansResult.source === "cpu-model"`: default-mode
    * chrome, node, firefox without user measures) it is the profiler's own sampled window, which
    * brackets the whole timed loop INCLUDING the settle wait -- so it can exceed `summary.wallMs` (the
    * sum of the timed `run()` samples). The human header labels that case `sampled window`.
@@ -167,7 +167,7 @@ export interface SpanEntry {
  * `query spans` output: one unified per-span breakdown array across chrome/firefox/node. `source`
  * says where the spans came from -- `breakdowns` (the recording's stored per-span bars: chrome
  * --breakdown, or firefox with user measures) or `cpu-model` (a single `run` span synthesized from
- * `CpuModel.breakdown` when no per-span bars were stored: firefox/node without measures, rung-1
+ * `CpuModel.breakdown` when no per-span bars were stored: firefox/node without measures, default-mode
  * chrome). The `run` span is always present when any bar exists, so this never comes back empty.
  */
 export interface SpansResult {
@@ -208,7 +208,7 @@ export interface SpanForced {
  *
  * `suppressed` is true when the span had fewer than the pooled-sample floor: `functions` is omitted
  * (raise --iterations) rather than a fabricated top-N. A span whose CPU windowing is not
- * reconstructable at its rung/kind reports `hot: null` instead of this shape.
+ * reconstructable at its capture-mode/kind reports `hot: null` instead of this shape.
  */
 export interface SpanHotFunctions {
   scope: "run-window" | "step-window" | "measure-pooled";
@@ -240,11 +240,11 @@ export interface SpanHotFunctions {
 
 /**
  * `query span <label>` output: one span's full anatomy. `slices` is the reconciling bar's unified
- * shape when the rung built one, else null (rung-honest, never fabricated). `counts` are Measured
- * throughout. `forced`/`thrash`/`firefoxDirtiedBy` are present only when an event-log rung (chrome
+ * shape when the capture mode built one, else null (capture-mode-honest, never fabricated). `counts` are Measured
+ * throughout. `forced`/`thrash`/`firefoxDirtiedBy` are present only when an event-log capture mode (chrome
  * --deep, firefox) carried the records they read; `thrash` is the run window's layout-thrashing
  * rollup, chrome --deep only. `hot` is the span-windowed hot functions, or null when the CPU
- * windowing is not reconstructable at this rung/kind (see SpanHotFunctions). Span identity is
+ * windowing is not reconstructable at this capture-mode/kind (see SpanHotFunctions). Span identity is
  * kind+label; a bare label matching more than one kind is a collision the caller resolves, never a
  * silent join.
  */
@@ -263,7 +263,7 @@ export interface SpanAnatomy {
   samples?: number;
   wallMinMs?: number;
   wallMaxMs?: number;
-  /** the reconciling bar's unified slices; null when this rung built no bar for the span */
+  /** the reconciling bar's unified slices; null when this capture mode built no bar for the span */
   slices: UnifiedSlices | null;
   /** carried through when the source breakdown did not fully close (lost events/clock skew) */
   residualMs?: number;
@@ -278,13 +278,13 @@ export interface SpanAnatomy {
   /** Long Animation Frames observed in a driver step's window (Chrome only); absent otherwise. Names
    * the scripts that made a frame slow, so a step attributes to source even with no CPU sampler. */
   loaf?: StepLoaf;
-  /** forced read-sites in this span's window; present only on an event-log rung (chrome/firefox --deep) */
+  /** forced read-sites in this span's window; present only in an event-log capture mode (chrome/firefox --deep) */
   forced?: SpanForced[];
   /** the layout-thrashing rollup for the run window (chrome --deep only, run span) */
   thrash?: ThrashReport;
   /** firefox --deep dirtied-by write report for this window (Gecko cause stacks, first-invalidation-only) */
   firefoxDirtiedBy?: FirefoxDirtiedByReport;
-  /** hot functions within this span's window; null when not reconstructable at this rung/kind */
+  /** hot functions within this span's window; null when not reconstructable at this capture-mode/kind */
   hot: SpanHotFunctions | null;
   hints: string[];
 }

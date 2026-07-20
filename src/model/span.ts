@@ -7,7 +7,7 @@ import type { RecordingSummary, SpanCounts } from "./recording.js";
 
 /**
  * Counts a span carries no per-occurrence rendering counts for. Every field is null (not-measured),
- * never a fake 0: a 0 would read as "measured clean", and the default/--breakdown/measure rungs
+ * never a fake 0: a 0 would read as "measured clean", and the default/--breakdown/measure capture modes
  * simply did not window these counts. See model/measured.ts for the tri-state contract.
  */
 export function notMeasuredSpanCounts(): SpanCounts {

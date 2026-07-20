@@ -174,12 +174,12 @@ test("userMeasureSpans: pairs user measures, excludes wpd:*, drops out-of-window
 
 // The one capture that ran gates each count/duration to Measured null vs a number. A --deep-shaped
 // capture (counts + forced, durations OFF because .stack distorts them); a breakdown-shaped one
-// (counts + durations, forced OFF); the default rung (nothing).
+// (counts + durations, forced OFF); the default capture mode (nothing).
 const DEEP = { counts: true, paintCount: true, longTasks: true, invalidations: true, durations: false, forced: true };
 const LIGHT = { counts: true, paintCount: true, longTasks: true, invalidations: false, durations: true, forced: false };
 
-// Rendering counts are Measured: a rung that saw a trace reports the exact count, a rung that did
-// not (the default rung, or a mode that drops the .stack forced detection) reports null, never 0.
+// Rendering counts are Measured: a capture mode that saw a trace reports the exact count, a capture mode that did
+// not (the default capture mode, or a mode that drops the .stack forced detection) reports null, never 0.
 test("buildSummary: capabilities gate forced to a count or to null (never a fake 0)", () => {
   const events = [{ id: 0, name: "Layout", ts: 1, dur: 2000, ph: "X", kind: "layout" }];
   const measured = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: DEEP });
@@ -187,9 +187,9 @@ test("buildSummary: capabilities gate forced to a count or to null (never a fake
   const notMeasured = buildSummary({ detailEvents: events, detailWindowStart: null, capabilities: LIGHT });
   assert.equal(notMeasured.forcedLayoutCount, null, "light trace has no .stack: forced not measured, so null");
   assert.equal(notMeasured.forcedLayoutMs, null);
-  // The default rung captures no trace: every count is null.
-  const defaultRung = buildSummary({ detailEvents: events, detailWindowStart: null });
-  assert.equal(defaultRung.layoutCount, null, "default rung has no trace, so no counts");
+  // The default capture mode captures no trace: every count is null.
+  const defaultMode = buildSummary({ detailEvents: events, detailWindowStart: null });
+  assert.equal(defaultMode.layoutCount, null, "default capture mode has no trace, so no counts");
 });
 
 // Counts come from the trace, main-thread windowed, when the capture captured one.
@@ -202,7 +202,7 @@ test("buildSummary: trace counts are Measured on capabilities.counts, null witho
   assert.equal(withTrace.layoutCount, 1);
   assert.equal(withTrace.paintCount, 1);
   const noTrace = buildSummary({ detailEvents: events, detailWindowStart: null });
-  assert.equal(noTrace.layoutCount, null, "default rung: no trace, no count");
+  assert.equal(noTrace.layoutCount, null, "default capture mode: no trace, no count");
   assert.equal(noTrace.paintCount, null);
 });
 

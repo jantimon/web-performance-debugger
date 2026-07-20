@@ -35,12 +35,12 @@ export interface DriverStep {
   markIndex?: number;
   label: string;
   /**
-   * The step's wall on the clock the rung has: the page's own `performance.now()` delta between the
+   * The step's wall on the clock the capture mode has: the page's own `performance.now()` delta between the
    * step's marks (this field, `pageWallMs`), overridden by the trace-clock window between the same
    * marks when a trace was captured (--breakdown/--deep). Never the node-side `performance.now()`
    * around `page.click`, which measures the tool process: ~20ms of that is input dispatch in no
    * renderer timeline (docs/dev/driver-timing.md). Null when neither clock can price the step (a
-   * navigating step on the no-trace default rung: a new document resets the page clock, so the two
+   * navigating step in the no-trace default capture mode: a new document resets the page clock, so the two
    * marks no longer share one, and there is no trace to span it).
    */
   wallMs: number | null;
@@ -270,7 +270,7 @@ export async function runDriver(
     // Built-in flow: one "load" step that navigates to the target. No prepare/cleanup. The default
     // settle (rAF+idle, twice) flushes the boot's paints after the load event, so the window is the
     // page's own load-to-settle. A navigating step has a null page-clock wall (the two marks sit on
-    // documents with different timeOrigins); a trace rung prices it off the trace window instead.
+    // documents with different timeOrigins); a trace capture mode prices it off the trace window instead.
     run = ({
       measureStep,
     }: {
@@ -518,8 +518,8 @@ export async function runDriver(
   recording = true;
 
   // prepare() and warmup have run; open the CPU sampler HERE, right before the run mark, not before
-  // prepare. The V8 sampler is not windowed after the fact (there is no trace clock on the default
-  // rung to slice it by), so anything it samples lands in the model. Started before prepare it bills
+  // prepare. The V8 sampler is not windowed after the fact (there is no trace clock in the default
+  // capture mode to slice it by), so anything it samples lands in the model. Started before prepare it bills
   // prepare's and every warmup's page-side JS to the run: on a probe whose run() does ~5ms and
   // prepare() does ~80ms, scriptingMs reads ~88ms with prepare as the top hot function. Starting it
   // after warmup makes the profile's lifetime the run window (the settle tail aside, which is idle),

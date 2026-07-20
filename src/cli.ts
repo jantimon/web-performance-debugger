@@ -36,7 +36,7 @@ const program = new Command();
 program
   .name(TOOL)
   .description(
-    "Drive Chrome (Puppeteer) to attribute layout/paint/invalidation work to source, one capture rung per run.",
+    "Drive Chrome (Puppeteer) to attribute layout/paint/invalidation work to source, one capture mode per run.",
   )
   .version(VERSION)
   .option("--color <when>", "colorize human output: auto | always | never", "auto");
@@ -136,20 +136,20 @@ program
     "timeout in ms for one protocol call (default 180000); raise it when a heavy traced interaction pins the main thread, or when a loaded machine makes Firefox time out launching",
     toInt,
   )
-  // The chrome capture ladder. Default (no flag) is rung 1: CPU sampler only, no trace, cleanest
-  // wall -- the four-slice CPU bar, no rendering counts. --breakdown and --deep are the higher rungs;
-  // --precise-wall is rung 1 minus the sampler. Every invocation is exactly ONE pass.
+  // The chrome capture modes. Default (no flag): CPU sampler only, no trace, cleanest wall -- the
+  // four-slice CPU bar, no rendering counts. --breakdown and --deep each capture more; --precise-wall
+  // is the default mode minus the sampler. Every invocation is exactly ONE pass.
   .option(
     "--breakdown",
-    "chrome rung 2: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span, plus exact layout/style/paint counts. Cannot report forced-layout counts or blame (they need the `.stack` category, which --deep captures)",
+    "chrome capture mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span, plus exact layout/style/paint counts. Cannot report forced-layout counts or blame (they need the `.stack` category, which --deep captures)",
   )
   .option(
     "--deep",
-    "rung 3 attribution report. Chrome: ONE full-trace pass (.stack + invalidationTracking), sampler OFF -- exact forced-layout blame, dirtied-by writes, invalidation rollup, exact counts, long tasks; slice durations suppressed (the trace distorts them), no CPU model. Firefox: the SAME gecko pass, adding a dirtied-by (first-invalidation-only) write report from Gecko's cause stacks (no exact-count parity, no forced-by, no thrash detector)",
+    "attribution-report capture mode. Chrome: ONE full-trace pass (.stack + invalidationTracking), sampler OFF -- exact forced-layout blame, dirtied-by writes, invalidation rollup, exact counts, long tasks; slice durations suppressed (the trace distorts them), no CPU model. Firefox: the SAME gecko pass, adding a dirtied-by (first-invalidation-only) write report from Gecko's cause stacks (no exact-count parity, no forced-by, no thrash detector)",
   )
   .option(
     "--precise-wall",
-    "rung 1 minus the CPU sampler: a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts",
+    "the default capture mode minus the CPU sampler: a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts",
   )
   .option(
     "--headless-mode <mode>",
@@ -207,7 +207,7 @@ program
         );
       if (cmdOpts.preciseWall)
         program.error(
-          "record --precise-wall needs a module: the built-in load flow's only step is a navigation, whose wall the page clock cannot price on a no-trace rung (nothing would be measured). Drop --precise-wall, or pass a module.",
+          "record --precise-wall needs a module: the built-in load flow's only step is a navigation, whose wall the page clock cannot price in a no-trace capture mode (nothing would be measured). Drop --precise-wall, or pass a module.",
         );
     }
     // undefined = flag not passed; the flavour then defaults to shell in launchBrowser. The two
@@ -223,18 +223,18 @@ program
     // explicit --headless-mode shell conflicts with --no-headless; the shell default does not.
     if (cmdOpts.headlessMode === "shell" && cmdOpts.headless === false)
       program.error("--headless-mode shell requires headless (drop --no-headless)");
-    // The rungs are mutually exclusive: each answers a different question with a different capture,
-    // and every invocation is exactly one pass. Two rungs means two invocations.
+    // The capture modes are mutually exclusive: each answers a different question with a different
+    // capture, and every invocation is exactly one pass. Two capture modes means two invocations.
     if (cmdOpts.breakdown && cmdOpts.deep)
       program.error(
-        "--breakdown and --deep are two different rungs (two captures, two questions): --breakdown is the reconciling bar, --deep is the attribution report. Run wpd twice to get both.",
+        "--breakdown and --deep are two different capture modes (two captures, two questions): --breakdown is the reconciling bar, --deep is the attribution report. Run wpd twice to get both.",
       );
     if (cmdOpts.preciseWall && (cmdOpts.breakdown || cmdOpts.deep))
       program.error(
-        `--precise-wall is rung 1 minus the sampler; it cannot combine with ${cmdOpts.breakdown ? "--breakdown" : "--deep"} (a higher rung). Drop one.`,
+        `--precise-wall is the default capture mode minus the sampler; it cannot combine with ${cmdOpts.breakdown ? "--breakdown" : "--deep"} (another capture mode). Drop one.`,
       );
     if (firefox) {
-      // On firefox the ONE gecko pass IS the lane at every rung. --breakdown/--precise-wall have no
+      // On firefox the ONE gecko pass IS the lane in every capture mode. --breakdown/--precise-wall have no
       // meaning over it, and --cpu-throttle needs CDP, which BiDi does not expose. --deep IS
       // supported: it is a reporting tier (the dirtied-by write report from Gecko's cause stacks), not
       // a capture change. --protocol-timeout is deliberately allowed: puppeteer threads it into BiDi.
