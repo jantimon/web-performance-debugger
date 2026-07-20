@@ -136,7 +136,7 @@ e2e(
     assert.ok(existsSync(out), "recording file written");
 
     const recording = JSON.parse(readFileSync(out, "utf8"));
-    // The reporting tier is recorded as its own rung name; the capture is still the one gecko pass.
+    // The reporting tier is recorded as its own capture-mode name; the capture is still the one gecko pass.
     assert.deepEqual(recording.meta.passes, ["gecko-deep"], "the --deep reporting tier over the one gecko pass");
     // The run span's anatomy carries the dirtied-by report, first-invalidation-only, with a WRITE line.
     const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
@@ -216,7 +216,7 @@ e2e(
 test("query blame --dirtied is refused on a non-firefox-deep recording", () => {
   const chromeDir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
   const out = path.join(chromeDir, "chrome-deep");
-  // A chrome --deep recording (no firefox needed): the guard is on the rung, not the browser launch.
+  // A chrome --deep recording (no firefox needed): the guard is on the capture mode, not the browser launch.
   const rec = spawnSync(process.execPath, [cli, "record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", "1", "--out", out], { encoding: "utf8" });
   if (rec.status !== 0) return; // chrome not installed on this host; the unit test covers the guard
   const result = spawnSync(process.execPath, [cli, "query", "blame", out, "--dirtied"], { encoding: "utf8" });

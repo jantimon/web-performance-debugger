@@ -88,11 +88,11 @@ export function computeStats(perIteration: number[]): BenchStats | null {
 }
 
 /**
- * What the one capture that ran could observe, per rung/lane. Every count/duration below is gated
- * to `Measured` null vs a number by one of these flags, so a rung that saw no trace reports null
+ * What the one capture that ran could observe, per capture mode/lane. Every count/duration below is gated
+ * to `Measured` null vs a number by one of these flags, so a capture mode that saw no trace reports null
  * (not a fake 0), and a `.stack`/`--deep` trace reports exact counts but suppresses its distorted
  * durations. Computed once in `capabilitiesFor` (record/capture.ts) and threaded to every
- * `buildSummary` call (run, step, node) so one rung's honesty is stated in one place.
+ * `buildSummary` call (run, step, node) so one capture mode's honesty is stated in one place.
  */
 export interface CaptureCapabilities {
   /** a trace was captured, so layout/style COUNTS are exact (windowed on the bar's main thread) */
@@ -109,7 +109,7 @@ export interface CaptureCapabilities {
   forced: boolean;
 }
 
-/** Everything not-measured: the default/precise-wall rung and node, which capture no rendering work. */
+/** Everything not-measured: the default/precise-wall capture mode and node, which capture no rendering work. */
 export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
   counts: false,
   paintCount: false,
@@ -134,7 +134,7 @@ export interface SummaryInputs {
    * computeStats contract, and no caller can invent a statistic that bypasses it.
    */
   perStep?: Omit<StepTiming, "stats">[];
-  /** what the capture could observe; defaults to NO_RENDERING_CAPTURE (default rung / node). */
+  /** what the capture could observe; defaults to NO_RENDERING_CAPTURE (default capture mode / node). */
   capabilities?: CaptureCapabilities;
   /** JS self-time from the CPU model, or null (--deep has no sampler, so no CPU model). */
   scriptingMs?: Measured<number>;
@@ -144,7 +144,7 @@ export interface SummaryInputs {
    * via `mainThread` -- the run's own selection. A per-step summary passes the run-selected thread so
    * its windowed counts sit on the same thread as its bar, rather than re-picking per step from a
    * window that carries no run:start marker. null means no thread was captured (every non-breakdown/
-   * non-deep rung strips pid/tid), so the single captured thread is counted whole.
+   * non-deep capture mode strips pid/tid), so the single captured thread is counted whole.
    */
   thread?: { pid: number; tid: number } | null;
 }
@@ -227,7 +227,7 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     wallMs: input.wallMs ?? null,
     inpMs: input.inpMs ?? null,
     interaction: input.interaction,
-    // Counts come from the trace, main-thread windowed (renderingWork); a rung with no trace reports
+    // Counts come from the trace, main-thread windowed (renderingWork); a capture mode with no trace reports
     // null, never a fake 0. Durations ride Chrome's `base::TimeTicks` (wall-tier, ~1%) and are valid
     // only on the light no-`.stack` trace, so a `--deep` (.stack) capture reports the exact counts
     // but null durations -- a distorted number is worse than none (.stack inflates style up to +38%).
@@ -243,7 +243,7 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     layoutInvalidations: measuredIf(capabilities.invalidations, layoutInval),
     paintInvalidations: measuredIf(capabilities.invalidations, paintInval),
     styleInvalidations: measuredIf(capabilities.invalidations, styleInval),
-    // null (not 0) when detection did not run: the default/--breakdown rungs drop the `.stack`
+    // null (not 0) when detection did not run: the default/--breakdown capture modes drop the `.stack`
     // category forced detection needs, so a 0 here would read as "no thrashing" instead of "not
     // measured". forcedLayoutMs is additionally a duration, so it is null wherever durations are.
     forcedLayoutCount: measuredIf(capabilities.forced, forcedLayoutCount),

@@ -216,13 +216,13 @@ first mount) runs with `--iterations 1` — that is one sample; repeat it by run
 phase you can repeat in place (an INP-style re-render, a cache probe) iterates in-page, and each
 `--iterations` pass is a fresh sample of the same work.
 
-## One capture per run: the three rungs
+## One capture per run: the capture modes
 
 Every `record` invocation is **exactly one capture pass** — one browser launch, one run of the flow.
-A rung picks *what* that pass captures. They are mutually exclusive: each answers a different question
+A capture mode picks *what* that pass captures. They are mutually exclusive: each answers a different question
 with a different instrumentation, and wanting two answers means running `wpd` twice.
 
-| Rung (chrome) | What it captures | What you get |
+| Capture mode (chrome) | What it captures | What you get |
 | --- | --- | --- |
 | **default** (no flag) | CPU sampler only, no trace | the four-slice CPU bar (`js · browser · gc · idle`), cleanest wall (~1%). No rendering counts |
 | **`--breakdown`** | light trace + CPU sampler, fused | the reconciling **seven-slice bar** per span (`js·style·layout·paint·gc·other·idle`, `Σ + idle = wall`) plus exact layout/style/paint counts |
@@ -239,8 +239,8 @@ counts, and shows span wall (the honest window width) but no slice ms.
 **Want the bar and the blame?** Run twice: `record --breakdown` for the reconciling bar and CPU model,
 `record --deep` for the forced-by/dirtied-by/thrash attribution.
 
-`--target firefox` is one Gecko-profiler pass at every rung (samples and markers are entangled at
-profiler startup), so the rungs are reporting tiers over that one capture rather than capture tiers;
+`--target firefox` is one Gecko-profiler pass in every capture mode (samples and markers are entangled at
+profiler startup), so the capture modes are reporting tiers over that one capture rather than capture tiers;
 `--breakdown`/`--precise-wall` are rejected there and `--deep` adds a dirtied-by write report.
 `--target node` is a CPU-only lane with the four-slice bar. See [the lanes](#what-each-target-gives-you).
 
@@ -393,13 +393,13 @@ interaction crossed the 16 ms floor the Event Timing spec sets, so nothing was m
 
 A step also carries any **Long Animation Frames** it triggered (Chrome), naming the scripts that made
 a frame slow — the listener/callback, its script url, its duration, and the ms it spent in forced
-style/layout. This attributes a step's cost to source even on the default rung (no trace, no CPU
+style/layout. This attributes a step's cost to source even in the default capture mode (no trace, no CPU
 sampler window): `query span <step>` prints the blamed scripts under the interaction split. It is
 Chrome-only today; a Firefox step omits it rather than reporting a fake zero.
 
 `inp ms` and the CWV split are measured **in-page**, so they describe the page, not the driver. A
 step's `wallMs` is the page's own window too: the trace-clock span between the step's marks under
-`--breakdown`/`--deep`, or the page's `performance.now` delta on the default rung — never the node-side
+`--breakdown`/`--deep`, or the page's `performance.now` delta in the default capture mode — never the node-side
 `page.click` bound (~20 ms of which is input dispatch in the tool's process, in no renderer timeline).
 The stored span records which clock priced it in `wallClock` (`"trace"` or `"page"`).
 
@@ -602,8 +602,8 @@ run with `--out` (the recording is written to exactly that path; the `.cpu.json`
 it), or just rely on `latest`:
 
 Slice ms comes from `--breakdown` and forced counts from `--deep`, and every run is one capture (one
-pass per run keeps every number trustworthy). So record each rung you need and gate each threshold on
-the rung that measured it:
+pass per run keeps every number trustworthy). So record each capture mode you need and gate each threshold on
+the capture mode that measured it:
 
 ```bash
 wpd record probe.mjs --bench --breakdown --out runs/before.json
@@ -611,10 +611,10 @@ wpd record probe.mjs --bench --breakdown --out runs/before.json
 wpd record probe.mjs --bench --breakdown --out runs/after.json
 wpd record probe.mjs --bench --deep      --out runs/after.deep.json
 
-# exit 1 on violation, each threshold on the rung that measures it:
+# exit 1 on violation, each threshold on the capture mode that measures it:
 wpd assert   runs/after.json      --max-layouts 120 --max-slice layout=2  # --breakdown: counts + slice ms
 wpd assert   runs/after.deep.json --max-forced 0                          # --deep: forced counts
-wpd diff     runs/before.json runs/after.json --fail-on-regression        # same rung on both sides
+wpd diff     runs/before.json runs/after.json --fail-on-regression        # same capture mode on both sides
 # per-function self-time deltas, noise filtered
 wpd cpu-diff runs/before.json runs/after.json --fail-on-regression
 ```
@@ -624,7 +624,7 @@ wpd cpu-diff runs/before.json runs/after.json --fail-on-regression
 `--max-wall`) and the reconciling bar's slices (`--max-slice <name>=<ms>`, repeatable, defaulting to the
 run span; `--label` targets another span). Slice ms is directional (wall-tier ~1%), never count-exact,
 so a slice budget is a directional gate like `--max-inp`, not a count gate. A budget on a metric the
-rung didn't measure — `--max-slice layout` on the default rung, or `--max-forced` on a `--breakdown`
+capture mode didn't measure — `--max-slice layout` in the default capture mode, or `--max-forced` on a `--breakdown`
 recording (forced counts need the `--deep` `.stack` trace) — is a **loud FAIL** (`n/a`), never a
 silent pass:
 
@@ -642,7 +642,7 @@ gated exact-count deltas, and warns when a metric is comparable on one side only
 joins two CPU models per function and per package, noise-filtered. Only the exact counts gate
 `--fail-on-regression`; wall, INP and scripting ms are directional, so they print but never fail the
 build. And a gate **refuses** across an incompatible capture rather than fabricate a regression: a
-`diff` across a different browser/runtime/rung/workload/`--iterations`/`--warmup`/headless flavour/
+`diff` across a different browser/runtime/capture-mode/workload/`--iterations`/`--warmup`/headless flavour/
 `--cpu-throttle`, or a `cpu-diff` across a different
 browser/runtime/workload/`--iterations`/`--warmup`/`--cpu-throttle`, names the mismatch and declines
 to gate. The **workload** axis is the executed flow (lane + host page + module), not just the target
@@ -666,7 +666,7 @@ and a new-vs-old pair warns that it cannot verify the flow.
 
 Any `<file>` may be `latest`. Verbs emit JSON with `--json` or `--format toon` (`get` takes `--format`
 only). `query events`/`get`/`blame` read the classified event log, which only `--deep` (chrome) and
-Firefox store; on other rungs they say so rather than report an empty page as clean.
+Firefox store; in other capture modes they say so rather than report an empty page as clean.
 
 **`query spans` is the one surface for per-interaction breakdowns across every target.** It returns one
 entry per span — the run window, each driver step, and every user `performance.measure` — each with the
@@ -682,13 +682,13 @@ labels containing `<text>`, case-insensitive substring). Both combine with `--la
 other, and the output always states how many spans the filter hid, so a filtered view is never mistaken
 for the whole recording.
 
-On the CPU-only lanes (default-rung chrome, `--target node`, Firefox without user measures) there is no
+On the CPU-only lanes (chrome's default capture mode, `--target node`, Firefox without user measures) there is no
 stored per-span bar, so `query spans` synthesizes the run span from the CPU model's own sampled window.
 That window is the profiler's bracket around the whole timed loop and **includes the settle wait**, so
 its `wallMs` differs from `summary.wallMs` (the sum of the timed `run()` samples); the human header
 labels it `sampled window`, and the JSON marks it `source: "cpu-model"`.
 
-Not every span carries a CPU/hot-functions number: the run span does on every sampler rung, steps only
+Not every span carries a CPU/hot-functions number: the run span does in every sampling capture mode, steps only
 under chrome `--breakdown`, measures under chrome `--breakdown` and firefox, and none under `--deep`/
 `--precise-wall` (see [docs/dev/cpu-attribution.md](docs/dev/cpu-attribution.md#which-spans-get-cpu-attribution)).
 
@@ -737,11 +737,11 @@ A few consequences worth stating plainly:
   *style* recalc as well as forced *layout*, despite the name.
 - **Firefox paint is not-measured** (off-main-thread), reported `null`, never a fake 0.
 
-**`Measured` is null-vs-0, everywhere.** Any count or slice a rung could not observe is an explicit
-`null` (not-measured), never a `0` (which reads as "measured clean"). The default rung observes no
+**`Measured` is null-vs-0, everywhere.** Any count or slice a capture mode could not observe is an explicit
+`null` (not-measured), never a `0` (which reads as "measured clean"). The default capture mode observes no
 rendering work, so its counts are `null`; Firefox paint is `null`; a `--deep` slice ms is `null`. A gate
 treats `null` as a loud failure, and a `diff` refuses to invent a delta from it. When you normalize
-across recordings of different rungs, read `slice?.ms ?? 0` rather than treat null-vs-0 as a per-target
+across recordings of different capture modes, read `slice?.ms ?? 0` rather than treat null-vs-0 as a per-target
 signal — the same target can report `paint` as `null` on a run-only recording and a measured `0` once a
 stored breakdown exists.
 
@@ -759,7 +759,7 @@ cost is pure JS (SSR, hot loops), this is already the whole story, and its `js` 
 Drive real user flows (`measureStep`) or benchmark DOM-touching modules in-page (`--bench`), get the
 reconciling bar (`--breakdown`), and get **forced layout/style blame** pointing at the offending
 statement (`--deep`). The same modules, recording format, and query verbs work in both browsers, so you
-can verify an optimization in both engines. Firefox delivers the Gecko pass at every rung: the reconciling
+can verify an optimization in both engines. Firefox delivers the Gecko pass at every capture mode: the reconciling
 bar, layout/style/forced counts (from Reflow/Styles markers), INP, and read-site blame come from that one
 capture; `--deep` adds a dirtied-by (first-invalidation-only) write report. Firefox also writes
 `<base>.geckoprofile.json`, ready to open at profiler.firefox.com.

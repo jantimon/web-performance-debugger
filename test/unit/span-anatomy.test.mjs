@@ -6,7 +6,7 @@ import { querySpan } from "../../dist/commands/query.js";
 import { tmpDir } from "./helpers.mjs";
 
 // `query span <label>`: one span's full anatomy. These pin the JSON contract -- the bar present vs
-// rung-honest null, Measured counts, the kind-collision listing, and the not-available CPU windowing
+// capture-mode-honest null, Measured counts, the kind-collision listing, and the not-available CPU windowing
 // for a non-run span -- against the compiled command.
 
 const slice = (ms) => ({ ms });
@@ -159,7 +159,7 @@ test("query span: counts preserve the Measured contract (null not-measured, 0 me
   assert.equal(anatomy.counts.layoutCount, 5);
 });
 
-// --- the bar absent on a rung that built none, plus forced attribution from the event log ---
+// --- the bar absent in a capture mode that built none, plus forced attribution from the event log ---
 
 test("query span run (--deep): no bar (slices null), forced read-sites from the event log, no cpu model => hot null", async () => {
   const file = writeRec("anatomy-deep.json", {
@@ -180,7 +180,7 @@ test("query span run (--deep): no bar (slices null), forced read-sites from the 
     ],
   });
   const anatomy = await captureJson(() => querySpan(file, "run", { json: true }));
-  assert.equal(anatomy.slices, null, "a --deep run built no reconciling bar: rung-honest null, never a fabricated bar");
+  assert.equal(anatomy.slices, null, "a --deep run built no reconciling bar: capture-mode-honest null, never a fabricated bar");
   assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length === 1, "forced read-sites come from the deep event log");
   assert.equal(anatomy.forced[0].at, "src/app.js:10");
   assert.equal(anatomy.forced[0].count, 2, "both flushes at the line roll up");
@@ -190,7 +190,7 @@ test("query span run (--deep): no bar (slices null), forced read-sites from the 
 
 // --- not-available CPU windowing for a non-run span without stored hot refs ---
 
-test("query span <step>: hot is null on a step span with no stored refs (e.g. a rung with no per-span tally)", async () => {
+test("query span <step>: hot is null on a step span with no stored refs (e.g. a capture mode with no per-span tally)", async () => {
   const file = writeRec("anatomy-step.json", {
     meta: { schemaVersion: "3", target: "chrome", iterations: 2, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },

@@ -113,7 +113,7 @@ export interface RecordingSummary {
 
   /**
    * Rendering counts and durations are `Measured` (model/measured.ts): a number is the exact count
-   * (0 = measured clean), null = NOT measured on this rung. The default rung (sampler only, no
+   * (0 = measured clean), null = NOT measured in this capture mode. The default mode (sampler only, no
    * trace) observes no rendering work at all, so every count/duration here is null there, never a
    * fake 0. Counts come from the trace, windowed on the bar's main thread; a `--breakdown`/`--deep`
    * capture supplies them.
@@ -121,7 +121,7 @@ export interface RecordingSummary {
   layoutCount: Measured<number>;
   /**
    * Wall-tier trace duration (`base::TimeTicks`, ~1% directional), valid only on the light
-   * (no-`.stack`) trace. Null on the default rung (no trace) AND on `--deep`, whose `.stack` trace
+   * (no-`.stack`) trace. Null in the default mode (no trace) AND on `--deep`, whose `.stack` trace
    * inflates style dur up to +38% (a distorted number is worse than none). Run `--breakdown` for it.
    */
   layoutMs: Measured<number>;
@@ -132,7 +132,7 @@ export interface RecordingSummary {
    * Main-thread paint chunks: one per dirtied region, [measured] exactly N+1 for N regions with
    * zero run-to-run variance. Raster (off-main-thread) is deliberately not in here; it counts
    * scheduler behaviour, not the page. See docs/dev/rendering-counts.md. `Measured`: null on the
-   * default rung (no trace) and on Firefox (paint is off-main-thread there), never a fake 0.
+   * default mode (no trace) and on Firefox (paint is off-main-thread there), never a fake 0.
    */
   paintCount: Measured<number>;
   /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
@@ -151,7 +151,7 @@ export interface RecordingSummary {
   forcedLayoutCount: Measured<number>;
   forcedLayoutMs: Measured<number>;
 
-  /** tasks >= 50ms ("long tasks") in the window; `Measured`, null on the default rung (no trace). */
+  /** tasks >= 50ms ("long tasks") in the window; `Measured`, null in the default mode (no trace). */
   longTaskCount: Measured<number>;
   /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
   longestTaskMs: Measured<number>;
@@ -326,8 +326,8 @@ export interface LoafFrame {
 
 /**
  * Long Animation Frames observed in a driver step's window (Chrome only). A LoAF names the scripts
- * that made a frame slow, so it attributes a step's cost to source EVEN on rungs with no CPU sampler
- * and no trace: the in-page `long-animation-frame` observer is ungated by any capture cap. Chrome
+ * that made a frame slow, so it attributes a step's cost to source EVEN in capture modes with no CPU
+ * sampler and no trace: the in-page `long-animation-frame` observer is ungated by any capture cap. Chrome
  * ships the API today and Firefox does not, so a firefox/node step carries none (absent, never a
  * fabricated zero). See browser/driver.ts.
  */
@@ -415,9 +415,9 @@ export interface RecordingMeta {
   /** lifecycle hooks found and called */
   lifecycle: string[];
   /**
-   * The one capture that ran, by rung name: "default" (sampler only) | "breakdown" | "deep" |
+   * The one capture that ran, by capture-mode name: "default" (sampler only) | "breakdown" | "deep" |
    * "precise-wall" | "gecko" (firefox) | "node-cpu". Every invocation is exactly one pass (one
-   * browser launch, one run of the flow), so this is a single-element array naming the rung, not a
+   * browser launch, one run of the flow), so this is a single-element array naming the capture mode, not a
    * multi-pass plan.
    */
   passes: string[];
@@ -438,7 +438,7 @@ export interface RecordingMeta {
    * Which code this run's forced-layout blame names (see BlameSemantic). "flush-site" (the read) on
    * both engines today, comparable at line granularity; "invalidation-site" (the write) only on
    * older Firefox recordings. Absent => the run produced no blame (--target node, or a chrome
-   * rung without a .stack trace).
+   * capture mode without a .stack trace).
    */
   blameSemantic?: BlameSemantic;
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
@@ -594,8 +594,8 @@ export interface FrameSideTrack {
 
 /**
  * Exact rendering counts windowed to ONE span's representative occurrence (the run window; a step's
- * first timed iteration). Each field is `Measured` (model/measured.ts): a rung that cannot observe a
- * count reports null, never a fake 0 (the default rung has no trace; --breakdown drops the `.stack`
+ * first timed iteration). Each field is `Measured` (model/measured.ts): a capture mode that cannot observe a
+ * count reports null, never a fake 0 (the default mode has no trace; --breakdown drops the `.stack`
  * category forced detection needs). A forced flush is already inside `layoutCount`/`styleCount`
  * (`forcedLayoutCount` re-reports the JS-triggered SUBSET), so a reader must never sum forced onto
  * layout + style.
@@ -618,9 +618,9 @@ export interface SpanCounts {
  * model as separate artifacts (the run, the step index, the per-span bars) is one `Span[]`.
  *
  * `aggregation` says how the numbers combine the timed iterations (see SpanAggregation). Fields are
- * populated by what the rung measured: `breakdown` (the reconciling seven-slice bar) only under
- * --breakdown / firefox / node; `counts` exactly under --breakdown/--deep/firefox and not-measured on
- * the default rung; INP/interaction only on a driver step that observed one. Not-measured is an
+ * populated by what the capture mode measured: `breakdown` (the reconciling seven-slice bar) only under
+ * --breakdown / firefox / node; `counts` exactly under --breakdown/--deep/firefox and not-measured in
+ * the default mode; INP/interaction only on a driver step that observed one. Not-measured is an
  * explicit null, never a fabricated 0.
  */
 export interface Span {
@@ -638,9 +638,9 @@ export interface Span {
   index?: number;
   /**
    * Headline wall (ms) on the page's own clock: the trace-clock window between the span's marks
-   * (--breakdown/--deep), else the page's performance.now delta (a driver step on the default rung),
-   * else the summed timed samples (a bench run). Null when unmeasured (a step that navigated on a
-   * no-trace rung; see docs/dev/driver-timing.md).
+   * (--breakdown/--deep), else the page's performance.now delta (a driver step in the default mode),
+   * else the summed timed samples (a bench run). Null when unmeasured (a step that navigated in a
+   * no-trace capture mode; see docs/dev/driver-timing.md).
    */
   wallMs: number | null;
   /**
@@ -651,8 +651,8 @@ export interface Span {
    */
   wallClock?: "trace" | "page";
   /**
-   * The reconciling seven-slice bar (`Σ slices + idle = wallMs`), when the rung built one
-   * (--breakdown / firefox / node). Absent on the default and --deep rungs, which report identities
+   * The reconciling seven-slice bar (`Σ slices + idle = wallMs`), when the capture mode built one
+   * (--breakdown / firefox / node). Absent in the default and --deep capture modes, which report identities
    * and counts but no bar. When `aggregation` is `"median"` this is the lower-median-by-wall
    * occurrence VERBATIM (a real reconciling sample, not per-slice averages).
    */
@@ -666,7 +666,7 @@ export interface Span {
   /**
    * Long Animation Frames observed in a driver step's window, with the scripts the browser blamed
    * (Chrome only; absent on firefox/node steps, run/measure spans, and older recordings). This
-   * attributes a step's cost to source even on rungs the CPU sampler cannot reach (the in-page
+   * attributes a step's cost to source even in capture modes the CPU sampler cannot reach (the in-page
    * observer is ungated by any capture cap). See StepLoaf.
    */
   loaf?: StepLoaf;
@@ -695,8 +695,8 @@ export interface Span {
   frames?: FrameSideTrack;
   /**
    * Per-span hot functions on the CPU-sampler scripting axis (--breakdown chrome step/measure, firefox
-   * measure). Absent on the run span (read from the CpuModel at query time), on rungs with no sampler,
-   * and on older recordings. Refs join to the sibling CpuModel.functions[]. See SpanHot.
+   * measure). Absent on the run span (read from the CpuModel at query time), in capture modes with no
+   * sampler, and on older recordings. Refs join to the sibling CpuModel.functions[]. See SpanHot.
    */
   hot?: SpanHot;
 }
@@ -727,7 +727,7 @@ export interface SpanBreakdown {
   wallMaxMs?: number;
   /**
    * Per-span hot functions on the CPU-sampler scripting axis (--breakdown chrome step/measure, firefox
-   * measure); absent on the run span and rungs with no sampler. Copied onto the stored `Span.hot`. See
+   * measure); absent on the run span and in capture modes with no sampler. Copied onto the stored `Span.hot`. See
    * SpanHot. When a measure merged occurrences, this is POOLED across all of them (not the kept bar's
    * single occurrence), so the list has a firmer sample footing than the bar's lower-median sample.
    */
@@ -738,7 +738,7 @@ export interface SpanBreakdown {
  * The one small default artifact a run writes (schema 3): the run summary, the collapsed `Span[]`
  * (run + steps + user measures), and meta. The raw `.cpuprofile` and the resolved `.cpu.json` model
  * are separate siblings; the `events[]` DEEP EVENT LOG is written into this file ONLY under --deep
- * (chrome) and firefox, where blame/`query get`/`query events` read it -- every other rung leaves it
+ * (chrome) and firefox, where blame/`query get`/`query events` read it -- every other capture mode leaves it
  * empty, which keeps the default artifact digest-sized.
  */
 export interface Recording {
@@ -747,8 +747,8 @@ export interface Recording {
   marks: TimingEntry[];
   /**
    * The deep event log: resolved trace events with `.stack` frames and invalidation records. Present
-   * only on a rung that captured one (--deep, firefox); an EMPTY array on the default/--breakdown/
-   * --precise-wall rungs, where `query events`/`get`/`blame` report "not captured at this rung".
+   * only in a capture mode that captured one (--deep, firefox); an EMPTY array in the default/--breakdown/
+   * --precise-wall capture modes, where `query events`/`get`/`blame` report "not captured in this capture mode".
    */
   events: NormalizedEvent[];
   summary: RecordingSummary;
@@ -799,7 +799,7 @@ export interface ThrashStep {
  * steps -- forced flushes re-dirtied since the previous flush in the same top-level task, matched by
  * kind (a layout flush needs a layout write in its gap, a style flush a style write). `steps` is the
  * write->read interleave, capped for size; `omitted` counts thrash steps past the cap. Absent, never
- * a fabricated `count: 0`, on any lane that cannot observe it (the default/--breakdown rungs drop the
+ * a fabricated `count: 0`, on any lane that cannot observe it (the default/--breakdown capture modes drop the
  * invalidation records, Firefox has none).
  */
 export interface ThrashReport {
@@ -846,7 +846,7 @@ export interface StepIndexEntry {
   /** this step's own min/median/mean/max; null below 2 samples, same contract as elsewhere */
   stats?: BenchStats | null;
   headline: {
-    /** Measured (see model/measured.ts): null when the rung captured no trace to count from */
+    /** Measured (see model/measured.ts): null when the capture mode captured no trace to count from */
     layoutCount: Measured<number>;
     /** Measured (see model/measured.ts): null when forced detection was not run for this step */
     forcedLayoutCount: Measured<number>;

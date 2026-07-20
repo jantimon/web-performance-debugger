@@ -1,11 +1,11 @@
-# CPU profiling: rungs, contamination, and what self-time means (internal)
+# CPU profiling: capture modes, contamination, and what self-time means (internal)
 
 > **Developer notes, not user documentation.** Read the [README](../../README.md) to use wpd. This
-> file records why the rung ladder is shaped the way it is, with the measurements behind it, so the
-> next person does not "optimise" the structure into a wrong number.
+> file records why the capture modes are shaped the way they are, with the measurements behind it, so
+> the next person does not "optimise" the structure into a wrong number.
 
 **In this file:** [what self-time includes](#what-self-time-actually-includes)
-· [the rung ladder](#the-rung-ladder)
+· [the capture modes](#the-capture-modes)
 · [the sampler opens at the run mark](#the-sampler-opens-at-the-run-mark-not-before-prepare)
 · [never ride a `.stack` trace](#why-the-sampler-never-rides-a-stack-trace)
 · [trace durations vs CDP](#layoutmsstylemspaintms-are-trace-durations-and-cdp-would-be-no-finer)
@@ -17,18 +17,18 @@ the 1 ms floor), [cpu-attribution.md](./cpu-attribution.md) (which spans get sam
 functions, sourcemap trust). Related: [engine-mapping.md](./engine-mapping.md) (Gecko <-> Blink
 names and semantics), [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas).
 
-**Provenance.** Rung-structure numbers are 5 interleaved runs per arm, after a discarded warmup, of
+**Provenance.** Capture-mode numbers are 5 interleaved runs per arm, after a discarded warmup, of
 `examples/forces-layout.mjs --bench` on chrome 150 / firefox 152; interval numbers are 3 runs per arm
 of `examples/cpu-busywork.mjs --target node`. First-run numbers are cold-start outliers by a wide
 margin (a single un-warmed run reads 18ms against a 7ms median, enough to "prove" the wrong
-conclusion) — **always warm up and interleave** before believing a rung A/B.
+conclusion): **always warm up and interleave** before believing a capture-mode A/B.
 
 ## What self-time actually includes
 
 **[measured]** The headline fact, and it is not what "CPU profile" suggests.
 
 On the browser lanes, `selfMs` is **JS plus the synchronous engine work that JS triggered** — not
-pure JS. The default rung (sampler, tracing off) on the forced-layout probe:
+pure JS. The default capture mode (sampler, tracing off) on the forced-layout probe:
 
 ```
 8.41 ms   fn=run    examples/forces-layout.mjs:24
@@ -54,10 +54,10 @@ But it constrains what may be claimed:
 - **browser lanes** (`--bench`, driver): self-time is JS + synchronous engine work. Do not describe
   it as "pure JS cost".
 
-## The rung ladder
+## The capture modes
 
 Every invocation is exactly ONE capture pass: one browser launch, one run of the flow, one recording.
-A rung picks WHAT that pass captures, never how many passes run. `captureFor()` in
+A capture mode picks WHAT that pass captures, never how many passes run. `captureFor()` in
 `src/record/capture.ts` is the authority.
 
 ```
@@ -65,7 +65,7 @@ chrome default:        [sampler]                     four-slice CPU bar; no rend
 chrome --breakdown:    [light-trace + trace samples]  seven-slice reconciling bar + exact counts
 chrome --deep:         [full trace, sampler OFF]     forced-layout blame + exact counts, no bar
 chrome --precise-wall: [no trace, no sampler]        pristine benchmark wall, nothing else
-firefox:               [gecko]                        one pass; every rung is a reporting tier over it
+firefox:               [gecko]                        one pass; every capture mode is a reporting tier over it
 node:                  [node-cpu]                     in-process V8, four-slice bar (engine slice "native")
 ```
 
@@ -75,7 +75,7 @@ node:                  [node-cpu]                     in-process V8, four-slice 
 - **--breakdown**: ONE fused pass: a light trace (the shipped categories MINUS
   `disabled-by-default-devtools.timeline.stack` and MINUS `invalidationTracking`, plus gc events, PLUS
   `disabled-by-default-v8.cpu_profiler`). The CPU samples come from that `v8.cpu_profiler` ProfileChunk
-  stream, **not** the CDP `Profiler.start/stop` sampler (no CDP profiler runs on this rung). The stream
+  stream, **not** the CDP `Profiler.start/stop` sampler (no CDP profiler runs in this capture mode). The stream
   shares the trace's `base::TimeTicks` clock, so the seven-slice
   `js · style · layout · paint · gc · other · idle` bar reconciles, and the trace carries exact
   layout/style/paint counts. The stream is **continuous across a cross-document navigation** (the CDP
@@ -86,33 +86,33 @@ node:                  [node-cpu]                     in-process V8, four-slice 
   what removes the +21% contamination below (`v8.cpu_profiler` is not `.stack`: same order as the light
   trace's own cost). The stream samples at a **fixed ~150us** it sets itself, read back from the chunk
   deltas into `meta.cpuIntervalUs`/`CpuModel.sampleIntervalUs` (never the 200us default constant, which
-  does not describe this rung); it is not settable up without a CDP profiler, and ~150us is inside the
+  does not describe this capture mode); it is not settable up without a CDP profiler, and ~150us is inside the
   interval-stable band, so the reported percentages do not move. Being one pass it runs every iteration,
-  so counts total across `--iterations`; forced counts and blame need `.stack`, so this rung reports
+  so counts total across `--iterations`; forced counts and blame need `.stack`, so this capture mode reports
   them `null`, never 0.
 - **--deep**: ONE full trace (`.stack` + `invalidationTracking`) with the sampler OFF: forced-layout
   blame (read-site), dirtied-by writes, the thrash detector, invalidation rollup, exact counts and
   long tasks. No CPU model and no reconciling bar. Slice durations are suppressed (`.stack` inflates
   them, style up to +38% below); the span's wall (window width) is still reported.
-- **--precise-wall**: the default rung minus the sampler: a pristine benchmark wall, no sampler
+- **--precise-wall**: the default capture mode minus the sampler: a pristine benchmark wall, no sampler
   perturbation, no counts, no CPU model.
 - **gecko**: firefox only; one Gecko-profiler run yields CPU samples *and* layout/style markers. It
-  is the firefox lane at every rung (the profiler is a whole-browser-lifetime startup feature), so
-  the rungs are reporting tiers over this one capture. `--deep` adds a dirtied-by write report from
+  is the firefox lane in every capture mode (the profiler is a whole-browser-lifetime startup feature), so
+  the capture modes are reporting tiers over this one capture. `--deep` adds a dirtied-by write report from
   Gecko's native cause stacks; `meta.passes` is `gecko` or `gecko-deep`. See
   [firefox-cpu.md](./firefox-cpu.md).
 - **node**: `--target node`; the in-process V8 sampler (`runtime/node.ts`), CPU-only, four-slice bar
   with the engine slice labeled `native`.
 
-CPU profiling is **on by default** wherever a rung samples (chrome default and `--breakdown`, firefox,
-node) and costs no extra pass. The sampler-free rungs are chrome's `--precise-wall` and `--deep`;
+CPU profiling is **on by default** wherever a capture mode samples (chrome default and `--breakdown`, firefox,
+node) and costs no extra pass. The sampler-free capture modes are chrome's `--precise-wall` and `--deep`;
 node and firefox have none, because node would measure nothing without the sampler and firefox
 without the gecko pass reports every rendering count as 0.
 
 ### The sampler opens at the run mark, not before prepare
 
 **[measured]** The V8 CPU model is built from the WHOLE returned profile, never sliced to the run
-window: there is no trace clock on the default rung to slice it by, so whatever the sampler recorded
+window: there is no trace clock in the default capture mode to slice it by, so whatever the sampler recorded
 lands in `scriptingMs`, the package rollup, the hot list, and `cpu-diff`. So the sampler's lifetime
 IS the measured window, and it opens **right before the `wpd:run:start` mark**, after `prepare()` and
 after every warmup iteration (`browser/driver.ts` `beforeRunWindow`, `record/runpass.ts`). `cleanup()`
@@ -130,10 +130,10 @@ before the sampler starts (`runpass.ts` setup phase).
 Starting late is safe across navigation: the page CDP session outlives a cross-document navigation
 (the on-ramp `--url` load step navigates inside the run window with the sampler already open), so a
 `prepare()` that navigates is simply excluded, and a `run()` that navigates behaves as before -- on the
-default rung the CDP profiler resets in the new process, so page CPU work before the navigation is
+default capture mode the CDP profiler resets in the new process, so page CPU work before the navigation is
 absent from `scriptingMs`. `--breakdown` does not have this loss: it sources samples from the trace's
 `v8.cpu_profiler` stream, which is continuous across the navigation
-([cpu-attribution.md](./cpu-attribution.md#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-rung---breakdown-does-not)).
+([cpu-attribution.md](./cpu-attribution.md#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-capture-mode---breakdown-does-not)).
 There the trace-sourced profile is instead windowed to the run onward (`windowTraceCpuProfile`, since
 the trace runs before `prepare()` in driver mode), which excludes `prepare()`/warmup by timestamp
 rather than by when the sampler opened.
@@ -142,7 +142,7 @@ rather than by when the sampler opened.
 
 **[measured]** Sampling is cheap; that is not why the sampler needs a trace it can avoid.
 **The `.stack` category contaminating the sampler is.** The load-bearing property of any pass the
-sampler rides is that `.stack` is off it: the default rung has no trace at all, and the `--breakdown`
+sampler rides is that `.stack` is off it: the default capture mode has no trace at all, and the `--breakdown`
 light trace drops `.stack`. `--deep`, which needs `.stack`, runs the sampler **OFF** for exactly this
 reason.
 
@@ -208,13 +208,13 @@ measured.
 ### The sampler costs wall, and `--precise-wall` reclaims it
 
 **[measured]** The sampler adds no pass (it is on or off the one capture), but it does cost wall on
-the rung it rides: **perIteration +10% median and ~3x the variance** at a 50us interval, most of
+the capture mode it rides: **perIteration +10% median and ~3x the variance** at a 50us interval, most of
 which the 200us default below buys back. The CPU model itself is intact (+4%, overlapping ranges,
 same function count).
 
 That trade respects the existing trust hierarchy — wall is declared *directional*, CPU self-time is
 declared *real* — and systematic inflation cancels in `diff`, where both sides carry it. So the
-sampled rungs (default, `--breakdown`) are not pristine on wall, which is what `--precise-wall` is
+sampling capture modes (default, `--breakdown`) are not pristine on wall, which is what `--precise-wall` is
 for: clean-wall and `--iterations` benchmarking work.
 
 ### The sampler interval: why 200us

@@ -29,7 +29,7 @@ export interface MergedStep {
    */
   perIteration: number[];
   /** the median of `perIteration`; identical to the single sample when there is only one. Null when
-   * no iteration could be priced (a navigating step on the no-trace rung; see DriverStep.wallMs). */
+   * no iteration could be priced (a navigating step in a no-trace capture mode; see DriverStep.wallMs). */
   wallMs: number | null;
   /** the clock every walled sample shares: "trace" only when ALL are trace-priced; a single
    * page-clock sample (a lost step-end mark in one iteration) degrades the label to "page", since a
@@ -179,7 +179,7 @@ function describeDivergence(timingLabels: string[], tracedLabels: string[]): str
  * trace lost some wpd:step markers (a buffer overflow), so it is a hard error, not a silent degrade.
  *
  * `tracedWindows` of undefined is NOT divergence: it means the pass captured no trace at all (the
- * default/precise-wall rung, or firefox), so there is nothing to pair with and every step
+ * default/precise-wall capture mode, or firefox), so there is nothing to pair with and every step
  * legitimately has no window. That case is the caller's to detect and is reported as a note.
  */
 export function mergeSteps(
@@ -244,7 +244,7 @@ export function mergeSteps(
     );
     const first = ordered[0];
     const window = tracedWindows == null ? undefined : windowByLabel.get(label);
-    // A step whose wall could not be priced (navigation on the no-trace rung) contributes no sample,
+    // A step whose wall could not be priced (navigation in a no-trace capture mode) contributes no sample,
     // rather than a fabricated 0 or a null poisoning the median.
     const perIteration = ordered
       .map((step) => step.wallMs)

@@ -18,7 +18,7 @@
 Split out: [blame-semantics.md](./blame-semantics.md) (read-site vs write-site blame, `markForced`
 vs DevTools' rule, the dirtied-by reports and the thrash detector). Related:
 [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas),
-[cpu-profiling.md](./cpu-profiling.md) (the rung ladder, sampler contamination, what self-time includes).
+[cpu-profiling.md](./cpu-profiling.md) (the capture modes, sampler contamination, what self-time includes).
 
 **Provenance.** Facts below are either (a) reproduced locally against `examples/forces-layout.mjs`
 in both engines, marked **[measured]**, or (b) read out of mozilla-central / chromium at
