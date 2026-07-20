@@ -244,8 +244,22 @@ For the same reason `--deep` suppresses slice durations: the `.stack` trace infl
 to +38%, and a distorted millisecond is worse than none — so `--deep` leads with identities and exact
 counts, and shows span wall (the honest window width) but no slice ms.
 
-**Want the bar and the blame?** Run twice: `record --breakdown` for the reconciling bar and CPU model,
-`record --deep` for the forced-by/dirtied-by/thrash attribution.
+**Want the bar and the blame?** Record both into one **run group** — the sanctioned two-question path:
+
+```bash
+wpd record probe.mjs --bench --members breakdown,deep --group perf   # two captures, one manifest
+wpd query spans  latest                                              # the bar (from the breakdown member)
+wpd query span   latest run                                          # STITCHED: bar+hot from breakdown, counts+forced from deep
+wpd assert       latest --max-slice js=5 --max-forced 0              # each threshold gated on the member that measured it
+```
+
+A group is N separate, unfused captures of **one** workload recorded as siblings under a
+`<name>.group.json` manifest. It holds no summary or aggregate of its own — nothing is ever averaged
+across members: the group verbs draw each panel from the member that measured it and tag it, and a
+threshold whose axis no member measured is a loud `n/a` FAIL, never a silent pass. Add a single
+recording to a group with `record … --group <name>` (the join refuses a member whose
+workload/iterations/etc differ; only the capture mode may). `diff groupA groupB` fans out over members
+paired by capture mode.
 
 `--target firefox` is one Gecko-profiler pass in every capture mode (samples and markers are entangled at
 profiler startup), so the capture modes are reporting tiers over that one capture rather than capture tiers;
