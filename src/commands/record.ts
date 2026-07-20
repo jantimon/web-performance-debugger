@@ -851,7 +851,8 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     printSourcemapLine(recording.meta.sourcemaps, cpuModel.unmappedFrames ?? 0);
     // In --breakdown mode the seven-slice per-span bars replace the single profile-only bar.
     const barSpans = recording.spans.filter((span) => span.breakdown);
-    if (barSpans.length) printSpanBreakdowns(barSpans, recording.meta.iterations);
+    if (barSpans.length)
+      printSpanBreakdowns(barSpans, recording.meta.iterations, recording.meta.browser);
     else printCpuBreakdown(cpuModel);
   }
   if (recording.meta.throttle?.cpuRate) {
