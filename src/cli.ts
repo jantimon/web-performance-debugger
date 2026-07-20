@@ -340,7 +340,16 @@ program
     try {
       await recordAndReport(opts);
     } catch (err) {
-      program.error(`record failed: ${recordFailureMessage(err as Error)}`);
+      const error = err as Error;
+      // Set a non-zero exit code so CI/scripts detect the failure. process.exitCode (not a hard
+      // process.exit) lets buffered stdout/stderr flush and the browser/server teardown finish before
+      // the process ends.
+      console.error(`record failed: ${recordFailureMessage(error)}`);
+      // A RangeError such as a stack overflow carries an unhelpful one-line message; the stack is the
+      // only pointer to where it blew. Print it under WPD_DEBUG, else name the flag.
+      if (process.env.WPD_DEBUG && error.stack) console.error(error.stack);
+      else console.error("(set WPD_DEBUG=1 to print the error stack)");
+      process.exitCode = 1;
     }
   });
 
@@ -517,4 +526,9 @@ program
     }).catch((error) => program.error(error.message)),
   );
 
-program.parseAsync(process.argv);
+// Any error that escapes a command action (one not already routed through program.error) must still
+// exit non-zero, independent of Node's --unhandled-rejections policy, so CI never reads a silent 0.
+program.parseAsync(process.argv).catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});
