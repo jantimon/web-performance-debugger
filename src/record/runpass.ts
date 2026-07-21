@@ -80,9 +80,12 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 /** How long to wait for Firefox to flush its shutdown dump before giving up. Generous: a large
  * ring buffer serializes to a multi-hundred-MB file on a slow disk. */
 const GECKO_DUMP_TIMEOUT_MS = 15_000;
-/** Poll cadence while waiting for the dump. */
-const GECKO_DUMP_POLL_MS = 250;
-/** Consecutive equal sizes that count as "done growing" (the dump is written incrementally). */
+/** Poll cadence while waiting for the dump. The dump is complete when `browser.close()` resolves
+ * (puppeteer waits for process exit, and MOZ_PROFILER_SHUTDOWN writes during shutdown), so the poll
+ * only confirms the file is on disk and settled; a tight cadence confirms that in a few reads. */
+const GECKO_DUMP_POLL_MS = 20;
+/** Consecutive equal sizes that count as "done growing", guarding a slow-disk write that lands after
+ * the first stat (the file exists but is still being flushed on a very large dump). */
 const GECKO_DUMP_STABLE_READS = 3;
 
 /** The Gecko sampling interval for this run: the interval option is expressed in microseconds (the
@@ -93,8 +96,9 @@ function geckoIntervalMs(opts: RecordOptions): number {
     : GECKO_MIN_INTERVAL_MS;
 }
 
-/** Firefox writes the Gecko shutdown dump asynchronously after browser.close(); wait for the
- * file to exist AND stop growing (stable across reads) before parsing it. */
+/** Firefox flushes the Gecko shutdown dump during `browser.close()`, so by the time this runs the
+ * file is written; the poll confirms it exists AND has stopped growing (stable across reads) before
+ * parsing, which only matters when a very large dump is still landing on a slow disk. */
 async function waitForGeckoDump(
   dumpPath: string,
   timeoutMs = GECKO_DUMP_TIMEOUT_MS,
@@ -281,7 +285,13 @@ export async function runPass(
       runCleanup = () => page.evaluate(runHarness, { ...harnessArg, phase: "cleanup" as const });
     }
 
-    // Let asynchronous paint/composite work flush before we stop tracing.
+    // Let asynchronous paint/composite work flush before we stop tracing. [measured] This trailing
+    // settle is load-bearing for the counts, NOT dead time: a paint the flow defers past the first
+    // frame (a double-`requestAnimationFrame`, a short `setTimeout`) lands in this window and is
+    // counted only if the settle outlasts it -- ~50 ms catches a double-rAF/~30 ms tail, ~200 ms
+    // catches a ~100 ms-deferred paint; drop the settle and those paints vanish from the counts. It
+    // runs ONCE after the whole flow (not per iteration), so its cost is a fixed per-run tail. INP is
+    // unaffected: the driver's per-step settle already finalizes the interaction before the step ends.
     await sleep(opts.settleMs);
 
     if (cdpSampler && client) cpuProfile = await stopCpuProfile(client);

@@ -37,7 +37,23 @@ export function memberRecordingPath(manifestPath: string, member: GroupMember): 
   return path.resolve(path.dirname(manifestPath), member.recording);
 }
 
-/** Load a member's recording. */
+/** Verify a loaded member recording still holds the capture mode the manifest recorded for it. A
+ * member's mode is its recording's `meta.passes[0]`; a mismatch means the file was overwritten by a
+ * different-mode record (two members that shared one `--out`), so the manifest entry now points at
+ * the wrong capture. Fail loudly rather than route a verb to a mode it did not measure and return
+ * silently-undefined slices (a fake-zero shape). Call it wherever a member recording is loaded. */
+export function assertMemberMode(rec: Recording, member: GroupMember, abs: string): void {
+  const fileMode = rec.meta.passes[0];
+  if (fileMode !== member.mode)
+    throw new Error(
+      `Run-group member '${memberLabel(member)}' points at ${abs}, but that recording is a ` +
+        `'${fileMode}' capture, not '${member.mode}'. The member file was overwritten by another ` +
+        `capture mode (two members sharing one --out). Re-record each member to a distinct --out, or ` +
+        `use \`--members <modes> --group <name>\` to auto-name them.`,
+    );
+}
+
+/** Load a member's recording, verifying it still holds the manifest's recorded capture mode. */
 export async function loadMemberRecording(
   manifestPath: string,
   member: GroupMember,
@@ -48,6 +64,7 @@ export async function loadMemberRecording(
     path.extname(abs).toLowerCase(),
   ) as Recording;
   assertRecordingArtifact(rec, abs);
+  assertMemberMode(rec, member, abs);
   return rec;
 }
 

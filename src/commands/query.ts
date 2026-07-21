@@ -49,6 +49,7 @@ import { printSpanBreakdowns, printCpuBreakdown } from "./cpu.js";
 import { loadCpuModel, shortSource } from "../profile/cpuprofile.js";
 import { resolveTarget, hintTarget, resolveConsumption } from "./resolve.js";
 import {
+  assertMemberMode,
   loadGroup,
   loadMemberRecording,
   memberLabel,
@@ -998,6 +999,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   // member's verbs; a plain recording renders itself.
   const consumption = await resolveConsumption(file);
   let abs = consumption.path;
+  let overviewMemberForCheck: GroupMember | undefined;
   let groupCtx: {
     name: string;
     overviewLabel: string;
@@ -1018,6 +1020,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
           `(members: ${group.members.map((entry) => memberLabel(entry)).join(", ")}).`,
       );
     abs = memberRecordingPath(consumption.path, overviewMember);
+    overviewMemberForCheck = overviewMember;
     const deepMember = pickMember(group, "forced");
     groupCtx = {
       name: group.meta.name,
@@ -1028,6 +1031,9 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     };
   }
   const rec = await load(abs);
+  // A clobbered member (its file overwritten by another capture mode) points the overview at the
+  // wrong capture; fail loudly rather than render its unrelated slices as this member's.
+  if (overviewMemberForCheck) assertMemberMode(rec, overviewMemberForCheck, abs);
   // Prefer the recording's spans that carry a bar; reach for the sibling CPU model only when none do
   // (firefox/node without measures, or a default-mode chrome run), where the run bar lives on
   // CpuModel.breakdown instead of on the stored spans.

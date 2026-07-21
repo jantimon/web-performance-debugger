@@ -10,6 +10,7 @@ import {
   partialGroupNotes,
 } from "../../dist/model/group.js";
 import { preflightGroup, appendMember } from "../../dist/record/group.js";
+import { loadMemberRecording } from "../../dist/commands/group.js";
 import { readFileSync } from "node:fs";
 import {
   assertGroupArtifact,
@@ -411,5 +412,91 @@ test("appendMember: a name that only sanitize-collides is refused, naming both n
     }),
     (error) => error.message.includes("perf app") && error.message.includes("perf-app"),
     "the append refuses a name-collision, naming both the stored and requested names",
+  );
+});
+
+test("preflightGroup: refuses a member whose --out lands on an existing member's recording", async () => {
+  // An existing member 'breakdown' stored at breakdown.json; a second record with a DIFFERENT mode but
+  // the SAME --out would overwrite it, leaving two manifest entries pointing at one file.
+  const manifestPath = writeManifest({ modes: ["breakdown"] });
+  const dir = path.dirname(manifestPath);
+  await assert.rejects(
+    preflightGroup(manifestPath, "json", "perf", [{ mode: "default" }], path.join(dir, "breakdown.json")),
+    (error) =>
+      /overwrite that member/.test(error.message) &&
+      error.message.includes("breakdown") &&
+      /distinct --out/.test(error.message) &&
+      /--members/.test(error.message),
+    "the out-path refusal names the clobbered member and both fixes",
+  );
+  // A distinct --out for the new member passes silently.
+  await preflightGroup(manifestPath, "json", "perf", [{ mode: "default" }], path.join(dir, "default.json"));
+  // A SAME-mode re-record to the same --out is a duplicate, not an out-path collision: the apter D1
+  // message wins (the out-path check runs only after the duplicate check clears).
+  await assert.rejects(
+    preflightGroup(manifestPath, "json", "perf", [{ mode: "breakdown" }], path.join(dir, "breakdown.json")),
+    (error) => /already holds/.test(error.message) && !/overwrite that member/.test(error.message),
+    "a same-mode shared --out reports the duplicate, not the out-path collision",
+  );
+});
+
+test("appendMember: refuses a second member that would overwrite the first member's file", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
+  const manifestPath = path.join(dir, "perf.group.json");
+  const shared = path.join(dir, "base.json");
+  writeFileSync(shared, JSON.stringify(recordingFor("breakdown")));
+  await appendMember({
+    name: "perf",
+    manifestPath,
+    format: "json",
+    recordingPath: shared,
+    meta: meta({ passes: ["breakdown"] }),
+    summary: {},
+  });
+  // A second, different-mode member pointed at the SAME --out (its file already clobbered on disk).
+  writeFileSync(shared, JSON.stringify(recordingFor("default")));
+  await assert.rejects(
+    appendMember({
+      name: "perf",
+      manifestPath,
+      format: "json",
+      recordingPath: shared,
+      meta: meta({ passes: ["default"] }),
+      summary: {},
+    }),
+    (error) => /overwrite that member/.test(error.message) && error.message.includes("breakdown"),
+    "the primitive refuses a second member overwriting the first member's recording",
+  );
+  // The manifest still holds only the first member (the refusal left it untouched).
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  assert.equal(manifest.members.length, 1, "the refused append added no member");
+});
+
+test("loadMemberRecording: refuses a member file overwritten by another capture mode", async () => {
+  // The manifest records this member as 'breakdown', but the file on disk is a 'default' capture (a
+  // second record clobbered it via a shared --out). Consumption must fail loudly, not route a verb to
+  // a mode it did not measure and return silently-undefined slices.
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
+  const manifestPath = path.join(dir, "perf.group.json");
+  const member = { mode: "breakdown", recording: "shared.json", createdAt: "", annotations: [] };
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      meta: { tool: "wpd", version: "0", schemaVersion: SCHEMA_VERSION, kind: "run-group", createdAt: "", name: "perf" },
+      iterations: 5,
+      warmup: 1,
+      headless: true,
+      members: [member],
+      notes: [],
+    }),
+  );
+  writeFileSync(path.join(dir, "shared.json"), JSON.stringify(recordingFor("default")));
+  await assert.rejects(
+    loadMemberRecording(manifestPath, member),
+    (error) =>
+      /overwritten by another capture mode/.test(error.message) &&
+      error.message.includes("breakdown") &&
+      error.message.includes("default"),
+    "a clobbered member fails loudly rather than returning silently-undefined slices",
   );
 });

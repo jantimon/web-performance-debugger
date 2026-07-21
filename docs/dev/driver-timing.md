@@ -139,6 +139,19 @@ to round the parts to whole ms where Chrome does not.
 
 ## Limits worth knowing before you rely on it
 
+- **The trailing settle (200 ms) catches deferred paints; it is not dead time.** After the whole flow
+  and before the trace stops, `record` sleeps `opts.settleMs` (200 ms) ONCE, so an async paint the
+  flow deferred past the first frame lands inside the counted window. **[measured]** on a `--breakdown`
+  bench probe whose `run()` schedules a paint after returning: a single next-frame `requestAnimationFrame`
+  paint is caught even at settle 0 (the trace-stop round trip covers it), but a **double-rAF or a ~30 ms
+  `setTimeout`** paint needs ~50 ms and a **~100 ms-deferred** paint needs the full ~200 ms; drop the
+  settle to 0 and those paints vanish from `paintCount`/`layoutCount`. The settle is only idle time for
+  a purely synchronous flow; framework "after paint" patterns (double-rAF, short timeouts) defer real
+  renders into this window, and the settle is what counts them. It runs once per invocation, not per
+  iteration, so its cost is a fixed per-run tail, not an `--iterations` multiplier. **INP is not
+  affected by it** (measured identical
+  at settle 0/50/200): the per-step settle above finalizes the interaction before the step's marks close,
+  so the trailing settle only governs run-window paint counts.
 - **Untrusted events produce nothing.** `page.evaluate(() => el.click())` fires a synthetic click,
   which Event Timing does not observe: measured **0 entries**. A programmatic step therefore has no
   INP and no breakdown, and that is not a bug to fix. Time programmatic work with `--bench --url`
