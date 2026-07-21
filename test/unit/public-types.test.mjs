@@ -42,10 +42,24 @@ const DOCUMENTED_ROOT_TYPES = [
   "SpansOutput",
 ];
 
+// The identifiers actually re-exported from the package root. tsc emits index.ts's re-exports as
+// `export { A, B } from "..."` / `export type { A, B } from "..."` clauses, so read the clause braces
+// rather than the whole file: a bare `\bName\b` would also match a name that merely appears inside
+// another type body, passing even when that name is not itself a root export. A renamed export
+// (`Local as Root`) is exported under the Root name, so take the identifier after `as`.
+function collectRootExports(declarationSource) {
+  const exported = new Set();
+  for (const clause of declarationSource.matchAll(/export\s+(?:type\s+)?\{([^}]*)\}/g)) {
+    for (const specifier of clause[1].split(",")) {
+      const name = specifier.trim().split(/\s+as\s+/).pop()?.trim();
+      if (name) exported.add(name);
+    }
+  }
+  return exported;
+}
+
 test("every documented root type is re-exported from the built package", () => {
-  const missing = DOCUMENTED_ROOT_TYPES.filter(
-    // Match the identifier as a whole word inside an `export type { ... }` list.
-    (name) => !new RegExp(`\\b${name}\\b`).test(declaration),
-  );
+  const exported = collectRootExports(declaration);
+  const missing = DOCUMENTED_ROOT_TYPES.filter((name) => !exported.has(name));
   assert.deepEqual(missing, [], `dist/index.d.ts is missing root type exports: ${missing.join(", ")}`);
 });
