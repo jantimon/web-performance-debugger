@@ -11,8 +11,9 @@ import puppeteer from "puppeteer";
 // real Firefox over WebDriver BiDi, profiles run() with the Gecko profiler, and resolves CPU
 // self-time + forced layout/style back to source. Firefox's puppeteer build is installed
 // separately (`npx puppeteer browsers install firefox`), so this self-skips when it is absent to
-// keep `npm test` and the browser-free CI job green. Unlike the Chrome e2e there is no
-// WPD_E2E_REQUIRED hard-fail: Firefox stays an optional lane (run it via `npm run test:e2e:firefox`).
+// keep `npm test` and the browser-free CI job green. Set WPD_E2E_FIREFOX_REQUIRED=1 (as
+// `npm run test:e2e:firefox` does) to turn a missing Firefox into a hard failure instead of a
+// skip, so the scheduled Firefox job can never silently pass without exercising the gecko lane.
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cli = path.join(repoRoot, "dist", "cli.js");
 const examples = path.join(repoRoot, "examples");
@@ -30,6 +31,9 @@ async function firefoxAvailable() {
 }
 
 const ready = await firefoxAvailable();
+if (!ready && process.env.WPD_E2E_FIREFOX_REQUIRED) {
+  throw new Error("WPD_E2E_FIREFOX_REQUIRED is set but no Firefox is installed for Puppeteer.");
+}
 const e2e = ready
   ? test
   : (name, _opts, fn) => test(name, { skip: "Firefox not installed" }, fn ?? _opts);

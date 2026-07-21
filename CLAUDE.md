@@ -36,9 +36,14 @@ node dist/cli.js <...>  # run the CLI (installed bins: web-performance-debugger,
 npm run changeset       # add a changeset; CI Release workflow versions+publishes on merge to main
 ```
 
-CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
-unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). The **378** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+CI (`.github/workflows/ci.yml`) runs on Node 24: `ci` (lint → format:check → build → unit `test`,
+browser-free, `PUPPETEER_SKIP_DOWNLOAD`), `pack-smoke` (packs the tarball, installs it into a temp
+project, runs the bin + a `--target node` record + a root-type compile via `scripts/pack-smoke.mjs`,
+browser-free), and `e2e` (downloads Chrome, runs `test:e2e`). A final `release` job (changesets +
+OIDC publish) `needs: [ci, pack-smoke, e2e]` and runs only on a push to main, so a broken main can
+never publish. The gecko `test:e2e:firefox` suite runs nightly in `.github/workflows/firefox-e2e.yml`
+(installs Firefox, `WPD_E2E_FIREFOX_REQUIRED=1` so a missing browser is a hard failure), not on every
+PR. The **378** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
 `dist/` (classify/summarize/analysis/format, plus the breakdown engine, the trace CPU-chunk merge
 (`profile-chunks`), `query spans` adapter + its bar-less counts overview + its
 flood filter, the `query span` anatomy + removed-verb stubs, the thrash detector, the firefox
@@ -405,7 +410,9 @@ list: both would otherwise yield an empty-but-valid model reporting ~0 scripting
 this lane refuses to emit. `isToolFrameUrl` also drops `/__wpd_blank__` (BiDi attributes bench
 harness frames to the served host page). Fixture: a trimmed real dump at
 `test/fixtures/gecko-shutdown.trimmed.json`; e2e is self-skipping (`test/firefox.e2e.test.mjs`,
-`npm run test:e2e:firefox`), NOT wired into `WPD_E2E_REQUIRED`.
+`npm run test:e2e:firefox`), gated by its own `WPD_E2E_FIREFOX_REQUIRED` (set by that script, so a
+missing Firefox hard-fails there) and run nightly in `.github/workflows/firefox-e2e.yml`, separate
+from the chrome `WPD_E2E_REQUIRED` lane.
 
 **Before touching any of this, read [docs/dev/](docs/dev/README.md)** — the raw-format schemas, the
 INP measurements, the Gecko<->Blink name map, and the honest caveats (Firefox `forcedLayoutMs`
