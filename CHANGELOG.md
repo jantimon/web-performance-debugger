@@ -1,5 +1,34 @@
 # @jantimon/web-performance-debugger
 
+## 0.15.1
+
+### Patch Changes
+
+- 2bb3024: Restructure the README capture-mode table into a scannable capability matrix (CPU sampler,
+  reconciling bar, rendering counts, forced-layout blame, Speed) with ✅/— cells, sorted
+  fastest-first. The per-mode prose moves to a bullet list below the table.
+- 19bda33: Correct the pnpm install recipe (pnpm 11 dropped the `package.json` field and needs `allowBuilds` in
+  `pnpm-workspace.yaml`), make the SSR and assert quickstart blocks self-contained from a clean
+  checkout, and fix a reversed `query span` example. Help and notes now state the sampler's real cost
+  (~4-7% on mixed work, ~1% on JS-heavy) and that `--user-data-dir` holds sensitive state and works on
+  Firefox; a schema mismatch on a newer artifact now says "upgrade wpd" rather than "re-record".
+- dd43f25: Add a Firefox capability table to the README capture-mode section, mirroring the chrome table, so
+  the flags that work on the Gecko lane read at a glance. The unavailable modes show "not available"
+  with a footnote instead of prose.
+- 2a6245f: Harden the run-group lifecycle so a re-record cannot corrupt a good group.
+
+  - A `--group`/`--members` record now validates every requested member against any existing
+    manifest BEFORE launching a browser or writing a byte: a duplicate member, or a `--group`
+    name that only sanitize-collides with a stored one, refuses (exit 1) and names the recovery.
+  - The group pointer is written only after the join is accepted, so a refused join leaves
+    `latest` on the prior group instead of downgrading it to an orphan recording.
+  - A recovered partial group loses its stale "the deep capture failed" note: partial status is
+    derived from requested-vs-present members, so the note reflects the current state.
+  - Artifact and manifest writes are atomic (temp file + rename), so a kill mid-write cannot
+    corrupt an existing recording, CPU model, manifest, or the `latest` pointer.
+  - Export the run-group manifest and stitched group-query types from the package root
+    (`RunGroup`, `GroupMember`, `GroupSpansResult`, `GroupSpanStitch`, `SpansOutput`, …).
+
 ## 0.15.0
 
 ### Minor Changes
