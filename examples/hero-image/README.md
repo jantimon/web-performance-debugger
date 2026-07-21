@@ -52,7 +52,10 @@ Generate one strip with ChatGPT image generation:
 > logo, each drawn in loose pencil and ink in the same flat sketch style and muted palette as the
 > hero, like an engineer's notebook. No text labels, no gradients, no photorealism.
 
-Export the strip as a transparent AVIF, then slice it into three PNGs with sharp: decode, extract
-each third, alpha-trim the margin, square-pad, resize to 240px, and quantize to a 128-color palette
-(10-15 KB each). Publish each the same way as the hero and paste the three URLs into the logo row and
-the two table lead-ins in the project README.
+Slice the OPAQUE strip into three PNGs with sharp: extract each third, key the paper background to
+transparent with a border-connected flood fill (only pixels reachable from the edges within a small
+color distance of the paper; interior whites like Chrome's ring survive), alpha-trim, square-pad,
+resize to 240px, and quantize to a 128-color palette (~11 KB each). Do not key via a transparent
+re-export from the image model: it eats the dark outline extremes (hexagon vertices, flame tips).
+Publish each the same way as the hero and paste the three URLs into the logo row and the two table
+lead-ins in the project README.
