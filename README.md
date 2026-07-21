@@ -22,6 +22,12 @@
 Account for **every millisecond** of an interaction, and make it add up. `wpd` drives real Chrome or
 Firefox (or pure Node) and decomposes one measured span into slices that tile it exactly:
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/25d1e68e-dcb6-4fca-b57a-75561f6342f8" alt="Chrome logo, hand-drawn" height="64">
+  <img src="https://github.com/user-attachments/assets/dafc7978-b897-443a-a999-92d8b70572ff" alt="Firefox logo, hand-drawn" height="64">
+  <img src="https://github.com/user-attachments/assets/41fc3dfd-61e2-4edd-a1e2-22127b29b02e" alt="Node.js logo, hand-drawn" height="64">
+</p>
+
 ```
 run (run, 10.2 ms, sum of 5 iterations)
 slice   ms   %
@@ -243,7 +249,7 @@ phase you can repeat in place (an INP-style re-render, a cache probe) iterates i
 
 ## One capture per run: the capture modes
 
-Every `record` invocation is **exactly one capture pass** — one browser launch, one run of the flow.
+<img src="https://github.com/user-attachments/assets/25d1e68e-dcb6-4fca-b57a-75561f6342f8" alt="" height="20"> Every `record` invocation is **exactly one capture pass** — one browser launch, one run of the flow.
 A capture mode picks *what* that pass captures. They are mutually exclusive: each answers a different question
 with a different instrumentation, and wanting two answers means running `wpd` twice.
 
@@ -301,7 +307,7 @@ recording to a group with `record … --group <name>` (the join refuses a member
 workload/iterations/etc differ; only the capture mode may). `diff groupA groupB` fans out over members
 paired by capture mode.
 
-On **Firefox** every mode is the same one capture, so the table reports what that capture yields
+<img src="https://github.com/user-attachments/assets/dafc7978-b897-443a-a999-92d8b70572ff" alt="" height="20"> On **Firefox** every mode is the same one capture, so the table reports what that capture yields
 rather than what you switch on:
 
 | Capture mode (firefox) | Accepted | CPU samples | Reconciling bar | Rendering counts | Read-site blame | Dirtied-by writes | Speed |
