@@ -1,6 +1,6 @@
 {
   "name": "@jantimon/web-performance-debugger",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "description": "Drive Chrome (Puppeteer) to attribute layout/paint/invalidation work back to source lines, with isolated timing and CI gating",
   "type": "module",
   "main": "./dist/index.js",
