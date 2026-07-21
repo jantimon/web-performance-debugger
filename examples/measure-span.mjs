@@ -12,9 +12,11 @@ export async function run() {
   const box = document.getElementById("mbox");
 
   performance.mark("work:start");
-  // Some real JS plus one forced geometry read, so the span carries js + layout, not just idle.
+  // Enough real JS that the span clears the ~1 ms Gecko sampler floor at a few iterations (a sub-ms
+  // window would sample zero JS and the bar would read all-idle), plus one forced geometry read so
+  // the span carries js + layout, not just idle.
   let sink = 0;
-  for (let index = 0; index < 300000; index++) sink += Math.sqrt(index);
+  for (let index = 0; index < 6000000; index++) sink += Math.sqrt(index);
   box.style.width = 100 + (sink % 40) + "px";
   sink += box.offsetWidth;
   performance.mark("work:end");

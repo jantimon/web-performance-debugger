@@ -21,6 +21,7 @@ import type {
   GroupSpanSources,
   GroupSpanStitch,
   SpanAnatomy,
+  SpanCountsEntry,
   SpanForced,
   SpanHotFunctions,
   UnifiedSlices,
@@ -33,7 +34,6 @@ import {
   parseSpanKindLabel,
   filterSpanEntries,
   spanPassesFilter,
-  type SpanCountsEntry,
   type SpanCountsOverview,
 } from "../model/spans.js";
 import { isFirefoxDeep, isGeckoCaptureMode } from "../model/capture-mode.js";
@@ -1073,6 +1073,27 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   const spanFilter = { minWallMs: query.minWall, labelIncludes: query.filter };
   const selected = label ? result.spans.filter((span) => span.label === label) : result.spans;
   const { spans, hidden } = filterSpanEntries(selected, spanFilter);
+  // Bar-less step/measure rows (a default/--precise-wall driver step whose only bar is the run's) get
+  // the same --label selector then flood filter, so a mixed recording lists them alongside the bar
+  // rows. Selector first, flood filter second, so `hidden` counts only what the flood filter removed
+  // (never the targeting) -- the same order the bar path above uses. A null-wall span (a navigating
+  // step with no trace clock) is honest, not sub-threshold: only a MEASURED wall below --min-wall hides.
+  const barlessLabelled = label
+    ? (result.barlessSpans ?? []).filter((span) => span.label === label)
+    : (result.barlessSpans ?? []);
+  const barlessSelected = barlessLabelled.filter((span) => {
+    if (query.filter && !span.label.toLowerCase().includes(query.filter.toLowerCase()))
+      return false;
+    if (query.minWall != null && span.wallMs != null && span.wallMs < query.minWall) return false;
+    return true;
+  });
+  const barlessHidden = barlessLabelled.length - barlessSelected.length;
+  const totalHidden = hidden + barlessHidden;
+  // Drop the builder's unfiltered `barlessSpans` from the spread and re-add the filtered set (only
+  // when non-empty), so a pure-bar recording keeps its old shape (no field) and the JSON never
+  // carries the pre-filter rows.
+  const { barlessSpans: _unfilteredBarless, ...resultWithoutBarless } = result;
+  const barlessField = barlessSelected.length ? { barlessSpans: barlessSelected } : {};
 
   const fmt = structuredFormat(query);
   // Disclose the filter and how many spans it hid in the structured output too, never a silent cut.
@@ -1094,7 +1115,15 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     : {};
   if (fmt)
     return emit(
-      { ...result, ...variantField, ...groupField, spans, hidden, filter: spanFilter },
+      {
+        ...resultWithoutBarless,
+        ...variantField,
+        ...groupField,
+        spans,
+        ...barlessField,
+        hidden: totalHidden,
+        filter: spanFilter,
+      },
       fmt,
     );
 
@@ -1120,26 +1149,40 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     const bars = selectedBars.filter((span) =>
       spanPassesFilter(span.label, span.breakdown!.wallMs, spanFilter),
     );
-    if (!bars.length) {
+    if (!bars.length && !barlessSelected.length) {
       if (label) return void console.log(`No span labelled '${label}' in ${file}.`);
       return void console.log(
-        `No spans matched the filter in ${file} (${hidden} hidden by --min-wall/--filter).`,
+        `No spans matched the filter in ${file} (${totalHidden} hidden by --min-wall/--filter).`,
       );
     }
-    printSpanBreakdowns(bars, iterations, rec.meta.browser, query.frames ?? false);
-    printSpanFilterNote(hidden);
-  } else if (label && label !== "run") {
-    return void console.log(
-      `No span labelled '${label}' in ${file} (this lane carries only the 'run' bar).`,
-    );
-  } else if (!spans.length) {
-    // The single run bar this lane carries was hidden by --min-wall/--filter.
-    return void console.log(
-      `No spans matched the filter in ${file} (${hidden} hidden by --min-wall/--filter).`,
-    );
+    if (bars.length) printSpanBreakdowns(bars, iterations, rec.meta.browser, query.frames ?? false);
+    // A step with no bar of its own lists here, below the bars. In a --breakdown recording the reason
+    // is a cross-document navigation (its trace window spans the swap but no bar tiles it), NOT a
+    // capture mode that lacks bars, so the hint must not tell a --breakdown user to run --breakdown.
+    if (barlessSelected.length)
+      printBarlessStepRows(
+        barlessSelected,
+        "navigated cross-document, so carry no reconciling bar",
+      );
+    printSpanFilterNote(totalHidden);
   } else {
-    printCpuBreakdown(model!, iterations);
-    printSpanFilterNote(hidden);
+    // The lane's single run bar (synthesized from the CpuModel) plus any bar-less driver steps. A
+    // --label targeting the run keeps it in `spans` (length 0 or 1); a --label targeting a step
+    // leaves `spans` empty and matches the step in the bar-less set instead.
+    const runShown = spans.length > 0;
+    if (runShown) printCpuBreakdown(model!, iterations);
+    if (barlessSelected.length)
+      printBarlessStepRows(
+        barlessSelected,
+        "no reconciling bar at this capture; record --breakdown for per-span bars",
+      );
+    if (!runShown && !barlessSelected.length) {
+      if (label) return void console.log(`No span labelled '${label}' in ${file}.`);
+      return void console.log(
+        `No spans matched the filter in ${file} (${totalHidden} hidden by --min-wall/--filter).`,
+      );
+    }
+    printSpanFilterNote(totalHidden);
   }
   // Point drill-down at one span's full anatomy (bar + counts + forced/dirtied + hot functions) and
   // at the event log, where one exists. The hint target is `latest` when this IS the latest recording,
@@ -1164,6 +1207,29 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     console.log(
       dim(`  • The classified event log: wpd query events ${hintPath} (drill: query get)`),
     );
+}
+
+/**
+ * The bar-less span rows that sit BELOW a bar in a mixed overview: driver steps a sampler-only capture
+ * (default/--precise-wall) built no per-span bar for, or a step that navigated cross-document in a
+ * --breakdown recording. Listed by wall + INP rather than dropped from the overview; slices/counts are
+ * not on these rows, so the table stays to what is real (wall, aggregation, INP). `hint` names WHY the
+ * rows have no bar (it differs by capture mode), so a --breakdown user is not told to run --breakdown.
+ */
+function printBarlessStepRows(spans: SpanCountsEntry[], hint: string): void {
+  console.log(`\nspans without a bar ${dim(`(${hint})`)}\n`);
+  console.log(
+    table(
+      ["span", "kind", "wall", "agg", "inp"],
+      spans.map((span) => [
+        span.label,
+        span.kind,
+        span.wallMs == null ? "—" : `${num(span.wallMs, 1)} ms`,
+        span.aggregation,
+        span.inpMs == null ? "—" : `${num(span.inpMs, 1)} ms`,
+      ]),
+    ),
+  );
 }
 
 /**

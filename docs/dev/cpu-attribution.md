@@ -91,13 +91,18 @@ Four constraints are load-bearing (**[measured]**, probe on a forced-layout driv
   (`suppressed: true` + a raise-`--iterations` hint), never a top-N invented from noise; a function
   below ~3 pooled samples is dropped from the list.
 
-**Caveat (pre-existing, inherited, not widened here):** puppeteer's own `page.click` machinery injects
-`pptr:evaluate;<method>` frames (`isIntersectingViewport`, `visibleRatio`, ...) whose call-site file
-is `puppeteer-core`, not one of wpd's four injection sites in `WPD_EVALUATE_SITES`, so `isToolFrameUrl`
-does not drop them and they rank like user code (they already appear in `query cpu`). Negligible on a
-heavy step (a handful of samples), but they are the ENTIRE ranked set on a click-only step -- which is
-exactly the case the 10-sample suppression floor covers. Widening the tool-frame filter is its own
-risky change and is deliberately NOT done for this feature.
+**Automation dispatch is dropped, anchored to its own path.** Puppeteer's own `page.click` machinery
+injects `pptr:evaluate;<method>` frames (`isIntersectingViewport`, `visibleRatio`, ...) whose call
+site is inside `node_modules/puppeteer-core/lib`; Firefox's WebDriver code (Marionette, RemoteAgent,
+BiDi, EventUtils' `synthesizeMouseAtPoint`) runs under `chrome://remote/`. Both are the harness
+driving the page, not the app, so `isToolFrameUrl` drops them: their self-time tiles into the
+`browser` slice, never a ranked function or a js-by-package bucket. The match is **anchored to those
+paths** (`/node_modules/puppeteer-core/`, `chrome://remote/`), so a user's own driver-mode
+`page.evaluate` callback -- whose call site is the user's module -- survives to reach blame/cpu, and a
+user file merely *named* like puppeteer-core is untouched. Undropped, puppeteer's frames are the
+ENTIRE ranked set on a click-only step and leak into `byPackage` as a percent-encoded
+`%2Fpuppeteer-core...` bucket; the Firefox `chrome://remote/` url is stripped from `parsed.url` by the
+Gecko converter, so the drop matches it through `parsed.rawUrl`.
 
 ## Sourcemap note gating
 

@@ -77,7 +77,7 @@ export function crossProcessWorkSplit(): string {
 // --- Firefox lane ---
 
 export function firefoxBackend(): string {
-  return "Firefox backend (WebDriver BiDi): no CDP, so no exact counters and no CPU/network throttling. Wall timing rides performance.now (directional) and is measured under the Gecko profiler (~1% systematic cost; cancels in a diff of two Firefox runs).";
+  return "Firefox backend (WebDriver BiDi): no CDP, so no exact counters and no CPU/network throttling. Wall timing rides performance.now (directional) and is measured under the Gecko profiler, whose cost is workload-weighted: ~150% wall on reflow-heavy work (the profiler captures a JS cause stack on every reflow), ~5% on pure JS. It is systematic, so it cancels in a diff of two Firefox runs.";
 }
 
 export function firefoxRenderingCountsMeasured(): string {
@@ -93,7 +93,7 @@ export function firefoxInp(): string {
 }
 
 export function firefoxForcedCountSemantics(): string {
-  return "Firefox forcedLayoutCount comes from Gecko Reflow/Styles marker cause stacks (the write-site JS cause), not Chrome's read-site rule, so it counts mount-driven reflows Chrome reports 0 for. Never compare forced counts across engines: read a Firefox run against another Firefox run.";
+  return "Firefox forcedLayoutCount comes from Gecko Reflow/Styles marker cause stacks (the write-site JS cause), not Chrome's read-site rule, so it counts mount-driven reflows Chrome reports 0 for. Never compare forced counts across engines: read a Firefox run against another Firefox run. The forced-layout MILLISECONDS from these markers also under-report the flush duration ~7x vs Chrome for identical work, so read forced ms as directional and against another Firefox run, never against Chrome's.";
 }
 
 export function firefoxDeepReport(): string {
