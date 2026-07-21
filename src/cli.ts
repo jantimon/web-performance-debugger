@@ -125,7 +125,7 @@ program
   .option("--no-headless", "run with a visible browser window")
   .option(
     "--user-data-dir <path>",
-    "reuse a persistent Chrome profile (log in once; shared across passes/runs)",
+    "reuse a persistent browser profile (chrome or firefox) to log in once; shared across passes/runs. Use a throwaway dedicated dir: it stores cookies, logins and history",
   )
   .option(
     "--disable-browser-sandbox",
@@ -150,7 +150,7 @@ program
   )
   .option(
     "--precise-wall",
-    "the default capture mode minus the CPU sampler: a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts",
+    "the default capture mode minus the CPU sampler: a pristine benchmark wall that buys back the sampler's overhead (~4-7% on mixed work, ~1% on a long JS-heavy window). No CPU model and no rendering counts",
   )
   .option(
     "--headless-mode <mode>",

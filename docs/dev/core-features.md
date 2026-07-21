@@ -6,6 +6,11 @@ best-in-class scale. Ratings are calibrated against verified competitor capabili
 evidence (issue threads, vendor docs, published measurements). External links and market claims
 are a 2026-07 snapshot; re-verify before quoting them in user-facing copy.
 
+**Scoping convention.** Competitor capabilities here were checked against each tool's official
+documentation on 2026-07-21. This is a documentation review on that date, not an exhaustive market
+audit, so read every "no tool does X" as "no reviewed tool's official docs document X". Where an
+absolute survives below, it carries that meaning.
+
 Two findings repeat across every feature:
 
 - **The pain is articulated; the solution shape is not.** Users voice the problems loudly
@@ -67,9 +72,11 @@ slowly but I don't know what is causing it", wanting app-vs-internals separation
 builds), recurring SSR `renderToString` threads that end in manual flamegraph reading.
 Discoverability risk: "cost of a dependency" as a search phrase is owned by bundle-size tools.
 
-**Expected-but-missing.** Every human-facing competitor is a GUI; the `.cpuprofile` handoff to
-speedscope/DevTools is the mitigation and should be loud. Memory profiling and continuous/prod
-profiling are out of scope; state the boundary.
+**Expected-but-missing.** The human-facing competitors lead with a GUI flamegraph, and the ones
+with a programmatic surface still don't emit this rollup: Pyroscope's HTTP API
+(`SelectMergeProfile`, `/ingest`, `/render`) returns pprof and flamegraph shapes, not a per-package
+milliseconds table. The `.cpuprofile` handoff to speedscope/DevTools is the mitigation and should be
+loud. Memory profiling and continuous/prod profiling are out of scope; state the boundary.
 
 ## 3. The reconciling breakdown bar: best in class (narrow, precise claim)
 
@@ -84,7 +91,8 @@ with idle, in a GUI, manually. No tool products the combination of engine-work s
 **arbitrary user-named span**, residual-zero as a stated contract, machine-readable, cross-engine
 (7 slices Chrome, 6 Firefox, 4 node). Lighthouse's main-thread breakdown is load-only with no
 idle and no reconciliation; the DevTools INP insight splits phases, not engine work; LoAF
-partitions frames, never user spans; Perfetto has the primitives but you write the SQL.
+partitions frames, never user spans; Perfetto ships trace-based metrics and summaries, but none
+tile an arbitrary user span into reconciling engine slices, so for this view you write PerfettoSQL.
 
 **Use cases:** mount/hydrate/INP decomposition, comparing CSS-in-JS techs, spotting
 idle-dominated spans that are not CPU problems, explaining "fast function, slow interaction".
@@ -131,10 +139,12 @@ optimistic is the moment latent demand becomes articulated.
 runs, gate CI on thresholds. The `spans` overview is deliberately small; drilldown is by id.
 
 **Why it wins.** Google's chrome-devtools-mcp validated the premise almost verbatim (a ~30MB
-trace summarized to <4KB for the model), but it re-traces live and persists nothing: no artifact,
-no re-query, no diff, no gate. Perfetto is the mirror image: keeps everything, pre-digests
-nothing, and you write PerfettoSQL. The unoccupied intersection is a trace you can **keep**, query
-by id, diff, and gate, with source attribution in the artifact.
+trace summarized to <4KB for the model). It can save the raw trace to disk (a `filePath` on its
+tracing tools), but what it persists is the raw trace, not a re-queryable digest: no id-drilldown,
+no diff, no gate. Perfetto is the mirror image: it keeps the whole trace and ships trace-based
+metrics and summaries, but nothing attributes a slice to a source line or gates it, and for a view
+it does not pre-build you write PerfettoSQL. The unoccupied intersection is a trace you can **keep**,
+query by id, diff, and gate, with source attribution in the artifact.
 
 **Use cases:** CI regression gates, PR before/after, sharing a repro, agent-driven perf
 debugging.
@@ -156,8 +166,9 @@ profiling. `query spans` folds all three onto one shape.
 **Why it wins, unevenly.** The node SSR lane is a draw on its own: SSR self-time pain is
 well-attested (Expedia/Walmart engineering posts, `renderToString` threads) and nobody pairs it
 with browser profiling in one CLI. The Firefox lane is the boldest technical claim. browsertime
-can capture a Gecko profile but only hands it to a web UI, and nothing else extracts comparable
-metrics programmatically, but the audience is niche and shows up as Bugzilla repros (946167,
+can capture a Gecko profile and writes it to disk as JSON, but that file is destined for the
+Firefox Profiler web UI; nothing else extracts comparable metrics programmatically into a CI-shaped
+table, but the audience is niche and shows up as Bugzilla repros (946167,
 1209697: layout pathologies that reproduce only in Firefox), not as tool requests. Position it as
 "when you hit it, nothing else finds it".
 
@@ -166,8 +177,9 @@ one mental model across all three.
 
 **The predictable objection.** "Why not Safari?" lands harder than Firefox enthusiasm. The answer
 is a platform limitation, not a scope choice: WebKit exposes no headless deep-profiling hook to
-anyone (Playwright profiles only Chromium; the Safari MCP server surfaces navigation/resource
-timing only), so nobody holds the ground wpd is conceding.
+anyone (Playwright's functional Trace Viewer traces all three engines, but its CDP-based CPU/JS
+profiling is Chromium-only; the Safari MCP server surfaces navigation/resource timing only), so
+nobody holds the ground wpd is conceding.
 
 ## 7. Exact rendering counts (layout / style / paint): good
 
