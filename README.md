@@ -294,10 +294,24 @@ recording to a group with `record … --group <name>` (the join refuses a member
 workload/iterations/etc differ; only the capture mode may). `diff groupA groupB` fans out over members
 paired by capture mode.
 
+On **Firefox** every mode is the same one capture, so the table reports what that capture yields
+rather than what you switch on:
+
+| Capture mode (firefox) | Accepted | CPU samples | Reconciling bar | Rendering counts | Read-site blame | Dirtied-by writes | Speed |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | --- |
+| **default** (no flag) | ✅ gecko pass | ✅ | ✅ | ✅ | ✅ | — | 🐌🐌🐌 Δ ~150% |
+| **`--deep`** | ✅ same capture | ✅ | ✅ | ✅ | ✅ | ✅ | same capture, same cost |
+| **`--breakdown`** | not available* | | | | | | |
+| **`--precise-wall`** | not available* | | | | | | |
+
+\* The Firefox lane is one Gecko-profiler pass — the only source of its CPU samples, markers,
+reconciling bar, and read-site blame. That pass cannot be switched off (the point of `--precise-wall`)
+and offers no separate light or deep trace to pick (what `--breakdown` picks on chrome), so neither
+flag has anything to select. Full cost and caveats: [docs/dev/firefox-cpu.md](docs/dev/firefox-cpu.md).
+
 `--target firefox` is one Gecko-profiler pass in every capture mode (samples and markers are entangled at
-profiler startup), so the capture modes are reporting tiers over that one capture rather than capture tiers;
-`--breakdown`/`--precise-wall` are rejected there and `--deep` adds a dirtied-by write report. That pass has
-no sampler-free counterpart — the Gecko profiler is a startup feature for the whole browser lifetime — so
+profiler startup), so the capture modes are reporting tiers over that one capture rather than capture tiers.
+That pass has no sampler-free counterpart — the Gecko profiler is a startup feature for the whole browser lifetime — so
 even Firefox's fastest capture pays for it: **🐌🐌🐌 Δ ~150%** over a plain Firefox launch on the same
 workload, and `--deep` is the same capture at the same cost. That tax is reflow-weighted, not flat:
 each synchronous reflow's marker captures a JS cause stack (the blame signal), so the probe's
