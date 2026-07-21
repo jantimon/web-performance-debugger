@@ -25,6 +25,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc",
     "lint": "oxlint src",
     "lint:fix": "oxlint src --fix",
@@ -35,7 +36,7 @@
     "pretest:e2e": "npm run build",
     "test:e2e": "WPD_E2E_REQUIRED=1 node --test test/cli.e2e.test.mjs",
     "pretest:e2e:firefox": "npm run build",
-    "test:e2e:firefox": "node --test test/firefox.e2e.test.mjs",
+    "test:e2e:firefox": "WPD_E2E_FIREFOX_REQUIRED=1 node --test test/firefox.e2e.test.mjs",
     "changeset": "changeset",
     "version": "changeset version && npm install --package-lock-only",
     "release": "npm run build && changeset publish",

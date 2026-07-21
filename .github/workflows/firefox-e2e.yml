@@ -1,0 +1,35 @@
+name: Firefox e2e
+
+# The gecko lane (--target firefox) has no per-PR gate: it needs a Firefox build the other jobs
+# don't install, and the suite self-skips when Firefox is absent, so wiring it into every PR would
+# either slow every run or pass green without ever launching Firefox. This scheduled job installs
+# Firefox explicitly and runs the suite in required mode, so a real gecko regression surfaces within
+# a day instead of at the next manual run. The suite is quick (~45s of tests), so nightly is cheap.
+# Trigger it by hand from the Actions tab when needed.
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firefox-e2e:
+    runs-on: ubuntu-latest
+    env:
+      # The gecko suite drives Firefox, never puppeteer's bundled Chrome, so skip that download.
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Puppeteer downloads Chrome on install, not Firefox, so pull the pinned Firefox build the
+      # suite drives (same channel `npx puppeteer browsers install` resolves for `--target firefox`).
+      - run: npx puppeteer browsers install firefox
+      # WPD_E2E_FIREFOX_REQUIRED=1 (set by test:e2e:firefox) turns a missing Firefox into a hard
+      # failure, so this job can never pass green by silently skipping the gecko lane.
+      - run: npm run test:e2e:firefox

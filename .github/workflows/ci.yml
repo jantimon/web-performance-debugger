@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Default the whole workflow to read-only; the release job re-declares the write scopes it needs.
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -23,6 +27,22 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  pack-smoke:
+    # Builds the tarball as `npm publish` would, installs it into a throwaway project, and proves the
+    # published surface works: the bin runs, a --target node record writes an artifact, and the
+    # documented root types compile against the installed package. Browser-free, so it stays fast.
+    runs-on: ubuntu-latest
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/pack-smoke.mjs
+
   e2e:
     # Drives the real CLI against headless Chrome end-to-end (record -> query, trace + CPU).
     runs-on: ubuntu-latest
@@ -39,3 +59,49 @@ jobs:
       # --disable-browser-sandbox escape stays untested here on purpose.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: npm run test:e2e
+
+  release:
+    # Publishing waits for the whole suite to pass on THIS commit: `needs` blocks on the other jobs
+    # of the same workflow run, so a broken main (does-not-compile, failing test, or an unshippable
+    # tarball) can never publish. Runs only on a push to main; skipped on pull requests.
+    needs: [ci, pack-smoke, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # changesets pushes the "Version Packages" PR and tags
+      pull-requests: write # changesets opens/updates the "Version Packages" PR
+      id-token: write # OIDC: trusted publishing to npm with provenance, no stored token
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "true" # publishing never launches a browser
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing (OIDC) needs a recent npm (>= 11.5.1). The npm bundled
+      # with Node 24 is older, so pull a current one through corepack.
+      - name: Upgrade npm for trusted publishing
+        run: |
+          corepack enable npm
+          corepack prepare npm@latest --activate
+          npm --version
+
+      - run: npm ci
+
+      # Opens/updates the "Version Packages" PR from pending changesets, and on
+      # merge runs `npm run release` (build + `changeset publish`). Publishing
+      # authenticates via OIDC, so there is NO NODE_AUTH_TOKEN / NPM_TOKEN here:
+      # the trusted publisher is configured on npmjs.com against this repo.
+      - uses: changesets/action@v1
+        with:
+          version: npm run version
+          publish: npm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
