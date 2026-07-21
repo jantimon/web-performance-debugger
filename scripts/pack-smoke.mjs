@@ -18,7 +18,9 @@ function run(command, args, options = {}) {
   execFileSync(command, args, { stdio: "inherit", ...options });
 }
 function capture(command, args, options = {}) {
-  return execFileSync(command, args, { encoding: "utf8", ...options });
+  // Capture stdout (the return value) but let stderr through to the parent, so a failing command's
+  // diagnostics land in the CI log instead of being swallowed into the thrown error's .stderr.
+  return execFileSync(command, args, { encoding: "utf8", stdio: ["inherit", "pipe", "inherit"], ...options });
 }
 
 // Build + pack from the repo. `npm pack` honors the `files` list, so the tarball is byte-identical
