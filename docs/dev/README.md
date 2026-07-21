@@ -27,6 +27,7 @@ permalink).
 | [trace-buffer.md](./trace-buffer.md) | changing `trace/tracing.ts`, the trace buffer size, or claiming a `--deep` count is exact on a heavy page |
 | [facts.md](./facts.md) | changing any load-bearing measured number (a ledger of them + the files that must agree, checked by a unit test) |
 | [core-features.md](./core-features.md) | writing user-facing copy, prioritizing features, or claiming a capability is unique. The one file here whose evidence is market research (competitor docs and issue threads, link-verified and dated) rather than engine probes |
+| [orchestrator-boundary.md](./orchestrator-boundary.md) | answering a feature request that asks wpd to grade, compare, recommend, or scaffold — the standing scope boundary and why each capability stays with the caller |
 
 ## Find it by question
 
