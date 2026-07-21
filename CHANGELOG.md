@@ -1,5 +1,36 @@
 # @jantimon/web-performance-debugger
 
+## 0.15.3
+
+### Patch Changes
+
+- 02b5e6d: Tighten CLI argument validation so a bad number fails at the boundary instead of silently skewing a
+  run or a gate:
+
+  - `--max-wall`/`--max-inp` now accept non-negative fractional ms (matching stored fractional walls
+    and `--max-slice`); INP budgets take floats too, for one consistent timing-budget policy.
+  - Count maxima (`--max-layouts`, `--max-forced`, ...) reject negatives, which could only ever fail.
+  - `--top` requires a positive integer; `query get`/`query frame` parse ids strictly (`abc`/`12junk`
+    now error instead of becoming NaN or 12).
+  - `--protocol-timeout` requires a positive integer; `--cpu-throttle` requires an integer greater
+    than 1, and is rejected on firefox/node whatever the value.
+  - `--target node` rejects `--no-headless`/`--keep-partial`/`--protocol-timeout`; `--bench` rejects
+    `--keep-partial`. These lanes consume none of them.
+
+- d6293f8: Close three ways a count gate could pass a broken CI green:
+
+  - `assert` on a run-group now gates a stepped driver member per step (matching a plain recording),
+    not its run summary, so a per-step budget is not defeated by the run total.
+  - A cross-process split (successive navigations) or a dropped-event trace overflow is now recorded as
+    a typed field (`meta.mainThread.split`, `meta.dataLoss.trace`); `assert` and `diff
+--fail-on-regression` refuse count and count-derived thresholds on such a recording (a loud
+    not-gateable FAIL), never a silent pass over a known-incomplete count.
+  - A step whose work ran on an un-selected renderer process reports its counts as not-measured (—),
+    never a fake 0.
+
+  Gates that were silently passing on these shapes now fail loudly; the message names the fix (one
+  navigation per run, or lighter work).
+
 ## 0.15.2
 
 ### Patch Changes
