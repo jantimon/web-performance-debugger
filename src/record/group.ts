@@ -61,6 +61,37 @@ function nameCollisionError(manifestPath: string, stored: string, requested: str
   );
 }
 
+/** The out-path refusal: a joining member whose recording lands on the SAME file as an existing
+ * member would overwrite that member the moment it is written, leaving two manifest entries pointing
+ * at one file (and every verb routed to the clobbered member reading undefined slices). Two members
+ * are two recordings; refuse before anything is written, naming the collision and both fixes. */
+function outPathCollisionError(
+  groupName: string,
+  collidingMember: GroupMember,
+  recordingPath: string,
+): Error {
+  return new Error(
+    `Refusing to record into run-group '${groupName}': the output path ${recordingPath} is already ` +
+      `member '${memberLabel(collidingMember)}'s recording. Appending would overwrite that member, ` +
+      `leaving two manifest entries pointing at one file. Give each member a distinct --out, or drop ` +
+      `--out and use \`--members <modes> --group ${groupName}\`, which auto-names each member.`,
+  );
+}
+
+/** The existing member (if any) whose recording resolves to `recordingPath`, so a join that would
+ * overwrite it is refused. Paths are resolved against the manifest dir, the same key the members are
+ * stored relative to. Compared by `path.resolve`, not `realpath`: both the new `--out` and the stored
+ * member paths derive from the one `outDir` of this invocation, so they share symlink form (a
+ * `/tmp` vs `/private/tmp` split cannot arise between them within a run). */
+function memberAtRecordingPath(
+  members: GroupMember[],
+  manifestDir: string,
+  recordingPath: string,
+): GroupMember | undefined {
+  const target = path.resolve(recordingPath);
+  return members.find((member) => path.resolve(manifestDir, member.recording) === target);
+}
+
 /** A member recording's own path when the `--members` runner records it: a named sibling of the
  * manifest, one per capture mode, so re-running the group overwrites the same member deterministically. */
 export function memberOutPath(dir: string, name: string, mode: string, format: Format): string {
@@ -132,17 +163,22 @@ export interface AppendMemberInput {
  * the browser launches or a byte is written. Refuses (throws) on:
  *   - a name-identity mismatch (D2): the requested name and the stored `meta.name` differ but sanitize
  *     to the same manifest filename -- two distinct groups the join would silently merge.
+ *   - an out-path collision: the joining member's recording resolves to an existing member's file, so
+ *     appending would overwrite it (a plain `--group --out <base>` repeated across modes).
  *   - a duplicate `(mode, variant)` member (D1): two identical captures are not two questions.
  * A refusal names the recovery in one sentence: the exact missing-members command while the group is
  * still partial, else record under a new `--group` name or remove the manifest and its members. No
  * manifest (first formation) passes silently. This runs the D1 preflight so a re-run never overwrites a
- * member artifact or downgrades the `latest` pointer before the duplicate is caught.
+ * member artifact or downgrades the `latest` pointer before the duplicate is caught. `newRecordingPath`
+ * (the resolved `--out` of this invocation's single member) drives the out-path collision check; absent
+ * for the `--members` runner, whose per-mode `memberOutPath` names are distinct by construction.
  */
 export async function preflightGroup(
   manifestPath: string,
   format: Format,
   requestedName: string,
   requested: { mode: string; variant?: string }[],
+  newRecordingPath?: string,
 ): Promise<void> {
   const existing = await readManifest(manifestPath, format);
   if (!existing) return;
@@ -154,7 +190,19 @@ export async function preflightGroup(
       (member) => member.mode === candidate.mode && member.variant === candidate.variant,
     ),
   );
-  if (duplicates.length === 0) return;
+  if (duplicates.length === 0) {
+    // Not a duplicate capture, so the D1 message would not fit; a shared --out with a DIFFERENT mode
+    // is the out-path collision (the duplicate check above already caught a same-mode shared --out).
+    if (newRecordingPath != null) {
+      const clash = memberAtRecordingPath(
+        existing.members,
+        path.dirname(manifestPath),
+        newRecordingPath,
+      );
+      if (clash) throw outPathCollisionError(existing.meta.name, clash, newRecordingPath);
+    }
+    return;
+  }
   // Recovery names the still-missing members from the group's declared `requested` set when it carries
   // one (a partial `--members` group), else from this invocation's own requested modes.
   const declared = existing.requested?.length
@@ -244,6 +292,12 @@ export async function appendMember(input: AppendMemberInput): Promise<RunGroup> 
           `${verdict.refusals.join("; ")}. A group holds N captures of ONE workload differing only in ` +
           `capture mode. Re-record this member with the group's flags, or start a new group.`,
       );
+    // Out-path collision: a member of a NEW capture mode (formationVerdict passed) whose recording
+    // lands on an existing member's file. The preflight catches it before launch; this is the
+    // primitive's guard, so a direct caller cannot append a second entry pointing at the file it just
+    // overwrote. After the duplicate refusal above, so a same-mode re-record gets the apter D1 message.
+    const clash = memberAtRecordingPath(group.members, manifestDir, input.recordingPath);
+    if (clash) throw outPathCollisionError(group.meta.name, clash, input.recordingPath);
     newMember.annotations = verdict.annotations;
     group.members.push(newMember);
   }

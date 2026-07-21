@@ -1386,6 +1386,29 @@ e2e("record --members breakdown,deep forms a group and query span stitches acros
   assert.ok(stitch.hot?.functions?.length > 0, "hot functions come from the breakdown member");
 });
 
+// Two ad-hoc `--group` records sharing ONE `--out` would make the second overwrite the first member's
+// recording, leaving two manifest entries pointing at one file. The preflight refuses the second
+// before it launches a browser, naming the collision and the fix.
+e2e("record --group refuses a second member whose --out collides with an existing member", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const shared = path.join(dir, "base.json");
+  // First member (default capture mode) forms the group and writes base.json.
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--group", "collide", "--iterations", "1", "--out", shared]);
+  // Second member, a DIFFERENT capture mode, pointed at the SAME --out: refuse before launching.
+  const clash = spawnSync(
+    process.execPath,
+    [cli, "record", path.join(examples, "forces-layout.mjs"), "--bench", "--breakdown", "--group", "collide", "--iterations", "1", "--out", shared],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.notEqual(clash.status, 0, "the colliding out-path record exits non-zero");
+  const message = clash.stdout + clash.stderr;
+  assert.match(message, /overwrite that member/, "the refusal explains the overwrite");
+  assert.match(message, /distinct --out|--members/, "the refusal names the fix");
+  // The manifest still holds exactly the first member (nothing was clobbered).
+  const manifest = JSON.parse(readFileSync(path.join(dir, "collide.group.json"), "utf8"));
+  assert.equal(manifest.members.length, 1, "the refused member was never added");
+});
+
 // assert routes each threshold to the member that measured its axis; an axis NO member measures is a
 // loud n/a FAIL, never a silent pass -- the Measured contract extended across a group.
 e2e("assert on a group routes each threshold to its member, with a loud n/a FAIL where no member measures the axis", { timeout: TIMEOUT_MS }, () => {

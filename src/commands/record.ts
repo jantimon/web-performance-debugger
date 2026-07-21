@@ -294,9 +294,15 @@ export async function record(opts: RecordOptions): Promise<{
   // The --members runner also preflights the whole set upfront; this covers a plain single --group.
   if (opts.group) {
     const preflightManifest = groupManifestPathFor(outDir, opts.group, opts.format);
-    await preflightGroup(preflightManifest, opts.format, opts.group, [
-      { mode: capture.mode, variant: opts.variant },
-    ]);
+    await preflightGroup(
+      preflightManifest,
+      opts.format,
+      opts.group,
+      [{ mode: capture.mode, variant: opts.variant }],
+      // outPath drives the out-path collision check; a default (no --out) name is timestamped, so it
+      // is unique per run and passes, same as the node lane's explicit-only check below.
+      outPath,
+    );
   }
 
   // In --url bench mode the host page is a remote origin that import()s the served module cross-origin,
@@ -918,6 +924,8 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
         opts.format,
         opts.group,
         [{ mode: "node-cpu", variant: opts.variant }],
+        // Only an explicit --out can collide; the default name is timestamped and unique per run.
+        opts.out ? path.resolve(opts.out) : undefined,
       );
     }
     const result = await recordNode(opts);

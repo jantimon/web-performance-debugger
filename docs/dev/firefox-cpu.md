@@ -80,6 +80,13 @@ signal. Paint stays off the bar: it is off-main-thread compositor work (a side t
   `stackwalk` +0.7 MB), so a dump is ~15-23 MB regardless of workload. Do NOT shrink it by lowering
   ENTRIES: undersizing silently overwrites (drops) the window's *earliest* samples. `stackwalk`
   stays off (zero signal on shallow JIT stacks, +0.7 MB).
+- **[measured] The shutdown dump is complete when `browser.close()` resolves.** Puppeteer's close
+  waits for the Firefox process to exit, and `MOZ_PROFILER_SHUTDOWN` writes the dump during that
+  shutdown, so by the time `waitForGeckoDump` runs the file already exists at full size (measured
+  across 7 rounds and two ring sizes: poll-to-first-exists 0 ms, never grew after close 0/7). The
+  growth-detection stability check (`GECKO_DUMP_STABLE_READS`) and the 15 s timeout stay only to
+  guard a slow-disk lag on a very large dump landing after the first stat; the poll cadence is tight
+  (`GECKO_DUMP_POLL_MS` 20 ms) so stability confirms in a few reads, not a fixed ~750 ms floor.
 
 ## Where the ~150% gecko overhead comes from
 
