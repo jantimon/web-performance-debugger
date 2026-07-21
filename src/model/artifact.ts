@@ -8,16 +8,27 @@ import { SCHEMA_VERSION } from "../schema.js";
 
 /**
  * Throw unless `schemaVersion` is exactly this build's `SCHEMA_VERSION`. `file` names the offending
- * artifact in the message. An absent version (a hand-written or pre-schema file) fails the same way:
- * "I cannot tell what shape this is" is still a refusal, never a best-effort parse.
+ * artifact in the message. The guidance branches on which side is behind: an OLDER artifact re-records
+ * under this build; a NEWER one (its epoch parses above this build's) means the reader is behind, so
+ * upgrade wpd rather than re-record (re-recording would throw away the newer evidence). An absent or
+ * non-numeric version cannot be ordered against this build's epoch, so it falls to a neutral
+ * re-record refusal, never a best-effort parse.
  */
 export function assertSchemaVersion(schemaVersion: string | undefined, file: string): void {
   if (schemaVersion === SCHEMA_VERSION) return;
   const found = schemaVersion == null ? "<none>" : `"${schemaVersion}"`;
-  throw new Error(
-    `${file}: unreadable artifact (schema ${found}; this build reads schema "${SCHEMA_VERSION}"). ` +
-      `It was recorded by an older wpd; re-record with this version.`,
-  );
+  // Order only on an all-digit epoch: Number.parseInt would read "3-draft" as 3 and mis-order it as
+  // an older recording, so a non-numeric version falls through to the neutral branch instead.
+  const epochOf = (value: string): number =>
+    /^\d+$/.test(value) ? Number.parseInt(value, 10) : NaN;
+  const foundEpoch = schemaVersion == null ? NaN : epochOf(schemaVersion);
+  const thisEpoch = epochOf(SCHEMA_VERSION);
+  const prefix = `${file}: unreadable artifact (schema ${found}; this build reads schema "${SCHEMA_VERSION}"). `;
+  if (Number.isInteger(foundEpoch) && Number.isInteger(thisEpoch) && foundEpoch > thisEpoch)
+    throw new Error(prefix + `It was recorded by a newer wpd; upgrade wpd to read it.`);
+  if (Number.isInteger(foundEpoch) && Number.isInteger(thisEpoch) && foundEpoch < thisEpoch)
+    throw new Error(prefix + `It was recorded by an older wpd; re-record with this version.`);
+  throw new Error(prefix + `It carries a different schema epoch; re-record with this version.`);
 }
 
 /**

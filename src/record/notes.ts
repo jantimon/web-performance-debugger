@@ -116,7 +116,7 @@ export function defaultCaptureMode(): string {
 }
 
 export function cpuSamplerOnDefaultMode(): string {
-  return "The CPU sampler perturbs per-iteration wall by ~1% in this capture mode: it is systematic, so it cancels in `diff`. Use --precise-wall for a sampler-off benchmark wall (no CPU model).";
+  return "The CPU sampler perturbs per-iteration wall by ~4-7% on mixed work (~1% on a long JS-heavy window) in this capture mode: it is systematic, so it cancels in `diff`. Use --precise-wall for a sampler-off benchmark wall (no CPU model).";
 }
 
 /** --deep: full trace, sampler off; exact counts + blame, durations suppressed. */
@@ -126,7 +126,7 @@ export function deepCaptureMode(): string {
 
 /** --precise-wall: the default capture mode minus the sampler. */
 export function preciseWall(): string {
-  return "Precise-wall capture mode: the CPU sampler is OFF for a pristine benchmark wall (the ~1% the sampler costs). No CPU model and no rendering counts — the wall is the only product. Drop --precise-wall for the four-slice CPU bar.";
+  return "Precise-wall capture mode: the CPU sampler is OFF for a pristine benchmark wall, buying back its overhead (~4-7% on mixed work, ~1% on a long JS-heavy window). No CPU model and no rendering counts — the wall is the only product. Drop --precise-wall for the four-slice CPU bar.";
 }
 
 // --- Driver step wall ---

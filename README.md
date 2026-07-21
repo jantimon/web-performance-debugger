@@ -78,9 +78,13 @@ Full section: [A line forces synchronous layout](#a-line-forces-synchronous-layo
 file, and owning package. That is where SSR runs in production.
 
 ```bash
-wpd record examples/ssr-demo/demo.mjs --target node --iterations 250
+(cd examples/ssr-demo && npm install)   # the example has its own deps
+NODE_ENV=production wpd record examples/ssr-demo/demo.mjs --target node --iterations 250
 wpd query cpu latest
 ```
+
+`NODE_ENV=production` is load-bearing: without it React resolves to its development build and the
+profile shows a cost nobody ships.
 
 ![Node CPU rollup: the four-slice bar splits self-time across react-dom, tailwind-merge and your app, with tailwind-merge's LRU-cache lookup the single hottest function.](examples/demo-gif/shots/cpu-rollup.png)
 
@@ -102,6 +106,7 @@ Full section: [SSR or a hot JS loop is slow](#ssr-or-a-hot-js-loop-is-slow).
 `assert` fails the build when a budget is blown; `diff` and `cpu-diff` compare two recordings.
 
 ```bash
+wpd record examples/forces-layout.mjs --bench --deep --iterations 5   # a capture with the forced/layout counts to gate
 wpd assert latest --max-forced 0 --max-layouts 50
 ```
 
@@ -161,12 +166,25 @@ newest run, so every `query` verb accepts `latest` instead of a file path.
 - **Node 24+**.
 - **Chrome** is downloaded automatically by Puppeteer on install. To skip the browser entirely, use
   the `--target node` lane (CPU profiling only, no DOM/layout/paint).
-- **pnpm users:** pnpm 10+ blocks Puppeteer's browser-download postinstall by default, and pnpm 11
-  hard-fails `pnpm exec wpd` on that gate. Pick one recipe in your `package.json`: allow the download
-  with `"pnpm": {"onlyBuiltDependencies": ["puppeteer"]}`, or suppress the build-script gate with
-  `"pnpm": {"ignoredBuiltDependencies": ["puppeteer"]}` — but the latter only silences the gate, it
-  does not download a browser, so you must supply one yourself (set `PUPPETEER_EXECUTABLE_PATH`, or
-  populate the puppeteer cache with `npx puppeteer browsers install chrome`).
+- **pnpm users:** pnpm blocks Puppeteer's browser-download postinstall by default, so you must
+  allow it or no Chrome lands. The recipe differs by version:
+  - **pnpm 10:** allow the build in `package.json`:
+    ```json
+    { "pnpm": { "onlyBuiltDependencies": ["puppeteer"] } }
+    ```
+  - **pnpm 11:** that `package.json` field is gone; an install now exits 1
+    (`ERR_PNPM_IGNORED_BUILDS`) without downloading a browser. Allow the build in
+    `pnpm-workspace.yaml` instead, using the map form (the list form `- puppeteer` mis-parses and
+    still fails):
+    ```yaml
+    allowBuilds:
+      puppeteer: true
+    ```
+    pnpm 11 also holds back very fresh releases by default (`minimumReleaseAge`); if it skips a
+    just-published wpd, wait it out or lower that setting.
+
+  To skip the download and supply your own browser, set `PUPPETEER_EXECUTABLE_PATH`, or populate the
+  puppeteer cache with `npx puppeteer browsers install chrome`.
 - **Firefox** is optional (`--target firefox`): install it once with
   `npx puppeteer browsers install firefox`. See [What each target gives you](#what-each-target-gives-you).
 - When `--url` is a URL, **your dev/preview server must already be running** at that URL; wpd does
@@ -379,7 +397,7 @@ signature where each geometry read re-flushes a layout the prior write dirtied.
     …
 ```
 
-`query span run <recording>` shows the same anatomy scoped to the run window (counts, forced read-sites
+`wpd query span latest run` shows the same anatomy scoped to the run window (counts, forced read-sites
 with their dirtied-by writes, and the thrash rollup); `query blame --forced` lists the read-sites, and
 under each the write that dirtied it (chrome `--deep` names both ends).
 
@@ -481,7 +499,9 @@ it produces an INP entry, where a synthetic `page.evaluate(() => element.click()
 
 **Behind a login?** Add `--no-headless` to sign in by hand and `--user-data-dir ./.wpd-profile` to
 persist that session. Gate the login in your driver so it only waits when not yet authenticated, and do
-any iframe/list waiting there too.
+any iframe/list waiting there too. That profile dir stores real browser state — cookies, logins,
+history — so point it at a throwaway dir dedicated to wpd, never your everyday profile, and add it to
+`.gitignore` so a session token never lands in a commit.
 
 ### Measuring an interaction more than once
 
