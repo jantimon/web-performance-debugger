@@ -683,8 +683,12 @@ Remote fetching is bounded on purpose: up to 4 concurrent fetches, a 20 MB scrip
 and a 30 s per-run budget for all remote sourcemap work, so a heavy site cannot stall the profile.
 
 A partial failure is normal and healthy: third-party scripts (analytics, chat widgets) rarely ship
-maps, and bucketing them by origin is the honest answer — their cost is real, but it is not yours. Only
-`0 of N` means the package table can't be believed at all.
+maps, and bucketing them by origin is the honest answer — their cost is real, but it is not yours. The
+`N of M resolved` ratio is not the trust signal: hand-written unbundled ESM legitimately resolves 0 of
+1, because it needs no map, and every frame still lands on a real source line. The signal is the
+**WARNING** wpd prints, which fires only when a minified bundle went unmapped or a remote frame fell
+back to an origin bucket — exactly when the package table shows bundle/origin names in place of real
+packages.
 
 ## Did my change regress a budget
 
@@ -711,10 +715,11 @@ wpd cpu-diff runs/before.json runs/after.json --fail-on-regression
 ```
 
 `assert` gates the exact counts (`--max-forced`, `--max-layouts`, `--max-paints`,
-`--max-layout-invalidations`, `--max-style-invalidations`, `--max-long-tasks`, `--max-inp`,
-`--max-wall`) and the reconciling bar's slices (`--max-slice <name>=<ms>`, repeatable, defaulting to the
-run span; `--label` targets another span). Slice ms is directional (wall-tier ~1%), never count-exact,
-so a slice budget is a directional gate like `--max-inp`, not a count gate. A budget on a metric the
+`--max-layout-invalidations`, `--max-style-invalidations`, `--max-long-tasks`) plus directional
+timing and slice budgets (`--max-inp`, `--max-wall`, and the reconciling bar's slices
+`--max-slice <name>=<ms>`, repeatable, defaulting to the run span; `--label` targets another span).
+Slice ms is directional (wall-tier ~1%), never count-exact, so a slice budget is a directional gate
+like `--max-inp`, not a count gate. A budget on a metric the
 capture mode didn't measure — `--max-slice layout` in the default capture mode, or `--max-forced` on a `--breakdown`
 recording (forced counts need the `--deep` `.stack` trace) — is a **loud FAIL** (`n/a`), never a
 silent pass:
@@ -766,6 +771,11 @@ recording came from chrome `--breakdown`, `--target firefox`, or `--target node`
 not measure is an explicit `null`, never a fabricated `0`. Filter to one span with `--label <L>` (exact,
 case-sensitive, like a `performance.measure` name); this is the label-keyed join a matrix consumer
 performs, the same access path on every engine.
+
+When you emit your own `performance.measure` spans, keep same-label occurrences sequential: do not
+overlap or nest two measures that share a label. wpd pairs a label's start and end in first-in-
+first-out order, so two same-label measures whose ends arrive in reverse order cross-pair, and each
+reported span then covers the wrong window. Give overlapping regions distinct labels.
 
 When a site's tag manager floods the overview with hundreds of tiny `performance.measure` spans, cut
 the noise with `--min-wall <ms>` (hide spans below a wall threshold) and `--filter <text>` (keep only

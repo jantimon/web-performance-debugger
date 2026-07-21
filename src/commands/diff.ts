@@ -207,7 +207,11 @@ async function diffRecordings(
     for (const regression of regressions) console.log(`  ▲ ${regression}`);
     if (opts.failOnRegression) process.exitCode = 1;
   } else {
-    console.log("\nNo regressions. 🎉");
+    // Scoped to what actually gates: the advisory rows (wall/INP) and the slice deltas above are
+    // directional and never counted here, so claiming "no regressions" outright would overclaim.
+    console.log(
+      "\nNo exact-count regressions in the gated set. Directional deltas (wall, INP, slices) above are advisory.",
+    );
   }
 }
 
