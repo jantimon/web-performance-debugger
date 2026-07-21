@@ -1,5 +1,5 @@
-import { promises as fs } from "node:fs";
 import { serialize, type Format } from "../output/format.js";
+import { writeFileAtomic } from "../model/atomic-write.js";
 import type { CpuModel, Recording } from "../model/recording.js";
 
 // Pure artifact writers: they take already-built model objects and put them on disk. No browser
@@ -8,20 +8,21 @@ import type { CpuModel, Recording } from "../model/recording.js";
 // and the resolved CPU model. The `query spans`/`query span <label>` views are derived from the
 // recording at read time, so there is no separate step-index file to write.
 
-/** Serialize a recording to `outPath`. */
+/** Serialize a recording to `outPath` (atomic: temp file + rename, so a killed write leaves the
+ * previous recording intact rather than a half-written one). */
 export async function writeRecording(
   outPath: string,
   recording: Recording,
   format: Format,
 ): Promise<void> {
-  await fs.writeFile(outPath, serialize(recording, format), "utf8");
+  await writeFileAtomic(outPath, serialize(recording, format));
 }
 
-/** Serialize the resolved CPU model to `cpuModelPath`. */
+/** Serialize the resolved CPU model to `cpuModelPath` (atomic, same reason as writeRecording). */
 export async function writeCpuModel(
   cpuModelPath: string,
   cpuModel: CpuModel,
   format: Format,
 ): Promise<void> {
-  await fs.writeFile(cpuModelPath, serialize(cpuModel, format), "utf8");
+  await writeFileAtomic(cpuModelPath, serialize(cpuModel, format));
 }

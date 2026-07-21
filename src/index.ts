@@ -58,10 +58,20 @@ export type {
   SpanForced,
   SpanHotFunctions,
   SpanAnatomy,
+  GroupSpanMember,
+  GroupSpanSources,
+  GroupSpanStitch,
+  GroupSpansProvenance,
+  GroupSpansResult,
+  SpansOutput,
   CpuPackageDelta,
   CpuFunctionDelta,
   CpuDiffResult,
 } from "./model/query.js";
+
+// The run-group manifest artifact (`<base>.group.json`): the N-capture-of-one-workload shape and its
+// members. `query spans`/`span` on a group emit GroupSpansResult / GroupSpanStitch (above).
+export type { RunGroup, GroupMeta, GroupMember } from "./model/group.js";
 
 // Raw V8 sampling profile (the .cpuprofile file, DevTools/Speedscope format).
 export type { RawCpuProfile } from "./profile/cpuprofile.js";

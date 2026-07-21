@@ -7,7 +7,10 @@ import {
   formationVerdict,
   pickMember,
   countDisagreements,
+  partialGroupNotes,
 } from "../../dist/model/group.js";
+import { preflightGroup, appendMember } from "../../dist/record/group.js";
+import { readFileSync } from "node:fs";
 import { assertGroupArtifact, assertRecordingArtifact } from "../../dist/model/artifact.js";
 import { resolveConsumption, writePointer } from "../../dist/commands/resolve.js";
 import { SCHEMA_VERSION } from "../../dist/schema.js";
@@ -190,4 +193,184 @@ test("resolveConsumption: filename detection for explicit paths, pointer.group f
     if (prevXdg === undefined) delete process.env.XDG_STATE_HOME;
     else process.env.XDG_STATE_HOME = prevXdg;
   }
+});
+
+test("partialGroupNotes: reflects current counts while incomplete, silent once complete", () => {
+  // Requested breakdown+deep, only breakdown present: one loud note naming the gap AND the recovery.
+  const incomplete = partialGroupNotes("perf", ["breakdown", "deep"], ["breakdown"]);
+  assert.equal(incomplete.length, 1, "an incomplete group carries one partial note");
+  assert.ok(incomplete[0].includes("1 of 2"), "the note reflects the CURRENT counts");
+  assert.ok(incomplete[0].includes("missing: deep"), "it names the missing member");
+  assert.ok(
+    incomplete[0].includes("--members deep --group perf"),
+    "and the exact recovery command",
+  );
+
+  // Once the missing member records, the note is GONE -- state, never a stored failure narrative.
+  assert.deepEqual(
+    partialGroupNotes("perf", ["breakdown", "deep"], ["breakdown", "deep"]),
+    [],
+    "a complete group carries no partial note",
+  );
+  // An ad-hoc --group group requested nothing, so it is complete-by-construction: never partial.
+  assert.deepEqual(partialGroupNotes("perf", [], ["breakdown"]), [], "no requested set => no note");
+});
+
+// Write a manifest to a fresh temp dir and return its path, for the preflight tests.
+const writeManifest = (over = {}) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
+  const manifest = {
+    meta: {
+      tool: "wpd",
+      version: "0",
+      schemaVersion: SCHEMA_VERSION,
+      kind: "run-group",
+      createdAt: "",
+      name: "perf",
+      ...over.meta,
+    },
+    iterations: 5,
+    warmup: 1,
+    headless: true,
+    requested: over.requested,
+    members: (over.modes ?? ["breakdown"]).map((mode) => ({
+      mode,
+      recording: `${mode}.json`,
+      createdAt: "",
+      annotations: [],
+    })),
+    notes: [],
+  };
+  const manifestPath = path.join(dir, "perf.group.json");
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  return manifestPath;
+};
+
+test("preflightGroup: a name that only sanitize-collides refuses with BOTH names", async () => {
+  // Stored "perf app", requested "perf-app": both fold to perf-app.group.json, so a join would merge
+  // two distinct groups. Refuse, naming both so the collision is legible.
+  const manifestPath = writeManifest({ meta: { name: "perf app" }, modes: ["breakdown"] });
+  await assert.rejects(
+    preflightGroup(manifestPath, "json", "perf-app", [{ mode: "deep" }]),
+    (error) =>
+      error.message.includes("perf app") &&
+      error.message.includes("perf-app") &&
+      /merge/.test(error.message),
+    "the name-mismatch refusal carries both the stored and requested names",
+  );
+});
+
+test("preflightGroup: a duplicate on a COMPLETE group refuses, naming the rename/remove recovery", async () => {
+  const manifestPath = writeManifest({
+    requested: ["breakdown", "deep"],
+    modes: ["breakdown", "deep"],
+  });
+  await assert.rejects(
+    preflightGroup(manifestPath, "json", "perf", [{ mode: "breakdown" }, { mode: "deep" }]),
+    (error) =>
+      /already holds/.test(error.message) &&
+      /complete/.test(error.message) &&
+      /new --group name/.test(error.message) &&
+      error.message.includes("perf"),
+    "a complete-group duplicate names the rename-or-remove recovery, not a --members command",
+  );
+});
+
+test("preflightGroup: a duplicate on a PARTIAL group names the exact missing-members command", async () => {
+  // breakdown present, deep still missing (requested both). Re-running breakdown is a duplicate, but
+  // the recovery must point at the member that is actually missing.
+  const manifestPath = writeManifest({ requested: ["breakdown", "deep"], modes: ["breakdown"] });
+  await assert.rejects(
+    preflightGroup(manifestPath, "json", "perf", [{ mode: "breakdown" }]),
+    (error) => error.message.includes("record --members deep --group perf"),
+    "a partial-group duplicate names the missing member's exact command",
+  );
+});
+
+test("preflightGroup: no manifest and a non-duplicate member both pass silently", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
+  // No manifest yet (first formation): nothing to conflict with.
+  await preflightGroup(path.join(dir, "perf.group.json"), "json", "perf", [{ mode: "breakdown" }]);
+  // An existing group, a genuinely new member: no refusal.
+  const manifestPath = writeManifest({ requested: ["breakdown"], modes: ["breakdown"] });
+  await preflightGroup(manifestPath, "json", "perf", [{ mode: "deep" }]);
+});
+
+// A minimal on-disk recording for a member, so appendMember can read its meta + summary.
+const recordingFor = (mode) => ({
+  meta: meta({ passes: [mode] }),
+  window: { measure: "wpd:run", startTs: null, endTs: null, wallMs: null },
+  marks: [],
+  events: [],
+  spans: [],
+  summary: {},
+});
+
+test("appendMember: a partial group's stale note is GONE once the missing member records (D3)", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
+  const manifestPath = path.join(dir, "perf.group.json");
+  const format = "json";
+  const requested = ["breakdown", "deep"];
+  const writeMember = (mode) =>
+    writeFileSync(path.join(dir, `${mode}.json`), JSON.stringify(recordingFor(mode)));
+  const append = (mode) =>
+    appendMember({
+      name: "perf",
+      manifestPath,
+      format,
+      recordingPath: path.join(dir, `${mode}.json`),
+      meta: meta({ passes: [mode] }),
+      summary: {},
+      requested,
+    });
+
+  // First member: the group is partial (deep still missing), so it carries the structural note.
+  writeMember("breakdown");
+  await append("breakdown");
+  let manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  assert.equal(manifest.members.length, 1, "one member so far");
+  assert.deepEqual(manifest.requested.sort(), ["breakdown", "deep"], "the requested set is persisted");
+  assert.ok(
+    manifest.notes.some((note) => note.includes("1 of 2") && note.includes("missing: deep")),
+    "while incomplete the note reflects the current counts and names the gap",
+  );
+
+  // Recovery: the missing member records. The partial note is REMOVED (present state, not history).
+  writeMember("deep");
+  await append("deep");
+  manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  assert.equal(manifest.members.length, 2, "members 2/2 after recovery");
+  assert.ok(
+    !manifest.notes.some((note) => note.includes("partial group")),
+    "a recovered group carries no stale 'partial group ... failed' note",
+  );
+});
+
+test("appendMember: a name that only sanitize-collides is refused, naming both names (D2)", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
+  const manifestPath = path.join(dir, "perf-app.group.json");
+  writeFileSync(path.join(dir, "breakdown.json"), JSON.stringify(recordingFor("breakdown")));
+  // Form the group under the stored name "perf app".
+  await appendMember({
+    name: "perf app",
+    manifestPath,
+    format: "json",
+    recordingPath: path.join(dir, "breakdown.json"),
+    meta: meta({ passes: ["breakdown"] }),
+    summary: {},
+  });
+  writeFileSync(path.join(dir, "deep.json"), JSON.stringify(recordingFor("deep")));
+  // A second record whose --group "perf-app" folds to the same filename must refuse, not silently join.
+  await assert.rejects(
+    appendMember({
+      name: "perf-app",
+      manifestPath,
+      format: "json",
+      recordingPath: path.join(dir, "deep.json"),
+      meta: meta({ passes: ["deep"] }),
+      summary: {},
+    }),
+    (error) => error.message.includes("perf app") && error.message.includes("perf-app"),
+    "the append refuses a name-collision, naming both the stored and requested names",
+  );
 });

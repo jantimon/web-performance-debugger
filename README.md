@@ -870,8 +870,9 @@ const rec: Recording = JSON.parse(await readFile("run.json", "utf8"));
 | --- | --- |
 | recording `.json` (summary + `spans[]` + `events[]` under `--deep`/firefox) | `Recording` (spans: `Span`, events: `NormalizedEvent`) |
 | `.cpu.json` (CPU model) | `CpuModel` (functions: `CpuFunction`, edges: `CpuEdge`) |
-| `query spans` | `SpansResult` (spans: `SpanEntry`, slices: `UnifiedSlices`) |
-| `query span` | `SpanAnatomy` |
+| run-group `.group.json` manifest (`--group`/`--members`) | `RunGroup` (members: `GroupMember`) |
+| `query spans` | `SpansOutput` = `SpansResult` \| `GroupSpansResult` (the `group` field marks a group) |
+| `query span` | `SpanAnatomy`, or `GroupSpanStitch` on a run-group |
 | `query cpu` / `frame` / `blame` | `CpuOverview` / `FrameQueryResult` / `BlameEntry[]` |
 | `query get` / `events` | `NormalizedEvent` / `NormalizedEvent[]` |
 | `cpu-diff` | `CpuDiffResult` |

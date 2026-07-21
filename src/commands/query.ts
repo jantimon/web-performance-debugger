@@ -17,6 +17,7 @@ import { matchedFrameFloorMs } from "../model/frame-floor.js";
 import type {
   BlameEntry,
   GroupSpanMember,
+  GroupSpansProvenance,
   GroupSpanSources,
   GroupSpanStitch,
   SpanAnatomy,
@@ -1074,7 +1075,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   const variantField = rec.meta.variant ? { variant: rec.meta.variant } : {};
   // A group overview carries its provenance: the bar-bearing member it came from, and the deep member
   // that answers counts/blame -- so a consumer never reads this one member's bar as the whole group.
-  const groupField = groupCtx
+  const groupField: { group: GroupSpansProvenance } | Record<string, never> = groupCtx
     ? {
         group: {
           name: groupCtx.name,

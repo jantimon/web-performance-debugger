@@ -66,6 +66,11 @@ export interface RunGroup {
   runtime?: "chrome" | "node";
   /** group-level variant (nullable): the shared technique label, when every member carries one */
   variant?: string;
+  /** the capture modes a `--members` run asked this group to hold, so partial status is derived
+   * structurally (requested minus present) at every append rather than narrated once on failure.
+   * Set/unioned only by the `--members` runner; absent on an ad-hoc `--group` group, which is
+   * complete-by-construction (each single record is a whole member) and never reports partial. */
+  requested?: string[];
   members: GroupMember[];
   /** group-level disclosures: partial formation, count disagreement across members */
   notes: string[];
@@ -245,4 +250,31 @@ export function countDisagreements(members: MemberCounts[]): string[] {
     );
   }
   return notes;
+}
+
+// --- Partial-group status (requested vs present) ---
+
+/**
+ * The partial-group note, derived structurally from the modes a `--members` run requested versus the
+ * modes present. While a requested mode is missing, one loud note names the gap and the exact recovery
+ * command; when every requested mode is present (or none was requested), NO note. This describes the
+ * CURRENT state only -- never a failure narrative -- so a recovered group carries no stale "the deep
+ * capture failed" line once its missing member records. Pure: the caller reads the manifest and stores
+ * the result.
+ */
+export function partialGroupNotes(
+  name: string,
+  requestedModes: string[],
+  presentModes: string[],
+): string[] {
+  if (requestedModes.length === 0) return [];
+  const present = new Set(presentModes);
+  const missing = requestedModes.filter((mode) => !present.has(mode));
+  if (missing.length === 0) return [];
+  return [
+    `WARNING: partial group: ${presentModes.length} of ${requestedModes.length} members recorded; ` +
+      `missing: ${missing.join(", ")}. A verb routed to a missing member reports it as not measured ` +
+      `(a loud n/a), never a silent pass. Record the missing member(s): ` +
+      `\`record --members ${missing.join(",")} --group ${name}\`.`,
+  ];
 }

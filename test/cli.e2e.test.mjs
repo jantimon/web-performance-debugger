@@ -1,7 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1409,4 +1417,120 @@ e2e("diff of two run-groups fans out over members paired by capture mode", { tim
   assert.match(out, /members paired by capture mode/, "the diff fans out over members");
   assert.match(out, /=== member breakdown ===/, "the breakdown pair is diffed");
   assert.match(out, /=== member deep ===/, "the deep pair is diffed");
+});
+
+// D1: a re-run of an identical, COMPLETE --members group must refuse BEFORE any browser launch or
+// write, so every member artifact AND the latest pointer stay byte-for-byte unchanged. The old order
+// (write, downgrade the pointer, THEN reject the duplicate) overwrote a good group and hid it from
+// `latest`; the preflight makes the refusal the first thing that happens.
+function hashTree(root) {
+  const hash = createHash("sha256");
+  const walk = (dir) => {
+    for (const name of readdirSync(dir).sort()) {
+      const full = path.join(dir, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else {
+        hash.update(name);
+        hash.update(readFileSync(full));
+      }
+    }
+  };
+  walk(root);
+  return hash.digest("hex");
+}
+
+e2e("record --members: a rerun of a complete group refuses (exit 1) and touches no artifact or pointer", { timeout: TIMEOUT_MS }, () => {
+  const stateHome = mkdtempSync(path.join(tmpdir(), "wpd-state-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const pointersDir = path.join(stateHome, "wpd", "pointers");
+  const probe = path.join(examples, "forces-layout.mjs");
+  const args = ["record", probe, "--bench", "--members", "breakdown,deep", "--group", "perf", "--iterations", "1", "--out", path.join(outDir, "perf.json")];
+  const prevXdg = process.env.XDG_STATE_HOME;
+  process.env.XDG_STATE_HOME = stateHome;
+  try {
+    // Form the complete group (breakdown + deep), then snapshot every artifact and the pointer.
+    runCli(args);
+    const before = `${hashTree(outDir)}|${hashTree(pointersDir)}`;
+
+    // Re-run the identical command: both members are duplicates, so the preflight refuses.
+    const rerun = spawnSync(process.execPath, [cli, ...args], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: process.env,
+    });
+    assert.equal(rerun.status, 1, `a complete-group rerun must exit 1:\n${rerun.stdout}\n${rerun.stderr}`);
+    const message = `${rerun.stdout}\n${rerun.stderr}`;
+    assert.match(message, /already holds/, "the refusal names the duplicate");
+    assert.match(message, /complete|new --group name/, "and names the rename/remove recovery");
+
+    const after = `${hashTree(outDir)}|${hashTree(pointersDir)}`;
+    assert.equal(after, before, "the refused rerun changed no member artifact and did not downgrade the latest pointer");
+  } finally {
+    if (prevXdg === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = prevXdg;
+  }
+});
+
+// D1 (pointer ordering, the post-run refusal path): a --group join refused by the formation check
+// (a workload/iterations mismatch, caught AFTER the member's own artifacts are written, not by the
+// pre-run preflight) must NOT downgrade `latest`. The pointer is written only after the join is
+// accepted, so `latest` stays on the prior, intact group.
+e2e("record --group: a refused formation join leaves latest on the prior group", { timeout: TIMEOUT_MS }, () => {
+  const stateHome = mkdtempSync(path.join(tmpdir(), "wpd-state-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const probe = path.join(examples, "forces-layout.mjs");
+  const prevXdg = process.env.XDG_STATE_HOME;
+  process.env.XDG_STATE_HOME = stateHome;
+  try {
+    // Form the group at iterations 2; `latest` now resolves to it.
+    runCli(["record", probe, "--bench", "--breakdown", "--group", "perf", "--iterations", "2", "--out", path.join(outDir, "a.json")]);
+
+    // A second member at a DIFFERENT iterations count passes the preflight (not a duplicate) but fails
+    // formation after its own files are written.
+    const mismatch = spawnSync(process.execPath, [cli, "record", probe, "--bench", "--deep", "--group", "perf", "--iterations", "3", "--out", path.join(outDir, "b.json")], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: process.env,
+    });
+    assert.equal(mismatch.status, 1, `a mismatched join must exit 1:\n${mismatch.stdout}\n${mismatch.stderr}`);
+    assert.match(`${mismatch.stdout}\n${mismatch.stderr}`, /iterations|Refusing to add/, "the refusal names the mismatch");
+
+    // `latest` still resolves to the intact group, not the orphan b.json.
+    const spans = JSON.parse(runCli(["query", "spans", "latest", "--json"]));
+    assert.ok(spans.group, "latest still resolves to a group after the refused join");
+    assert.equal(spans.group.name, "perf", "and it is the prior group, not downgraded to an orphan recording");
+  } finally {
+    if (prevXdg === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = prevXdg;
+  }
+});
+
+// D1 (plain --group path, distinct from --members): record()'s own per-member preflight refuses a
+// duplicate capture-mode member BEFORE writing that member's artifacts.
+e2e("record --group: a duplicate capture-mode member refuses before writing anything", { timeout: TIMEOUT_MS }, () => {
+  const stateHome = mkdtempSync(path.join(tmpdir(), "wpd-state-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const probe = path.join(examples, "forces-layout.mjs");
+  const prevXdg = process.env.XDG_STATE_HOME;
+  process.env.XDG_STATE_HOME = stateHome;
+  try {
+    runCli(["record", probe, "--bench", "--breakdown", "--group", "perf", "--iterations", "1", "--out", path.join(outDir, "a.json")]);
+    const before = hashTree(outDir);
+
+    // A second --breakdown into the same group is a duplicate (mode already present).
+    const dup = spawnSync(process.execPath, [cli, "record", probe, "--bench", "--breakdown", "--group", "perf", "--iterations", "1", "--out", path.join(outDir, "b.json")], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: process.env,
+    });
+    assert.equal(dup.status, 1, `a duplicate --group member must exit 1:\n${dup.stdout}\n${dup.stderr}`);
+    assert.match(`${dup.stdout}\n${dup.stderr}`, /already holds/, "the refusal names the duplicate");
+    assert.equal(hashTree(outDir), before, "the duplicate wrote no member artifact (b.json never created)");
+  } finally {
+    if (prevXdg === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = prevXdg;
+  }
 });

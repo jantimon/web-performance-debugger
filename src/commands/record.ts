@@ -29,9 +29,11 @@ import { writeRecording, writeCpuModel } from "../record/artifacts.js";
 import {
   appendMember,
   groupManifestPathFor,
+  preflightGroup,
   runMembers,
   type GroupMemberMode,
 } from "../record/group.js";
+import { writeFileAtomic, copyFileAtomic } from "../model/atomic-write.js";
 import * as notesCatalog from "../record/notes.js";
 import { RUN_START_MARK, RUN_END_MARK, RUN_MEASURE } from "../model/marks.js";
 import { printCpuHeadline, printCpuBreakdown, printSpanBreakdowns } from "./cpu.js";
@@ -118,6 +120,10 @@ export interface RecordOptions {
    * (e.g. --breakdown AND --deep) records as siblings under one manifest. The join refuses an
    * incompatible member (see model/group.ts). Absent for a plain single recording. */
   group?: string;
+  /** The full set of capture modes a `--members` run asked for, set by the runner on every member so
+   * each append derives partial status structurally. Internal (no CLI flag); absent for a plain
+   * single `--group` record, which is complete-by-construction. */
+  groupRequested?: string[];
 }
 
 /** Bounded retries for a transient cross-process navigation failure (fresh browser each attempt). */
@@ -281,6 +287,17 @@ export async function record(opts: RecordOptions): Promise<{
   const capture = captureFor(opts, browserName);
   const capabilities = capabilitiesFor(capture, browserName);
   const wantTrace = capture.categories != null;
+
+  // --group preflight: validate this member against any existing manifest BEFORE the browser launches
+  // or a byte is written, so a duplicate/name-collision refuses without overwriting a member artifact
+  // or downgrading the `latest` pointer (D1/D2). captureFor is pure, so capture.mode is known here.
+  // The --members runner also preflights the whole set upfront; this covers a plain single --group.
+  if (opts.group) {
+    const preflightManifest = groupManifestPathFor(outDir, opts.group, opts.format);
+    await preflightGroup(preflightManifest, opts.format, opts.group, [
+      { mode: capture.mode, variant: opts.variant },
+    ]);
+  }
 
   // In --url bench mode the host page is a remote origin that import()s the served module cross-origin,
   // so that one origin is granted CORS read access; every other mode serves the host page same-origin
@@ -655,17 +672,18 @@ export async function record(opts: RecordOptions): Promise<{
     if (cpuPass.geckoDumpPath) {
       // Firefox: the authoritative raw artifact is the Gecko dump (loads at profiler.firefox.com);
       // CpuModel.profile points at it. The model is built from the converted V8-shaped profile.
-      // Copy rather than round-trip through a string: the dump can be very large.
+      // Copy atomically (temp + rename), rather than round-trip through a string: the dump can be very
+      // large, and a killed copy must not corrupt an existing member's geckoprofile.
       cpuProfilePath = path.join(outDir, `${base}.geckoprofile.json`);
-      await fs.copyFile(cpuPass.geckoDumpPath, cpuProfilePath);
+      await copyFileAtomic(cpuPass.geckoDumpPath, cpuProfilePath);
       await fs.rm(cpuPass.geckoDumpPath, { force: true });
     } else {
       cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
       // Strip the trace-lane-only sampleTimestampsUs so the raw file stays the standard DevTools shape.
-      await fs.writeFile(
+      // Atomic (temp + rename): a killed write leaves no torn .cpuprofile for DevTools/Speedscope.
+      await writeFileAtomic(
         cpuProfilePath,
         JSON.stringify(toDevtoolsCpuProfile(cpuPass.cpuProfile)),
-        "utf8",
       );
     }
     cpuModel = await buildCpuModel(cpuPass.cpuProfile, {
@@ -791,19 +809,12 @@ export async function record(opts: RecordOptions): Promise<{
     cpuModelPath = path.join(outDir, `${base}.cpu${extFor(opts.format)}`);
     await writeCpuModel(cpuModelPath, cpuModel, opts.format);
   }
-  // Pointer so `query/assert/diff … latest` resolve reliably (not by mtime). Written recording-only
-  // first, so a group append that refuses (throws below) still leaves `latest` on this valid
-  // recording, and a NON-group record clears any prior `group` pointer.
-  await writePointer({
-    recording: outPath,
-    cpuProfile: cpuProfilePath,
-    cpuModel: cpuModelPath,
-  });
 
   // --group: append this recording to the named manifest (creating it on the first member). The join
-  // validates workload identity and refuses an incompatible member (appendMember throws). On success,
-  // repoint `latest` at the group so a group-aware verb resolves it, keeping `recording` as the
-  // last-member fallback.
+  // validates workload identity and refuses an incompatible member (appendMember throws). The pointer
+  // is written ONLY AFTER the join is accepted: a refused join must leave `latest` on the prior
+  // (intact) group, never downgraded to this orphan recording. A plain record owns `latest` outright
+  // (and clears any prior `group` pointer), so it writes the recording-only pointer directly.
   let groupManifestPath: string | undefined;
   if (opts.group) {
     groupManifestPath = groupManifestPathFor(outDir, opts.group, opts.format);
@@ -816,6 +827,7 @@ export async function record(opts: RecordOptions): Promise<{
       cpuProfilePath,
       meta,
       summary: recording.summary,
+      requested: opts.groupRequested,
     });
     await writePointer({
       recording: outPath,
@@ -823,6 +835,9 @@ export async function record(opts: RecordOptions): Promise<{
       cpuModel: cpuModelPath,
       group: groupManifestPath,
     });
+  } else {
+    // Pointer so `query/assert/diff latest` resolve reliably (not by mtime).
+    await writePointer({ recording: outPath, cpuProfile: cpuProfilePath, cpuModel: cpuModelPath });
   }
 
   return { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel, groupManifestPath };
@@ -894,10 +909,23 @@ function printSourcemapLine(
 export async function recordAndReport(opts: RecordOptions): Promise<void> {
   if (opts.runtime === "node") {
     const { recordNode } = await import("../runtime/node.js");
+    // --group preflight before the profiling run writes anything (D1/D2). The node lane is a single
+    // capture mode ("node-cpu"), so that is the member this run adds.
+    if (opts.group) {
+      const dir = opts.out ? path.dirname(path.resolve(opts.out)) : path.resolve("recordings");
+      await preflightGroup(
+        groupManifestPathFor(dir, opts.group, opts.format),
+        opts.format,
+        opts.group,
+        [{ mode: "node-cpu", variant: opts.variant }],
+      );
+    }
     const result = await recordNode(opts);
     printNodeReport(result);
     // --group is allowed on the node lane (a single-lane group), so append here: recordNode returns
-    // before record(), where the chrome append lives.
+    // before record(), where the chrome append lives. recordNode skips its own pointer write when
+    // --group is set, so the pointer is written ONLY AFTER the join is accepted (a refused join leaves
+    // `latest` on the prior group, never downgraded).
     if (opts.group) {
       const manifestPath = groupManifestPathFor(
         path.dirname(result.outPath),
@@ -913,6 +941,7 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
         cpuProfilePath: result.cpuProfilePath,
         meta: result.recording.meta,
         summary: result.recording.summary,
+        requested: opts.groupRequested,
       });
       await writePointer({
         recording: result.outPath,
@@ -976,7 +1005,12 @@ export async function recordMembersAndReport(
 ): Promise<void> {
   const outcome = await runMembers((memberOpts) => recordAndReport(memberOpts), opts, modes);
   if (outcome.partial) {
-    const message = `record --members: the '${outcome.partial.failedMode}' capture failed; kept the ${outcome.completed} member(s) that completed. Failure: ${outcome.partial.reason}`;
+    // The runner records in order and stops at the first failure, so the members it did NOT reach are
+    // the tail. Name the exact command that records only those: re-running the full command now
+    // refuses every completed member as a duplicate (D1), so the reduced one is the path that works.
+    const missing = modes.slice(outcome.completed);
+    const recovery = `record --members ${missing.join(",")} --group ${opts.group}`;
+    const message = `record --members: the '${outcome.partial.failedMode}' capture failed; kept the ${outcome.completed} member(s) that completed. Record the rest with \`${recovery}\`. Failure: ${outcome.partial.reason}`;
     console.error(message);
     console.log(`\n⚠ ${message}`);
   }
