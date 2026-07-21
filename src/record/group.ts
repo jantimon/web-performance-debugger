@@ -71,10 +71,9 @@ function outPathCollisionError(
   recordingPath: string,
 ): Error {
   return new Error(
-    `Refusing to record into run-group '${groupName}': the output path ${recordingPath} is already ` +
-      `member '${memberLabel(collidingMember)}'s recording. Appending would overwrite that member, ` +
-      `leaving two manifest entries pointing at one file. Give each member a distinct --out, or drop ` +
-      `--out and use \`--members <modes> --group ${groupName}\`, which auto-names each member.`,
+    `Refusing to record into run-group '${groupName}': the output path '${recordingPath}' is already the recording for member '${memberLabel(collidingMember)}'. ` +
+      `Appending would overwrite that member, leaving two manifest entries pointing at one file. Give each member a distinct --out, ` +
+      `or drop --out and use \`--members <modes> --group ${groupName}\` to auto-name each member.`,
   );
 }
 
