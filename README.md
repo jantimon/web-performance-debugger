@@ -7,7 +7,7 @@
 
 <p align="center">
   <img
-    src="https://github.com/user-attachments/assets/REPLACE-ME-hero-intro"
+    src="https://github.com/user-attachments/assets/9da693d1-b04f-4a72-b971-f2886df14742"
     alt="A browser window, an arrow to a terminal running wpd record --breakdown, an arrow to a stacked bar of style, layout, js and other slices, captioned: the sum of slices plus idle equals wall"
     width="900">
 </p>
