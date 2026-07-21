@@ -8,7 +8,11 @@ import {
   pickMember,
   countDisagreements,
 } from "../../dist/model/group.js";
-import { assertGroupArtifact, assertRecordingArtifact } from "../../dist/model/artifact.js";
+import {
+  assertGroupArtifact,
+  assertRecordingArtifact,
+  assertSchemaVersion,
+} from "../../dist/model/artifact.js";
 import { resolveConsumption, writePointer } from "../../dist/commands/resolve.js";
 import { SCHEMA_VERSION } from "../../dist/schema.js";
 
@@ -157,6 +161,41 @@ test("artifact gates keep group manifests and old recordings apart", () => {
 
   // A wrong schema still fails first, for both kinds.
   assert.throws(() => assertGroupArtifact({ meta: { schemaVersion: "2", kind: "run-group" }, members: [] }, "g"), /unreadable artifact/);
+});
+
+test("schema-epoch guidance points the right way: re-record vs upgrade vs neutral", () => {
+  const older = String(Number.parseInt(SCHEMA_VERSION, 10) - 1);
+  const newer = String(Number.parseInt(SCHEMA_VERSION, 10) + 1);
+
+  // An OLDER artifact re-records under this build.
+  assert.throws(
+    () => assertSchemaVersion(older, "old.json"),
+    (error) =>
+      /recorded by an older wpd/.test(error.message) && /re-record/.test(error.message),
+    "an older epoch says re-record",
+  );
+
+  // A NEWER artifact means the reader is behind: upgrade, never re-record (that discards evidence).
+  assert.throws(
+    () => assertSchemaVersion(newer, "new.json"),
+    (error) =>
+      /recorded by a newer wpd/.test(error.message) &&
+      /upgrade wpd/.test(error.message) &&
+      !/re-record/.test(error.message),
+    "a newer epoch says upgrade, and never re-record",
+  );
+
+  // An absent or unparseable version cannot be ordered: neutral wording, no older/newer claim.
+  for (const unorderable of [undefined, "draft"]) {
+    assert.throws(
+      () => assertSchemaVersion(unorderable, "weird.json"),
+      (error) =>
+        /different schema epoch/.test(error.message) &&
+        !/older wpd/.test(error.message) &&
+        !/newer wpd/.test(error.message),
+      `an unorderable version (${unorderable}) is neutral`,
+    );
+  }
 });
 
 test("resolveConsumption: filename detection for explicit paths, pointer.group for latest", async () => {
