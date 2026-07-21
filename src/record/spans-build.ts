@@ -4,8 +4,12 @@
 // windowed counts the old per-step recording did (buildSummary over its window), and the reconciling
 // bar from `bars` when the capture mode built one.
 
-import { buildSummary, type CaptureCapabilities } from "../metrics/summarize.js";
-import { mainThread } from "../trace/main-thread.js";
+import {
+  buildSummary,
+  NO_RENDERING_CAPTURE,
+  type CaptureCapabilities,
+} from "../metrics/summarize.js";
+import { mainThread, REANCHOR_MAX_MARKER_SHARE } from "../trace/main-thread.js";
 import { countsFromSummary, notMeasuredSpanCounts } from "../model/span.js";
 import { spanAggregation } from "../model/spans.js";
 import type { MergedStep } from "../trace/steps.js";
@@ -25,6 +29,35 @@ export interface SpansBuildInput {
   /** the run window's end (trace clock), so a step whose end mark was lost windows its counts to the
    * run end exactly like its bar. null in capture modes with no trace / an unclosed run window. */
   runWindowEnd: number | null;
+}
+
+/**
+ * Whether a step's window ran on a renderer process OTHER than the selected main thread: the selected
+ * thread carried a VANISHING share of the step's layout/paint (a stray flush or none) while another
+ * thread carried the rest. On a cross-process-split run this means the step's work landed on an
+ * un-selected process (a second navigation), so its counts scoped to the selected thread would read a
+ * fake measured-clean ~0. A genuinely idle step (no rendering anywhere) is NOT uncovered -- its 0 is
+ * real. Same vanishing-share test as the main-thread re-anchor, so one threshold governs both.
+ *
+ * Applied ONLY within a run the selector already flagged `split` (the caller gates on it): that flag
+ * carries the disjoint-in-time discriminator that separates a successive navigation from a CONCURRENT
+ * same-page OOPIF. Without the split gate this test would fire for an OOPIF-heavy step whose top thread
+ * did little -- but an OOPIF's own-process count is a separate off-thread count by design, so the top
+ * thread's small count IS the honest top-process-scoped answer there, not a fake 0 to null.
+ */
+function stepRanOnUnselectedProcess(
+  windowEvents: NormalizedEvent[],
+  thread: { pid: number; tid: number },
+): boolean {
+  let onSelected = 0;
+  let onOthers = 0;
+  for (const event of windowEvents) {
+    if (event.kind !== "layout" && event.kind !== "paint") continue;
+    if (event.sampled || event.pid == null || event.tid == null) continue;
+    if (event.pid === thread.pid && event.tid === thread.tid) onSelected++;
+    else onOthers++;
+  }
+  return onOthers > 0 && onSelected < onOthers * REANCHOR_MAX_MARKER_SHARE;
 }
 
 /**
@@ -73,6 +106,16 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
         event.ts >= step.startTs &&
         (stepEnd == null || event.ts <= stepEnd),
     );
+    // On a cross-process-split run (runThread.split, which carries the disjoint-in-time discriminator
+    // separating a second navigation from a concurrent OOPIF), a step whose work ran on an un-selected
+    // renderer process is NOT-COVERED by the selected thread: report its counts as not-measured (null),
+    // never the fake measured-clean 0 the selected-thread window would produce. The run-level split note
+    // discloses it; here the honesty is per step, in the artifact, so no consumer reads that 0 as real
+    // work. A non-split run never nulls a step: a concurrent OOPIF's small top-thread count is honest.
+    const stepCapabilities =
+      runThread?.split && stepRanOnUnselectedProcess(windowEvents, runThread)
+        ? NO_RENDERING_CAPTURE
+        : capabilities;
     const stepSummary = buildSummary({
       wallMs: step.wallMs,
       inpMs: step.inpMs,
@@ -80,7 +123,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       detailEvents: windowEvents,
       detailWindowStart: step.startTs,
       perIteration: step.perIteration,
-      capabilities,
+      capabilities: stepCapabilities,
       thread: runThread,
     });
     const stepBar = barByKey.get(`step:${step.label}`);

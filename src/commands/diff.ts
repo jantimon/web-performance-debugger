@@ -8,6 +8,7 @@ import { loadGroup, loadMemberRecording, memberLabel, memberRecordingPath } from
 import { formatMeasured, type Measured } from "../model/measured.js";
 import { diffSpanSlices, type SpanSliceDiff } from "../model/spans.js";
 import { comparabilityMismatches } from "../model/compat.js";
+import { countIntegrityRefusal } from "../model/count-integrity.js";
 import { loadSpanEntries } from "./spanSource.js";
 import type { GroupMember } from "../model/group.js";
 import type { Recording, RecordingSummary } from "../model/recording.js";
@@ -155,6 +156,25 @@ async function diffRecordings(
     );
     process.exitCode = 1;
     return;
+  }
+
+  // One (or both) sides has known-incomplete counts (a cross-process split, or dropped trace events):
+  // the gated count deltas would compare an undercount, so a "regression" or "improvement" could be an
+  // artifact of the missing work. Refuse to gate rather than fabricate a verdict -- the same honest
+  // refusal assert makes, and the same shape as the comparability refusal above.
+  if (opts.failOnRegression) {
+    const integrityIssues = [
+      ["baseline", countIntegrityRefusal(baselineRec.meta)],
+      ["current", countIntegrityRefusal(currentRec.meta)],
+    ].filter((entry): entry is [string, string] => entry[1] != null);
+    if (integrityIssues.length) {
+      console.log(
+        `\nRefusing to gate (--fail-on-regression) on known-incomplete counts:\n` +
+          integrityIssues.map(([side, reason]) => `    ${side}: ${reason}`).join("\n"),
+      );
+      process.exitCode = 1;
+      return;
+    }
   }
 
   const rows: (string | number)[][] = [];

@@ -10,7 +10,7 @@ import { RUN_START_MARK } from "../model/marks.js";
  * flushes against a real page's dozens-to-thousands, well under this floor; a real top page renders a
  * substantial fraction of the total.
  */
-const REANCHOR_MAX_MARKER_SHARE = 0.05;
+export const REANCHOR_MAX_MARKER_SHARE = 0.05;
 
 /** The renderer main thread the counts and the breakdown bar share, plus how it was chosen. */
 export interface MainThreadSelection {
@@ -126,8 +126,12 @@ export function mainThread(events: NormalizedEvent[]): MainThreadSelection | nul
       markerCount < busiest.count * REANCHOR_MAX_MARKER_SHARE;
     if (swappedAway) return { pid: busiest!.pid, tid: busiest!.tid, via: "reanchored", split };
     // The marker thread stayed the top page (single process, or a same-page OOPIF whose counts are
-    // top-process scoped by design): not a cross-process split, whatever a concurrent OOPIF's share.
-    return { pid: start.pid, tid: start.tid, via: "marker", split: false };
+    // top-process scoped by design). A concurrent OOPIF never sets `split` (its window overlaps the
+    // selected thread's, so the disjoint-time test above excludes it), but a LATER cross-process
+    // navigation does: it leaves a heavy thread disjoint in time even when the marker thread was
+    // reused for the first page (the common blank-host process-reuse shape). Carry the computed
+    // `split` so that second-navigation signal survives the marker branch, never a hardcoded false.
+    return { pid: start.pid, tid: start.tid, via: "marker", split };
   }
   return busiest ? { pid: busiest.pid, tid: busiest.tid, via: "heuristic", split } : null;
 }
