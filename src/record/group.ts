@@ -7,7 +7,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { serialize, deserialize, extFor, type Format } from "../output/format.js";
-import { assertGroupArtifact } from "../model/artifact.js";
+import { assertGroupArtifact, assertRecordingArtifact } from "../model/artifact.js";
 import {
   formationVerdict,
   countDisagreements,
@@ -58,6 +58,9 @@ export function memberOutPath(dir: string, name: string, mode: string, format: F
 async function readMemberCounts(recordingPath: string, label: string): Promise<MemberCounts> {
   const body = await fs.readFile(recordingPath, "utf8");
   const rec = deserialize(body, path.extname(recordingPath).toLowerCase()) as Recording;
+  // Fail loudly on a mis-referenced member (a hand-edited manifest, or a path pointing at a sibling
+  // .cpu.json / .group.json): treating a non-recording as "no counts" would hide a real disagreement.
+  assertRecordingArtifact(rec, recordingPath);
   const summary = rec.summary ?? ({} as RecordingSummary);
   const counts: MemberCounts["counts"] = {};
   const summaryFields = summary as unknown as Record<string, number | null | undefined>;
@@ -87,6 +90,9 @@ async function readMemberMeta(manifestDir: string, member: GroupMember): Promise
   const recordingPath = path.resolve(manifestDir, member.recording);
   const body = await fs.readFile(recordingPath, "utf8");
   const rec = deserialize(body, path.extname(recordingPath).toLowerCase()) as Recording;
+  // The formation check runs against this meta; a wrong artifact kind here must fail with a clear
+  // message now, not crash positionally on a missing meta field later in the join.
+  assertRecordingArtifact(rec, recordingPath);
   return rec.meta;
 }
 

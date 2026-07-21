@@ -82,15 +82,16 @@ function structuredFormat(opts: OutOpts): Format | null {
 }
 
 /**
- * Load a recording for an event-log verb (events/get/blame), routing a run-group to its deep member
- * (the only one carrying the event log) and disclosing the routing in human output. A group with no
- * deep member fails loudly in resolveVerbTarget, never a silent empty result.
+ * Load a recording for an event-log verb (events/get/blame), routing a run-group to the member that
+ * carries the event log (chrome --deep, or any firefox gecko member) and disclosing the routing in
+ * human output. A group with no such member fails loudly in resolveVerbTarget, never a silent empty
+ * result.
  */
 async function loadEventLogTarget(file: string, opts: OutOpts): Promise<Recording> {
   const routed = await resolveVerbTarget(
     file,
     "blame",
-    "the deep event log (forced-layout blame / events)",
+    "the event log (forced-layout blame / events)",
   );
   const rec = await load(routed.target);
   const routeLine = routingNote(routed, "the event log");
