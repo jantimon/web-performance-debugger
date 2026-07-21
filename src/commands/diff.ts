@@ -3,11 +3,13 @@ import path from "node:path";
 import { deserialize } from "../output/format.js";
 import { assertRecordingArtifact } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
-import { resolveTarget } from "./resolve.js";
+import { resolveTarget, resolveConsumption } from "./resolve.js";
+import { loadGroup, loadMemberRecording, memberLabel, memberRecordingPath } from "./group.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
 import { diffSpanSlices, type SpanSliceDiff } from "../model/spans.js";
 import { comparabilityMismatches } from "../model/compat.js";
 import { loadSpanEntries } from "./spanSource.js";
+import type { GroupMember } from "../model/group.js";
 import type { Recording, RecordingSummary } from "../model/recording.js";
 
 // `gated` metrics participate in --fail-on-regression; `advisory` ones are printed but never
@@ -89,8 +91,32 @@ function printSliceDiff(diff: SpanSliceDiff): void {
     console.log(`spans only in current (not compared): ${diff.unmatchedCurrent.join(", ")}`);
 }
 
-/** Compare two recordings field-by-field; optionally fail the process on regression. */
+/** Compare two recordings OR two run-groups field-by-field; optionally fail on regression. A group
+ * pairs its members by (mode, variant) and diffs each pair; a group vs a plain recording is refused
+ * (one shape at a time). */
 export async function diffCmd(
+  baseline: string,
+  current: string,
+  opts: { failOnRegression?: boolean },
+): Promise<void> {
+  const [baselineConsumption, currentConsumption] = await Promise.all([
+    resolveConsumption(baseline),
+    resolveConsumption(current),
+  ]);
+  const eitherGroup = baselineConsumption.kind === "group" || currentConsumption.kind === "group";
+  if (eitherGroup) {
+    if (baselineConsumption.kind !== "group" || currentConsumption.kind !== "group")
+      throw new Error(
+        "diff compares two run-groups or two recordings, not one of each. Pass two group manifests, " +
+          "or two member recordings.",
+      );
+    return diffGroups(baselineConsumption.path, currentConsumption.path, opts);
+  }
+  return diffRecordings(baseline, current, opts);
+}
+
+/** Compare two recordings field-by-field; optionally fail the process on regression. */
+async function diffRecordings(
   baseline: string,
   current: string,
   opts: { failOnRegression?: boolean },
@@ -182,5 +208,82 @@ export async function diffCmd(
     if (opts.failOnRegression) process.exitCode = 1;
   } else {
     console.log("\nNo regressions. 🎉");
+  }
+}
+
+/** A member's pairing key across two groups: capture mode + variant (span identity's group analogue). */
+function memberPairKey(member: GroupMember): string {
+  return `${member.mode}::${member.variant ?? ""}`;
+}
+
+/**
+ * Diff two run-groups: fan out over members paired by (mode, variant), diffing each matched pair with
+ * the SAME per-recording diff (comparabilityMismatches and the gates unchanged). Members present on
+ * only one side are reported, not compared. A GROUP-LEVEL refusal fires only when the two groups
+ * measured different workloads: pairing per-mode captures of two different programs is meaningless, so
+ * `--fail-on-regression` refuses the whole diff there rather than per pair.
+ */
+async function diffGroups(
+  baselineManifest: string,
+  currentManifest: string,
+  opts: { failOnRegression?: boolean },
+): Promise<void> {
+  const [baselineGroup, currentGroup] = await Promise.all([
+    loadGroup(baselineManifest),
+    loadGroup(currentManifest),
+  ]);
+  console.log(
+    `diff run-group '${baselineGroup.meta.name}' -> '${currentGroup.meta.name}' (members paired by capture mode + variant)`,
+  );
+
+  // Group-level workload refusal: read each group's first member's meta and reuse the comparability
+  // gate's workload axis. Different workloads make every per-pair count delta a program difference, not
+  // a code change, so refuse the whole diff rather than fabricate per-pair regressions.
+  const [baselineRef, currentRef] = await Promise.all([
+    loadMemberRecording(baselineManifest, baselineGroup.members[0]),
+    loadMemberRecording(currentManifest, currentGroup.members[0]),
+  ]);
+  const workloadRefusal = comparabilityMismatches(baselineRef.meta, currentRef.meta).find(
+    (mismatch) => mismatch.axis === "workload" && mismatch.blocksGating,
+  );
+  if (workloadRefusal) {
+    console.log(
+      `\nRefusing to diff these run-groups: they measured different workloads ` +
+        `(${workloadRefusal.base} vs ${workloadRefusal.current}). A per-mode diff would subtract two ` +
+        `programs, not a code change.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const currentByKey = new Map(
+    currentGroup.members.map((member) => [memberPairKey(member), member]),
+  );
+  const baselineKeys = new Set(baselineGroup.members.map(memberPairKey));
+  let comparedAny = false;
+  for (const baselineMember of baselineGroup.members) {
+    const currentMember = currentByKey.get(memberPairKey(baselineMember));
+    if (!currentMember) {
+      console.log(`\nmember '${memberLabel(baselineMember)}' only in baseline (not compared).`);
+      continue;
+    }
+    comparedAny = true;
+    console.log(`\n=== member ${memberLabel(baselineMember)} ===`);
+    // The per-pair diff sets process.exitCode on a gated regression; that verdict rides through.
+    await diffRecordings(
+      memberRecordingPath(baselineManifest, baselineMember),
+      memberRecordingPath(currentManifest, currentMember),
+      opts,
+    );
+  }
+  for (const currentMember of currentGroup.members)
+    if (!baselineKeys.has(memberPairKey(currentMember)))
+      console.log(`\nmember '${memberLabel(currentMember)}' only in current (not compared).`);
+  if (!comparedAny) {
+    console.log(
+      "\nNo members matched by capture mode + variant; nothing was compared. Record the groups with the same members.",
+    );
+    // A gate you asked for but could not evaluate must fail loudly, never pass silently on an empty diff.
+    if (opts.failOnRegression) process.exitCode = 1;
   }
 }

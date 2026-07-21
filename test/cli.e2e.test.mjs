@@ -1344,3 +1344,69 @@ e2e("query spans --min-wall and --filter narrow the overview and disclose the hi
   assert.ok(byLabel.spans.every((span) => /run/i.test(span.label)), "only labels containing 'run' survive");
   assert.equal(byLabel.hidden, all.spans.length - byLabel.spans.length, "hidden count is disclosed");
 });
+
+// --- Run groups: N unfused captures of ONE workload as siblings under a manifest ---
+
+// The sanctioned two-question path: `--members breakdown,deep --group` records both captures back to
+// back, and `query span` STITCHES them -- the bar+hot from the breakdown member, the exact counts +
+// forced-layout blame from the deep member -- every panel tagged, walls per member, never combined.
+e2e("record --members breakdown,deep forms a group and query span stitches across its members", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "perf.json");
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--members", "breakdown,deep", "--group", "perf", "--iterations", "2", "--out", out]);
+
+  const manifest = path.join(dir, "perf.group.json");
+  assert.ok(existsSync(manifest), "the manifest is a sibling of the member recordings");
+  const group = JSON.parse(readFileSync(manifest, "utf8"));
+  assert.equal(group.meta.kind, "run-group", "the manifest is a run-group artifact");
+  assert.deepEqual(group.members.map((member) => member.mode), ["breakdown", "deep"], "both captures recorded as members");
+  // Structurally no aggregate: the manifest can carry no summary/wall of its own, so no output implies one number for the group.
+  assert.ok(!("summary" in group) && !("wallMs" in group), "the manifest holds no summary or wall of its own");
+  // The deep member differs from breakdown only in capture mode + sampler interval, which ANNOTATES (never refuses).
+  assert.ok(group.members[1].annotations.some((note) => /sampler-interval/.test(note)), "the interval difference annotated rather than refused the join");
+
+  // The stitch: one anatomy drawing each panel from the member that measures it.
+  const stitch = JSON.parse(runCli(["query", "span", manifest, "run", "--json"]));
+  assert.equal(stitch.members.length, 2, "each member's own wall is listed separately");
+  assert.ok(stitch.members.every((member) => member.wallMs > 0), "each member reports its OWN wall, never one combined number");
+  assert.equal(stitch.sources.slices, "breakdown", "the reconciling bar comes from the breakdown member");
+  assert.equal(stitch.sources.counts, "deep", "the exact counts come from the deep member");
+  assert.equal(stitch.sources.forced, "deep", "forced-layout blame comes from the deep member");
+  assert.ok(stitch.slices.js.ms > 0, "the stitched bar has a js slice from breakdown");
+  assert.ok(stitch.counts.forcedLayoutCount > 0, "the deep member's exact forced count is stitched in");
+  assert.ok(Array.isArray(stitch.forced) && stitch.forced.length > 0, "forced read-sites are stitched from the deep member");
+  assert.ok(stitch.hot?.functions?.length > 0, "hot functions come from the breakdown member");
+});
+
+// assert routes each threshold to the member that measured its axis; an axis NO member measures is a
+// loud n/a FAIL, never a silent pass -- the Measured contract extended across a group.
+e2e("assert on a group routes each threshold to its member, with a loud n/a FAIL where no member measures the axis", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--members", "breakdown,deep", "--group", "g", "--iterations", "1", "--out", path.join(dir, "g.json")]);
+  const manifest = path.join(dir, "g.group.json");
+
+  // forced routes to the deep member, the js slice to the breakdown member: generous budgets pass (exit 0).
+  const ok = runAssert([manifest, "--max-forced", "1000000", "--max-slice", "js=1000000"]);
+  assert.equal(ok.status, 0, `routed budgets should pass:\n${ok.stdout}`);
+  assert.match(ok.stdout, /forced layout\/style\s+deep/, "the forced threshold is answered by the deep member");
+  assert.match(ok.stdout, /slice js\s+breakdown/, "the js slice budget is answered by the breakdown member");
+
+  // A breakdown-only group has NO member measuring forced: a loud n/a FAIL, never a silent green.
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--breakdown", "--group", "baronly", "--iterations", "1", "--out", path.join(dir, "bar.json")]);
+  const noMember = runAssert([path.join(dir, "baronly.group.json"), "--max-forced", "0"]);
+  assert.equal(noMember.status, 1, "an axis no member measures fails loudly");
+  assert.match(noMember.stdout, /no member measures this axis/, "the FAIL names the unmeasured axis");
+});
+
+// diff over two groups fans out over members paired by capture mode (each pair diffed unchanged).
+e2e("diff of two run-groups fans out over members paired by capture mode", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const probe = path.join(examples, "forces-layout.mjs");
+  runCli(["record", probe, "--bench", "--members", "breakdown,deep", "--group", "base", "--iterations", "1", "--out", path.join(dir, "base.json")]);
+  runCli(["record", probe, "--bench", "--members", "breakdown,deep", "--group", "cur", "--iterations", "1", "--out", path.join(dir, "cur.json")]);
+
+  const out = runCli(["diff", path.join(dir, "base.group.json"), path.join(dir, "cur.group.json")]);
+  assert.match(out, /members paired by capture mode/, "the diff fans out over members");
+  assert.match(out, /=== member breakdown ===/, "the breakdown pair is diffed");
+  assert.match(out, /=== member deep ===/, "the deep pair is diffed");
+});

@@ -38,14 +38,15 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 
 CI (`.github/workflows/ci.yml`) has two jobs on Node 24: `ci` (lint → format:check → build →
 unit `test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`) and `e2e` (downloads Chrome, runs
-`test:e2e`). The **372** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+`test:e2e`). The **378** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
 `dist/` (classify/summarize/analysis/format, plus the breakdown engine, the trace CPU-chunk merge
 (`profile-chunks`), `query spans` adapter + its bar-less counts overview + its
 flood filter, the `query span` anatomy + removed-verb stubs, the thrash detector, the firefox
 dirtied-by report, the gecko converter, the XDG pointer, frame side track, the trace-overflow/partial
 notes, the LoAF shaper (`summarizeLoaf`), the `waitForStable` destroyed-context classifier, the
-comparability gate (workload/variant/ephemeral-loopback-port), the off-disk package rollup, and the
-`facts.md` ledger drift check). The **cli e2e tests** (`test/cli.e2e.test.mjs`) spawn the
+comparability gate (workload/variant/ephemeral-loopback-port), the run-group core
+(formation/pickMember/count-disagreement + the artifact gates + `resolveConsumption`), the off-disk
+package rollup, and the `facts.md` ledger drift check). The **cli e2e tests** (`test/cli.e2e.test.mjs`) spawn the
 built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
 `--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`), the
 trace-sourced CPU samples keeping per-step attribution across a navigation, the cross-process
@@ -84,7 +85,11 @@ schema-version + recording-shape gates every reader passes through), `query.ts` 
 shapes the `query`/`cpu-diff` verbs emit under `--format json|toon`, kept off the stored types so the
 JSON contract cannot silently drift), and `compat.ts` (`comparabilityMismatches`: the capture axes
 that make a `diff`/`cpu-diff` `--fail-on-regression` gate meaningless, so it refuses instead of
-fabricating a pass/fail). `record` orchestration lives in
+fabricating a pass/fail), and `group.ts` (the **run-group** manifest: `RunGroup`/`GroupMember` types,
+`formationVerdict` reusing `comparabilityMismatches` to refuse an incompatible member, `pickMember`
+routing a consumption axis to the member that measured it, and `countDisagreements` surfacing both
+values when two members disagree on an exact count -- pure; the fs writer/runner is `record/group.ts`,
+the consumer primitives are `commands/group.ts`). `record` orchestration lives in
 `src/record/`: `capture.ts` (`captureFor` picks the ONE capture mode + `capabilitiesFor`/
 `blameSemanticFor`/`countScopeNote`), `page-option.ts` (`PageResolution`: resolves the `--url <value>`
 host page, or its hidden `--html` alias, to a live URL to navigate or a local HTML file to serve),
@@ -273,7 +278,12 @@ Two things this rule is **not**, both documented in
   state dir (`$XDG_STATE_HOME/wpd/pointers/<hash>.json`, else `~/.local/state/wpd/pointers/`) that
   `record` writes — so no `recordings/` dir is dropped into a consumer's cwd. A legacy in-cwd
   `recordings/.wpd-last.json` is still READ as a fallback, never written. **Never resolve recordings
-  by mtime**.
+  by mtime**. `resolveConsumption` is the group-aware entry: `latest` resolves to the group manifest
+  when the pointer carries `group` (a group-forming record set it; a later non-group record cleared
+  it), an explicit `.group.json` path is a group, and every other explicit path is a recording (so a
+  member path always resolves to the recording). Group-aware verbs (`query spans`/`span`, `assert`,
+  `diff`, `cpu`/`frame`/`blame`) branch on it, routing to a member via `pickMember` or stitching
+  across members; a plain recording keeps its exact single-file path.
 - `output/format.ts`: every output supports JSON or TOON (`--format toon`); recordings are
   read back auto-detecting the format. `output/ascii.ts`: terminal tables/sparklines (ANSI-aware:
   widths are measured by *visible* length via `output/color.ts`'s `visibleLength`, so colored cells

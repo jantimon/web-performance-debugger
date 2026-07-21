@@ -4,6 +4,7 @@ import { num, table } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
 import { serialize, isFormat, type Format } from "../output/format.js";
 import { spanAggregation } from "../model/spans.js";
+import { resolveVerbTarget, routingNote } from "./group.js";
 
 /**
  * The `(first|sum of N iterations)` / `(median of N samples)` suffix a bar prints, so a reader knows a
@@ -277,7 +278,11 @@ const GROUPINGS = new Set(["package", "file", "function"]);
 export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
   const by = opts.by ?? "package";
   if (!GROUPINGS.has(by)) throw new Error(`--by must be one of: package, file, function`);
-  const model = await loadCpuModel(file);
+  // A run-group routes to its CPU-bearing member (breakdown preferred); a plain recording is itself.
+  const routed = await resolveVerbTarget(file, "cpu", "CPU sampling");
+  const model = await loadCpuModel(routed.target);
+  const routeLine = routingNote(routed, "CPU sampling");
+  if (routeLine && !structuredFormat(opts)) console.log(dim(routeLine));
   const topN = opts.top != null ? opts.top : DEFAULT_TOP;
   const byPackage = packageRollup(model);
   const byFile = fileRollup(model);
@@ -379,7 +384,10 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
 
 /** Drill one function by id: its source, top callers, and top callees. */
 export async function queryFrame(file: string, id: number, opts: OutOpts): Promise<void> {
-  const model = await loadCpuModel(file);
+  const routed = await resolveVerbTarget(file, "cpu", "CPU sampling");
+  const model = await loadCpuModel(routed.target);
+  const routeLine = routingNote(routed, "CPU sampling");
+  if (routeLine && !structuredFormat(opts)) console.log(dim(routeLine));
   const target = model.functions[id];
   if (!target)
     throw new Error(`No function with id ${id} (have 0..${model.functions.length - 1}).`);
