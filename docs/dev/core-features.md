@@ -287,5 +287,3 @@ recommended `response_format` pattern; (5) an agent-facing skill file externaliz
 - **Vocabulary matters:** users say "reflow" (wpd says layout), search "cost of a dependency"
   (finds size tools), and think in INP phases (wpd bars engine slices). User-facing copy should
   bridge from the words users use to the model wpd ships.
-</content>
-</invoke>

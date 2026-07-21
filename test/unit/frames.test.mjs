@@ -164,5 +164,5 @@ test("diff does not regress on the frame side track (display-only invariant)", a
     process.exitCode = savedExit;
     assert.notEqual(exit, 1, "a frame-only difference must not fail the diff");
   }
-  assert.match(lines.join("\n"), /No regressions/);
+  assert.match(lines.join("\n"), /No exact-count regressions/);
 });
