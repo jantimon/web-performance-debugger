@@ -222,13 +222,28 @@ Every `record` invocation is **exactly one capture pass** — one browser launch
 A capture mode picks *what* that pass captures. They are mutually exclusive: each answers a different question
 with a different instrumentation, and wanting two answers means running `wpd` twice.
 
-| Capture mode (chrome) | What it captures | What you get | Speed |
-| --- | --- | --- | --- |
-| **no measurement** *(not a mode)* | nothing — plain browser, no trace, no sampler | just the wall; the baseline the Speed column is measured against | 🏆 baseline |
-| **default** (no flag) | CPU sampler only, no trace | the four-slice CPU bar (`js · browser · gc · idle`), cleanest wall. No rendering counts | 🐌 Δ ~4-7% |
-| **`--breakdown`** | light trace + CPU sampler, fused | the reconciling **seven-slice bar** per span (`js·style·layout·paint·gc·other·idle`, `Σ + idle = wall`) plus exact layout/style/paint counts | 🐌🐌 Δ ~25% |
-| **`--deep`** | full trace (`.stack` + invalidations), sampler off | the **attribution report**: forced-by read-sites, dirtied-by writes, the thrash detector, invalidation rollup, exact counts, long tasks. Identities and counts, no slice ms | 🐌🐌🐌 Δ ~70% |
-| **`--precise-wall`** | sampler off, no trace | a pristine benchmark wall (buys back the sampler cost). Nothing else | 🏆 Δ ~0% |
+| Capture mode (chrome) | CPU sampler | Reconciling bar | Rendering counts | Forced-layout blame | Speed |
+| --- | :---: | :---: | :---: | :---: | --- |
+| **no measurement** *(not a mode)* | — | — | — | — | 🏆 baseline |
+| **`--precise-wall`** | — | — | — | — | 🏆 Δ ~0% |
+| **default** (no flag) | ✅ | — | — | — | 🐌 Δ ~4-7% |
+| **`--breakdown`** | ✅ | ✅ | ✅ | — | 🐌🐌 Δ ~25% |
+| **`--deep`** | — | — | ✅ | ✅ | 🐌🐌🐌 Δ ~70% |
+
+Each mode in one line:
+
+- **no measurement** — plain browser, no trace, no CPU sampler: just the wall, the baseline the
+  Speed column is measured against. Not a flag you pass.
+- **`--precise-wall`** — the CPU sampler off and no trace: a pristine benchmark wall that buys back
+  the CPU sampler's cost, and nothing else.
+- **default** — the CPU sampler only: the four-slice CPU bar (`js · browser · gc · idle`) and the
+  run span's hot functions, the cleanest wall, no rendering counts.
+- **`--breakdown`** — a light trace fused with the CPU sampler: the reconciling **seven-slice bar**
+  per span (`js·style·layout·paint·gc·other·idle`, `Σ + idle = wall`) plus exact layout/style/paint
+  counts. It cannot report forced-layout blame — that needs the `.stack` trace.
+- **`--deep`** — the full trace (`.stack` + invalidations) with the CPU sampler off: the
+  **attribution report** — forced-by read-sites, dirtied-by writes, the thrash detector,
+  invalidation rollup, exact counts, long tasks. Span wall but no slice ms, and no CPU model.
 
 **Speed** is the median wall-time overhead each mode adds over the no-measurement baseline, on a
 mid-size mixed JS + layout workload, from the repo's own probe (`examples/capture-mode-speed.mjs`).
@@ -239,7 +254,7 @@ one less.
 
 The split is what keeps the numbers honest. The CPU sampler must never ride a `.stack` trace (it
 inflates sampled self-time +21%, billing the trace's own stack-walk to the JS frame that forced a
-layout), so `--breakdown` samples only the light no-`.stack` trace and `--deep` runs the sampler off.
+layout), so `--breakdown` samples only the light no-`.stack` trace and `--deep` runs the CPU sampler off.
 For the same reason `--deep` suppresses slice durations: the `.stack` trace inflates style recalc up
 to +38%, and a distorted millisecond is worse than none — so `--deep` leads with identities and exact
 counts, and shows span wall (the honest window width) but no slice ms.
@@ -269,7 +284,7 @@ even Firefox's fastest capture pays for it: **🐌🐌🐌 Δ ~150%** over a pla
 workload, and `--deep` is the same capture at the same cost. That tax is reflow-weighted, not flat:
 each synchronous reflow's marker captures a JS cause stack (the blame signal), so the probe's
 reflow-heavy workload pays ~150% while pure-JS work pays ~5%
-([details](docs/dev/firefox-cpu.md)). Chrome can buy the sampler back with
+([details](docs/dev/firefox-cpu.md)). Chrome can buy the CPU sampler back with
 `--precise-wall`; Firefox cannot, so its numbers are a floor, not a benchmark wall.
 `--target node` is a CPU-only lane with the four-slice bar. See [the lanes](#what-each-target-gives-you).
 
