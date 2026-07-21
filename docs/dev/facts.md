@@ -17,7 +17,7 @@ listed here), and only list a file that genuinely contains the string.
 | Frame cadence, new-headless (~60 Hz) | 16.6 ms one-frame floor | 16.6 | docs/dev/frame-floor.md | src/record/notes.ts, src/browser/launch.ts, docs/dev/frame-floor.md |
 | Frame cadence, shell-headless (~120 Hz) | 8.3 ms one-frame floor | 8.3 | docs/dev/frame-floor.md | src/record/notes.ts, src/browser/launch.ts, docs/dev/frame-floor.md, docs/dev/cpu-profiling.md |
 | Driver settle floor | ~31 ms new-headless (~half on shell) | ~31 | docs/dev/driver-timing.md | docs/dev/driver-timing.md, docs/dev/README.md, docs/dev/frame-floor.md |
-| Firefox forced-layout ms under-report | ~7x low vs Chrome | 7x | docs/dev/blame-semantics.md (forced-layout blame) | docs/dev/blame-semantics.md, docs/dev/engine-mapping.md, CLAUDE.md |
+| Firefox forced-layout ms under-report | ~7x low vs Chrome | 7x | docs/dev/blame-semantics.md (forced-layout blame) | src/record/notes.ts, docs/dev/blame-semantics.md, docs/dev/engine-mapping.md, CLAUDE.md |
 | Paint count exactness | exactly N+1 for N dirtied regions | N+1 | docs/dev/rendering-counts.md | src/trace/taxonomy.ts, src/model/recording.ts, src/commands/diff.ts, docs/dev/rendering-counts.md |
 | Default CPU sampler interval | 200 us | 200 | docs/dev/cpu-profiling.md (why 200) | src/profile/cpuprofile.ts, docs/dev/cpu-profiling.md |
 | Fused (--breakdown) pass wall cost | ~2-5% above the sampler-only default capture mode | 2-5% | src/record/capture.ts (the breakdown capture mode) | src/record/capture.ts, src/record/notes.ts |
@@ -37,4 +37,4 @@ listed here), and only list a file that genuinely contains the string.
 | Per-mode wall overhead: default (sampler) | ~4-7% over no-measurement on the mixed capture-mode-speed probe | ~4-7% | docs/dev/cpu-profiling.md (per-capture-mode wall overhead) | README.md, docs/dev/cpu-profiling.md |
 | Per-mode wall overhead: --breakdown | ~25% over no-measurement on the mixed capture-mode-speed probe | ~25% | docs/dev/cpu-profiling.md (per-capture-mode wall overhead) | README.md, docs/dev/cpu-profiling.md |
 | Per-mode wall overhead: --deep | ~70% over no-measurement on the mixed capture-mode-speed probe | ~70% | docs/dev/cpu-profiling.md (per-capture-mode wall overhead) | README.md, docs/dev/cpu-profiling.md |
-| Per-mode wall overhead: firefox gecko | ~150% over a plain Firefox launch on the mixed capture-mode-speed probe | ~150% | docs/dev/cpu-profiling.md (per-capture-mode wall overhead) | README.md, docs/dev/cpu-profiling.md |
+| Per-mode wall overhead: firefox gecko | ~150% over a plain Firefox launch on the mixed capture-mode-speed probe | ~150% | docs/dev/cpu-profiling.md (per-capture-mode wall overhead) | src/record/notes.ts, README.md, docs/dev/cpu-profiling.md |

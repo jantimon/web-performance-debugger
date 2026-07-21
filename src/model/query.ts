@@ -164,6 +164,26 @@ export interface SpanEntry {
 }
 
 /**
+ * One span's row when the capture built no reconciling bar for it (a default/--precise-wall driver
+ * step, or a step that navigated): its wall, aggregation and windowed Measured counts, with no
+ * slices. The `slices`-less counterpart to `SpanEntry`, kept honest by the Measured contract -- a
+ * count the capture did not take is `null`, never a fabricated 0. `--deep` carries exact counts here;
+ * the sampling capture modes carry only the wall + INP.
+ */
+export interface SpanCountsEntry {
+  label: string;
+  kind: SpanKind;
+  /** trace-clock window width; null when a navigating step could not be priced */
+  wallMs: number | null;
+  aggregation: SpanAggregation;
+  /** a step's position within its iteration; absent on run/measure spans */
+  index?: number;
+  counts: SpanCounts;
+  /** worst-interaction INP (ms) for a driver step; absent when none crossed the floor */
+  inpMs?: number | null;
+}
+
+/**
  * `query spans` output: one unified per-span breakdown array across chrome/firefox/node. `source`
  * says where the spans came from -- `breakdowns` (the recording's stored per-span bars: chrome
  * --breakdown, or firefox with user measures) or `cpu-model` (a single `run` span synthesized from
@@ -175,6 +195,14 @@ export interface SpansResult {
   target: string;
   source: "breakdowns" | "cpu-model";
   spans: SpanEntry[];
+  /**
+   * Step/measure spans the capture built no reconciling bar for -- a driver step in the default or
+   * --precise-wall capture (whose only bar is the run's CpuModel bar), or a step that navigated. They
+   * carry wall/INP/aggregation + Measured counts, slices not-measured, so the overview lists EVERY
+   * span (the documented run + steps + measures) even when only the run has a bar, rather than
+   * dropping the steps. Absent when every span already appears in `spans`.
+   */
+  barlessSpans?: SpanCountsEntry[];
   /** how many spans the `query spans` flood filter (--min-wall/--filter) hid; 0 when no filter was
    * passed. The `query spans` emitter always sets it (0 included), so a filtered result is never a
    * silent cut; optional only because the intermediate builder result omits it before emit. */

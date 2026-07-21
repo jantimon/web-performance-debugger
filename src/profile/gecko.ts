@@ -15,6 +15,7 @@ import {
   WPD_MARK_PREFIX,
 } from "../model/marks.js";
 import type { RawCallFrame, RawCpuProfile, RawProfileNode } from "./cpuprofile.js";
+import { isToolFrameUrl } from "../trace/stacks.js";
 import type { GeckoMeasureWindow } from "./gecko-breakdown.js";
 
 /** Raw trace-stack frame shape that trace/stacks.ts `extractStack` reads (1-based line/col). */
@@ -104,10 +105,14 @@ const MAX_STACK_DEPTH = 1024;
 
 /** Parsed frame location: a resolvable JS url (http/https/file) keeps `url`; everything else
  * (native labels, self-hosted, resource:// internals, bare addresses) has an empty url and is
- * bucketed as (native) downstream, never fs-walked. Line/col are 1-based as Gecko writes them. */
+ * bucketed as (native) downstream, never fs-walked. Line/col are 1-based as Gecko writes them.
+ * `rawUrl` keeps the ORIGINAL scheme url (chrome://, resource://, ...) even when it is not a
+ * resolvable source, so the shared `isToolFrameUrl` predicate can spot a WebDriver-automation frame
+ * (chrome://remote/) that the stripped `url` no longer names; it is never fs-walked or fetched. */
 interface ParsedLocation {
   functionName: string;
   url: string;
+  rawUrl: string;
   line: number | null;
   column: number | null;
 }
@@ -131,21 +136,37 @@ export function parseGeckoLocation(rawLocation: string): ParsedLocation {
   if (named) {
     const url = named[2];
     return isResolvableUrl(url)
-      ? { functionName: named[1], url, line: Number(named[3]), column: Number(named[4]) }
-      : { functionName: named[1] || location, url: "", line: null, column: null };
+      ? {
+          functionName: named[1],
+          url,
+          rawUrl: url,
+          line: Number(named[3]),
+          column: Number(named[4]),
+        }
+      : { functionName: named[1] || location, url: "", rawUrl: url, line: null, column: null };
   }
   const positioned = location.match(/^(.+):(\d+):(\d+)$/);
   if (positioned && isResolvableUrl(positioned[1])) {
     return {
       functionName: "",
       url: positioned[1],
+      rawUrl: positioned[1],
       line: Number(positioned[2]),
       column: Number(positioned[3]),
     };
   }
   if (isResolvableUrl(location))
-    return { functionName: "", url: location, line: null, column: null };
-  return { functionName: location, url: "", line: null, column: null };
+    return { functionName: "", url: location, rawUrl: location, line: null, column: null };
+  return { functionName: location, url: "", rawUrl: "", line: null, column: null };
+}
+
+/** A WebDriver-automation frame (Firefox's Marionette/RemoteAgent/BiDi/EventUtils, hosted under
+ * chrome://remote/): the harness driving the page, never the user's JS. `parseGeckoLocation` strips
+ * the unresolvable chrome:// url from `parsed.url`, so match `rawUrl` through the shared predicate.
+ * Dropped from the CPU chain and the slice classification so its self-time (synthesizeMouseAtPoint et
+ * al.) does not rank above the app's own functions. */
+function isAutomationFrame(parsed: ParsedLocation): boolean {
+  return isToolFrameUrl(parsed.rawUrl);
 }
 
 /** Walk parent + child processes (they nest recursively) and collect every thread. */
@@ -313,7 +334,7 @@ function sampleSlice(context: GeckoContext, stackIndex: number | null): GeckoSli
       if (info.category === idleCategory) return "idle";
       if (info.category === layoutCategory) return layoutSlice(info.rawLocation);
       if (info.category === gcCategory) return "gc";
-      if (info.category === jsCategory) return "js";
+      if (info.category === jsCategory) return isAutomationFrame(info.parsed) ? "other" : "js";
       // DOM accessor time, Profiler self-overhead, Graphics, Other, etc. are engine/runtime work.
       return "other";
     }
@@ -339,7 +360,9 @@ function jsChainRootFirst(
   while (current != null && guard++ < MAX_STACK_DEPTH) {
     const stackRow = thread.stackTable.data[current];
     const info = readFrame(context, stackRow[schema.frame] as number);
-    if (info.isJs) leafFirst.push(info.parsed);
+    // A WebDriver-automation frame is dropped like a native one: its self-time belongs to the harness,
+    // not the app, so it never becomes a ranked CPU node.
+    if (info.isJs && !isAutomationFrame(info.parsed)) leafFirst.push(info.parsed);
     current = stackRow[schema.prefix] as number | null;
   }
   const rootFirst = leafFirst.reverse();

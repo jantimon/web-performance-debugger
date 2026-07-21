@@ -35,3 +35,41 @@ test("isToolFrameUrl keeps a user's driver-mode page.evaluate callback (F11)", (
   assert.equal(isToolFrameUrl("http://127.0.0.1:5000/src/app.js"), false);
   assert.equal(isToolFrameUrl(undefined), false);
 });
+
+// Item 4: automation dispatch must not rank alongside the app's own JS.
+test("isToolFrameUrl drops puppeteer's own page.evaluate machinery (item 4b)", () => {
+  // puppeteer serializes its click/query helpers (isIntersectingViewport, clickableBox, ...) from
+  // node_modules/puppeteer-core/lib; without dropping them their percent-encoded path leaks into the
+  // js-by-package rollup as a `%2Fpuppeteer-core...` bucket and ranks like app code.
+  assert.equal(
+    isToolFrameUrl(
+      pptr(
+        "CdpElementHandle.isIntersectingViewport (file:///app/node_modules/puppeteer-core/lib/puppeteer/api/ElementHandle.js:1329:47)",
+      ),
+    ),
+    true,
+  );
+  assert.equal(
+    isToolFrameUrl(
+      pptr(
+        "#clickableBox (file:///app/node_modules/puppeteer-core/lib/puppeteer/api/ElementHandle.js:997:38)",
+      ),
+    ),
+    true,
+  );
+  // Anchored to node_modules/puppeteer-core/: a user's own file under a lookalike path survives.
+  assert.equal(
+    isToolFrameUrl(pptr("visibleRatio (/home/u/app/src/puppeteer-core-shim.js:4:2)")),
+    false,
+    "a user file merely NAMED like puppeteer-core, not under its node_modules, survives",
+  );
+});
+
+test("isToolFrameUrl drops Firefox's WebDriver-automation frames (item 4a)", () => {
+  // Marionette/RemoteAgent/BiDi/EventUtils are hosted under chrome://remote/; they drive the page,
+  // never the user's JS.
+  assert.equal(isToolFrameUrl("chrome://remote/content/external/EventUtils.js"), true);
+  assert.equal(isToolFrameUrl("chrome://remote/content/components/Marionette.sys.mjs"), true);
+  // Firefox's own browser-UI chrome:// frames are NOT automation and are left untouched.
+  assert.equal(isToolFrameUrl("chrome://browser/content/browser.js"), false);
+});

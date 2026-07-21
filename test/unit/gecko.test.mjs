@@ -27,6 +27,7 @@ test("parseGeckoLocation: named JS, anonymous, native, and non-resolvable urls",
   assert.deepEqual(parseGeckoLocation("hashString (http://h/a.mjs:6:20)[43]"), {
     functionName: "hashString",
     url: "http://h/a.mjs",
+    rawUrl: "http://h/a.mjs",
     line: 6,
     column: 20,
   });
@@ -34,6 +35,7 @@ test("parseGeckoLocation: named JS, anonymous, native, and non-resolvable urls",
   assert.deepEqual(parseGeckoLocation("http://h/__blank__:1:8[28]"), {
     functionName: "",
     url: "http://h/__blank__",
+    rawUrl: "http://h/__blank__",
     line: 1,
     column: 8,
   });
@@ -41,11 +43,19 @@ test("parseGeckoLocation: named JS, anonymous, native, and non-resolvable urls",
   assert.deepEqual(parseGeckoLocation("XRE_InitChildProcess"), {
     functionName: "XRE_InitChildProcess",
     url: "",
+    rawUrl: "",
     line: null,
     column: null,
   });
   // self-hosted is JS but not on-disk/fetchable, so the url is dropped (-> (native))
   assert.equal(parseGeckoLocation("get (self-hosted:12:3)").url, "");
+  // a WebDriver-automation frame keeps its chrome://remote/ url in rawUrl (for isToolFrameUrl) even
+  // though the unresolvable url is stripped, so it drops out of the CPU chain downstream.
+  const automation = parseGeckoLocation(
+    "synthesizeMouseAtPoint (chrome://remote/content/external/EventUtils.js:598:34)",
+  );
+  assert.equal(automation.url, "");
+  assert.equal(automation.rawUrl, "chrome://remote/content/external/EventUtils.js");
 });
 
 test("parseGecko: selects the content thread by its wpd:run marks and reads the window", () => {
@@ -90,6 +100,44 @@ test("geckoToRawCpuProfile -> buildCpuModel resolves hot JS to source with 1->0-
   // native JS-engine builtins (JSRope::flatten etc.) must bucket as (native), never a real pkg
   const native = model.functions.filter((fn) => fn.package === "(native)");
   for (const fn of native) assert.ok(!fn.source || !fn.source.includes("node_modules"));
+});
+
+test("geckoToRawCpuProfile drops Firefox WebDriver-automation frames from the CPU model (item 4a)", async () => {
+  const dump = syntheticGeckoDump();
+  const thread = dump.threads[0];
+  // A chrome://remote/ automation frame (EventUtils.synthesizeMouseAtPoint), JS category (3), sitting
+  // directly under root so the whole sample is automation dispatch, not app code.
+  const locationIndex =
+    thread.stringTable.push(
+      "synthesizeMouseAtPoint (chrome://remote/content/external/EventUtils.js:598:34)",
+    ) - 1;
+  const frameIndex = thread.frameTable.data.push([locationIndex, false, null, null, 597, 33, 3, 0]) - 1;
+  const stackIndex = thread.stackTable.data.push([0, frameIndex]) - 1; // root->automation
+  // Two busy in-window samples on it: without the drop it would top the function list.
+  thread.samples.data.push([stackIndex, 14.5, 1000], [stackIndex, 15.5, 1000]);
+
+  const context = parseGecko(dump);
+  const raw = geckoToRawCpuProfile(context);
+  const model = await buildCpuModel(raw, {
+    profilePath: "auto.geckoprofile.json",
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1", browser: "firefox" },
+    sampleIntervalUs: 1000,
+    serverUrl: "http://h",
+    root: repoRoot,
+  });
+  assert.ok(
+    !model.functions.some((fn) => fn.fn === "synthesizeMouseAtPoint"),
+    "the automation frame never becomes a ranked CPU function",
+  );
+  // The app's own JS still resolves (the drop is anchored, not a blanket JS cull).
+  assert.ok(
+    model.functions.some((fn) => fn.fn === "hashString" || fn.fn === "run"),
+    "the app's own frames survive",
+  );
+  // The automation samples' wall tiles into the reconciling bar's browser slice, never js.
+  const packageByNode = await packagesByProfileNode(raw, { serverUrl: "http://h", root: repoRoot });
+  const breakdown = computeGeckoCpuBreakdown(raw, packageByNode, model.totalMs);
+  assert.ok(breakdown.slices.browser.ms > 0, "automation dispatch tiles into the browser slice");
 });
 
 test("geckoToRenderingEvents -> attachStacks/markForced yields windowed + forced layout blame", async () => {

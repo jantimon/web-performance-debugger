@@ -469,6 +469,22 @@ e2e("record (default capture mode): a driver step carries LoAF script attributio
   const anatomy = JSON.parse(runCli(["query", "span", out, "step:slow-click", "--json"]));
   assert.ok(anatomy.loaf, "query span --json carries the loaf field");
   assert.ok(anatomy.loaf.frames[0].scripts[0].invoker, "and it names the blamed script");
+
+  // The overview lists the driver steps even though only the run carries a bar in this capture: the
+  // run bar (from the sibling CpuModel) plus every step bar-less, never the run alone.
+  const overview = JSON.parse(runCli(["query", "spans", out, "--json"]));
+  assert.equal(overview.source, "cpu-model", "the run bar comes from the sibling CpuModel");
+  assert.deepEqual(
+    overview.spans.map((span) => span.kind),
+    ["run"],
+    "the only bar row is the run",
+  );
+  const barlessLabels = (overview.barlessSpans ?? []).map((span) => span.label).sort();
+  assert.deepEqual(
+    barlessLabels,
+    ["quick", "slow-click"],
+    "both driver steps are surfaced bar-less, not dropped from the overview",
+  );
 });
 
 // waitForStable catches a streamed transition the default settle ends before. Two steps click the

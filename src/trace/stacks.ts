@@ -126,6 +126,11 @@ const WPD_EVALUATE_SITES = [
 export function isToolFrameUrl(url: string | undefined): boolean {
   if (!url) return false;
   if (url.startsWith("debugger://")) return true;
+  // Firefox's WebDriver-automation code (Marionette, RemoteAgent, the BiDi handlers, EventUtils'
+  // synthesizeMouseAtPoint) is hosted under chrome://remote/; it is the harness driving the page,
+  // never the user's own JS, so its self-time must not rank alongside the app's. Anchored to the
+  // /remote/ subtree, so Firefox's own browser-UI chrome:// frames are untouched.
+  if (url.startsWith("chrome://remote/")) return true;
   if (
     // page.evaluate'd code under older puppeteer (its legacy evaluation sourceURL)
     url.includes("__puppeteer_evaluation_script__") ||
@@ -139,19 +144,26 @@ export function isToolFrameUrl(url: string | undefined): boolean {
   if (url.startsWith("pptr:")) {
     // Puppeteer's own internal frames.
     if (url.startsWith("pptr:internal")) return true;
-    // A `pptr:<fn>;<encoded call site>` frame: drop it ONLY when the call site is one of wpd's own
-    // injection points. A user's driver-mode page.evaluate callback gets the same scheme, and its
-    // frames are real user code that must reach blame/cpu. The site is percent-encoded in the url,
-    // so decode before matching (the `/` separators would otherwise read as `%2F`).
+    // A `pptr:<fn>;<encoded call site>` frame: the call site is percent-encoded in the url, so decode
+    // before matching (the `/` separators would otherwise read as `%2F`). On Windows the path uses
+    // backslashes; the fragments are written with forward slashes, so normalize before matching.
     let site = url;
     try {
       site = decodeURIComponent(url);
     } catch {
       // malformed percent-encoding: match against the raw url instead
     }
-    // The call site is a filesystem path, so on Windows its separators are backslashes; the
-    // fragments are written with forward slashes, so normalize before matching.
-    return WPD_EVALUATE_SITES.some((fragment) => site.replaceAll("\\", "/").includes(fragment));
+    const normalized = site.replaceAll("\\", "/");
+    // Puppeteer's own page-side machinery (isIntersectingViewport, clickableBox, the query handlers)
+    // is serialized from node_modules/puppeteer-core/lib; its call site names that path. It is
+    // automation dispatch, never user code (a user's driver-mode page.evaluate callback names the
+    // user's module, not puppeteer-core's lib), so drop it. Without this its cost ranks like app JS
+    // and its percent-encoded path leaks into the js-by-package rollup as a `%2Fpuppeteer-core...`
+    // bucket. Anchored to /node_modules/puppeteer-core/, so a user file under a lookalike path stays.
+    if (normalized.includes("/node_modules/puppeteer-core/")) return true;
+    // Otherwise drop it ONLY when the call site is one of wpd's own injection points; a user's
+    // driver-mode page.evaluate callback survives to reach blame/cpu.
+    return WPD_EVALUATE_SITES.some((fragment) => normalized.includes(fragment));
   }
   return false;
 }

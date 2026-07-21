@@ -253,6 +253,123 @@ test("buildSpans: never empty when any bar exists (the run span is always synthe
   assert.equal(buildSpans([], nodeCpu, "node").spans[0].kind, "run");
 });
 
+// --- Mixed overview: a run bar alongside bar-less driver steps (default/--precise-wall capture) ---
+
+// On the sampler-only default capture a driver flow stores a bar-less run span (priced by the
+// CpuModel window) plus bar-less step spans. The overview must list the steps, not just the run.
+const notMeasuredCounts = {
+  layoutCount: null,
+  styleCount: null,
+  paintCount: null,
+  forcedLayoutCount: null,
+  layoutInvalidations: null,
+  styleInvalidations: null,
+  longTaskCount: null,
+};
+const defaultDriverSpans = [
+  { label: "run", kind: "run", aggregation: "sum", wallMs: null, counts: notMeasuredCounts },
+  {
+    label: "first increment",
+    kind: "step",
+    aggregation: "first",
+    index: 0,
+    wallMs: 26.9,
+    inpMs: null,
+    counts: notMeasuredCounts,
+  },
+  {
+    label: "five rapid increments",
+    kind: "step",
+    aggregation: "first",
+    index: 1,
+    wallMs: 56.5,
+    inpMs: 12.5,
+    counts: notMeasuredCounts,
+  },
+];
+
+test("buildSpans: a default-capture driver flow lists the run bar AND its bar-less steps (item 3)", () => {
+  const result = buildSpans(defaultDriverSpans, firefoxCpu, "chrome", 1);
+  assert.equal(result.source, "cpu-model");
+  assert.equal(result.spans.length, 1, "the run bar is synthesized from the CpuModel");
+  assert.equal(result.spans[0].kind, "run");
+  assert.ok(result.barlessSpans, "the driver steps are carried bar-less, not dropped");
+  assert.equal(result.barlessSpans.length, 2, "both steps appear; the stored run is not duplicated");
+  assert.ok(
+    result.barlessSpans.every((span) => span.kind === "step"),
+    "the run row is represented by the synthesized bar, never re-listed bar-less",
+  );
+  const step = result.barlessSpans.find((span) => span.label === "five rapid increments");
+  assert.equal(step.wallMs, 56.5, "the step wall passes through");
+  assert.equal(step.inpMs, 12.5, "the step INP passes through");
+  assert.equal(step.aggregation, "first", "the step aggregation passes through");
+  assert.equal(step.index, 1, "the step index passes through");
+});
+
+test("buildSpans: a pure --breakdown recording carries no barlessSpans (every span has a bar)", () => {
+  const result = buildSpans(chromeBreakdowns, undefined, "chrome");
+  assert.equal(result.barlessSpans, undefined, "no bar-less field when every span carries a bar");
+});
+
+test("buildSpans: a bar-less step in a breakdown recording (a navigating step) still lists bar-less", () => {
+  const bars = [
+    { label: "run", kind: "run", breakdown: chromeBreakdown(7) },
+    {
+      label: "navigate",
+      kind: "step",
+      index: 0,
+      wallMs: null,
+      aggregation: "first",
+      counts: notMeasuredCounts,
+    },
+  ];
+  const result = buildSpans(bars, undefined, "chrome");
+  assert.equal(result.source, "breakdowns");
+  assert.equal(result.spans.length, 1, "only the run has a bar");
+  assert.equal(result.barlessSpans.length, 1, "the navigating step lists bar-less");
+  assert.equal(result.barlessSpans[0].label, "navigate");
+});
+
+test("query spans on a default-capture driver flow shows the run bar + every step (item 3)", async () => {
+  const file = writeRec("spans-mixed.json", {
+    meta: { schemaVersion: "3", target: "chrome", passes: ["default"], iterations: 1 },
+    spans: defaultDriverSpans,
+  });
+  writeFileSync(
+    path.join(tmpDir, "spans-mixed.cpu.json"),
+    JSON.stringify({ meta: { schemaVersion: "3" }, functions: [], breakdown: firefoxCpu }),
+    "utf8",
+  );
+  const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
+  assert.equal(parsed.source, "cpu-model");
+  assert.equal(parsed.spans.length, 1, "the run bar");
+  assert.equal(parsed.spans[0].kind, "run");
+  assert.ok(parsed.barlessSpans, "the steps are surfaced, not dropped (the contract bug)");
+  assert.deepEqual(
+    parsed.barlessSpans.map((span) => span.label).sort(),
+    ["first increment", "five rapid increments"],
+    "every driver step appears in the overview",
+  );
+});
+
+test("query spans --label can target a bar-less step in a mixed recording (item 3)", async () => {
+  const file = writeRec("spans-mixed-label.json", {
+    meta: { schemaVersion: "3", target: "chrome", passes: ["default"], iterations: 1 },
+    spans: defaultDriverSpans,
+  });
+  writeFileSync(
+    path.join(tmpDir, "spans-mixed-label.cpu.json"),
+    JSON.stringify({ meta: { schemaVersion: "3" }, functions: [], breakdown: firefoxCpu }),
+    "utf8",
+  );
+  const parsed = JSON.parse(
+    await captureJson(() => querySpans(file, { json: true, label: "first increment" })),
+  );
+  assert.equal(parsed.spans.length, 0, "the run bar is filtered out by the step label");
+  assert.equal(parsed.barlessSpans.length, 1, "the targeted step is the only row");
+  assert.equal(parsed.barlessSpans[0].label, "first increment");
+});
+
 test("recordingLane: the engine axis comes from browser/runtime, not meta.target", () => {
   // meta.target holds the recorded module path, so the lane must be derived from browser/runtime.
   assert.equal(recordingLane({ browser: "firefox" }), "firefox");

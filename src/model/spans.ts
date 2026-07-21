@@ -10,10 +10,9 @@ import type {
   RecordingMeta,
   Span,
   SpanAggregation,
-  SpanCounts,
   SpanKind,
 } from "./recording.js";
-import type { SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
+import type { SpanCountsEntry, SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
 import { gateMeasured, type Measured } from "./measured.js";
 
 /**
@@ -108,6 +107,21 @@ function slicesFromCpuBreakdown(cpu: CpuBreakdown): UnifiedSlices {
 /** A stored span that carries a reconciling bar (its `breakdown` is present). */
 type BarSpan = Span & { breakdown: NonNullable<Span["breakdown"]> };
 
+/** Project a stored span onto the bar-less counts row (`query spans` overview when no bar covers it):
+ * wall/aggregation/index + Measured counts + INP, no slices. Shared by `buildSpanCounts` (the
+ * all-bar-less overview) and `buildSpans` (the bar-less step/measure rows alongside a run bar). */
+function spanCountsEntry(span: Span): SpanCountsEntry {
+  return {
+    label: span.label,
+    kind: span.kind,
+    wallMs: span.wallMs,
+    aggregation: span.aggregation,
+    ...(span.index != null ? { index: span.index } : {}),
+    counts: span.counts,
+    ...(span.inpMs != null ? { inpMs: span.inpMs } : {}),
+  };
+}
+
 function entryFromSpan(span: BarSpan, iterations: number): SpanEntry {
   return {
     label: span.label,
@@ -158,40 +172,31 @@ export function buildSpans(
   // fallback below). buildRecordingSpans always emits at least the run span, so `spans.length` alone
   // is not the test -- a bar must be present.
   const barSpans = (spans ?? []).filter((span): span is BarSpan => span.breakdown != null);
+  const barlessSpans = (spans ?? []).filter((span) => span.breakdown == null);
+  const withBarless = (rows: SpanCountsEntry[]): { barlessSpans?: SpanCountsEntry[] } =>
+    rows.length ? { barlessSpans: rows } : {};
   if (barSpans.length)
     return {
       target,
       source: "breakdowns",
       spans: barSpans.map((span) => entryFromSpan(span, iterations)),
+      // A step (or navigating span) with no bar of its own still belongs in the overview; carry it
+      // bar-less so the run/steps/measures listing stays complete.
+      ...withBarless(barlessSpans.map(spanCountsEntry)),
     };
   if (cpuBreakdown)
     return {
       target,
       source: "cpu-model",
       spans: [runEntryFromCpuBreakdown(cpuBreakdown, iterations)],
+      // The synthesized run bar stands in for the stored `run` span (which has no bar in this
+      // capture), so drop the run row here; the driver steps have no bar at all and must still show.
+      ...withBarless(barlessSpans.filter((span) => span.kind !== "run").map(spanCountsEntry)),
     };
   return null;
 }
 
 // --- query spans: the bar-less counts overview ---
-
-/**
- * One span's row when the capture built no reconciling bar (default/--deep/--precise-wall): its
- * wall, aggregation and windowed Measured counts, with no slices. `--deep` carries exact counts here
- * (its whole point); the default/--precise-wall capture modes carry only the wall, with counts not-measured.
- */
-export interface SpanCountsEntry {
-  label: string;
-  kind: SpanKind;
-  /** trace-clock window width; null when a navigating step could not be priced */
-  wallMs: number | null;
-  aggregation: SpanAggregation;
-  /** a step's position within its iteration; absent on run/measure spans */
-  index?: number;
-  counts: SpanCounts;
-  /** worst-interaction INP (ms) for a driver step; absent when none crossed the floor */
-  inpMs?: number | null;
-}
 
 /**
  * The `query spans` overview for a bar-less recording: counts + wall per span, no reconciling bar at
@@ -225,15 +230,7 @@ export function buildSpanCounts(
     target,
     source: "counts",
     iterations,
-    spans: spans.map((span) => ({
-      label: span.label,
-      kind: span.kind,
-      wallMs: span.wallMs,
-      aggregation: span.aggregation,
-      ...(span.index != null ? { index: span.index } : {}),
-      counts: span.counts,
-      ...(span.inpMs != null ? { inpMs: span.inpMs } : {}),
-    })),
+    spans: spans.map(spanCountsEntry),
   };
 }
 
