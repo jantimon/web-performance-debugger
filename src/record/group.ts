@@ -7,10 +7,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { serialize, deserialize, extFor, type Format } from "../output/format.js";
+import { writeFileAtomic } from "../model/atomic-write.js";
 import { assertGroupArtifact, assertRecordingArtifact } from "../model/artifact.js";
 import {
   formationVerdict,
   countDisagreements,
+  partialGroupNotes,
   memberLabel,
   GROUP_COUNT_FIELDS,
   type RunGroup,
@@ -45,6 +47,18 @@ function sanitizeName(name: string): string {
  * every member path in it is relative and the whole directory can move or be committed together. */
 export function groupManifestPathFor(dir: string, name: string, format: Format): string {
   return path.join(dir, `${sanitizeName(name)}.group${extFor(format)}`);
+}
+
+/** The D2 refusal: two group names that sanitize to the SAME manifest filename are distinct groups, so
+ * joining a `requested` name into a manifest stored under `stored` would silently merge them. Identity
+ * is the stored `meta.name`, never the shared filename. Names both so the collision is legible. */
+function nameCollisionError(manifestPath: string, stored: string, requested: string): Error {
+  return new Error(
+    `Refusing to record into '${path.basename(manifestPath)}': it belongs to run-group '${stored}', ` +
+      `but you passed --group '${requested}'. Those two names reduce to the same manifest filename, so ` +
+      `joining would silently merge two different groups. Use a --group name that does not collide with ` +
+      `'${stored}', or record into '${stored}' itself.`,
+  );
 }
 
 /** A member recording's own path when the `--members` runner records it: a named sibling of the
@@ -107,6 +121,58 @@ export interface AppendMemberInput {
   /** the joining recording's meta + summary (for formation + count-disagreement) */
   meta: RecordingMeta;
   summary: RecordingSummary;
+  /** the capture modes the `--members` runner asked for this invocation; unioned into the manifest's
+   * `requested` set so partial status is derived structurally. Absent for an ad-hoc single `--group`
+   * record, which is complete-by-construction and never reports partial. */
+  requested?: string[];
+}
+
+/**
+ * Validate the requested members of a `--group`/`--members` run against any EXISTING manifest, BEFORE
+ * the browser launches or a byte is written. Refuses (throws) on:
+ *   - a name-identity mismatch (D2): the requested name and the stored `meta.name` differ but sanitize
+ *     to the same manifest filename -- two distinct groups the join would silently merge.
+ *   - a duplicate `(mode, variant)` member (D1): two identical captures are not two questions.
+ * A refusal names the recovery in one sentence: the exact missing-members command while the group is
+ * still partial, else record under a new `--group` name or remove the manifest and its members. No
+ * manifest (first formation) passes silently. This runs the D1 preflight so a re-run never overwrites a
+ * member artifact or downgrades the `latest` pointer before the duplicate is caught.
+ */
+export async function preflightGroup(
+  manifestPath: string,
+  format: Format,
+  requestedName: string,
+  requested: { mode: string; variant?: string }[],
+): Promise<void> {
+  const existing = await readManifest(manifestPath, format);
+  if (!existing) return;
+  if (existing.meta.name !== requestedName)
+    throw nameCollisionError(manifestPath, existing.meta.name, requestedName);
+  const presentModes = new Set(existing.members.map((member) => member.mode));
+  const duplicates = requested.filter((candidate) =>
+    existing.members.some(
+      (member) => member.mode === candidate.mode && member.variant === candidate.variant,
+    ),
+  );
+  if (duplicates.length === 0) return;
+  // Recovery names the still-missing members from the group's declared `requested` set when it carries
+  // one (a partial `--members` group), else from this invocation's own requested modes.
+  const declared = existing.requested?.length
+    ? existing.requested
+    : requested.map((candidate) => candidate.mode);
+  const missing = declared.filter((mode) => !presentModes.has(mode));
+  const dupLabels = duplicates
+    .map((candidate) =>
+      candidate.variant ? `${candidate.mode}/${candidate.variant}` : candidate.mode,
+    )
+    .join(", ");
+  const recovery = missing.length
+    ? `Record only the missing member(s): \`record --members ${missing.join(",")} --group ${requestedName}\`.`
+    : `This group is complete. Record under a new --group name, or remove ${path.basename(manifestPath)} and its member recordings first, then re-record.`;
+  throw new Error(
+    `Refusing to record into run-group '${existing.meta.name}': it already holds ${dupLabels}. ` +
+      `Two identical captures are not two questions. ${recovery}`,
+  );
 }
 
 /**
@@ -162,6 +228,10 @@ export async function appendMember(input: AppendMemberInput): Promise<RunGroup> 
     };
   } else {
     group = existing;
+    // Identity is the stored meta.name, not the shared filename: refuse a name that only collides on
+    // disk rather than silently joining under the stored name the user never typed (D2). The preflight
+    // catches this before the run; this is the primitive's own guard for a direct/programmatic caller.
+    if (group.meta.name !== name) throw nameCollisionError(manifestPath, group.meta.name, name);
     const reference = await readMemberMeta(manifestDir, group.members[0]);
     const verdict = formationVerdict(
       reference,
@@ -170,12 +240,19 @@ export async function appendMember(input: AppendMemberInput): Promise<RunGroup> 
     );
     if (verdict.refusals.length)
       throw new Error(
-        `Refusing to add this recording to group '${group.meta.name}': ${verdict.refusals.join("; ")}. ` +
-          `A group holds N captures of ONE workload differing only in capture mode. Re-record this ` +
-          `member with the group's flags, or start a new group.`,
+        `Refusing to add this recording to run-group '${group.meta.name}' (requested as '${name}'): ` +
+          `${verdict.refusals.join("; ")}. A group holds N captures of ONE workload differing only in ` +
+          `capture mode. Re-record this member with the group's flags, or start a new group.`,
       );
     newMember.annotations = verdict.annotations;
     group.members.push(newMember);
+  }
+
+  // Union the modes this `--members` invocation asked for into the manifest, so partial status is a
+  // structural fact (requested minus present) at every append, not a note narrated once on failure.
+  if (input.requested?.length) {
+    const merged = new Set([...(group.requested ?? []), ...input.requested]);
+    group.requested = [...merged];
   }
 
   // Recompute the cross-member disagreement notes from scratch each append (idempotent): read each
@@ -193,43 +270,24 @@ export async function appendMember(input: AppendMemberInput): Promise<RunGroup> 
       );
     }
   }
-  // Keep any partial-formation note (it is not a count disagreement) and refresh the disagreement set.
-  const partialNotes = group.notes.filter((note) => note.startsWith(GROUP_PARTIAL_PREFIX));
-  group.notes = [...countDisagreements(memberCounts), ...partialNotes];
+  // Recompute both note sets from the current manifest state (idempotent, present-tense): the
+  // cross-member count disagreements, then the structural partial-group note (requested minus present).
+  // A recovered group -- one whose missing member has now recorded -- carries no partial note, because
+  // partialGroupNotes derives it from state, never from a stored failure narrative.
+  group.notes = [
+    ...countDisagreements(memberCounts),
+    ...partialGroupNotes(
+      group.meta.name,
+      group.requested ?? [],
+      group.members.map((member) => member.mode),
+    ),
+  ];
 
   await fs.mkdir(manifestDir, { recursive: true });
-  await fs.writeFile(manifestPath, serialize(group, format), "utf8");
+  // Atomic: appendMember rewrites the WHOLE manifest, so a truncate-in-place write killed mid-flight
+  // would lose every member already recorded. Temp file + rename leaves the good manifest intact.
+  await writeFileAtomic(manifestPath, serialize(group, format));
   return group;
-}
-
-const GROUP_PARTIAL_PREFIX = "WARNING: partial group";
-
-/** The loud note the runner attaches when a later member's capture failed, keeping the members that
- * completed (keep-partial precedent). Names the failed mode and why. */
-export function groupPartialNote(
-  completed: number,
-  requested: number,
-  failedMode: string,
-  reason: string,
-): string {
-  return (
-    `${GROUP_PARTIAL_PREFIX}: ${completed} of ${requested} members recorded; the '${failedMode}' ` +
-    `capture failed, so this group is incomplete. A verb that routes to a missing member reports it ` +
-    `as not measured (a loud n/a), never a silent pass. Re-run to record the missing member. ` +
-    `Failure: ${reason}`
-  );
-}
-
-/** Attach a group-level note to an existing manifest (the runner's partial-formation disclosure). */
-export async function annotateGroup(
-  manifestPath: string,
-  format: Format,
-  note: string,
-): Promise<void> {
-  const group = await readManifest(manifestPath, format);
-  if (!group) return;
-  group.notes.push(note);
-  await fs.writeFile(manifestPath, serialize(group, format), "utf8");
 }
 
 export interface RunMembersOutcome {
@@ -255,6 +313,15 @@ export async function runMembers(
   const name = baseOpts.group!;
   const dir = baseOpts.out ? path.dirname(path.resolve(baseOpts.out)) : path.resolve("recordings");
   const manifestPath = groupManifestPathFor(dir, name, baseOpts.format);
+  // Validate the WHOLE requested set against any existing manifest before the first browser launches:
+  // a name-identity mismatch or a duplicate member refuses here, so a re-run of a complete group never
+  // overwrites a member artifact or touches the `latest` pointer (D1).
+  await preflightGroup(
+    manifestPath,
+    baseOpts.format,
+    name,
+    modes.map((mode) => ({ mode, variant: baseOpts.variant })),
+  );
   let completed = 0;
   for (const mode of modes) {
     const memberOpts: RecordOptions = {
@@ -263,6 +330,9 @@ export async function runMembers(
       deep: mode === "deep",
       preciseWall: mode === "precise-wall",
       group: name,
+      // Thread the full requested set so each append derives partial status structurally (a later
+      // member's failure leaves the correct "N of M, missing X" note without a separate annotate step).
+      groupRequested: modes,
       out: memberOutPath(dir, name, mode, baseOpts.format),
     };
     try {
@@ -270,14 +340,10 @@ export async function runMembers(
       completed++;
     } catch (error) {
       // The first member failing leaves nothing to salvage: surface it, like keep-partial's
-      // first-iteration rule. A later one keeps the members recorded so far, with a loud note.
+      // first-iteration rule. A later one keeps the members recorded so far; the last successful
+      // append already left the structural partial note ("N of M, missing X"), no annotate needed.
       if (completed === 0) throw error;
       const reason = error instanceof Error ? error.message : String(error);
-      await annotateGroup(
-        manifestPath,
-        baseOpts.format,
-        groupPartialNote(completed, modes.length, mode, reason),
-      );
       return {
         manifestPath,
         completed,

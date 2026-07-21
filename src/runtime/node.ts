@@ -11,6 +11,7 @@ import {
 import { buildSummary, NO_RENDERING_CAPTURE } from "../metrics/summarize.js";
 import { buildRecordingSpans } from "../record/spans-build.js";
 import { writePointer } from "../commands/resolve.js";
+import { writeFileAtomic } from "../model/atomic-write.js";
 import { serialize, extFor } from "../output/format.js";
 import type { CpuModel, Recording, RecordingMeta } from "../model/recording.js";
 import { RUN_MEASURE } from "../model/marks.js";
@@ -141,7 +142,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
   };
 
   const cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
-  await fs.writeFile(cpuProfilePath, JSON.stringify(rawProfile), "utf8");
+  await writeFileAtomic(cpuProfilePath, JSON.stringify(rawProfile));
   const cpuModel = await buildCpuModel(rawProfile, {
     profilePath: cpuProfilePath,
     meta,
@@ -150,7 +151,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     runtime: "node",
   });
   const cpuModelPath = path.join(outDir, `${base}.cpu${extFor(opts.format)}`);
-  await fs.writeFile(cpuModelPath, serialize(cpuModel, opts.format), "utf8");
+  await writeFileAtomic(cpuModelPath, serialize(cpuModel, opts.format));
 
   const summary = buildSummary({
     perIteration,
@@ -178,13 +179,17 @@ export async function recordNode(opts: RecordOptions): Promise<{
       runWindowEnd: null,
     }),
   };
-  await fs.writeFile(outPath, serialize(recording, opts.format), "utf8");
+  await writeFileAtomic(outPath, serialize(recording, opts.format));
 
-  await writePointer({
-    recording: outPath,
-    cpuProfile: cpuProfilePath,
-    cpuModel: cpuModelPath,
-  });
+  // A plain node record owns `latest`; a --group record defers the pointer to recordAndReport, which
+  // writes it ONLY AFTER the manifest join is accepted (a refused join leaves `latest` on the prior
+  // group, never downgraded to this orphan recording).
+  if (!opts.group)
+    await writePointer({
+      recording: outPath,
+      cpuProfile: cpuProfilePath,
+      cpuModel: cpuModelPath,
+    });
 
   return { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel };
 }

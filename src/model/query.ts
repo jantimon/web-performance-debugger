@@ -184,6 +184,37 @@ export interface SpansResult {
   filter?: { minWallMs?: number; labelIncludes?: string };
 }
 
+/**
+ * The provenance block `query spans` adds when the target is a RUN-GROUP: which member the overview
+ * bar came from, and which members answer the counts/blame axes a single bar cannot. Its presence is
+ * what distinguishes a `GroupSpansResult` from a plain `SpansResult` -- a consumer reads the bar as one
+ * member's real sample, never as the whole group's, and knows where to drill for the rest.
+ */
+export interface GroupSpansProvenance {
+  /** the run-group's name (its manifest identity) */
+  name: string;
+  /** the member the overview bar/spans were drawn from */
+  overviewFrom: string;
+  /** the member that carries exact counts, or null when no member does */
+  countsFrom: string | null;
+  /** the member that carries forced-layout blame + the event log, or null when none does */
+  blameFrom: string | null;
+  /** group-level disclosures (count disagreement across members, partial formation) */
+  notes: string[];
+}
+
+/** `query spans` on a run-group: a `SpansResult` plus the `group` provenance block. */
+export interface GroupSpansResult extends SpansResult {
+  group: GroupSpansProvenance;
+}
+
+/**
+ * The `query spans` output shape: a plain recording yields a `SpansResult`; a run-group yields a
+ * `GroupSpansResult`. The presence of the `group` field discriminates the two, so a JSON/TOON consumer
+ * branches on it rather than guessing.
+ */
+export type SpansOutput = SpansResult | GroupSpansResult;
+
 /** One forced (synchronous) layout/style read-site within a span, with the write(s) that dirtied it. */
 export interface SpanForced {
   /** source location "file:line:col" of the geometry read that forced the flush (relative to root) */

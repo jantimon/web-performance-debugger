@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { writeFileAtomic } from "../model/atomic-write.js";
 
 /**
  * The pointer answers "resolve `latest` from THIS cwd", so it is keyed by the resolved cwd and
@@ -42,7 +43,8 @@ export interface LastPointer {
 export async function writePointer(pointer: LastPointer): Promise<void> {
   const file = pointerFileFor(process.cwd());
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, JSON.stringify(pointer, null, 2), "utf8");
+  // Atomic: a killed write must not leave a torn pointer that resolves `latest` to a truncated path.
+  await writeFileAtomic(file, JSON.stringify(pointer, null, 2));
 }
 
 async function readPointer(): Promise<LastPointer> {
