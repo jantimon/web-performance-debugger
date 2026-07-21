@@ -71,11 +71,46 @@ const toInt = (value: string) => {
   return parseInt(value, 10);
 };
 
-/** A non-negative ms threshold (fractional allowed): --min-wall is a wall-tier ms, not a count. */
+/**
+ * A non-negative ms threshold (fractional allowed): a wall/INP budget is a wall-tier ms, not a
+ * count, and stored walls are fractional, so a whole-number-only parser rejects a legitimate
+ * `--max-wall 40.5`. The regex rejects negatives, exponents, Infinity and NaN, so the result is a
+ * finite bound.
+ */
 const toFloat = (value: string) => {
   if (!/^\d+(\.\d+)?$/.test(value.trim()))
     throw new InvalidArgumentError(`'${value}' is not a non-negative number.`);
   return parseFloat(value);
+};
+
+/**
+ * A count/time maximum below zero can never be met, so a gate set that way fails forever and points
+ * the reader at the data instead of the typo. Reject it at the boundary.
+ */
+const toNonNegativeInt = (value: string) => {
+  const parsed = toInt(value);
+  if (parsed < 0) throw new InvalidArgumentError(`'${value}' must be zero or greater.`);
+  return parsed;
+};
+
+/**
+ * A positive whole count: `--top` feeds `.slice(0, n)`, so zero or a negative slices from the end
+ * and prints nonsense like "below the top -1". Require at least one.
+ */
+const toPositiveInt = (value: string) => {
+  const parsed = toInt(value);
+  if (parsed < 1) throw new InvalidArgumentError(`'${value}' must be a positive whole number.`);
+  return parsed;
+};
+
+/**
+ * A positional id (`query get`/`query frame`). Bare `parseInt` turns `abc` into NaN ("No function
+ * with id NaN") and `12junk` into 12, so parse it strictly and name the argument that was wrong.
+ */
+const toPositionalId = (raw: string, argName: string): number => {
+  if (!/^\d+$/.test(raw.trim()))
+    program.error(`<${argName}> must be a non-negative whole number, got '${raw}'.`);
+  return parseInt(raw, 10);
 };
 
 program
@@ -135,7 +170,7 @@ program
   .option(
     "--protocol-timeout <ms>",
     "timeout in ms for one protocol call (default 180000); raise it when a heavy traced interaction pins the main thread, or when a loaded machine makes Firefox time out launching",
-    toInt,
+    toPositiveInt,
   )
   // The chrome capture modes. Default (no flag): CPU sampler only, no trace, cleanest wall -- the
   // four-slice CPU bar, no rendering counts. --breakdown and --deep each capture more; --precise-wall
@@ -255,7 +290,8 @@ program
         cmdOpts.breakdown &&
           "--breakdown (firefox's reconciling bar comes from the Gecko profile automatically; your performance.measure() spans surface in recording.spans without a flag)",
         cmdOpts.preciseWall && "--precise-wall (the gecko pass IS the firefox lane)",
-        cmdOpts.cpuThrottle && "--cpu-throttle (needs CDP)",
+        // Presence-based, not truthiness: --cpu-throttle 0 is still unsupported here, and 0 is falsy.
+        cmdOpts.cpuThrottle != null && "--cpu-throttle (needs CDP)",
         cmdOpts.disableBrowserSandbox && "--disable-browser-sandbox (chrome-only launch flag)",
       ].filter(Boolean);
       if (unsupported.length) {
@@ -268,12 +304,19 @@ program
       const browserOnly = [
         // Detection is skipped on node (above), so these hold the raw flag the user passed.
         (cmdOpts.url || cmdOpts.html) && (cmdOpts.url ? "--url" : "--html"),
-        cmdOpts.cpuThrottle && "--cpu-throttle",
+        // Presence-based where the value can be falsy (0 throttle, 0 timeout): the lane consumes
+        // none of these, so a passed-but-falsy value is still a flag on the wrong lane.
+        cmdOpts.cpuThrottle != null && "--cpu-throttle",
         cmdOpts.userDataDir && "--user-data-dir",
         cmdOpts.disableBrowserSandbox && "--disable-browser-sandbox",
         cmdOpts.breakdown && "--breakdown",
         cmdOpts.deep && "--deep",
         cmdOpts.preciseWall && "--precise-wall",
+        // No browser to make headless/visible, no driver iteration to salvage, no protocol to time
+        // out: this lane runs in-process.
+        cmdOpts.headless === false && "--no-headless",
+        cmdOpts.keepPartial && "--keep-partial",
+        cmdOpts.protocolTimeout != null && "--protocol-timeout",
       ].filter(Boolean);
       if (browserOnly.length)
         program.error(
@@ -285,6 +328,17 @@ program
           "--bench imports the module inside a page; --target node has no page. Drop --bench (--iterations already repeats run() on this lane).",
         );
     }
+    // --keep-partial salvages a failed driver iteration; --bench imports run() in-page with no
+    // driver loop to salvage, so the flag has nothing to act on (node already rejected --bench).
+    if (bench && cmdOpts.keepPartial)
+      program.error(
+        "--keep-partial is a driver-mode salvage: --bench runs run() in-page, with no per-iteration driver step to keep. Drop --keep-partial.",
+      );
+    // --cpu-throttle multiplies CPU slowdown; the throttle skips a rate of 1 or below silently, so a
+    // value that does nothing is a typo, not a request. firefox/node already rejected the flag above,
+    // so reaching here is chrome.
+    if (!firefox && !node && cmdOpts.cpuThrottle != null && cmdOpts.cpuThrottle <= 1)
+      program.error("--cpu-throttle must be an integer greater than 1 (e.g. 4 for 4x slower).");
     // --disable-browser-sandbox drops the renderer's OS process containment (chrome-only; firefox and
     // node reject the flag above, so reaching here means chrome). What that unsandboxed renderer is
     // then allowed to touch decides whether the combination is merely reduced-containment or actively
@@ -448,7 +502,7 @@ fmtOpts(
     .description(
       "one span's full anatomy: bar, counts, INP, forced/dirtied-by, hot functions. <label> is a bare label or a kind:label qualifier",
     )
-    .option("--top <n>", "hot functions to show within the span (run span only)", toInt)
+    .option("--top <n>", "hot functions to show within the span (run span only)", toPositiveInt)
     .option(
       "--frames",
       "list each dropped/smoothness-affecting compositor frame under the bar (default: a one-line count)",
@@ -480,7 +534,7 @@ fmtOpts(
     )
     .option("--name <substr>", "case-insensitive name filter")
     .option("--forced", "only forced (synchronous) layout/style")
-    .option("--top <n>", "limit to first n", toInt)
+    .option("--top <n>", "limit to first n", toPositiveInt)
     .option("--sort <by>", "dur|ts (default dur)", "dur"),
 ).action((file, opts) => run(queryEvents(file, opts)));
 fmtOpts(
@@ -494,37 +548,42 @@ fmtOpts(
       "--dirtied",
       "firefox --deep only: the dirtied-by write report (Gecko cause stacks, first-invalidation-only), separate from the --forced read-site rows",
     )
-    .option("--top <n>", "limit to first n locations", toInt),
+    .option("--top <n>", "limit to first n locations", toPositiveInt),
 ).action((file, opts) => run(queryBlame(file, opts)));
 query
   .command("get <file> <id>")
   .description("fetch one event (full stack + args) by id")
   .option("--format <fmt>", "structured output: json | toon")
-  .action((file, id, opts) => run(queryGet(file, parseInt(id, 10), opts)));
+  .action((file, id, opts) => run(queryGet(file, toPositionalId(id, "id"), opts)));
 fmtOpts(
   query
     .command("cpu <file>")
     .description("CPU profile overview: hot functions + by-package self time")
     .option("--by <grouping>", "rollup grouping: package | file | function", "package")
-    .option("--top <n>", "hot functions to show", toInt),
+    .option("--top <n>", "hot functions to show", toPositiveInt),
 ).action((file, opts) => run(queryCpu(file, opts)));
 fmtOpts(
   query
     .command("frame <file> <id>")
     .description("drill one CPU function by id: its callers and callees"),
-).action((file, id, opts) => run(queryFrame(file, parseInt(id, 10), opts)));
+).action((file, id, opts) => run(queryFrame(file, toPositionalId(id, "id"), opts)));
 
 program
   .command("assert <file>")
-  .description("gate a recording or step-index against thresholds (exit 1 on violation)")
-  .option("--max-forced <n>", "max forced layout/style", toInt)
-  .option("--max-layouts <n>", "max layout count", toInt)
-  .option("--max-paints <n>", "max paint count", toInt)
-  .option("--max-layout-invalidations <n>", "max layout invalidations", toInt)
-  .option("--max-style-invalidations <n>", "max style/selector invalidations", toInt)
-  .option("--max-long-tasks <n>", "max tasks >=50ms", toInt)
-  .option("--max-inp <ms>", "max INP (worst interaction) ms", toInt)
-  .option("--max-wall <ms>", "max wall ms", toInt)
+  .description(
+    "gate a recording or run-group against thresholds; driver thresholds apply per step (exit 1 on violation)",
+  )
+  .option("--max-forced <n>", "max forced layout/style", toNonNegativeInt)
+  .option("--max-layouts <n>", "max layout count", toNonNegativeInt)
+  .option("--max-paints <n>", "max paint count", toNonNegativeInt)
+  .option("--max-layout-invalidations <n>", "max layout invalidations", toNonNegativeInt)
+  .option("--max-style-invalidations <n>", "max style/selector invalidations", toNonNegativeInt)
+  .option("--max-long-tasks <n>", "max tasks >=50ms", toNonNegativeInt)
+  // INP (Event Timing) durations are 8ms-granular whole numbers, but the budget accepts fractional
+  // ms for one consistent policy with --max-wall and --max-slice: every directional ms budget is a
+  // non-negative finite float.
+  .option("--max-inp <ms>", "max INP (worst interaction) ms", toFloat)
+  .option("--max-wall <ms>", "max wall ms", toFloat)
   .option(
     "--max-slice <name=ms>",
     `max ms for a breakdown slice (${SLICE_NAMES.join("|")}); repeatable, e.g. --max-slice js=5 ` +
