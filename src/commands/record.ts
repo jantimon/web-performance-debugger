@@ -576,6 +576,15 @@ export async function record(opts: RecordOptions): Promise<{
     // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome".
     browser: browserName === "firefox" ? "firefox" : undefined,
     blameSemantic: blameSemanticFor(capture),
+    // The main-thread selection (via + split) as a typed field, so a reader (and assert/diff) sees the
+    // cross-process split without parsing prose. Absent on a non-counting capture, where the selection
+    // is null. The prose note above (crossProcessWorkSplit) stays for humans.
+    mainThread: threadSelection
+      ? { via: threadSelection.via, split: threadSelection.split }
+      : undefined,
+    // The trace buffer overran and events were dropped: a typed carrier for the known-incomplete
+    // counts, beside the loud note above. Absent when no loss occurred.
+    dataLoss: detail.traceDataLoss ? { trace: true } : undefined,
     throttle,
   };
 

@@ -450,6 +450,21 @@ export interface RecordingMeta {
   blameSemantic?: BlameSemantic;
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
   runtime?: "chrome" | "node";
+  /**
+   * The renderer main thread the trace-derived counts and the reconciling bar were scoped to, and how
+   * it was chosen (see trace/main-thread.ts). `split` is the load-bearing signal: true when the run's
+   * rendering landed on MORE than one renderer process one after another (successive cross-process
+   * navigations), so the selected thread holds only part of it and the counts are known-INCOMPLETE.
+   * `assert`/`diff --fail-on-regression` refuse count and count-derived thresholds when it is set,
+   * the same honest-refusal the Measured contract makes for a not-measured count. Absent on non-counting
+   * captures (the sampler-only/precise-wall modes, firefox) and on recordings written before this field. */
+  mainThread?: { via: "marker" | "reanchored" | "heuristic"; split: boolean };
+  /**
+   * The trace buffer overran and Chrome dropped events (`trace: true`). Trace-derived counts then
+   * UNDERCOUNT, so they are known-incomplete: `assert`/`diff --fail-on-regression` refuse count and
+   * count-derived thresholds, and `meta.notes` carries the loud disclosure. Absent when no loss
+   * occurred and on recordings written before this field. */
+  dataLoss?: { trace: boolean };
   /** artificial slowdown applied during the run */
   throttle?: { cpuRate?: number };
   /** when this recording is one step of a stepped run */

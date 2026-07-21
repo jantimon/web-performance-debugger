@@ -751,8 +751,16 @@ e2e("record --breakdown (driver): successive cross-process navigations warn, nev
     const splitNoted = (rec.meta.notes || []).some((note) => /split across more than one renderer process/.test(note));
     if (splitNoted) {
       assert.match(result.stderr, /split across more than one renderer process/, "the split is loud on stderr too");
+      // The split is also a TYPED field the gate readers consume, not just prose.
+      assert.equal(rec.meta.mainThread?.split, true, "the split is persisted as meta.mainThread.split");
+      // The step that ran on the un-selected process reports not-measured counts, never a fake 0.
+      const uncovered = rec.spans.find(
+        (span) => span.kind === "step" && span.counts.layoutCount === null,
+      );
+      assert.ok(uncovered, "a split run's un-selected-process step reports null counts, never a fake 0");
     } else {
       // No split: both navigations stayed in one process, so both steps' counts are real (never a fake 0).
+      assert.notEqual(rec.meta.mainThread?.split, true, "no split flag when the run stayed single-process");
       const loadB = rec.spans.find((span) => span.kind === "step" && span.label === "loadB");
       assert.ok(loadB?.counts.layoutCount > 0, "with no split, the second step's counts are real");
     }
@@ -1427,6 +1435,60 @@ e2e("assert on a group routes each threshold to its member, with a loud n/a FAIL
   const noMember = runAssert([path.join(dir, "baronly.group.json"), "--max-forced", "0"]);
   assert.equal(noMember.status, 1, "an axis no member measures fails loudly");
   assert.match(noMember.stdout, /no member measures this axis/, "the FAIL names the unmeasured axis");
+});
+
+// F1: a stepped driver recording gates PER STEP (each step has its own windowed counts). A run-group
+// must gate the same way: routing --max-layouts to the deep member and reading its RUN SUMMARY (which
+// totals every step) fails a per-step budget the plain recording passes. So the group gates the routed
+// member's STEP spans, and the plain and group verdicts match, target for target.
+e2e("assert gates a driver run-group per step, matching the plain recording's verdict (F1)", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const html = path.join(repoRoot, "test", "fixtures", "driver-probe.html");
+  assert.ok(existsSync(html), "driver-probe.html is committed, so this test cannot silently skip");
+  const flow = path.join(dir, "flow.mjs");
+  writeFileSync(
+    flow,
+    `export async function prepare({ page }) { await page.waitForSelector("#inc"); }
+     export async function run({ page, measureStep }) {
+       await measureStep("first", () => page.click("#inc"));
+       await measureStep("second", () => page.click("#inc"));
+     }`,
+  );
+
+  const plain = path.join(dir, "plain.json");
+  runCli(["record", flow, "--html", html, "--deep", "--iterations", "1", "--out", plain]);
+  runCli(["record", flow, "--html", html, "--members", "breakdown,deep", "--group", "grp", "--iterations", "1", "--out", path.join(dir, "grp.json")]);
+  const manifest = path.join(dir, "grp.group.json");
+  assert.ok(existsSync(manifest), "the group manifest was written");
+
+  // Per-step layout counts from the plain deep recording drive the budgets: sum-1 clears every step
+  // yet sits below the run total (a run-summary gate would fail it); maxStep-1 fails the busiest step.
+  const steps = JSON.parse(readFileSync(plain, "utf8")).spans.filter((span) => span.kind === "step");
+  const counts = steps.map((span) => span.counts.layoutCount);
+  assert.equal(counts.length, 2, "the flow has two steps");
+  assert.ok(counts.every((count) => count > 0), `both steps lay out: ${counts}`);
+  const sum = counts.reduce((total, count) => total + count, 0);
+  const passBudget = String(sum - 1);
+  const failBudget = String(Math.max(...counts) - 1);
+
+  const layoutsAt = (target, budget) => runAssert([target, "--max-layouts", budget]);
+
+  // Passing budget: per-step gating passes on BOTH; the group gated the deep member's STEPS (a
+  // run-summary gate would have failed this budget), naming the member in each row.
+  const plainPass = layoutsAt(plain, passBudget);
+  const groupPass = layoutsAt(manifest, passBudget);
+  assert.equal(plainPass.status, 0, `plain per-step passes sum-1:\n${plainPass.stdout}`);
+  assert.equal(groupPass.status, plainPass.status, `the group verdict matches the plain one:\n${groupPass.stdout}`);
+  assert.match(groupPass.stdout, /step 0/, "the group gated the routed member's steps, not its run summary");
+  assert.match(groupPass.stdout, /first/, "the step label rides the row");
+  assert.match(groupPass.stdout, /deep/, "and the member column names who answered");
+
+  // Failing budget: the busiest step exceeds it on BOTH, identical non-zero verdicts.
+  const plainFail = layoutsAt(plain, failBudget);
+  const groupFail = layoutsAt(manifest, failBudget);
+  assert.equal(plainFail.status, 1, `plain fails the busiest step at maxStep-1:\n${plainFail.stdout}`);
+  assert.equal(groupFail.status, plainFail.status, `the group fails identically:\n${groupFail.stdout}`);
+  assert.match(groupFail.stdout, /step/, "the group failure is reported per step");
 });
 
 // diff over two groups fans out over members paired by capture mode (each pair diffed unchanged).

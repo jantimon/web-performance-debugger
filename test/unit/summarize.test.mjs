@@ -295,3 +295,103 @@ test("reanchoredMainThread note names the cross-process navigation", () => {
   assert.match(note, /new renderer process/);
   assert.match(note, /post-navigation renderer main thread/);
 });
+
+// F2a: a later cross-process navigation leaves a heavy thread DISJOINT in time from the selected one.
+// When the marker thread was reused for the first page (marker == busiest, the common blank-host
+// process-reuse shape), the selection resolves via the marker branch -- and that branch must still
+// carry the computed `split`, not a hardcoded false, or the split warning/refusal is suppressed.
+test("mainThread marker branch carries a later-navigation split (F2a)", () => {
+  const events = [marker(100, 1)]; // run:start on the reused renderer, ts 0
+  for (let index = 0; index < 20; index++) events.push(layout(index + 1, 500, 100, 1)); // first page, marker thread
+  for (let index = 0; index < 20; index++) events.push(layout(index + 1000, 500, 200, 5)); // second nav, disjoint, later
+
+  const main = mainThread(events);
+  assert.equal(main.pid, 100, "the marker thread was busiest, so it stays selected");
+  assert.equal(main.via, "marker", "no swap: the marker thread did the first page's work");
+  assert.equal(main.split, true, "the disjoint second navigation's split survives the marker branch");
+});
+
+// A concurrent OOPIF (its window OVERLAPS the selected thread's) is not a split, even in the marker
+// branch: the disjoint-time test excludes it. So the marker branch reports split=false there, not a
+// false positive from carrying the computed value.
+test("mainThread marker branch: a concurrent OOPIF is not a split (F2a guard)", () => {
+  const events = [marker(1, 1)];
+  for (let index = 0; index < 20; index++) events.push(layout(index + 1, 500, 1, 1)); // top page, marker thread
+  for (let index = 0; index < 20; index++) events.push(layout(index + 1, 500, 2, 1)); // OOPIF, concurrent (same ts range)
+
+  const main = mainThread(events);
+  assert.equal(main.via, "marker", "the top page keeps the selection");
+  assert.equal(main.split, false, "an overlapping OOPIF window is not a successive-navigation split");
+});
+
+// F2c: on a cross-process-split run, a step whose window ran on an UN-selected renderer process is
+// not-covered by the selected main thread. Its counts must be not-measured (null), never the fake
+// measured-clean 0 the selected-thread window would yield. A covered step keeps its real counts.
+test("buildRecordingSpans nulls an uncovered step's counts on a split run, never a fake 0 (F2c)", () => {
+  const events = [marker(100, 1)]; // selected (busiest) thread
+  // step 0 window [1,100]: 5 layouts on the selected thread (covered).
+  for (let index = 0; index < 5; index++) events.push(layout(10 + index * 10, 500, 100, 1));
+  // step 1 window [1000,1100]: 4 layouts on a DIFFERENT, disjoint renderer process (uncovered).
+  for (let index = 0; index < 4; index++) events.push(layout(1010 + index * 10, 500, 200, 5));
+
+  const selection = mainThread(events);
+  assert.deepEqual({ pid: selection.pid, tid: selection.tid }, { pid: 100, tid: 1 }, "the busier thread is selected");
+  assert.equal(selection.split, true, "the run is a successive-navigation split");
+
+  const mergedSteps = [
+    { label: "first", index: 0, startTs: 1, endTs: 100, wallMs: 5, inpMs: null, interaction: null, perIteration: [5] },
+    { label: "second", index: 1, startTs: 1000, endTs: 1100, wallMs: 5, inpMs: null, interaction: null, perIteration: [5] },
+  ];
+  const summary = buildSummary({ detailEvents: events, detailWindowStart: 0, capabilities: TRACE_CAP, wallMs: 20 });
+  const spans = buildRecordingSpans({
+    summary,
+    mergedSteps,
+    detailEvents: events,
+    capabilities: TRACE_CAP,
+    bars: [],
+    runWindowEnd: 1100,
+  });
+  const steps = spans.filter((span) => span.kind === "step");
+  const first = steps.find((span) => span.label === "first");
+  const second = steps.find((span) => span.label === "second");
+  assert.equal(first.counts.layoutCount, 5, "the covered step keeps its real layout count");
+  assert.equal(second.counts.layoutCount, null, "the uncovered step reports not-measured, never a fake 0");
+  assert.equal(second.counts.paintCount, null, "every count on the uncovered step is null, not 0");
+});
+
+// F2c guard: on a run that is NOT a cross-process split (a concurrent same-page OOPIF renders
+// alongside the top thread, its window OVERLAPPING), a step where the top thread did little while the
+// OOPIF did lots must KEEP its real top-thread count. An OOPIF's own-process count is a separate
+// off-thread count by design, so the top thread's small count IS the honest top-process-scoped answer
+// -- nulling it would be a false "not measured", the dual of the fake 0. The split gate prevents that.
+test("buildRecordingSpans keeps a step's count when a concurrent OOPIF outweighs it on a non-split run (F2c guard)", () => {
+  const events = [marker(1, 1)];
+  // Top page thread (1,1): busiest overall, but only ONE layout inside the step window [900,1100].
+  for (const ts of [100, 200, 300, 400, 500, 600, 700, 800, 1000]) events.push(layout(ts, 500, 1, 1));
+  for (let index = 0; index < 22; index++) events.push(layout(1200 + index * 100, 500, 1, 1));
+  // Concurrent OOPIF (2,1): 25 layouts, all INSIDE the step window, overlapping the top thread in time.
+  for (let index = 0; index < 25; index++) events.push(layout(950 + index * 5, 500, 2, 1));
+
+  const selection = mainThread(events);
+  assert.deepEqual({ pid: selection.pid, tid: selection.tid }, { pid: 1, tid: 1 }, "the top thread is selected");
+  assert.equal(selection.split, false, "a concurrent OOPIF is not a successive-navigation split");
+
+  const mergedSteps = [
+    { label: "only", index: 0, startTs: 900, endTs: 1100, wallMs: 5, inpMs: null, interaction: null, perIteration: [5] },
+  ];
+  const summary = buildSummary({ detailEvents: events, detailWindowStart: 0, capabilities: TRACE_CAP, wallMs: 20 });
+  const spans = buildRecordingSpans({
+    summary,
+    mergedSteps,
+    detailEvents: events,
+    capabilities: TRACE_CAP,
+    bars: [],
+    runWindowEnd: 3400,
+  });
+  const step = spans.find((span) => span.kind === "step" && span.label === "only");
+  assert.equal(
+    step.counts.layoutCount,
+    1,
+    "the step keeps its real top-process count (1), not nulled by the OOPIF's off-thread 25",
+  );
+});
