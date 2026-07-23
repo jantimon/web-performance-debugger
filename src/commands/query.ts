@@ -38,7 +38,15 @@ import {
 } from "../model/spans.js";
 import { isFirefoxDeep, isGeckoCaptureMode } from "../model/capture-mode.js";
 import { bold, cyan, dim } from "../output/color.js";
-import { num, table } from "../output/ascii.js";
+import {
+  num,
+  table,
+  middleEllipsis,
+  idleShareSuffix,
+  spanWallProvenance,
+  LABEL_COL_MAX,
+  SOURCE_COL_MAX,
+} from "../output/ascii.js";
 import { analyzeThrash } from "../trace/thrash.js";
 import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
 import { forcedLayouts } from "../trace/analysis.js";
@@ -428,7 +436,7 @@ function printSpanAnatomy(
   const count = (value: Measured<number>): string =>
     formatMeasured(value, (measured) => String(measured));
   console.log(
-    `\nspan ${bold(anatomy.label)} ${dim(`(${anatomy.kind} · ${anatomy.target} · ${anatomy.aggregation} of ${anatomy.iterations} iteration(s))`)}`,
+    `\nspan ${bold(middleEllipsis(anatomy.label, LABEL_COL_MAX))} ${dim(`(${anatomy.kind} · ${anatomy.target} · ${anatomy.aggregation} of ${anatomy.iterations} iteration(s))`)}`,
   );
   const wall = anatomy.wallMs == null ? "—" : `${num(anatomy.wallMs)} ms`;
   const spread =
@@ -437,7 +445,19 @@ function printSpanAnatomy(
           ` · ${anatomy.samples} samples, wall ${num(anatomy.wallMinMs, 1)}..${num(anatomy.wallMaxMs, 1)} ms`,
         )
       : "";
-  console.log(`wall: ${bold(wall)}${spread}`);
+  // Point-of-use provenance on the wall itself, each firing only where the bare number misleads: a
+  // step's wall is a MEDIAN (its header aggregation "first" describes the counts/bar window, not this
+  // number), and a settle-dominated window's width reads as workload unless its idle share sits beside
+  // it. The idle tag rides only a span whose wall IS the tiled bar window (idleShareSuffix's contract).
+  const wallTags: string[] = [];
+  const stepMedian = spanWallProvenance(anatomy.kind, span.perIteration?.length ?? 0);
+  if (stepMedian) wallTags.push(stepMedian);
+  if (span.breakdown) {
+    const idleTag = idleShareSuffix(span.breakdown.slices.idle.ms, span.breakdown.wallMs);
+    if (idleTag) wallTags.push(`${idleTag} (window, not work)`);
+  }
+  const wallTail = wallTags.length ? dim(` · ${wallTags.join(" · ")}`) : "";
+  console.log(`wall: ${bold(wall)}${spread}${wallTail}`);
   // A wall pinned to a frame-cadence floor hides sub-frame work: libraries whose real re-render is
   // each under the floor all report the floor (a measure floors at one frame, a driver step at the
   // 2-rAF settle, docs/dev/frame-floor.md). Surface the faster sample and the js slice beside it so
@@ -582,7 +602,11 @@ function printSpanAnatomy(
     console.log(
       table(
         ["count", "ms", "source"],
-        shown.map((entry) => [entry.count, num(entry.durMs, 2), entry.at]),
+        shown.map((entry) => [
+          entry.count,
+          num(entry.durMs, 2),
+          middleEllipsis(entry.at, SOURCE_COL_MAX),
+        ]),
       ),
     );
     const withWrites = shown.filter((entry) => entry.dirtiedBy?.length);
@@ -829,7 +853,7 @@ function printGroupSpanStitch(stitch: GroupSpanStitch): void {
   const count = (value: Measured<number>): string =>
     formatMeasured(value, (measured) => String(measured));
   console.log(
-    `\nspan ${bold(stitch.label)} ${dim(`(${stitch.kind} · run-group '${stitch.group}' · ${stitch.target})`)}`,
+    `\nspan ${bold(middleEllipsis(stitch.label, LABEL_COL_MAX))} ${dim(`(${stitch.kind} · run-group '${stitch.group}' · ${stitch.target})`)}`,
   );
   console.log(dim(`  ${stitchFooterFromSources(stitch)}`));
 
@@ -894,7 +918,11 @@ function printGroupSpanStitch(stitch: GroupSpanStitch): void {
     console.log(
       table(
         ["count", "ms", "source"],
-        shown.map((entry) => [entry.count, num(entry.durMs, 2), entry.at]),
+        shown.map((entry) => [
+          entry.count,
+          num(entry.durMs, 2),
+          middleEllipsis(entry.at, SOURCE_COL_MAX),
+        ]),
       ),
     );
     if (stitch.forced.length > shown.length)
@@ -1222,7 +1250,7 @@ function printBarlessStepRows(spans: SpanCountsEntry[], hint: string): void {
     table(
       ["span", "kind", "wall", "agg", "inp"],
       spans.map((span) => [
-        span.label,
+        middleEllipsis(span.label, LABEL_COL_MAX),
         span.kind,
         span.wallMs == null ? "—" : `${num(span.wallMs, 1)} ms`,
         span.aggregation,
@@ -1280,7 +1308,7 @@ async function printBarlessSpans(
     table(
       ["span", "kind", "wall", "agg", "layout", "style", "paint", "forced", "long≥50ms"],
       spans.map((span) => [
-        span.label,
+        middleEllipsis(span.label, LABEL_COL_MAX),
         span.kind,
         span.wallMs == null ? "—" : `${num(span.wallMs, 1)} ms`,
         span.aggregation,
@@ -1354,7 +1382,7 @@ export async function queryEvents(file: string, query: EventsQuery): Promise<voi
         event.kind,
         event.name,
         num(usToMs(event.dur), 3),
-        event.at ?? "",
+        event.at ? middleEllipsis(event.at, SOURCE_COL_MAX) : "",
       ]),
     ),
   );
@@ -1471,8 +1499,10 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     return;
   }
   // The source cell carries the forcing DOM property when the lane names it (Firefox read-site).
-  const sourceCell = (row: { at: string; properties: Set<string> }): string =>
-    row.properties.size ? `${row.at} (${[...row.properties].join(", ")})` : row.at;
+  const sourceCell = (row: { at: string; properties: Set<string> }): string => {
+    const at = middleEllipsis(row.at, SOURCE_COL_MAX);
+    return row.properties.size ? `${at} (${[...row.properties].join(", ")})` : at;
+  };
   // `--all` shows the forced column so "ran but forced 0" lines are first-class.
   console.log(
     query.all
