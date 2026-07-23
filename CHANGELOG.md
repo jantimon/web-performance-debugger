@@ -1,5 +1,41 @@
 # @jantimon/web-performance-debugger
 
+## 0.17.0
+
+### Minor Changes
+
+- 4edff5f: Deep traces past the former ~512MB parse ceiling now parse. The trace is scanned one event at a time
+  straight from the raw stream bytes (`scanTraceEvents`), so a JS string is never built and a >512MB
+  trace no longer refuses with `tooLargeToParse`; a 1.09GB `--deep` trace parses in ~6s. The trace
+  buffer is raised to 4GB to match.
+
+  The next ceiling is honest: a `--deep`/firefox recording stores the full event log, and serializing
+  it to one JSON string still hits ~512MB. That failure is now a named, actionable error (the event
+  count and the `--breakdown` remedy), not a bare `Invalid string length`.
+
+### Patch Changes
+
+- 6f1e42c: The terminal report now carries provenance at a glance, so a number is harder to misquote. JSON/TOON
+  output is unchanged.
+
+  - `query span` tags a settle/idle-dominated wall with its idle share (`~88% idle (window, not work)`),
+    so a boot window's width is not read as workload cost.
+  - A step's wall on `query span` now names itself a median of its samples, since the header
+    aggregation (`first`) describes the counts/bar window, not the wall.
+  - Over-wide span labels and source paths/URLs in the tables are middle-ellipsized so a real-site cell
+    cannot blow the column layout.
+
+- aaa29c5: Failures now surface loudly and clean up after themselves:
+
+  - A static-server bind failure (port in use, EPERM) fails the run through the normal `record failed:`
+    path with exit 1, instead of crashing on an uncaught error.
+  - A teardown failure (a cleanup hook, a browser close) no longer replaces the primary run error; the
+    run error surfaces and the teardown failure is attached as its `cause`.
+  - The Firefox lane no longer leaves its multi-MB temp profile dump behind when a run, parse, or copy
+    fails.
+  - A browser launch that fails partway through setup (new page, CDP session) closes the browser
+    instead of leaving it running.
+
 ## 0.16.0
 
 ### Minor Changes
