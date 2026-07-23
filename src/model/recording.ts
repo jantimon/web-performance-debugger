@@ -156,8 +156,9 @@ export interface RecordingSummary {
   /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
   longestTaskMs: Measured<number>;
 
-  /** JS self-time from the CPU model; `Measured`, null on `--deep` (sampler off, no CPU model). */
-  scriptingMs: Measured<number>;
+  /** JS self-time from the CPU model (`CpuModel.jsSelfMs`); `Measured`, null on `--deep` (sampler off,
+   * no CPU model). NOT the non-idle sampled total: gc/engine/native are excluded. */
+  jsSelfMs: Measured<number>;
   totalEvents: number;
 
   /**
@@ -998,8 +999,20 @@ export interface CpuModel {
   sampleIntervalUs: number;
   /** wall span of the sampled window, ms */
   totalMs: number;
-  /** sampled time excluding idle, ms */
-  scriptingMs: number;
+  /**
+   * JS self-time, ms: the sum over rankable user functions -- the SAME set `packageRollup`/`fileRollup`
+   * tile, so their percentages reconcile to 100% against it. This is the CPU headline and the axis
+   * `cpu-diff --fail-on-regression` gates. On the browser lanes it folds in the synchronous engine work
+   * JS triggered (a forced layout bills to the forcing frame; ~85% of the layout probe's JS self-time is
+   * reflow); only `--target node` measures pure JS. Excludes gc, engine/(program), idle, and tool frames.
+   */
+  jsSelfMs: number;
+  /**
+   * Non-idle sampled total, ms (`js + gc + engine/native`, i.e. everything sampled that was not idle).
+   * Informational and honestly named: it is NOT JS self-time, so a per-package share must never
+   * denominate on it. `jsSelfMs` is the headline; `breakdown` splits this into its slices.
+   */
+  activeMs: number;
   system: CpuSystem;
   /**
    * Reconciling decomposition of the sampled window (the slices tile it exactly): `js · browser ·

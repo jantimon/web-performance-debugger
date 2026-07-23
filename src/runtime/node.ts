@@ -6,8 +6,10 @@ import { Session } from "node:inspector";
 import {
   buildCpuModel,
   DEFAULT_CPU_INTERVAL_US,
+  windowCumulativeCpuProfile,
   type RawCpuProfile,
 } from "../profile/cpuprofile.js";
+import { usToMs, msToUs } from "../model/time.js";
 import { buildSummary, NO_RENDERING_CAPTURE } from "../metrics/summarize.js";
 import { buildRecordingSpans } from "../record/spans-build.js";
 import { writePointer } from "../commands/resolve.js";
@@ -87,15 +89,29 @@ export async function recordNode(opts: RecordOptions): Promise<{
   const { session, post } = profilerSession();
   await post("Profiler.enable");
   await post("Profiler.setSamplingInterval", { interval: intervalUs });
+  // The profiler's own clock (profile.startTime/endTime, microseconds) shares node's monotonic tick
+  // source with performance.now, offset by a stable constant. Read performance.now right before
+  // Profiler.start: the profiler stamps startTime at the beginning of that call, so this pins the
+  // offset (profile-clock minus perf.now) to under ~0.1 ms. The loop bounds below become the explicit
+  // application window the profile is clipped to, dropping the sampler-startup prefix.
+  const nowBeforeProfilerStartMs = performance.now();
   await post("Profiler.start");
 
   const perIteration: number[] = [];
+  // The timed loop's own bounds on the perf.now clock: windowStart is the first run()'s start,
+  // windowEnd the last run()'s end. The ~9-30 ms the profiler spends warming up before the first
+  // run() falls BEFORE windowStart, so clipping to this window bills that prefix to no frame.
+  let windowStartNowMs: number | null = null;
+  let windowEndNowMs = 0;
   let rawProfile: RawCpuProfile | undefined;
   try {
     for (let iteration = 0; iteration < opts.iterations; iteration++) {
       const startedAt = performance.now();
+      if (windowStartNowMs == null) windowStartNowMs = startedAt;
       await run(ctx);
-      perIteration.push(performance.now() - startedAt);
+      const finishedAt = performance.now();
+      windowEndNowMs = finishedAt;
+      perIteration.push(finishedAt - startedAt);
     }
   } finally {
     // Best-effort teardown even if run() threw: stop the profiler, drop the inspector session,
@@ -106,6 +122,17 @@ export async function recordNode(opts: RecordOptions): Promise<{
     if (cleanup) await cleanup(ctx);
   }
   if (!rawProfile) throw new Error("Profiler.stop returned no profile");
+
+  // Clip the profile to the timed loop's window on the profiler's own clock. The clock offset is the
+  // gap between the profiler's startTime (captured at the start of Profiler.start) and the perf.now
+  // read taken immediately before it; adding it converts the loop bounds into the profile clock. Skip
+  // when no run() executed (iterations 0), leaving the raw profile untouched.
+  if (windowStartNowMs != null) {
+    const clockOffsetMs = usToMs(rawProfile.startTime) - nowBeforeProfilerStartMs;
+    const windowStartUs = msToUs(windowStartNowMs + clockOffsetMs);
+    const windowEndUs = msToUs(windowEndNowMs + clockOffsetMs);
+    rawProfile = windowCumulativeCpuProfile(rawProfile, windowStartUs, windowEndUs);
+  }
 
   const outPath = opts.out
     ? path.resolve(opts.out)
@@ -159,9 +186,9 @@ export async function recordNode(opts: RecordOptions): Promise<{
     inpMs: null,
     detailEvents: [],
     detailWindowStart: null,
-    // No DOM: every rendering count is not-measured (NO_RENDERING_CAPTURE default). scriptingMs is
+    // No DOM: every rendering count is not-measured (NO_RENDERING_CAPTURE default). jsSelfMs is
     // the in-process V8 profile's JS self-time.
-    scriptingMs: cpuModel.scriptingMs,
+    jsSelfMs: cpuModel.jsSelfMs,
   });
   const recording: Recording = {
     meta,

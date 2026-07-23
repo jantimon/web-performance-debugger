@@ -90,7 +90,7 @@ test("geckoToRawCpuProfile -> buildCpuModel resolves hot JS to source with 1->0-
     serverUrl: FIXTURE_ORIGIN,
     root: repoRoot,
   });
-  assert.ok(model.scriptingMs > 0, "non-zero sampled scripting time");
+  assert.ok(model.jsSelfMs > 0, "non-zero sampled JS self-time");
   const busywork = model.functions.find((fn) => fn.source?.includes("forces-layout.mjs"));
   assert.ok(busywork, "a busywork function resolved to its source file");
   assert.match(busywork.package, /wpd-examples|app/, "attributed to the example workspace package");

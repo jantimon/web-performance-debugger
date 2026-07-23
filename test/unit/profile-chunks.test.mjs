@@ -110,7 +110,7 @@ test("assembleTraceCpuProfile: buildCpuModel runs UNCHANGED and attributes BOTH 
   const { profile, sampleIntervalUs } = assembleTraceCpuProfile(fixture);
   const model = await buildCpuModel(profile, {
     profilePath: "/tmp/x.cpuprofile",
-    meta: { schemaVersion: "3" },
+    meta: { schemaVersion: "4" },
     sampleIntervalUs,
     root: os.tmpdir(),
   });
@@ -121,7 +121,7 @@ test("assembleTraceCpuProfile: buildCpuModel runs UNCHANGED and attributes BOTH 
   const burn = model.functions.find((fn) => fn.fn === "burn");
   const work = model.functions.find((fn) => fn.fn === "work");
   assert.ok(burn.selfMs > work.selfMs, "burn (5 samples) outweighs work (3 samples)");
-  assert.ok(model.scriptingMs > 0, "the merged model has real scripting time");
+  assert.ok(model.jsSelfMs > 0, "the merged model has real JS self-time");
 });
 
 test("assembleTraceCpuProfile: no chunk stream yields null (the honest not-covered fallback)", () => {

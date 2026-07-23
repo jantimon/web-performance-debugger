@@ -56,6 +56,43 @@ But it constrains what may be claimed:
 - **browser lanes** (`--bench`, driver): self-time is JS + synchronous engine work. Do not describe
   it as "pure JS cost".
 
+### The headline is `jsSelfMs`, not the non-idle total
+
+The `CpuModel` carries two figures, and they answer different questions:
+
+- **`jsSelfMs`** is the JS self-time headline: the sum over rankable user functions, the SAME set
+  `packageRollup`/`fileRollup` tile, so the per-package shares reconcile to 100% against it. This is
+  what `query cpu` leads with, what the `record` report prints, and the axis `cpu-diff
+  --fail-on-regression` gates.
+- **`activeMs`** is the non-idle sampled total (`js + gc + engine/native`). It is strictly larger, and
+  it is NOT JS self-time: gc and engine work are real, but they are not a function's cost and never
+  denominate a per-package share. `query cpu` reports it as "of X ms non-idle sampled" and the
+  reconciling bar splits it into its slices.
+
+Keep them apart. The idle-complement (`sampled − idle`) is `activeMs`; billing it under a "JS
+self-time" label folds gc/native into a JS number while the same output prints them as separate rows,
+so two denominators sit under one name and the package percentages fall short of the headline.
+`cpu-diff` gates on `jsSelfMs` so a change that is entirely gc/native, or sampler-startup jitter that
+never lands on a JS frame, cannot trip a JS-cost gate.
+
+### The node lane windows out the profiler-start prefix
+
+**[measured]** On `--target node`, the inspector profiler's `timeDeltas[0]` is the whole interval from
+`Profiler.start` to the FIRST sample -- the 9-30 ms the sampler spends warming up, spent before the
+first `run()` (it elapses inside the `await Profiler.start`). V8 bills that unsampled prefix to
+whichever frame the first sample caught, which is `post (node:inspector)` (the tool's own inspector
+call), adding a fixed ~9-30 ms to `jsSelfMs` under `(node)`. `runtime/node.ts` brackets the timed loop
+on the profiler's own clock (the profiler stamps `startTime` at the start of `Profiler.start`, so a
+`performance.now` read there pins the clock offset to under ~0.1 ms) and clips the profile to that
+window (`windowCumulativeCpuProfile`), so the prefix and any post-loop tail land on no frame and
+`totalMs` equals the window width. A no-op then reads ~0, not the prefix.
+
+The chrome CDP lanes do NOT need this: the same `timeDeltas[0]` prefix lands on `(program)` there (the
+renderer is idle between the profiler start and the first driven work), which tiles into the `browser`
+slice, never a ranked function or a package row, so it cannot become a hot function or move a
+per-function/package `cpu-diff` row. Its only reach was the non-idle total, which `jsSelfMs` gating
+now excludes.
+
 ## The capture modes
 
 Every invocation is exactly ONE capture pass: one browser launch, one run of the flow, one recording.
@@ -113,18 +150,19 @@ without the gecko pass reports every rendering count as 0.
 
 ### The sampler opens at the run mark, not before prepare
 
-**[measured]** The V8 CPU model is built from the WHOLE returned profile, never sliced to the run
-window: there is no trace clock in the default capture mode to slice it by, so whatever the sampler recorded
-lands in `scriptingMs`, the package rollup, the hot list, and `cpu-diff`. So the sampler's lifetime
-IS the measured window, and it opens **right before the `wpd:run:start` mark**, after `prepare()` and
-after every warmup iteration (`browser/driver.ts` `beforeRunWindow`, `record/runpass.ts`). `cleanup()`
-already runs after the sampler stops.
+**[measured]** On the chrome CDP lanes the V8 CPU model is built from the WHOLE returned profile,
+never sliced to the run window: there is no trace clock in the default capture mode to slice it by, so
+whatever the sampler recorded lands in `jsSelfMs`, the package rollup, the hot list, and `cpu-diff`.
+So the sampler's lifetime IS the measured window, and it opens **right before the `wpd:run:start`
+mark**, after `prepare()` and after every warmup iteration (`browser/driver.ts` `beforeRunWindow`,
+`record/runpass.ts`). `cleanup()` already runs after the sampler stops. (The node lane DOES slice, on
+the profiler's own clock, to drop the start prefix -- see above.)
 
 Opened before `prepare()` instead, it bills every page-side JS that setup ran to the run. On a driver
 probe whose `run()` does ~5 ms of page JS and whose `prepare()` does ~80 ms, the whole-profile model
-reads **scriptingMs ~88 ms with the setup loop as the top hot function (~84 ms, 95%)** and a ~310 ms
+reads **jsSelfMs ~88 ms with the setup loop as the top hot function (~84 ms, 95%)** and a ~310 ms
 sampled window; a second `--warmup 2` adds the warmup repetitions on top (~99 ms). Opening it at the
-run mark reads **scriptingMs ~9 ms**, the run's own cost. The trace COUNTS are windowed to the run
+run mark reads **jsSelfMs ~9 ms**, the run's own cost. The trace COUNTS are windowed to the run
 marks regardless (`findWindow`), so on `--breakdown` the trace may start before the sampler; only the
 sampler must not. This matches bench, where `prepare()`+warmup already run in a separate `page.evaluate`
 before the sampler starts (`runpass.ts` setup phase).
@@ -133,7 +171,7 @@ Starting late is safe across navigation: the page CDP session outlives a cross-d
 (the on-ramp `--url` load step navigates inside the run window with the sampler already open), so a
 `prepare()` that navigates is simply excluded, and a `run()` that navigates behaves as before -- on the
 default capture mode the CDP profiler resets in the new process, so page CPU work before the navigation is
-absent from `scriptingMs`. `--breakdown` does not have this loss: it sources samples from the trace's
+absent from `jsSelfMs`. `--breakdown` does not have this loss: it sources samples from the trace's
 `v8.cpu_profiler` stream, which is continuous across the navigation
 ([cpu-attribution.md](./cpu-attribution.md#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-capture-mode---breakdown-does-not)).
 There the trace-sourced profile is instead windowed to the run onward (`windowTraceCpuProfile`, since
@@ -311,7 +349,7 @@ summed timed `run()` samples) to ~1% on JS-bound work. Probe: `examples/fixed-js
 | lane | iter=1 | iter=50 | reconciles with bench wall | resolution floor |
 | --- | --- | --- | --- | --- |
 | Chrome (200us sampler) | js 2.2 ms (bench 2.2) | js 74.1 ms (bench 73.4) | yes, ~1% | ~1.5ms call resolves at iter=1 (~10 samples) |
-| Firefox (~1ms sampler) | scriptingMs 2.0 ms (bench 2) | scriptingMs 67.9 ms (bench 65) | yes, ~3% | needs a few ms accumulated; ~5ms over-count floor for near-zero work |
+| Firefox (~1ms sampler) | jsSelfMs 2.0 ms (bench 2) | jsSelfMs 67.9 ms (bench 65) | yes, ~3% | needs a few ms accumulated; ~5ms over-count floor for near-zero work |
 
 The sampler interval sets the floor: Chrome at 200us prices a single sub-millisecond call (though
 at `--iterations 1` a sub-ms call can land 0 samples — the near-zero `console.log` probe

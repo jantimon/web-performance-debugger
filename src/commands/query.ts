@@ -299,7 +299,7 @@ function buildSpanAnatomy(
   if (span.kind === "run" && model)
     hot = {
       scope: "run-window",
-      scriptingMs: model.scriptingMs,
+      scriptingMs: model.jsSelfMs,
       pooledSamples: model.sampleCount,
       occurrences: 1,
       functions: model.functions.slice(0, topN),

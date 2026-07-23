@@ -132,10 +132,10 @@ test("diff does not regress on the frame side track (display-only invariant)", a
     wallMs: 10, inpMs: null, layoutCount: 5, layoutMs: 1, styleCount: 5, styleMs: 1,
     paintCount: 2, paintMs: 1, layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0,
     forcedLayoutCount: 0, forcedLayoutMs: 0, longTaskCount: 0, longestTaskMs: 0,
-    scriptingMs: 1, totalEvents: 10, perIteration: [10], stats: null, perStep: [],
+    jsSelfMs: 1, totalEvents: 10, perIteration: [10], stats: null, perStep: [],
   };
   const withFrames = (dropped) => ({
-    meta: { schemaVersion: "3", driver: false },
+    meta: { schemaVersion: "4", driver: false },
     window: { measure: "wpd:run", startTs: 0, endTs: 10, wallMs: 10 },
     marks: [], events: [],
     summary,

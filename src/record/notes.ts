@@ -81,11 +81,11 @@ export function firefoxBackend(): string {
 }
 
 export function firefoxRenderingCountsMeasured(): string {
-  return "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's counts: read them against another Firefox run. NOT measured and reported as not-measured (—), never a fake 0: paintCount (off-main-thread), invalidation counts and long tasks (from the DevTools trace, which Gecko has no equivalent of). scriptingMs comes from the CPU model.";
+  return "Rendering counts on Firefox: layoutCount/styleCount/forcedLayoutCount ARE measured, from the Gecko profiler's Reflow/Styles markers. Gecko batches layout differently than Chrome, so these are approximate and NOT comparable to Chrome's counts: read them against another Firefox run. NOT measured and reported as not-measured (—), never a fake 0: paintCount (off-main-thread), invalidation counts and long tasks (from the DevTools trace, which Gecko has no equivalent of). JS self-time comes from the CPU model.";
 }
 
 export function firefoxRenderingCountsDisabled(): string {
-  return "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as not-measured (—) because nothing counted them, not because the page did no work: layout/style/paint, forced layout, invalidations, long tasks, scriptingMs. Wall timing and INP are real.";
+  return "Rendering counts on Firefox come from the Gecko profiler pass, which this run disabled (cpuProfile:false). EVERY rendering count here is reported as not-measured (—) because nothing counted them, not because the page did no work: layout/style/paint, forced layout, invalidations, long tasks, JS self-time. Wall timing and INP are real.";
 }
 
 export function firefoxInp(): string {
@@ -105,7 +105,7 @@ export function firefoxBreakdown(): string {
 }
 
 export function firefoxNoCpuBreakdown(): string {
-  return "No CPU time breakdown on Firefox: this Gecko dump carries no per-sample threadCPUDelta CPU signal (an older recording, or the profiler ran without the `cpu` feature), so idle cannot be told from engine work and a bar would fabricate it. CPU self-time (scriptingMs, query cpu) is still measured.";
+  return "No CPU time breakdown on Firefox: this Gecko dump carries no per-sample threadCPUDelta CPU signal (an older recording, or the profiler ran without the `cpu` feature), so idle cannot be told from engine work and a bar would fabricate it. CPU self-time (JS self-time, query cpu) is still measured.";
 }
 
 // --- Chrome capture modes ---

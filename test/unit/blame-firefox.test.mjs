@@ -26,7 +26,7 @@ async function captureText(runner) {
 const summary = {
   wallMs: null,
   inpMs: null,
-  scriptingMs: 0,
+  jsSelfMs: 0,
   layoutCount: 1,
   styleCount: 1,
   paintCount: null,
@@ -46,7 +46,7 @@ function writeFirefoxRec(name, events) {
     file,
     JSON.stringify({
       meta: {
-        schemaVersion: "3",
+        schemaVersion: "4",
         target: "firefox",
         browser: "firefox",
         passes: ["gecko"],

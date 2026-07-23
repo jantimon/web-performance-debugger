@@ -735,9 +735,11 @@ run     layout  2.39   2    FAIL
 
 `diff` matches spans by label and reports per-slice ms deltas (advisory, directional) alongside the
 gated exact-count deltas, and warns when a metric is comparable on one side only (`n/a`). `cpu-diff`
-joins two CPU models per function and per package, noise-filtered. Only the exact counts gate
-`--fail-on-regression`; wall, INP and scripting ms are directional, so they print but never fail the
-build. And a gate **refuses** across an incompatible capture rather than fabricate a regression: a
+joins two CPU models per function and per package, noise-filtered. On `diff`, only the exact counts
+gate `--fail-on-regression`; wall, INP and JS self-time are directional, so they print but never fail
+the build. `cpu-diff --fail-on-regression` gates on **net JS self-time** (the JS-only headline the
+per-function and per-package rows sum to), so a change that is entirely GC/native or sampler noise
+does not trip it. And a gate **refuses** across an incompatible capture rather than fabricate a regression: a
 `diff` across a different browser/runtime/capture-mode/workload/`--iterations`/`--warmup`/headless flavour/
 `--cpu-throttle`, or a `cpu-diff` across a different
 browser/runtime/workload/`--iterations`/`--warmup`/`--cpu-throttle`, names the mismatch and declines

@@ -136,8 +136,9 @@ export interface SummaryInputs {
   perStep?: Omit<StepTiming, "stats">[];
   /** what the capture could observe; defaults to NO_RENDERING_CAPTURE (default capture mode / node). */
   capabilities?: CaptureCapabilities;
-  /** JS self-time from the CPU model, or null (--deep has no sampler, so no CPU model). */
-  scriptingMs?: Measured<number>;
+  /** JS self-time from the CPU model (`CpuModel.jsSelfMs`), or null (--deep has no sampler, so no CPU
+   * model). NOT the non-idle sampled total. */
+  jsSelfMs?: Measured<number>;
   /**
    * The renderer main thread to scope EVERY trace-derived count to (layout/style AND
    * paint/forced/invalidation/long-task/total). Omitted (undefined) => selected from `detailEvents`
@@ -256,7 +257,7 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
       capabilities.longTasks && capabilities.durations,
       usToMs(longestTaskUs),
     ),
-    scriptingMs: input.scriptingMs ?? null,
+    jsSelfMs: input.jsSelfMs ?? null,
     totalEvents: total,
     perIteration,
     stats: computeStats(perIteration),

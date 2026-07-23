@@ -332,12 +332,12 @@ test("buildSpans: a bar-less step in a breakdown recording (a navigating step) s
 
 test("query spans on a default-capture driver flow shows the run bar + every step (item 3)", async () => {
   const file = writeRec("spans-mixed.json", {
-    meta: { schemaVersion: "3", target: "chrome", passes: ["default"], iterations: 1 },
+    meta: { schemaVersion: "4", target: "chrome", passes: ["default"], iterations: 1 },
     spans: defaultDriverSpans,
   });
   writeFileSync(
     path.join(tmpDir, "spans-mixed.cpu.json"),
-    JSON.stringify({ meta: { schemaVersion: "3" }, functions: [], breakdown: firefoxCpu }),
+    JSON.stringify({ meta: { schemaVersion: "4" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
   const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
@@ -354,12 +354,12 @@ test("query spans on a default-capture driver flow shows the run bar + every ste
 
 test("query spans --label can target a bar-less step in a mixed recording (item 3)", async () => {
   const file = writeRec("spans-mixed-label.json", {
-    meta: { schemaVersion: "3", target: "chrome", passes: ["default"], iterations: 1 },
+    meta: { schemaVersion: "4", target: "chrome", passes: ["default"], iterations: 1 },
     spans: defaultDriverSpans,
   });
   writeFileSync(
     path.join(tmpDir, "spans-mixed-label.cpu.json"),
-    JSON.stringify({ meta: { schemaVersion: "3" }, functions: [], breakdown: firefoxCpu }),
+    JSON.stringify({ meta: { schemaVersion: "4" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
   const parsed = JSON.parse(
@@ -453,7 +453,7 @@ async function captureJson(runner) {
 
 test("query spans --label keeps the exact match; a miss is an empty array, not an error", async () => {
   const file = writeRec("spans-chrome.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 4 },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 4 },
     spans: chromeBreakdowns,
   });
 
@@ -470,13 +470,13 @@ test("query spans --label keeps the exact match; a miss is an empty array, not a
 
 test("query spans synthesizes the run span from a sibling cpu model (never empty when a bar exists)", async () => {
   const file = writeRec("spans-ff.json", {
-    meta: { schemaVersion: "3", target: "firefox", browser: "firefox" },
+    meta: { schemaVersion: "4", target: "firefox", browser: "firefox" },
     spans: [],
   });
   // loadCpuModel finds `<base>.cpu.json` beside the recording; it must carry a functions array.
   writeFileSync(
     path.join(tmpDir, "spans-ff.cpu.json"),
-    JSON.stringify({ meta: { schemaVersion: "3" }, functions: [], breakdown: firefoxCpu }),
+    JSON.stringify({ meta: { schemaVersion: "4" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
   const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
@@ -538,7 +538,7 @@ test("buildSpanCounts projects a bar-less recording's spans onto counts + wall (
 
 test("query spans on a --deep recording renders the counts overview instead of erroring", async () => {
   const file = writeRec("spans-deep.json", {
-    meta: { schemaVersion: "3", target: "chrome", passes: ["deep"], iterations: 1 },
+    meta: { schemaVersion: "4", target: "chrome", passes: ["deep"], iterations: 1 },
     spans: deepSpans,
   });
   const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
@@ -555,7 +555,7 @@ test("query spans on a --deep recording renders the counts overview instead of e
 
 test("query spans errors (non-zero) only on a recording that holds no spans at all", async () => {
   const file = writeRec("spans-no-bar.json", {
-    meta: { schemaVersion: "3", target: "chrome" },
+    meta: { schemaVersion: "4", target: "chrome" },
     spans: [],
   });
   await assert.rejects(() => querySpans(file, { json: true }), /carries no spans/);
@@ -565,7 +565,7 @@ test("query spans errors (non-zero) only on a recording that holds no spans at a
 // reads as a capture mode that never sampled). Only the ENOCPUMODEL "no model here" case is the empty case.
 test("query spans surfaces a corrupt sibling cpu model instead of reporting 'no breakdown' (F35)", async () => {
   const file = writeRec("spans-corrupt-sibling.json", {
-    meta: { schemaVersion: "3", target: "chrome" },
+    meta: { schemaVersion: "4", target: "chrome" },
     spans: [],
   });
   writeFileSync(path.join(tmpDir, "spans-corrupt-sibling.cpu.json"), "{ this is not valid json", "utf8");

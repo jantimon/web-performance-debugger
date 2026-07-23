@@ -48,7 +48,7 @@ const METRICS: {
   { label: "long tasks", key: "longTaskCount", higherIsWorse: true, gated: true },
   { label: "INP ms", key: "inpMs", higherIsWorse: true, gated: false },
   { label: "wall ms", key: "wallMs", higherIsWorse: true, gated: false },
-  { label: "scripting ms", key: "scriptingMs", higherIsWorse: true, gated: false },
+  { label: "JS self ms", key: "jsSelfMs", higherIsWorse: true, gated: false },
 ];
 
 async function loadRecording(file: string): Promise<Recording> {

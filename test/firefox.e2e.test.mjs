@@ -239,7 +239,7 @@ e2e(
     assert.ok(existsSync(`${out}.geckoprofile.json`), "raw gecko dump written");
 
     const model = JSON.parse(runCli(["query", "cpu", out, "--json"]));
-    assert.ok(model.scriptingMs > 0, "non-zero sampled scripting time");
+    assert.ok(model.jsSelfMs > 0, "non-zero sampled JS self-time");
     assert.ok(model.sampleCount > 0, "gecko profiler collected samples");
     const named = model.hot.find(
       (fn) => fn.fn === "hashString" || fn.fn === "buildRows" || fn.fn === "serializeStyle",

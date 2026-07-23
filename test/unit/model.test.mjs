@@ -23,7 +23,7 @@ test("serialize/deserialize round-trips json and toon", () => {
 });
 
 test("public entrypoint exposes the schema version anchor", () => {
-  assert.equal(SCHEMA_VERSION, "3");
+  assert.equal(SCHEMA_VERSION, "4");
 });
 
 // Write-first (§17.13.9 item 5): an artifact stamped with an older schema epoch is REJECTED, loudly,
@@ -131,13 +131,13 @@ test("notes: the no-median on-ramp note names iterations and steers to --breakdo
 // Write recordings with explicit meta (browser/passes/iterations) to exercise the comparability gate.
 function writeRecMeta(name, metaOverrides, summaryOverrides = {}) {
   const summary = {
-    wallMs: null, inpMs: null, scriptingMs: 0,
+    wallMs: null, inpMs: null, jsSelfMs: 0,
     layoutCount: 0, styleCount: 0, paintCount: 0,
     forcedLayoutCount: 0, layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0,
     longTaskCount: 0, totalEvents: 0, perIteration: [], stats: null,
     ...summaryOverrides,
   };
-  const meta = { schemaVersion: "3", passes: ["deep"], driver: false, iterations: 5, ...metaOverrides };
+  const meta = { schemaVersion: "4", passes: ["deep"], driver: false, iterations: 5, ...metaOverrides };
   const file = path.join(tmpDir, name);
   writeFileSync(file, JSON.stringify({ meta, summary, spans: [] }), "utf8");
   return file;
@@ -387,12 +387,12 @@ test("diff: --fail-on-regression REFUSES across a mismatched capture-mode/browse
 // R05: cpu-diff had NO comparability check. It joins per-function self-time across two models as if
 // they measured the same JS; a workload/lane mismatch makes that a fabricated delta. It now warns
 // always and REFUSES a --fail-on-regression gate across browser/runtime/workload.
-function writeCpuModel(name, metaOverrides, scriptingMs) {
-  const meta = { schemaVersion: "3", passes: ["default"], iterations: 1, target: "a.mjs", ...metaOverrides };
+function writeCpuModel(name, metaOverrides, jsSelfMs) {
+  const meta = { schemaVersion: "4", passes: ["default"], iterations: 1, target: "a.mjs", ...metaOverrides };
   const model = {
-    profile: "x.cpuprofile", meta, scriptingMs, totalMs: scriptingMs,
+    profile: "x.cpuprofile", meta, jsSelfMs, activeMs: jsSelfMs, totalMs: jsSelfMs,
     sampleCount: 1, sampleIntervalUs: 200, system: { idleMs: 0, gcMs: 0, programMs: 0 },
-    functions: [{ id: 0, fn: "run", source: "a.mjs:1", file: "a.mjs", package: "app", selfMs: scriptingMs, totalMs: scriptingMs, selfPct: 100 }],
+    functions: [{ id: 0, fn: "run", source: "a.mjs:1", file: "a.mjs", package: "app", selfMs: jsSelfMs, totalMs: jsSelfMs, selfPct: 100 }],
     edges: [],
   };
   const file = path.join(tmpDir, name);
@@ -522,9 +522,9 @@ test("cpu-diff: an iterations/throttle mismatch WARNS but exits 0 without the ga
   assert.equal(code, undefined, "without --fail-on-regression the mismatch only warns");
 });
 
-test("diff: advisory wall/INP/scripting deltas do NOT fail the gate (H1)", async () => {
-  const baseline = writeRecording("base-advisory.json", { wallMs: 10, inpMs: 5, scriptingMs: 20 });
-  const current = writeRecording("cur-advisory.json", { wallMs: 99, inpMs: 88, scriptingMs: 77 });
+test("diff: advisory wall/INP/JS-self deltas do NOT fail the gate (H1)", async () => {
+  const baseline = writeRecording("base-advisory.json", { wallMs: 10, inpMs: 5, jsSelfMs: 20 });
+  const current = writeRecording("cur-advisory.json", { wallMs: 99, inpMs: 88, jsSelfMs: 77 });
   const code = await captureExitCode(() => diffCmd(baseline, current, { failOnRegression: true }));
   assert.equal(code, undefined); // coarse metrics regressed, but they are advisory-only
 });
