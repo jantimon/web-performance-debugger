@@ -9,36 +9,26 @@ import type { CDPSession } from "puppeteer";
 /**
  * A large offline-collection buffer, in KB. Chrome's default holds ~485k events (~275MB) [measured]
  * before it drops; a heavy --deep journey (`.stack` + `invalidationTracking`) outgrows that in a few
- * steps. 1 GB captures ~846k events (~475MB) with ZERO loss on the same probe, enough for a
- * multi-step production journey, and does not preallocate (the buffer fills only to what the trace
- * produces, so a light page pays nothing). Raising it further would let Chrome build a trace past the
- * ~512MB `parseTrace` can decode into one JS string, converting an honest overflow into a crash;
- * `stopTrace` guards that edge instead. See docs/dev/trace-buffer.md.
+ * steps. 4 GB captures ~2.1M events (~1.2GB) with ZERO loss [measured], enough for a multi-step
+ * production journey, and does not preallocate (the buffer fills only to what the trace produces, so a
+ * light page pays nothing). `scanTraceEvents` parses the streamed bytes one event at a time, so the
+ * former ~512MB single-string parse ceiling no longer bounds this value. See docs/dev/trace-buffer.md.
  */
-const TRACE_BUFFER_SIZE_KB = 1_000_000;
+const TRACE_BUFFER_SIZE_KB = 4_000_000;
 
-// Node cannot hold a string longer than 0x1fffffe8 chars; the trace JSON is ASCII, so this is also
-// the byte ceiling on a trace `parseTrace` (one TextDecoder().decode) can turn into text. A trace
-// past it is unparseable, reported honestly rather than thrown as ERR_STRING_TOO_LONG.
-const MAX_TRACE_STRING_BYTES = 0x1fffffe8;
-
-/** The result of one trace: the decoded JSON text, plus Chrome's own data-loss verdict. */
+/** The result of one trace: the raw JSON bytes, plus Chrome's own data-loss verdict. */
 export interface TraceResult {
-  /** the trace JSON, ready for parseTrace; "[]" when the browser produced nothing or it was unparseable */
-  text: string;
+  /**
+   * The trace JSON as UTF-8 bytes, ready for `scanTraceEvents`. A Uint8Array has no ~512MB ceiling (a
+   * JS string does), so a heavy --deep trace is held whole and parsed incrementally. `[]` bytes when
+   * the browser produced no stream.
+   */
+  bytes: Uint8Array;
   /**
    * Chrome reported that trace events were dropped (the buffer filled and wrapped). The counts
    * derived from a lossy trace can undercount, so this drives a loud note, never a silent number.
    */
   dataLossOccurred: boolean;
-  /**
-   * The trace outgrew the ~512MB a single JS string can hold, so it could not be decoded for parsing
-   * (`text` is the empty-trace sentinel `"[]"`, same as an empty run). A harder failure than
-   * dataLoss: not one count is available. Drives a hard error.
-   */
-  tooLargeToParse?: boolean;
-  /** bytes streamed from Chrome, for the too-large error message. */
-  byteLength?: number;
 }
 
 /** Split puppeteer-style category filters ("-name" excludes) into CDP's included/excluded lists. */
@@ -106,10 +96,10 @@ async function readStream(client: CDPSession, handle: string): Promise<Uint8Arra
 }
 
 /**
- * Stop tracing on `client` and return the decoded trace plus its data-loss verdict. Registers the
+ * Stop tracing on `client` and return the raw trace bytes plus its data-loss verdict. Registers the
  * `Tracing.tracingComplete` listener BEFORE `Tracing.end` so the event (which carries both the stream
- * handle and `dataLossOccurred`) is never missed. A trace past the JS-string ceiling is reported as
- * `tooLargeToParse` rather than decoded (which would throw ERR_STRING_TOO_LONG).
+ * handle and `dataLossOccurred`) is never missed. The bytes are returned undecoded: `scanTraceEvents`
+ * parses them one event at a time, so a trace past the ~512MB single-string ceiling still parses.
  */
 export async function stopTrace(client: CDPSession): Promise<TraceResult> {
   const complete = new Promise<{ stream?: string; dataLossOccurred: boolean }>((resolve) => {
@@ -119,9 +109,7 @@ export async function stopTrace(client: CDPSession): Promise<TraceResult> {
   });
   await client.send("Tracing.end");
   const { stream, dataLossOccurred } = await complete;
-  if (!stream) return { text: "[]", dataLossOccurred };
+  if (!stream) return { bytes: new TextEncoder().encode("[]"), dataLossOccurred };
   const bytes = await readStream(client, stream);
-  if (bytes.length >= MAX_TRACE_STRING_BYTES)
-    return { text: "[]", dataLossOccurred, tooLargeToParse: true, byteLength: bytes.length };
-  return { text: new TextDecoder("utf-8").decode(bytes), dataLossOccurred };
+  return { bytes, dataLossOccurred };
 }

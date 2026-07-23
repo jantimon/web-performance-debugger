@@ -1,6 +1,7 @@
 import type { NormalizedEvent } from "../model/recording.js";
 import { RUN_START_MARK, RUN_END_MARK, matchStepEdgeMark } from "../model/marks.js";
 import { classify } from "./classify.js";
+import { toRawTraceEvents } from "./scan.js";
 
 interface RawTraceEvent {
   cat?: string;
@@ -24,11 +25,10 @@ interface RawTraceEvent {
  * renderer main thread alone and must tell it from raster/compositor threads.
  */
 export function parseTrace(
-  rawJson: string | { traceEvents?: RawTraceEvent[] },
+  rawJson: string | Uint8Array | { traceEvents?: RawTraceEvent[] } | Iterable<RawTraceEvent>,
   options?: { keepThreadIds?: boolean },
 ): NormalizedEvent[] {
-  const obj = typeof rawJson === "string" ? JSON.parse(rawJson) : rawJson;
-  const raw: RawTraceEvent[] = Array.isArray(obj) ? obj : (obj.traceEvents ?? []);
+  const raw = toRawTraceEvents<RawTraceEvent>(rawJson);
   const keepThreadIds = options?.keepThreadIds === true;
   const out: NormalizedEvent[] = [];
   let id = 0;
