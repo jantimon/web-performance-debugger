@@ -143,6 +143,65 @@ test("buildSpans: aggregation is per-kind (run=sum, step/measure=first) and iter
     assert.equal(span.iterations, 7, "iterations is stamped on every span from the recording meta");
 });
 
+// A step's headline wall is the MEDIAN of its per-iteration samples (span.wallMs), never the bar's
+// iteration-0 window (span.breakdown.wallMs): on an outlier iteration 0 (a retry inside the timed
+// action) the window can be ~70x the median, and the median is the honest headline. The bar's window
+// rides breakdownWallMs so the slices still reconcile against what they tile.
+test("buildSpans: a step entry reports the median wall, not the iteration-0 bar window", () => {
+  const bars = [
+    { label: "run", kind: "run", breakdown: chromeBreakdown(20) },
+    {
+      label: "add rows",
+      kind: "step",
+      // The bar tiles an outlier iteration 0; the stored span wall is the median across iterations.
+      wallMs: 16.03,
+      breakdown: chromeBreakdown(2023.43),
+    },
+  ];
+  const result = buildSpans(bars, undefined, "chrome", 3);
+  const step = result.spans.find((span) => span.kind === "step");
+  assert.equal(step.wallMs, 16.03, "the step headline is the median, not the 2023.43 ms window");
+  assert.equal(step.breakdownWallMs, 2023.43, "the bar's own iteration-0 window rides breakdownWallMs");
+  // The slices tile the bar window, so Σ slices + idle reconciles to breakdownWallMs, not wallMs.
+  const sliceSum =
+    step.slices.js.ms +
+    step.slices.style.ms +
+    step.slices.layout.ms +
+    step.slices.paint.ms +
+    step.slices.gc.ms +
+    step.slices.other.ms +
+    step.slices.idle.ms;
+  assert.ok(Math.abs(sliceSum - step.breakdownWallMs) < 1e-6, "slices reconcile to the bar window");
+});
+
+// A run/measure span's wall IS its bar window (the whole-loop run window / the merged occurrence), so
+// it stays breakdown.wallMs and carries no breakdownWallMs (nothing to disambiguate).
+test("buildSpans: run and measure entries keep the bar window as wall, with no breakdownWallMs", () => {
+  const bars = [
+    { label: "run", kind: "run", wallMs: 999, breakdown: chromeBreakdown(20) },
+    { label: "work", kind: "measure", wallMs: 999, breakdown: chromeBreakdown(3) },
+  ];
+  const result = buildSpans(bars, undefined, "chrome", 3);
+  const run = result.spans.find((span) => span.kind === "run");
+  const measure = result.spans.find((span) => span.kind === "measure");
+  assert.equal(run.wallMs, 20, "the run wall is its tiled window, not a stray span.wallMs");
+  assert.equal(run.breakdownWallMs, undefined, "run carries no breakdownWallMs");
+  assert.equal(measure.wallMs, 3, "the measure wall is its tiled window");
+  assert.equal(measure.breakdownWallMs, undefined, "measure carries no breakdownWallMs");
+});
+
+// A step whose median is unpriceable (a navigating step, wallMs null) falls back to the bar window so
+// the headline stays a number rather than null.
+test("buildSpans: a step with a null median wall falls back to the bar window", () => {
+  const bars = [
+    { label: "run", kind: "run", breakdown: chromeBreakdown(20) },
+    { label: "nav", kind: "step", wallMs: null, breakdown: chromeBreakdown(12) },
+  ];
+  const step = buildSpans(bars, undefined, "chrome", 3).spans.find((span) => span.kind === "step");
+  assert.equal(step.wallMs, 12, "the bar window is the only wall available");
+  assert.equal(step.breakdownWallMs, 12, "the bar window is still disclosed");
+});
+
 test("spanAggregation: run is a sum, step and measure are first; a repeated measure is a median", () => {
   assert.equal(spanAggregation("run"), "sum");
   assert.equal(spanAggregation("step"), "first");

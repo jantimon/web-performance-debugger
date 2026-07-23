@@ -334,7 +334,11 @@ function buildSpanAnatomy(
     kind: span.kind,
     aggregation: entry?.aggregation ?? span.aggregation,
     iterations,
+    // A step's headline is the MEDIAN wall (entry.wallMs), never its iteration-0 bar window; the bar
+    // window rides `breakdownWallMs` so the two are not conflated. entry.wallMs already carries the
+    // median for a step (model/spans.ts entryFromSpan); the fallback covers a capture mode with no bar.
     wallMs: entry?.wallMs ?? span.wallMs,
+    ...(entry?.breakdownWallMs != null ? { breakdownWallMs: entry.breakdownWallMs } : {}),
     ...(span.samples != null ? { samples: span.samples } : {}),
     ...(span.wallMinMs != null ? { wallMinMs: span.wallMinMs } : {}),
     ...(span.wallMaxMs != null ? { wallMaxMs: span.wallMaxMs } : {}),
@@ -448,11 +452,13 @@ function printSpanAnatomy(
   // Point-of-use provenance on the wall itself, each firing only where the bare number misleads: a
   // step's wall is a MEDIAN (its header aggregation "first" describes the counts/bar window, not this
   // number), and a settle-dominated window's width reads as workload unless its idle share sits beside
-  // it. The idle tag rides only a span whose wall IS the tiled bar window (idleShareSuffix's contract).
+  // it. The idle tag rides ONLY a span whose wall IS the tiled bar window (idleShareSuffix's contract):
+  // a step's headline is the median, not that window, so its idle share stays on the bar's own idle row
+  // (whose header names the iteration-0 window), never beside a median it does not describe.
   const wallTags: string[] = [];
   const stepMedian = spanWallProvenance(anatomy.kind, span.perIteration?.length ?? 0);
   if (stepMedian) wallTags.push(stepMedian);
-  if (span.breakdown) {
+  if (span.breakdown && anatomy.kind !== "step") {
     const idleTag = idleShareSuffix(span.breakdown.slices.idle.ms, span.breakdown.wallMs);
     if (idleTag) wallTags.push(`${idleTag} (window, not work)`);
   }

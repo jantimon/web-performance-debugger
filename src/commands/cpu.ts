@@ -150,7 +150,11 @@ export function printSpanBreakdowns(
   console.log(`\nCPU time breakdown ${dim("(per span: Σ slices + idle = wall)")}`);
   for (const span of bars) {
     const { wallMs, slices, residualMs } = span.breakdown!;
-    const label = `${middleEllipsis(span.label, LABEL_COL_MAX)} ${dim(`(${span.kind}, ${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)})`)}`;
+    // A step's bar tiles iteration 0 ONLY, so this window is NOT the step's headline wall (the median
+    // of its samples, printed separately). Name it the iteration-0 window so the two are not conflated
+    // when an outlier iteration 0 makes them diverge.
+    const windowLabel = span.kind === "step" ? "iteration-0 window " : "";
+    const label = `${middleEllipsis(span.label, LABEL_COL_MAX)} ${dim(`(${span.kind}, ${windowLabel}${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)})`)}`;
     console.log(`\n${bold(label)}`);
     if (wallMs <= 0) {
       console.log(dim("  (empty window; nothing to tile)"));
