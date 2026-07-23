@@ -26,7 +26,13 @@ export function breakdownTraceCpuSource(intervalUs: number): string {
 }
 
 export function breakdownForcedNotMeasured(): string {
-  return "NOT measured in breakdown mode: forced-layout count and forced-layout blame (they need the `.stack` trace category, which this mode drops); reported as 'not measured', never 0. Run --deep for forced-layout blame and the dirtied-by/thrash report.";
+  return "NOT measured in breakdown mode: the forced-layout COUNT (it needs the `.stack` trace category, which this mode drops); reported as 'not measured', never 0. Forced-layout BLAME (query blame --forced) IS available: the read that forced each flush is sampled from the CPU profile's per-sample executing line (same flush-site semantic as --deep, a sampled estimate — cheap sub-interval reads can be missed and the line can lag one statement). Run --deep for the exact forced count and the dirtied-by/thrash report.";
+}
+
+/** --breakdown ran but the trace carried no per-sample executing lines (older Chrome), so the sampled
+ * read-site blame could not be derived. Reported as unavailable, never empty-as-clean. */
+export function breakdownBlameUnavailable(): string {
+  return "NOTE: --breakdown forced-layout blame is unavailable on this run: the trace's v8.cpu_profiler stream carried no per-sample executing lines (an older Chrome build), so query blame --forced has no read sites to name here. Run --deep for exact forced-layout blame, or update Chrome for the sampled read-site blame.";
 }
 
 export function breakdownInvalidationNotMeasured(): string {

@@ -122,6 +122,53 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
   assert.ok(top.kinds.includes("layout"), "kinds include layout");
 });
 
+// --breakdown drops .stack, so it has no exact forced-layout stack -- but the fused v8.cpu_profiler
+// stream carries a per-sample executing line (data.lines), and the sampler keeps sampling through a
+// synchronous forced layout, so `query blame --forced` answers with the SAMPLED read-site (the same
+// flush-site semantic as --deep + firefox). forces-layout.mjs reads each geometry property on its own
+// line (offsetWidth 46/56, offsetTop 52, ...), so a wide flush's sample lands on the forcing line.
+e2e("record --breakdown + query blame --forced returns sampled read-site attributions", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "sampled-blame");
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--breakdown", "--iterations", "5", "--out", out]);
+  assert.ok(existsSync(out), "recording file written");
+
+  // The recording carries the sampled read-site log and declares the flush-site semantic.
+  const recording = JSON.parse(readFileSync(out, "utf8"));
+  assert.equal(recording.meta.blameSemantic, "flush-site", "--breakdown declares the sampled read-site semantic");
+  assert.ok(recording.meta.passes.includes("breakdown"), "capture mode is breakdown");
+  // The forced COUNT stays not-measured on --breakdown (it needs .stack); only the blame is added.
+  assert.equal(recording.summary.forcedLayoutCount, null, "forced COUNT is still not measured (— ), never a fake 0");
+
+  const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
+  assert.ok(Array.isArray(blame) && blame.length > 0, "at least one sampled forced-layout source group");
+  const fromExample = blame.filter((row) => row.at?.includes("forces-layout.mjs"));
+  assert.ok(fromExample.length > 0, "sampled forced layout attributed to forces-layout.mjs");
+  assert.ok(fromExample.every((row) => row.forced > 0), "every attributed line is forced");
+  assert.ok(
+    fromExample.some((row) => row.kinds.includes("layout") || row.kinds.includes("style")),
+    "kinds include layout/style",
+  );
+  // Each geometry property is read on its own line (offsetTop 52, offsetWidth 56, ..., scrollY 104).
+  // A flush wider than one sampler interval lands exactly on the read line; a narrower one can lag one
+  // statement, so allow ±1. Assert several sampled sites land on/near the real read lines.
+  const knownReadLines = [46, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108, 120, 124];
+  const blamedLines = fromExample
+    .map((row) => Number(row.at.match(/forces-layout\.mjs:(\d+)/)?.[1]))
+    .filter((line) => Number.isFinite(line));
+  const onKnownRead = blamedLines.filter((line) =>
+    knownReadLines.some((read) => Math.abs(line - read) <= 1),
+  );
+  assert.ok(
+    onKnownRead.length >= 3,
+    `sampled read-sites land on/near known geometry-read lines (±1 for the sampled lag), got ${JSON.stringify([...new Set(blamedLines)])}`,
+  );
+
+  // The human output labels the semantic as SAMPLED (never presented as the exact --deep stack).
+  const human = runCli(["query", "blame", out, "--forced"]);
+  assert.match(human, /sampled/i, "the blame output labels the read-site as sampled");
+});
+
 // The signature move: --deep detects layout thrashing (write->read->write->read) over the trace's
 // invalidation records, reports the count + interleave, and annotates each forced read with the
 // WRITE that dirtied it. examples/forces-layout.mjs is a known thrash: bump() writes inline style

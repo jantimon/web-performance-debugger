@@ -347,11 +347,12 @@ export interface StepLoaf {
  * What a forced-layout blame line names:
  *
  * - "flush-site": the geometry READ that forced the pending layout to flush synchronously, e.g.
- *   the `offsetHeight` access, with the DOM property named. Produced on BOTH engines: Chrome/Blink
- *   captures the stack at the flush (from the trace's `.stack` category), Firefox/Gecko samples it
- *   from the DOM-accessor label frames on the stack. Comparable across engines at line granularity
- *   (measured: 12/21 lines exact on the shared probe), with a one-statement line-lag caveat where a
- *   sampled read lands on the adjacent statement.
+ *   the `offsetHeight` access. Produced three ways, all the same read-site semantic: Chrome `--deep`
+ *   reads it exactly from the trace's `.stack` at the flush; Chrome `--breakdown` samples it from the
+ *   `v8.cpu_profiler` per-sample executing line over a layout/style window (no `.stack`); Firefox/Gecko
+ *   samples it from the DOM-accessor label frames (with the property named). Comparable at line
+ *   granularity (measured: 12/21 lines exact on the shared probe), with a one-statement line-lag caveat
+ *   on the sampled routes where a sub-interval read lands on the adjacent statement.
  * - "invalidation-site": the WRITE that dirtied the DOM and made a flush necessary, e.g. the style
  *   assignment. The legacy Firefox semantic (Gecko cause stacks, first invalidator since the last
  *   flush), present only on older recordings.

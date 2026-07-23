@@ -38,6 +38,10 @@ interface RawTraceEvent {
       startTime?: number;
       cpuProfile?: { nodes?: TraceProfileNode[]; samples?: number[] };
       timeDeltas?: number[];
+      /** per-sample EXECUTING line (1-based, trace-stack convention), aligned with cpuProfile.samples.
+       * Present on recent Chrome; absent on older builds, in which case sampled read-site blame
+       * degrades to unavailable rather than to a wrong (function-definition) line. */
+      lines?: number[];
     };
   };
 }
@@ -49,8 +53,9 @@ interface ProfileGroup {
   fallbackStartTs: number | undefined;
   /** node id -> node, first definition wins (a node is emitted once, in the chunk that introduces it) */
   nodes: Map<number, TraceProfileNode>;
-  /** the ProfileChunk payloads for this stream, ordered by ts before the deltas are accumulated */
-  chunks: { ts: number; samples: number[]; timeDeltas: number[] }[];
+  /** the ProfileChunk payloads for this stream, ordered by ts before the deltas are accumulated. `lines`
+   * is the per-sample executing line (undefined when the chunk carried no `data.lines`). */
+  chunks: { ts: number; samples: number[]; timeDeltas: number[]; lines: number[] | undefined }[];
 }
 
 export interface AssembledTraceCpuProfile {
@@ -58,6 +63,11 @@ export interface AssembledTraceCpuProfile {
   profile: RawCpuProfile;
   /** the interval the stream actually ran at, read back from the inter-sample deltas */
   sampleIntervalUs: number;
+  /** per-sample EXECUTING line (1-based), parallel to `profile.samples`/`profile.sampleTimestampsUs`,
+   * for sampled read-site forced-layout blame. Absent when NO chunk carried `data.lines` (older
+   * Chrome): the feature then reports unavailable, never a function-definition line. A sample whose
+   * chunk lacked the field carries -1 here (skipped downstream). */
+  sampleLines?: number[];
 }
 
 const PROFILE_EVENT = "Profile";
@@ -135,6 +145,9 @@ export function assembleTraceCpuProfile(
         ts: event.ts ?? 0,
         samples: data?.cpuProfile?.samples ?? [],
         timeDeltas: data?.timeDeltas ?? [],
+        // undefined (not []) when the field is absent, so a chunk that lacks lines is distinguished
+        // from one that legitimately carried an empty sample set.
+        lines: data?.lines,
       });
     }
   }
@@ -150,6 +163,11 @@ export function assembleTraceCpuProfile(
   let samples: number[] = [];
   let timeDeltas: number[] = [];
   let sampleTimestampsUs: number[] = [];
+  // Per-sample executing line, parallel to `samples`. -1 = no line for this sample (its chunk carried
+  // no `data.lines`); `anyLines` stays false until a real line lands, so a stream that never emits the
+  // field returns sampleLines absent (the feature reports unavailable, never a fake line).
+  let sampleLines: number[] = [];
+  let anyLines = false;
   let nextId = 1;
   let earliestStart = Infinity;
 
@@ -185,6 +203,9 @@ export function assembleTraceCpuProfile(
         samples.push(globalId);
         timeDeltas.push(deltaUs);
         sampleTimestampsUs.push(clock);
+        const line = chunk.lines?.[index];
+        if (typeof line === "number") anyLines = true;
+        sampleLines.push(typeof line === "number" ? line : -1);
       }
     }
   }
@@ -210,6 +231,7 @@ export function assembleTraceCpuProfile(
     samples = order.map((index) => samples[index]);
     timeDeltas = order.map((index) => timeDeltas[index]);
     sampleTimestampsUs = order.map((index) => sampleTimestampsUs[index]);
+    sampleLines = order.map((index) => sampleLines[index]);
   }
 
   const startTime = Number.isFinite(earliestStart) ? earliestStart : 0;
@@ -221,7 +243,12 @@ export function assembleTraceCpuProfile(
     timeDeltas,
     sampleTimestampsUs,
   };
-  return { profile, sampleIntervalUs: medianInterval(timeDeltas) };
+  return {
+    profile,
+    sampleIntervalUs: medianInterval(timeDeltas),
+    // Absent when no chunk carried lines: the sampled-blame join then reports unavailable.
+    ...(anyLines ? { sampleLines } : {}),
+  };
 }
 
 /**

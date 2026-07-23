@@ -9,6 +9,7 @@
 **In this file:** [the "forced reflow" vocabulary and Gecko's cause stack](#forced-reflow-is-a-blink-concept-gecko-has-the-data-but-not-the-word)
 · [wpd's rule vs DevTools' rule](#wpds-markforced-is-not-devtools-rule-either)
 · [read-site vs write-site blame across engines](#forced-layout-blame-differs-by-engine)
+· [Chrome `--breakdown`: the same read, sampled](#chrome---breakdown-the-same-read-site-sampled-from-the-cpu-profile)
 · [Chrome's dirtied-by + thrash detector](#chromes-write-side-dirtied-by--the-thrash-detector---deep)
 · [Firefox's first-invalidation dirtied-by](#firefoxs-write-side-partial-dirtied-by-first-invalidation-only---deep)
 
@@ -90,6 +91,33 @@ The CPU lane corroborates the read-site direction: the sampled CPU model attribu
 cost to the **forcing** frame on both engines (`run()` at **8.41ms** chrome / **8.79ms** firefox,
 agreeing within 5%). See
 [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
+
+## Chrome `--breakdown`: the same read site, sampled from the CPU profile
+
+`--breakdown` drops `.stack`, so its `Layout`/`UpdateLayoutTree` events carry no JS stack and
+`markForced` cannot name the forcing read. But the fused `v8.cpu_profiler` sample stream keeps sampling
+THROUGH a synchronous forced layout, and each sample carries its leaf frame's EXECUTING line
+(`args.data.lines`, 1-based, matching the trace `.stack` line numbering directly -- unlike node's
+0-based function-definition `callFrame.lineNumber`). `trace/sampled-blame.ts` joins each main-thread
+layout/style event window against the sample timestamps and reads the in-window sample's line as the
+read site: the SAME flush-site semantic Chrome `--deep` reads exactly and Firefox samples. So
+`meta.blameSemantic` is `flush-site` here too, and `query blame --forced` answers on a `--breakdown`
+recording instead of refusing.
+
+It is a sampled estimate, with one sampler interval (~132-150us) as the threshold:
+
+- A forced flush **wider than one interval** yields the exact forcing line, no lag. **[measured]**
+  Chrome 150, a multi-line synthetic probe: **471 HIT / 2 off-by-one / 0 wrong**, and 458/0/0 on a
+  second arm (~100% recall).
+- A flush **narrower than the interval** has recall ~= duration/interval (**[measured] 18% at <0.05ms**),
+  and the one-statement lag plus the occasional wrong-adjacent-line the Firefox sampled lane documents
+  appear. Such a sub-interval attribution is marked **low-confidence** in the blame output, never
+  presented as exact.
+
+Forced COUNTS stay a `--deep` product: a sampled event is `sampled: true`, so `summarize` never counts
+it as a flush (the count needs `.stack`). Where `--deep` gives the exact count plus the write side
+(dirtied-by, thrash), `--breakdown` gives the sampled read plus the reconciling bar; a run group
+(`--members breakdown,deep`) records both and stitches them.
 
 ## Chrome's write side: dirtied-by + the thrash detector (`--deep`)
 

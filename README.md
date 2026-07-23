@@ -173,8 +173,8 @@ question with different instrumentation, and wanting two answers means running `
 | **no measurement** *(not a mode)* | — | — | — | — | 🏆 baseline |
 | **`--precise-wall`** | — | — | — | — | 🏆 Δ ~0% |
 | **default** (no flag) | ✅ | — | — | — | 🐌 Δ ~4-7% |
-| **`--breakdown`** | ✅ | ✅ | ✅ | — | 🐌🐌 Δ ~25% |
-| **`--deep`** | — | — | ✅ | ✅ | 🐌🐌🐌 Δ ~70% |
+| **`--breakdown`** | ✅ | ✅ | ✅ | ◐ sampled | 🐌🐌 Δ ~25% |
+| **`--deep`** | — | — | ✅ | ✅ exact | 🐌🐌🐌 Δ ~70% |
 
 - **no measurement** — plain browser, no trace, no CPU sampler: just the wall, the baseline the Speed
   column is measured against. Not a flag you pass.
@@ -184,7 +184,9 @@ question with different instrumentation, and wanting two answers means running `
   span's hot functions, the cleanest wall, no rendering counts.
 - **`--breakdown`** — a light trace fused with the CPU sampler: the reconciling **seven-slice bar**
   per span (`js·style·layout·paint·gc·other·idle`, `Σ + idle = wall`) plus exact layout/style/paint
-  counts. It cannot report forced-layout blame — that needs the `.stack` trace.
+  counts. It also answers `query blame --forced` with the read that forced each flush, **sampled** from
+  the CPU profile's per-sample executing line (a sampled estimate; a sub-interval flush is marked
+  low-confidence). The exact forced **count** still needs the `.stack` trace — record `--deep` for that.
 - **`--deep`** — the full trace (`.stack` + invalidations) with the CPU sampler off: the
   **attribution report** — forced-by read-sites, dirtied-by writes, the thrash detector, invalidation
   rollup, exact counts, long tasks. Span wall but no slice ms, and no CPU model.
