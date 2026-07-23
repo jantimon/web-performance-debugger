@@ -787,8 +787,9 @@ for the whole recording.
 
 On the CPU-only lanes (chrome's default capture mode, `--target node`, Firefox without user measures) there is no
 stored per-span bar, so `query spans` synthesizes the run span from the CPU model's own sampled window.
-That window is the profiler's bracket around the whole timed loop and **includes the settle wait**, so
-its `wallMs` differs from `summary.wallMs` (the sum of the timed `run()` samples); the human header
+That window is the profiler's bracket around the whole timed loop, so its `wallMs` differs from
+`summary.wallMs` (the sum of the timed `run()` samples); on the browser lanes it also spans the settle
+wait, while `--target node` has no page to settle. The human header
 labels it `sampled window`, and the JSON marks it `source: "cpu-model"`.
 
 Not every span carries a CPU/hot-functions number: the run span does in every sampling capture mode, steps only
