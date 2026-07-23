@@ -511,11 +511,11 @@ Tape gotchas, if you tweak `demo.tape`:
 
 - **`Sleep` must outlast the process.** VHS fires the next keystroke after the `Sleep`, not when
   the command exits. The `record` step needs a Sleep longer than its real runtime (~a few seconds).
-- **`--iterations 250`** buys sampling stability, not prefix-burying. The node lane windows the
-  profile to the timed loop, so `post (node:inspector)` (the profiler's start-up warmup) reads **0 ms**
-  and never ranks -- at 80 iterations `tailwind-merge get (lib/lru-cache.ts:35)` already leads (~23%),
-  and 250 only tightens the percentages (it leads at ~27%). Fewer iterations reads a noisier split, so
-  keep it high enough that the top rows are stable between runs.
+- **`--iterations 250`** buys sampling stability. The node lane windows the profile to the timed
+  loop, so `post (node:inspector)` (the profiler's start-up warmup) reads **0 ms** and never ranks --
+  at 80 iterations `tailwind-merge get (lib/lru-cache.ts:35)` already leads (~23%), and 250 only
+  tightens the percentages (it leads at ~27%). Fewer iterations reads a noisier split, so keep it
+  high enough that the top rows are stable between runs.
 - **`NODE_ENV=production` is load-bearing** (hidden in the tape). Without it React resolves to its
   development build: `react` outranks `react-dom`, and the profile shows a cost nobody ships.
 - **`FontSize 18` + `Width 1580`**: the widest line is the `query cpu` iteration-divisor headline
