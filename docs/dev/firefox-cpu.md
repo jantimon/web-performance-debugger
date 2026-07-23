@@ -53,7 +53,7 @@ That column is present only when the profiler runs with the `cpu` feature. An ex
 | Firefox (Gecko js,cpu, ~1ms) | 470 ms | **95.7% idle** — samples with `threadCPUDelta ~= 0` |
 
 So the reconciling bar IS emitted on Firefox: `geckoToRawCpuProfile` routes each ~0-CPU sample to
-`(idle)` (honest `scriptingMs`), and `computeGeckoCpuBreakdown` tiles the window
+`(idle)` (honest `jsSelfMs`), and `computeGeckoCpuBreakdown` tiles the window
 `js · style · layout · browser · gc · idle`, with style/layout from each sample's nearest-to-leaf
 Layout-category frame. A dump without the CPU signal (an older recording, or js-only) carries no
 idle signal, so no bar is emitted rather than a fabricated one. `cpuallthreads` is unnecessary
@@ -68,7 +68,7 @@ signal. Paint stays off the bar: it is off-main-thread compositor work (a side t
   macOS — achieved **0.50 ms** median (0.499-0.50 raw over 5 runs), so the `usleep()` floor does
   not hold — but it is declined: it doubles samples for resolution wpd does not use (function lists +
   self-% are interval-stable, [cpu-profiling.md](./cpu-profiling.md#the-sampler-interval-why-200us)),
-  and it *worsens* the two things that matter — scriptingMs-vs-bench-wall reconciliation
+  and it *worsens* the two things that matter — jsSelfMs-vs-bench-wall reconciliation
   **+4%->+7%**, dump size **+1.5 MB**, with no fidelity gain. Sub-frame fidelity comes from
   `--iterations` + measure-spans instead.
 - **Profiler self-overhead is 0.03-0.13% on the category axis — nothing to subtract.** wpd's dumps
@@ -125,7 +125,7 @@ Reading it, and reconciling with the tighter numbers above:
   a stack capture on every layout, billed to the same thread.
 - **It collapses on pure JS.** The same shipped config over the zero-reflow window costs **~5%** — the
   sampler's own wall, no markers to capture. That +5% baseline-delta is the same order as the
-  **~4%** scriptingMs-vs-bench-wall reconciliation residual measured above; the two are different axes
+  **~4%** jsSelfMs-vs-bench-wall reconciliation residual measured above; the two are different axes
   (a delta vs an uninstrumented baseline here, a within-run sum-vs-wall residual there) that agree the
   periodic sampler on non-reflow work is small. The +141% is what a page full of forced reflows adds
   on top, so the headline scales with reflow count: a low-reflow interaction pays far less than this

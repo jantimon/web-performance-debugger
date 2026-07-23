@@ -1,7 +1,7 @@
 {
   "name": "@jantimon/web-performance-debugger",
   "version": "0.16.0",
-  "description": "Drive Chrome (Puppeteer) to attribute layout/paint/invalidation work back to source lines, with isolated timing and CI gating",
+  "description": "Drive Chrome or Firefox (Puppeteer), or profile Node in-process, to attribute layout/paint/invalidation work and CPU self-time back to source lines, with isolated timing and CI gating",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

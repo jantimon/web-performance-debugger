@@ -81,8 +81,10 @@ Started at launch and dumped on browser exit via `launch({ env })`:
 - `MOZ_PROFILER_STARTUP_ENTRIES=16000000` (big ring buffer so the window is not overwritten; NOT a
   size lever — undersizing silently drops the window's earliest samples, dumps stay ~15-23MB)
 
-The dump is written **asynchronously** after `close()`. We poll for the file to exist AND stop
-growing (3 stable reads, ~15s timeout) before parsing. A 4.5s workload produced a 26MB dump.
+The dump is **complete when `close()` resolves**: Firefox writes it during shutdown, which `close()`
+waits for. We still poll for the file to exist AND stop growing (3 stable reads, ~15s timeout) before
+parsing, to guard a slow-disk lag on a large dump landing after the first stat. A 4.5s workload
+produced a 26MB dump.
 
 ## Raw ("gecko") profile format (version 34) as actually observed
 

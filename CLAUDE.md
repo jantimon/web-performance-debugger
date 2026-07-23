@@ -43,7 +43,7 @@ browser-free), and `e2e` (downloads Chrome, runs `test:e2e`). A final `release` 
 OIDC publish) `needs: [ci, pack-smoke, e2e]` and runs only on a push to main, so a broken main can
 never publish. The gecko `test:e2e:firefox` suite runs nightly in `.github/workflows/firefox-e2e.yml`
 (installs Firefox, `WPD_E2E_FIREFOX_REQUIRED=1` so a missing browser is a hard failure), not on every
-PR. The **378** unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
+PR. The unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
 `dist/` (classify/summarize/analysis/format, plus the breakdown engine, the trace CPU-chunk merge
 (`profile-chunks`), `query spans` adapter + its bar-less counts overview + its
 flood filter, the `query span` anatomy + removed-verb stubs, the thrash detector, the firefox
@@ -63,7 +63,7 @@ hot functions, a --deep step's counts + forced), per-step LoAF script attributio
 digest/index removal, the frame side track, and the two-capture assert workflow (a forced budget on
 `--breakdown` and a slice budget on `--deep` each fail loudly). They **self-skip when Chrome is not installed** (so
 `npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a
-missing browser into a hard failure so the e2e job can't silently pass. **11** firefox e2e tests
+missing browser into a hard failure so the e2e job can't silently pass. The firefox e2e tests
 (`test/firefox.e2e.test.mjs`, self-skipping) cover the gecko lane end-to-end.
 The broader smoke tests below stay manual (always `npm run build` first — the CLI runs `dist/`):
 

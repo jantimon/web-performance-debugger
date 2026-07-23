@@ -46,8 +46,11 @@ Firefox does the same thing, and lands in the same place (`run()` at **8.79ms**)
 
 This is **correct and useful**, not a bug: "delete this line and the page gets ~8ms faster" is
 exactly the actionable answer. It also means `query cpu` already gives forced-layout attribution to
-the *forcing* line on both engines — including on Firefox, where `query blame` gets it wrong (see
-[blame-semantics.md](./blame-semantics.md#forced-layout-blame-differs-by-engine)).
+the *forcing* line on both engines. On Firefox `query blame --forced` reaches the same read site by
+sampling: a DOM-accessor label frame over a Layout-category flush, attributed to the nearest JS
+ancestor's executing line plus the property name. It is a sampled estimate (a cheap read can be
+missed, the line can lag one statement), and Gecko's marker cause names the *write*, so it is kept off
+`--forced` (see [blame-semantics.md](./blame-semantics.md#forced-layout-blame-differs-by-engine)).
 
 But it constrains what may be claimed:
 
