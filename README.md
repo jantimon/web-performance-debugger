@@ -327,8 +327,8 @@ dirtied-by (the write that forced each read):
     ↳ dirtied by examples/probe.mjs:4:20 (Inline CSS style declaration was mutated)
 ```
 
-Line 5, `void el.offsetWidth`, caught red-handed: 100 loop reads forcing style + layout, times 5
-iterations, with the writes that dirtied it named underneath (chrome `--deep` names both ends).
+Line 5 is `void el.offsetWidth`: 100 loop reads forcing style + layout, times 5 iterations, with the
+writes that dirtied it named underneath (chrome `--deep` names both ends).
 `blame --all` lists every attributed line with a `forced` column, so "ran but never forced" is a real
 answer too. `record --deep` also prints the layout-thrashing interleave when it finds one — the
 write→read→write→read signature where each read re-flushes a layout the prior write dirtied:
@@ -482,6 +482,51 @@ profile dir stores real browser state — cookies, logins, history — so point 
 dedicated to wpd, never your everyday profile, and add it to `.gitignore` so a session token never
 lands in a commit.
 
+**A full production journey** ties these patterns together. This stays README material, not a
+committed example — a live third-party DOM is not stable enough to keep a runnable fixture green — so
+copy it and replace the placeholder selectors with your own:
+
+```js
+// journey.mjs — a multi-step journey against your own site. #search / .result / #detail are
+// PLACEHOLDER selectors: replace them. Run without --url so the boot step measures a cold navigation:
+//   wpd record journey.mjs --breakdown --iterations 10 --warmup 2
+import { waitForStable } from "@jantimon/web-performance-debugger";
+
+const SITE = "https://example.com"; // replace with your site
+
+// A production CDN occasionally resets an HTTP/2 stream on first hit; retry with escalating backoff.
+async function gotoWithRetry(page, url, tries = 3) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await page.goto(url, { waitUntil: "load" });
+    } catch (error) {
+      if (attempt >= tries) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
+    }
+  }
+}
+
+export async function prepare({ page }) {
+  // Untimed warm-up: DNS/TLS and first-hit CDN flakiness stay OUTSIDE the measured window.
+  await gotoWithRetry(page, SITE);
+}
+
+export async function run({ page, measureStep }) {
+  // Cold boot as its own step: no --url, so every iteration measures a fresh navigation.
+  await measureStep("boot", () => gotoWithRetry(page, SITE));
+
+  // Streamed results: wait for the container, then for the DOM to stop mutating.
+  await measureStep("search", () => page.type("#search", "example query"), {
+    until: waitForStable(page, { selector: ".result", quietMs: 200 }),
+  });
+
+  // In-page dialog: wait on a URL-hash / overlay condition, not a settle.
+  await measureStep("open detail", () => page.click(".result"), {
+    until: () => page.waitForFunction(() => location.hash === "#detail"),
+  });
+}
+```
+
 ### What a span's numbers represent
 
 Each `query spans` entry carries `aggregation` and `iterations`, which say what the numbers mean when
@@ -521,10 +566,10 @@ deliberately clamps. `--iterations N` repeats `run` and re-measures every step, 
 wpd record flow.mjs --url http://localhost:3000 --iterations 20 --warmup 3
 ```
 
-What repetition can repair: clock noise, a cold first sample. What it cannot: each step keeps its
-**raw samples** (`spans[].perIteration`), because a median hides the bimodality that usually is the
-finding — a median of 40 ms next to a max of 255 ms says one iteration was cold. `spans[].stats` is
-that step's own min/median/mean/max. There is deliberately no median *across* steps: "mount" and "inp"
+Repetition repairs clock noise and a cold first sample; it cannot repair a bimodal step. So each step
+keeps its **raw samples** (`spans[].perIteration`), because a median hides the bimodality that usually
+is the finding — a median of 40 ms next to a max of 255 ms says one iteration was cold. `spans[].stats`
+is that step's own min/median/mean/max. There is deliberately no median *across* steps: "mount" and "inp"
 measure different work, so pooling them would produce a real-looking number that means nothing.
 
 Each iteration must measure the **same steps** — wpd fails the run rather than report a median over
