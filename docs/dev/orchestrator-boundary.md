@@ -5,7 +5,7 @@
 > instead of an argument. It is the standing scope decision, not a wishlist.
 
 Related: [core-features.md](./core-features.md) (what wpd does do, and where the field stands). The
-README's [capture-mode section](../../README.md#one-capture-per-run-the-capture-modes) holds the
+README's [run-group section](../../README.md#run-groups-two-questions-one-workload) holds the
 run-group case the third test below turns on.
 
 **In this file**

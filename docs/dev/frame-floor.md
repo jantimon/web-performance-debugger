@@ -69,6 +69,11 @@ Isolated by crossover **[measured]**:
 - Puppeteer + its own Chrome, `headless: 'shell'` -> **8.3 ms**.
 - Puppeteer + **Playwright's** chromium binary + wpd's args -> **16.7 ms** (so it is not the build).
 - Playwright + its own chromium, every config incl. wpd's exact args -> **8.3 ms**.
+- Puppeteer + a configured **ordinary Chrome** (`PUPPETEER_EXECUTABLE_PATH`), `headless: 'shell'` ->
+  **8.3 ms**. A stock Chrome build has no shell binary, so Puppeteer skips managed shell resolution
+  and passes the bare `--headless` flag; the floor is still shell's ~8.3 ms, and the stamped mode
+  agrees with the observed floor. The 16.7 ms / 60 Hz cap reproduces only on Chrome-for-Testing's
+  `--headless=new`, not on this configured executable.
 
 Puppeteer 25 resolves `headless: true` to **new** headless (a full Chrome), which rate-limits
 `BeginFrame` to ~60 Hz. **chrome-headless-shell** runs `BeginFrame` at ~120 Hz, and Playwright's
