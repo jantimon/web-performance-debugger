@@ -464,7 +464,7 @@ export function geckoToRawCpuProfile(context: GeckoContext): RawCpuProfile {
     if (cpuDeltaUs != null) cpuDeltaPopulated = true;
     // Honest idle: a sample that burned ~no CPU since the previous one was descheduled (waiting),
     // so its wall-delta is idle regardless of what frame sat on the stack. Route it to the (idle)
-    // node so system.idleMs / scriptingMs are honest, and classify its slice as idle.
+    // node so system.idleMs / jsSelfMs are honest, and classify its slice as idle.
     const idleByCpu = cpuDeltaUs != null && cpuDeltaUs <= IDLE_CPU_DELTA_EPSILON_US;
 
     let nodeId: number;

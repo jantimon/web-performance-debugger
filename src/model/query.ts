@@ -28,11 +28,14 @@ export interface CpuDropped {
   selfMs: number;
 }
 
-/** `query cpu` output: scriptingMs headline, by-package/by-file rollups, and the hot list. */
+/** `query cpu` output: JS self-time headline, by-package/by-file rollups, and the hot list. */
 export interface CpuOverview {
   /** path to the raw .cpuprofile (absolute back-pointer) */
   profile: string;
-  scriptingMs: number;
+  /** JS self-time (the headline; the byPackage/byFile shares denominate on it) */
+  jsSelfMs: number;
+  /** non-idle sampled total (js + gc + engine/native); NOT the headline, and never a share denominator */
+  activeMs: number;
   totalMs: number;
   sampleCount: number;
   sampleIntervalUs: number;
@@ -271,7 +274,7 @@ export interface SpanForced {
  */
 export interface SpanHotFunctions {
   scope: "run-window" | "step-window" | "measure-pooled";
-  /** JS self-time the shares denominate on: `run-window` the model's scriptingMs; else pooledSamples * interval */
+  /** JS self-time the shares denominate on: `run-window` the model's jsSelfMs; else pooledSamples * interval */
   scriptingMs: number;
   /** ranked-JS samples the ranking is built from (`run-window`: the model's total sample count) */
   pooledSamples: number;
@@ -426,14 +429,19 @@ export interface CpuFunctionDelta {
   delta: number;
 }
 
-/** `cpu-diff` output: net scripting delta plus per-package and per-function movers. */
+/**
+ * `cpu-diff` output: net JS-self-time delta plus per-package and per-function movers. The gated axis is
+ * `netJsSelfMs` (the JS-only headline the per-function/package rows sum to), so a change that is
+ * entirely gc/engine/native or sampler noise on the non-idle total cannot trip the gate.
+ */
 export interface CpuDiffResult {
-  baseline: { file: string; scriptingMs: number };
-  current: { file: string; scriptingMs: number };
+  baseline: { file: string; jsSelfMs: number };
+  current: { file: string; jsSelfMs: number };
   /** per-function deltas below this (ms) are treated as sampling noise */
   noiseMs: number;
-  netScriptingMs: number;
-  netScriptingPct: number;
+  /** current jsSelfMs - baseline jsSelfMs; the axis `--fail-on-regression` gates */
+  netJsSelfMs: number;
+  netJsSelfPct: number;
   byPackage: CpuPackageDelta[];
   functions: CpuFunctionDelta[];
 }

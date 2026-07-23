@@ -132,29 +132,31 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
     .sort((left, right) => Math.abs(right.delta) - Math.abs(left.delta))
     .slice(0, TOP_FUNCTIONS);
 
-  const scriptingDelta = currentModel.scriptingMs - baseModel.scriptingMs;
-  const scriptingPct =
-    baseModel.scriptingMs > 0 ? (scriptingDelta / baseModel.scriptingMs) * 100 : 0;
+  // Gate on JS self-time (the JS-only headline), NOT the non-idle sampled total: a change that is
+  // entirely gc/engine/native, or sampler-startup jitter that never lands on a JS frame, must not trip
+  // a JS-cost gate. This is the axis the per-function/package movers below sum to.
+  const jsSelfDelta = currentModel.jsSelfMs - baseModel.jsSelfMs;
+  const jsSelfPct = baseModel.jsSelfMs > 0 ? (jsSelfDelta / baseModel.jsSelfMs) * 100 : 0;
 
   const fmt = structuredFormat(opts);
   if (fmt) {
     const result: CpuDiffResult = {
-      baseline: { file: baseline, scriptingMs: baseModel.scriptingMs },
-      current: { file: current, scriptingMs: currentModel.scriptingMs },
+      baseline: { file: baseline, jsSelfMs: baseModel.jsSelfMs },
+      current: { file: current, jsSelfMs: currentModel.jsSelfMs },
       noiseMs: NOISE_MS,
-      netScriptingMs: scriptingDelta,
-      netScriptingPct: scriptingPct,
+      netJsSelfMs: jsSelfDelta,
+      netJsSelfPct: jsSelfPct,
       byPackage: packageRows,
       functions: functionRows,
     };
     console.log(serialize(result, fmt));
-    if (opts.failOnRegression && scriptingDelta > NOISE_MS) process.exitCode = 1;
+    if (opts.failOnRegression && jsSelfDelta > NOISE_MS) process.exitCode = 1;
     return;
   }
 
   const signed = (value: number) => `${value >= 0 ? "+" : ""}${num(value, 1)}`;
   console.log(
-    `baseline: ${baseline}  (${num(baseModel.scriptingMs, 1)} ms JS self-time)\ncurrent:  ${current}  (${num(currentModel.scriptingMs, 1)} ms JS self-time)\nfilter floor: ${NOISE_MS} ms self (smaller per-function deltas are hidden). Sampling jitter runs a few % per function, so treat small deltas as noise; trust the net and the large movers.\n`,
+    `baseline: ${baseline}  (${num(baseModel.jsSelfMs, 1)} ms JS self-time)\ncurrent:  ${current}  (${num(currentModel.jsSelfMs, 1)} ms JS self-time)\nfilter floor: ${NOISE_MS} ms self (smaller per-function deltas are hidden). Sampling jitter runs a few % per function, so treat small deltas as noise; trust the net and the large movers.\n`,
   );
   console.log("package self-time delta:");
   console.log(
@@ -186,6 +188,6 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
       : "  (all functions within noise)",
   );
 
-  console.log(`\nnet scripting: ${signed(scriptingDelta)} ms (${signed(scriptingPct)}%)`);
-  if (opts.failOnRegression && scriptingDelta > NOISE_MS) process.exitCode = 1;
+  console.log(`\nnet JS self-time: ${signed(jsSelfDelta)} ms (${signed(jsSelfPct)}%)`);
+  if (opts.failOnRegression && jsSelfDelta > NOISE_MS) process.exitCode = 1;
 }

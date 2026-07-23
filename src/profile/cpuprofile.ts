@@ -202,6 +202,37 @@ export function toDevtoolsCpuProfile(raw: RawCpuProfile): RawCpuProfile {
   };
 }
 
+/**
+ * Window a single-stream (CDP / node inspector) CPU profile to an explicit application window on the
+ * profiler's own clock, so time OUTSIDE the window lands on no frame. A single-stream profile's
+ * `timeDeltas[i]` is the gap from the previous sample (unlike the trace-sourced stream, whose deltas
+ * are per-sample self-time), so `timeDeltas[0]` is the whole interval from profiler start to the first
+ * sample: the 9-30 ms of sampler startup the profiler spends before the first `run()`, which V8 bills
+ * to whatever frame that first sample caught (on node, `post (node:inspector)`). Reconstruct each
+ * sample's absolute timestamp, clip its interval to `[windowStartUs, windowEndUs]`, and keep only the
+ * in-window portion, so the start prefix and any post-`run()` tail contribute to no function, package,
+ * or gate. `totalMs` then equals the window width, reconciling with the summed timed `run()` samples.
+ * A sample whose in-window portion is empty is dropped, so `sampleCount` reflects the window too.
+ */
+export function windowCumulativeCpuProfile(
+  raw: RawCpuProfile,
+  windowStartUs: number,
+  windowEndUs: number,
+): RawCpuProfile {
+  const samples: number[] = [];
+  const timeDeltas: number[] = [];
+  let intervalStartUs = raw.startTime;
+  for (let index = 0; index < raw.samples.length; index++) {
+    const sampleTs = intervalStartUs + Math.max(0, raw.timeDeltas[index] ?? 0);
+    const inWindowUs = Math.min(sampleTs, windowEndUs) - Math.max(intervalStartUs, windowStartUs);
+    intervalStartUs = sampleTs;
+    if (inWindowUs <= 0) continue;
+    samples.push(raw.samples[index]);
+    timeDeltas.push(inWindowUs);
+  }
+  return { ...raw, startTime: windowStartUs, endTime: windowEndUs, samples, timeDeltas };
+}
+
 /** Parent every root (a node no one is a child of) under one synthetic `(root)` super-root, so the
  * DevTools-format tree is single-rooted. A profile that already has one root is returned as-is. */
 function singleRootedNodes(nodes: RawProfileNode[]): RawProfileNode[] {
@@ -781,9 +812,19 @@ export async function buildCpuModel(
   };
   const sampledUs = [...selfUsByNode.values()].reduce((sum, value) => sum + value, 0);
   const idleUs = msToUs(system.idleMs);
-  const scriptingMs = Math.max(0, usToMs(sampledUs - idleUs));
+  // Non-idle sampled total (js + gc + engine/native), honestly named: it is everything the sampler saw
+  // that was not idle, NOT JS self-time. The JS headline is jsSelfMs below.
+  const activeMs = Math.max(0, usToMs(sampledUs - idleUs));
 
-  const ranked = rankedFrameKeys(callFrameByKey, selfUsByKey).map((key) => {
+  const rankedKeys = rankedFrameKeys(callFrameByKey, selfUsByKey);
+  // JS self-time: the sum over rankable user functions -- the SAME set packageRollup sums, so package
+  // percentages reconcile to 100% against it (unlike activeMs, which also carries gc/engine/native).
+  // On the browser lanes this folds in the synchronous engine work JS triggered (a forced layout bills
+  // to the forcing frame); only --target node measures pure JS. Excludes gc, (program)/(root), idle,
+  // and the tool's own harness frames.
+  const jsSelfMs = usToMs(rankedKeys.reduce((sum, key) => sum + (selfUsByKey.get(key) ?? 0), 0));
+
+  const ranked = rankedKeys.map((key) => {
     const resolved = resolvedByKey.get(key)!;
     return {
       key,
@@ -808,7 +849,7 @@ export async function buildCpuModel(
       file: entry.file,
       package: entry.package,
       selfMs: entry.selfMs,
-      selfPct: scriptingMs > 0 ? (entry.selfMs / scriptingMs) * 100 : 0,
+      selfPct: jsSelfMs > 0 ? (entry.selfMs / jsSelfMs) * 100 : 0,
       totalMs: entry.totalMs,
     };
   });
@@ -857,7 +898,8 @@ export async function buildCpuModel(
     sampleCount: raw.samples.length,
     sampleIntervalUs: context.sampleIntervalUs,
     totalMs,
-    scriptingMs,
+    jsSelfMs,
+    activeMs,
     system,
     breakdown,
     functions,
@@ -967,7 +1009,9 @@ function rollup(model: CpuModel, keyOf: (fn: CpuFunction) => string): CpuGroupSt
     .map(([key, entry]) => ({
       key,
       selfMs: entry.selfMs,
-      selfPct: model.scriptingMs > 0 ? (entry.selfMs / model.scriptingMs) * 100 : 0,
+      // Denominated by jsSelfMs (the JS-only headline), the sum these buckets tile, so the shares add
+      // to 100%. activeMs would leave them short of 100 (it also carries gc/engine/native).
+      selfPct: model.jsSelfMs > 0 ? (entry.selfMs / model.jsSelfMs) * 100 : 0,
       functions: entry.functions,
     }))
     .sort((left, right) => right.selfMs - left.selfMs);

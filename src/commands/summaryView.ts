@@ -305,9 +305,7 @@ export function printSummary(rec: Recording): void {
     }
   }
 
-  console.log(
-    `\nscripting ms: ${ms(summary.scriptingMs)}   events in window: ${summary.totalEvents}`,
-  );
+  console.log(`\nJS self ms: ${ms(summary.jsSelfMs)}   events in window: ${summary.totalEvents}`);
   if (meta.notes.length) {
     console.log("\nnotes:");
     for (const note of meta.notes) console.log(`  • ${note}`);

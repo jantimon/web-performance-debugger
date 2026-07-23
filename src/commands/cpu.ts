@@ -59,7 +59,7 @@ import {
 export function printCpuHeadline(model: CpuModel): void {
   const byPackage = packageRollup(model);
   console.log(
-    `\nCPU profile: ${bold(`${num(model.scriptingMs, 1)} ms`)} JS self-time, sampled · ${dim(`${model.sampleCount} samples`)} (run ${cyan("'query cpu latest'")} to drill):\n`,
+    `\nCPU profile: ${bold(`${num(model.jsSelfMs, 1)} ms`)} JS self-time, sampled · ${dim(`${model.sampleCount} samples`)} (run ${cyan("'query cpu latest'")} to drill):\n`,
   );
   console.log(
     table(
@@ -309,7 +309,8 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
       );
     const overview: CpuOverview = {
       profile: model.profile,
-      scriptingMs: model.scriptingMs,
+      jsSelfMs: model.jsSelfMs,
+      activeMs: model.activeMs,
       totalMs: model.totalMs,
       sampleCount: model.sampleCount,
       sampleIntervalUs: model.sampleIntervalUs,
@@ -330,12 +331,12 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
       ? `sampled, summed over the whole window across ${iterations} iterations (divide by ${iterations} for a per-iteration figure)`
       : "sampled, summed over the whole window";
   console.log(
-    `CPU sampling: ${bold(`${num(model.scriptingMs, 1)} ms`)} JS self-time ${dim(`(${windowNote}) · ${model.sampleCount} samples @ ${model.sampleIntervalUs}us · idle ${num(model.system.idleMs, 1)} ms · gc ${num(model.system.gcMs, 1)} ms`)}`,
+    `CPU sampling: ${bold(`${num(model.jsSelfMs, 1)} ms`)} JS self-time ${dim(`(${windowNote}) · of ${num(model.activeMs, 1)} ms non-idle sampled · ${model.sampleCount} samples @ ${model.sampleIntervalUs}us · idle ${num(model.system.idleMs, 1)} ms · gc ${num(model.system.gcMs, 1)} ms`)}`,
   );
   if (model.breakdown)
     console.log(
       dim(
-        "  (that headline is the sampled total minus idle; the bar below splits it, breaking gc and browser/engine work out of the js slice.)",
+        "  (the headline is JS self-time only; the non-idle sampled total also carries gc and browser/engine work, which the bar below splits out of the js slice.)",
       ),
     );
   printCpuBreakdown(model);

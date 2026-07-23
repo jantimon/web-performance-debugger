@@ -630,7 +630,10 @@ program
 program
   .command("cpu-diff <baseline> <current>")
   .description("compare two CPU models: per-package + per-function self-time deltas")
-  .option("--fail-on-regression", "exit 1 if net scripting time increased")
+  .option(
+    "--fail-on-regression",
+    "exit 1 if net JS self-time increased (gc/native/idle changes and sampler noise do not count)",
+  )
   .option("--json", "emit raw JSON")
   .option("--format <fmt>", "structured output: json | toon")
   .action((baseline, current, opts) =>

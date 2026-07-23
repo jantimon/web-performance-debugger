@@ -668,9 +668,9 @@ export async function record(opts: RecordOptions): Promise<{
       // What this capture mode could observe (per capture): gates each count/duration to Measured null
       // vs a number, so the default mode reports no counts and --deep reports counts but null durations.
       capabilities: effectiveCapabilities,
-      // scriptingMs is patched in after the CPU model is built below (it is the model's JS
+      // jsSelfMs is patched in after the CPU model is built below (it is the model's JS
       // self-time); null here, and stays null on --deep, which has no sampler and no model.
-      scriptingMs: null,
+      jsSelfMs: null,
     }),
   };
 
@@ -712,10 +712,10 @@ export async function record(opts: RecordOptions): Promise<{
       maps,
     });
   }
-  // scriptingMs is the CPU model's JS self-time. Patched onto the summary here (the model exists
+  // jsSelfMs is the CPU model's JS self-time. Patched onto the summary here (the model exists
   // now, and `recording.summary` is shared by reference), so a capture mode with no sampler (--deep) keeps
   // the null it was built with -- a distinct not-measured, never a fake 0.
-  if (cpuModel) recording.summary.scriptingMs = cpuModel.scriptingMs;
+  if (cpuModel) recording.summary.jsSelfMs = cpuModel.jsSelfMs;
   // On the trace-sourced --breakdown lane the sampler interval is the v8.cpu_profiler stream's own
   // fixed rate (read back from the chunks), not a value wpd requested, so record that observed
   // interval rather than the default constant this lane does not use. Chrome only: firefox keeps the
