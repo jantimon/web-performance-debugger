@@ -29,7 +29,7 @@ test("countsFromSummary: projects exactly the seven windowed counts, preserving 
     // fields the projection must ignore
     wallMs: 99,
     inpMs: 40,
-    scriptingMs: 12,
+    jsSelfMs: 12,
   };
   assert.deepEqual(countsFromSummary(summary), {
     layoutCount: 5,

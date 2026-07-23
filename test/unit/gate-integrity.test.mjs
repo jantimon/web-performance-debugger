@@ -18,7 +18,7 @@ const cli = path.join(root, "dist", "cli.js");
 const baseMeta = () => ({
   tool: "wpd",
   version: "0.0.0",
-  schemaVersion: "3",
+  schemaVersion: "4",
   createdAt: new Date().toISOString(),
   mode: "module",
   target: "probe",
@@ -68,7 +68,7 @@ function recording({ split = false, dataLoss = false, layoutCount = 300, wallMs 
       forcedLayoutMs: null,
       longTaskCount: 0,
       longestTaskMs: null,
-      scriptingMs: null,
+      jsSelfMs: null,
       totalEvents: 0,
       perIteration: [],
       stats: null,

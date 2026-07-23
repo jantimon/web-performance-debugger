@@ -41,8 +41,10 @@ test("buildCpuModel: self/total time, recursion-safe totals, system buckets, edg
     runtime: "node",
   });
 
-  // scripting = all sampled self time minus idle: (1000+2000+500+1000) / 1000
-  assert.equal(model.scriptingMs, 4.5);
+  // jsSelfMs is JS-only (alpha 1.5 + beta 2.0 = 3.5), so it EXCLUDES the 1.0 ms gc that activeMs keeps.
+  assert.equal(model.jsSelfMs, 3.5);
+  // activeMs is the non-idle sampled total (js + gc): (1000+2000+500+1000) / 1000.
+  assert.equal(model.activeMs, 4.5);
   assert.equal(model.system.idleMs, 4);
   assert.equal(model.system.gcMs, 1);
 
@@ -127,11 +129,12 @@ test("loadCpuModel: an old model without a breakdown still loads and queries", a
   // but no `breakdown` key. The verbs must read it without assuming the field is present.
   const legacy = {
     profile: "old.cpuprofile",
-    meta: { tool: "wpd", version: "0.9.0", schemaVersion: "3" },
+    meta: { tool: "wpd", version: "0.9.0", schemaVersion: "4" },
     sampleCount: 2,
     sampleIntervalUs: 200,
     totalMs: 5,
-    scriptingMs: 5,
+    jsSelfMs: 5,
+    activeMs: 5,
     system: { idleMs: 0, gcMs: 0, programMs: 0 },
     functions: [
       { id: 0, fn: "render", source: "src/app.js:3", file: "src/app.js", package: "app", selfMs: 5, selfPct: 100, totalMs: 5 },
@@ -386,9 +389,9 @@ test("cpu-diff sums self-time on a join-key collision instead of dropping one (F
   const cpuFn = (fn, file, source, selfMs) => ({
     id: 0, fn, file, source, package: "app", selfMs, totalMs: selfMs, selfPct: 0, callers: [], callees: [],
   });
-  const model = (functions, scriptingMs) => ({
-    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "3", iterations: 1 },
-    profile: "x.cpuprofile", scriptingMs, totalMs: scriptingMs, sampleCount: 1, sampleIntervalUs: 200,
+  const model = (functions, jsSelfMs) => ({
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "4", iterations: 1 },
+    profile: "x.cpuprofile", jsSelfMs, activeMs: jsSelfMs, totalMs: jsSelfMs, sampleCount: 1, sampleIntervalUs: 200,
     system: { idleMs: 0, gcMs: 0, programMs: 0 }, functions,
   });
   // baseline has the line once (3ms); current has the SAME name+file at two lines (3 + 4 = 7ms).

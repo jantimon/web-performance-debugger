@@ -169,7 +169,7 @@ test("record --target node resolves hot functions to source without a browser", 
   assert.ok(existsSync(`${out}.cpuprofile`), "raw cpuprofile written");
 
   const model = JSON.parse(runCli(["query", "cpu", out, "--json"]));
-  assert.ok(model.scriptingMs > 0, "non-zero sampled scripting time");
+  assert.ok(model.jsSelfMs > 0, "non-zero sampled JS self-time");
   const named = model.hot.find(
     (fn) => fn.fn === "hashString" || fn.fn === "buildRows" || fn.fn === "serializeStyle",
   );
@@ -186,7 +186,7 @@ e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
 
   // Query by the bare --out path (no extension): exercises the sibling .cpu.json resolution.
   const model = JSON.parse(runCli(["query", "cpu", out, "--json"]));
-  assert.ok(model.scriptingMs > 0, "non-zero sampled scripting time");
+  assert.ok(model.jsSelfMs > 0, "non-zero sampled JS self-time");
   assert.ok(model.sampleCount > 0, "profiler collected samples");
   const named = model.hot.find(
     (fn) => fn.fn === "hashString" || fn.fn === "buildRows" || fn.fn === "serializeStyle",
@@ -210,7 +210,7 @@ e2e("the capture modes: default has no counts; --deep has exact counts with supp
   assert.equal(dflt.layoutCount, null, "default capture mode measures no layout count (—, never 0)");
   assert.equal(dflt.forcedLayoutCount, null, "and no forced count");
   assert.equal(dflt.layoutMs, null, "and no durations");
-  assert.ok(dflt.scriptingMs > 0, "but the CPU model still measures JS self-time");
+  assert.ok(dflt.jsSelfMs > 0, "but the CPU model still measures JS self-time");
 
   // --deep: exact counts are the product; slice durations are suppressed (.stack distorts them).
   const readDeep = (iterations) => {
@@ -597,11 +597,11 @@ e2e("record (driver): prepare()/warmup page-side JS stays out of the CPU model",
   runCli(["record", flow, "--iterations", "1", "--warmup", "1", "--out", out]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
-  const scriptingMs = rec.summary.scriptingMs;
-  assert.ok(scriptingMs != null && scriptingMs > 0.5, `run()'s own JS is measured, got ${scriptingMs}`);
+  const jsSelfMs = rec.summary.jsSelfMs;
+  assert.ok(jsSelfMs != null && jsSelfMs > 0.5, `run()'s own JS is measured, got ${jsSelfMs}`);
   assert.ok(
-    scriptingMs < 35,
-    `prepare()+warmup (~140 ms of page JS) must not leak into scriptingMs, got ${scriptingMs}`,
+    jsSelfMs < 35,
+    `prepare()+warmup (~140 ms of page JS) must not leak into JS self-time, got ${jsSelfMs}`,
   );
 
   // And no single function bills anywhere near the ~70 ms setup loop.
@@ -807,9 +807,9 @@ e2e("record --breakdown (driver): prepare()/warmup page JS stays out of the trac
   const out = path.join(dir, "bd-lifecycle");
   runCli(["record", flow, "--breakdown", "--iterations", "1", "--warmup", "1", "--out", out]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
-  const scriptingMs = rec.summary.scriptingMs;
-  assert.ok(scriptingMs != null && scriptingMs > 0.5, `run()'s own JS is measured, got ${scriptingMs}`);
-  assert.ok(scriptingMs < 35, `prepare()+warmup (~140 ms of page JS) must not leak into scriptingMs, got ${scriptingMs}`);
+  const jsSelfMs = rec.summary.jsSelfMs;
+  assert.ok(jsSelfMs != null && jsSelfMs > 0.5, `run()'s own JS is measured, got ${jsSelfMs}`);
+  assert.ok(jsSelfMs < 35, `prepare()+warmup (~140 ms of page JS) must not leak into JS self-time, got ${jsSelfMs}`);
   const model = JSON.parse(readFileSync(`${out}.cpu.json`, "utf8"));
   const topSelfMs = Math.max(0, ...model.functions.map((fn) => fn.selfMs));
   assert.ok(topSelfMs < 35, `no function carries the setup loop's ~70 ms, top self ${topSelfMs} ms`);
@@ -1138,7 +1138,7 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
       dflt.meta.notes.some((note) => /Built-in load flow/.test(note)),
       "the built-in flow is disclosed in the notes",
     );
-    assert.ok(dflt.summary.scriptingMs != null, "the CPU model still measures JS self-time on the boot");
+    assert.ok(dflt.summary.jsSelfMs != null, "the CPU model still measures JS self-time on the boot");
 
     // --breakdown: the run span AND the load step carry a reconciling bar (Σ slices + idle == wall),
     // counts are measured, and the navigating load step is priced on the trace clock (spans the nav).
@@ -1634,4 +1634,30 @@ e2e("record --group: a duplicate capture-mode member refuses before writing anyt
     if (prevXdg === undefined) delete process.env.XDG_STATE_HOME;
     else process.env.XDG_STATE_HOME = prevXdg;
   }
+});
+
+// B-01 end-to-end on the node lane (no browser): the profiler-start prefix (~9-30 ms the sampler
+// spends warming up before the first run()) is windowed out, so a near-no-op workload reports ~0 JS
+// self-time and two runs of it do NOT manufacture a cpu-diff regression from prefix jitter. Plain
+// `test` (not the Chrome-gated `e2e`): --target node imports the module in-process, no browser.
+test("node lane: a near-no-op --target node run gates stable under cpu-diff (B-01)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-node-e2e-"));
+  const probe = path.join(examples, "near-zero.mjs");
+  const base = path.join(dir, "base.json");
+  const current = path.join(dir, "current.json");
+  runCli(["record", probe, "--target", "node", "--iterations", "20", "--out", base]);
+  runCli(["record", probe, "--target", "node", "--iterations", "20", "--out", current]);
+
+  const baseModel = JSON.parse(readFileSync(`${base.replace(/\.json$/, "")}.cpu.json`, "utf8"));
+  assert.ok(baseModel.jsSelfMs < 5, `a near-no-op reports ~0 JS self-time, got ${baseModel.jsSelfMs}`);
+  // No `post (node:inspector)` prefix frame should top the list; the windowing removed it.
+  const topFn = baseModel.functions[0];
+  assert.ok(
+    !topFn || !(topFn.fn === "post" && (topFn.file ?? "").includes("inspector")),
+    `the profiler-start prefix must not be the hottest function, got ${topFn?.fn}`,
+  );
+
+  // --fail-on-regression must exit 0: runCli throws on a non-zero exit, so no throw is the assertion.
+  const diff = JSON.parse(runCli(["cpu-diff", base, current, "--fail-on-regression", "--json"]));
+  assert.ok(Math.abs(diff.netJsSelfMs) < 5, `two identical no-op runs net ~0, got ${diff.netJsSelfMs}`);
 });

@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
+import { SCHEMA_VERSION } from "../../dist/schema.js";
 
 // --- The seven-slice breakdown engine (pure; fixtures, no browser) ---
 //
@@ -364,13 +365,13 @@ export const tmpDir = mkdtempSync(path.join(os.tmpdir(), "wpd-test-"));
 // schema gate (model/artifact.ts) lets it through; the count/timing tests exercise the gate logic,
 // not the schema guard.
 export function writeRecording(name, summaryOverrides) {
-  return writeSchemaArtifact(name, "3", summaryOverrides);
+  return writeSchemaArtifact(name, SCHEMA_VERSION, summaryOverrides);
 }
 
 /** Like writeRecording, but the caller pins the schema epoch (to exercise the reject path). */
 export function writeSchemaArtifact(name, schemaVersion, summaryOverrides) {
   const summary = {
-    wallMs: null, inpMs: null, scriptingMs: 0,
+    wallMs: null, inpMs: null, jsSelfMs: 0,
     layoutCount: 0, styleCount: 0, paintCount: 0,
     forcedLayoutCount: 0, layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0,
     longTaskCount: 0, totalEvents: 0, perIteration: [], stats: null,

@@ -83,7 +83,7 @@ async function captureText(runner) {
 
 test("query span run: the reconciling bar is present, and hot functions come from the sibling CPU model", async () => {
   const file = writeRec("anatomy-bd.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 2, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 2, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -109,9 +109,9 @@ test("query span run: the reconciling bar is present, and hot functions come fro
   writeFileSync(
     path.join(tmpDir, "anatomy-bd.cpu.json"),
     JSON.stringify({
-      meta: { schemaVersion: "3", iterations: 2 },
+      meta: { schemaVersion: "4", iterations: 2 },
       sampleCount: 120,
-      scriptingMs: 12,
+      jsSelfMs: 12,
       functions: [
         { id: 0, fn: "render", package: "app", selfMs: 8, selfPct: 66, totalMs: 10, file: "src/app.js", source: "src/app.js:5" },
         { id: 1, fn: "diff", package: "react-dom", selfMs: 4, selfPct: 33, totalMs: 4 },
@@ -139,7 +139,7 @@ test("query span run: the reconciling bar is present, and hot functions come fro
 
 test("query span: counts preserve the Measured contract (null not-measured, 0 measured)", async () => {
   const file = writeRec("anatomy-counts.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 1, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -163,7 +163,7 @@ test("query span: counts preserve the Measured contract (null not-measured, 0 me
 
 test("query span run (--deep): no bar (slices null), forced read-sites from the event log, no cpu model => hot null", async () => {
   const file = writeRec("anatomy-deep.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["deep"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 1, passes: ["deep"] },
     window: { startTs: 0, endTs: 1000 },
     events: [
       { id: 1, name: "Layout", kind: "layout", ts: 50, dur: 2000, ph: "X", forced: true, at: "src/app.js:10" },
@@ -192,7 +192,7 @@ test("query span run (--deep): no bar (slices null), forced read-sites from the 
 
 test("query span <step>: hot is null on a step span with no stored refs (e.g. a capture mode with no per-span tally)", async () => {
   const file = writeRec("anatomy-step.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 2, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 2, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -203,9 +203,9 @@ test("query span <step>: hot is null on a step span with no stored refs (e.g. a 
   writeFileSync(
     path.join(tmpDir, "anatomy-step.cpu.json"),
     JSON.stringify({
-      meta: { schemaVersion: "3", iterations: 2 },
+      meta: { schemaVersion: "4", iterations: 2 },
       sampleCount: 50,
-      scriptingMs: 6,
+      jsSelfMs: 6,
       sampleIntervalUs: 200,
       functions: [{ id: 0, fn: "render", package: "app", selfMs: 6, selfPct: 100, totalMs: 6 }],
       breakdown: breakdown(7),
@@ -222,7 +222,7 @@ test("query span <step>: hot is null on a step span with no stored refs (e.g. a 
 
 test("query span <measure>: stored hot refs resolve to span-local shares via the sibling CpuModel", async () => {
   const file = writeRec("anatomy-meashot.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 4, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 4, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -251,9 +251,9 @@ test("query span <measure>: stored hot refs resolve to span-local shares via the
   writeFileSync(
     path.join(tmpDir, "anatomy-meashot.cpu.json"),
     JSON.stringify({
-      meta: { schemaVersion: "3", iterations: 4 },
+      meta: { schemaVersion: "4", iterations: 4 },
       sampleCount: 500,
-      scriptingMs: 50,
+      jsSelfMs: 50,
       sampleIntervalUs: 200,
       functions: [
         { id: 0, fn: "thrash", package: "app", selfMs: 40, selfPct: 80, totalMs: 45, file: "src/app.js", source: "src/app.js:5" },
@@ -279,7 +279,7 @@ test("query span <measure>: stored hot refs resolve to span-local shares via the
 
 test("query span <measure>: a suppressed hot tally reports the floor honestly, no fabricated functions", async () => {
   const file = writeRec("anatomy-suphot.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 5, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 5, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -299,9 +299,9 @@ test("query span <measure>: a suppressed hot tally reports the floor honestly, n
   writeFileSync(
     path.join(tmpDir, "anatomy-suphot.cpu.json"),
     JSON.stringify({
-      meta: { schemaVersion: "3", iterations: 5 },
+      meta: { schemaVersion: "4", iterations: 5 },
       sampleCount: 20,
-      scriptingMs: 4,
+      jsSelfMs: 4,
       sampleIntervalUs: 200,
       functions: [{ id: 0, fn: "noop", package: "app", selfMs: 4, selfPct: 100, totalMs: 4 }],
       breakdown: breakdown(7),
@@ -320,7 +320,7 @@ test("query span <measure>: a suppressed hot tally reports the floor honestly, n
 // The suppressed tally must say `not-covered`, NEVER "below-floor"/raise-iterations (which cannot help).
 test("query span <step>: a zero-pool tally over a JS-bearing window reports not-covered, not raise-iterations", async () => {
   const file = writeRec("anatomy-uncovered.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 3, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 3, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -348,9 +348,9 @@ test("query span <step>: a zero-pool tally over a JS-bearing window reports not-
   writeFileSync(
     path.join(tmpDir, "anatomy-uncovered.cpu.json"),
     JSON.stringify({
-      meta: { schemaVersion: "3", iterations: 3 },
+      meta: { schemaVersion: "4", iterations: 3 },
       sampleCount: 300,
-      scriptingMs: 60,
+      jsSelfMs: 60,
       sampleIntervalUs: 200,
       functions: [{ id: 0, fn: "render", package: "app", selfMs: 60, selfPct: 100, totalMs: 60 }],
       breakdown: breakdown(7),
@@ -371,7 +371,7 @@ test("query span <step>: a zero-pool tally over a JS-bearing window reports not-
 // gap, so the reason is `no-js` (never "below-floor", never "not-covered").
 test("query span <measure>: a zero-pool tally over an idle window reports no-js", async () => {
   const file = writeRec("anatomy-idle.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 3, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 3, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -398,9 +398,9 @@ test("query span <measure>: a zero-pool tally over an idle window reports no-js"
   writeFileSync(
     path.join(tmpDir, "anatomy-idle.cpu.json"),
     JSON.stringify({
-      meta: { schemaVersion: "3", iterations: 3 },
+      meta: { schemaVersion: "4", iterations: 3 },
       sampleCount: 300,
-      scriptingMs: 60,
+      jsSelfMs: 60,
       sampleIntervalUs: 200,
       functions: [{ id: 0, fn: "render", package: "app", selfMs: 60, selfPct: 100, totalMs: 60 }],
       breakdown: breakdown(7),
@@ -415,7 +415,7 @@ test("query span <measure>: a zero-pool tally over an idle window reports no-js"
 
 test("query span: a bare label colliding across kinds lists the matches and asks for kind:label", async () => {
   const file = writeRec("anatomy-collide.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 1, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -436,7 +436,7 @@ test("query span: a bare label colliding across kinds lists the matches and asks
 
 test("query span: an unknown label errors, listing the available spans", async () => {
   const file = writeRec("anatomy-miss.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 1, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [{ label: "run", kind: "run", aggregation: "sum", wallMs: 1, counts: nullCounts, breakdown: breakdown(1) }],
@@ -450,7 +450,7 @@ test("query span: a wall/INP median at the frame floor surfaces the min sample a
   const file = writeRec("anatomy-floor.json", {
     // new-headless => 16.6ms one-frame floor; the median pins to it, the min sample escapes it.
     meta: {
-      schemaVersion: "3",
+      schemaVersion: "4",
       target: "chrome",
       iterations: 5,
       passes: ["breakdown"],
@@ -482,7 +482,7 @@ test("query span: a wall/INP median at the frame floor surfaces the min sample a
 test("query span: real sub-frame-or-above work prints no floor note", async () => {
   const file = writeRec("anatomy-nofloor.json", {
     meta: {
-      schemaVersion: "3",
+      schemaVersion: "4",
       target: "chrome",
       iterations: 5,
       passes: ["breakdown"],
@@ -513,7 +513,7 @@ test("query span: firefox forced count discloses it is marker-derived with a sam
   const firefoxCounts = { ...nullCounts, forcedLayoutCount: 1 };
   const file = writeRec("anatomy-ffforced.json", {
     meta: {
-      schemaVersion: "3",
+      schemaVersion: "4",
       target: "firefox",
       browser: "firefox",
       iterations: 1,
@@ -542,7 +542,7 @@ test("query span: firefox forced count discloses it is marker-derived with a sam
 
 test("query span <measure>: discloses that counts are not windowed to a performance.measure span", async () => {
   const file = writeRec("anatomy-measure-counts.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 1, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -578,7 +578,7 @@ test("query span <measure>: no disclosure over an all-idle bar (no real style/la
     },
   });
   const file = writeRec("anatomy-measure-idle.json", {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 1, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [
@@ -617,7 +617,7 @@ const jankFrames = {
 
 function frameRec(name) {
   return {
-    meta: { schemaVersion: "3", target: "chrome", iterations: 1, passes: ["breakdown"] },
+    meta: { schemaVersion: "4", target: "chrome", iterations: 1, passes: ["breakdown"] },
     window: { startTs: 0, endTs: 100 },
     events: [],
     spans: [

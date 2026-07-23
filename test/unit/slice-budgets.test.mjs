@@ -196,7 +196,7 @@ test("diffSpanSlices: missing breakdowns on either side is empty, not a throw", 
 // A minimal summary so the count-gating path (which reads `summary` unconditionally) has fields to
 // read; the slice path reads `breakdowns`. Both live on the same recording here.
 const emptySummary = {
-  wallMs: null, inpMs: null, scriptingMs: 0,
+  wallMs: null, inpMs: null, jsSelfMs: 0,
   layoutCount: 0, styleCount: 0, paintCount: 0,
   forcedLayoutCount: 0, layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0,
   longTaskCount: 0, totalEvents: 0, perIteration: [], stats: null,
@@ -206,7 +206,7 @@ function writeBreakdownRecording(name, breakdowns) {
   const file = path.join(tmpDir, name);
   writeFileSync(
     file,
-    JSON.stringify({ meta: { schemaVersion: "3", target: "chrome", iterations: 1 }, summary: emptySummary, spans: breakdowns }),
+    JSON.stringify({ meta: { schemaVersion: "4", target: "chrome", iterations: 1 }, summary: emptySummary, spans: breakdowns }),
     "utf8",
   );
   return file;
@@ -256,7 +256,7 @@ test("assertCmd: a corrupt sibling CPU model surfaces instead of reading as no s
   const file = path.join(tmpDir, "no-bars.json");
   writeFileSync(
     file,
-    JSON.stringify({ meta: { schemaVersion: "3", target: "chrome", iterations: 1 }, summary: emptySummary }),
+    JSON.stringify({ meta: { schemaVersion: "4", target: "chrome", iterations: 1 }, summary: emptySummary }),
     "utf8",
   );
   writeFileSync(path.join(tmpDir, "no-bars.cpu.json"), "{ not json", "utf8");
