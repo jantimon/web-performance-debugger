@@ -126,11 +126,18 @@ function eventsInWindow(rec: Recording): NormalizedEvent[] {
  * not the array length, is the test.
  */
 function requireEventLog(rec: Recording, file: string): void {
-  if (rec.meta.passes.includes("deep") || isGeckoCaptureMode(rec.meta.passes)) return;
+  // --breakdown stores a SAMPLED read-site blame log (edge marks + sampled forced Layout/RecalcStyles
+  // events), so blame/events/get read it there too; the full invalidation event log is still --deep/firefox.
+  if (
+    rec.meta.passes.includes("deep") ||
+    rec.meta.passes.includes("breakdown") ||
+    isGeckoCaptureMode(rec.meta.passes)
+  )
+    return;
   throw new Error(
     `${file}: the event log was not captured in this capture mode (${rec.meta.passes.join("+")}). Events, ` +
-      `forced-layout blame, and invalidation records are stored only under --deep (chrome) or ` +
-      `--target firefox. Re-record with --deep.`,
+      `forced-layout blame, and invalidation records are stored under --deep (chrome), --breakdown ` +
+      `(chrome, sampled read-site blame only), or --target firefox. Re-record with --deep for the full log.`,
   );
 }
 
@@ -275,7 +282,13 @@ function buildSpanAnatomy(
   // Forced read-sites, thrash, and the firefox write report come from the deep event log, scoped to
   // this span's window. Absent in every capture mode that captured no log (the empty array is that lane's
   // "not captured", so the capture mode gates it, not the array length).
-  const hasEventLog = rec.meta.passes.includes("deep") || isGeckoCaptureMode(rec.meta.passes);
+  // --breakdown carries the sampled read-site blame log (with edge marks so a step/measure window
+  // resolves), so forced read-sites surface there too; thrash/dirtied stay --deep (they need the
+  // invalidation records --breakdown drops).
+  const hasEventLog =
+    rec.meta.passes.includes("deep") ||
+    rec.meta.passes.includes("breakdown") ||
+    isGeckoCaptureMode(rec.meta.passes);
   let forced: SpanForced[] | undefined;
   let thrash: SpanAnatomy["thrash"];
   let firefoxDirtied: SpanAnatomy["firefoxDirtiedBy"];
@@ -1425,6 +1438,9 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       durMs: number;
       kinds: Set<string>;
       properties: Set<string>;
+      /** sampled flushes at this line wider than one interval (confident) vs narrower (low-confidence) */
+      confident: number;
+      lowConfidence: number;
     }
   >();
   for (const event of events) {
@@ -1435,14 +1451,22 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       durMs: 0,
       kinds: new Set<string>(),
       properties: new Set<string>(),
+      confident: 0,
+      lowConfidence: 0,
     };
     group.count++;
     if (event.forced) group.forced++;
     group.durMs += usToMs(event.dur);
     group.kinds.add(event.kind);
+    const data = (
+      event.args as { data?: { property?: string; lowConfidence?: boolean } } | undefined
+    )?.data;
     // The forcing DOM property (Firefox read-site blame), stashed on the sampled event's args.
-    const property = (event.args as { data?: { property?: string } } | undefined)?.data?.property;
-    if (typeof property === "string") group.properties.add(property);
+    if (typeof data?.property === "string") group.properties.add(data.property);
+    // Chrome --breakdown sampled sub-interval flushes are low-confidence; a wider flush (no marker) or
+    // any --deep/firefox exact event is confident, so a line with one confident sample is not flagged.
+    if (data?.lowConfidence === true) group.lowConfidence++;
+    else group.confident++;
     groups.set(event.at!, group);
   }
   let rows = [...groups.values()].sort(
@@ -1470,6 +1494,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       kinds: [...row.kinds] as EventKind[],
       properties: row.properties.size ? [...row.properties] : undefined,
       dirtiedBy: dirtiedByReadSite[row.at]?.length ? dirtiedByReadSite[row.at] : undefined,
+      lowConfidence: row.confident === 0 && row.lowConfidence > 0 ? true : undefined,
     }));
     return emit(entries, fmt);
   }
@@ -1491,6 +1516,18 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       );
       return;
     }
+    // Chrome --breakdown samples the read from the CPU profile (no `.stack`), so an empty --forced can
+    // be a sampling miss, not a measured 0 -- and --breakdown never measures the forced COUNT, so there
+    // is no count to reconcile against (unlike firefox above). Say which, and point at --deep.
+    if (query.forced && rec.meta.browser !== "firefox" && rec.meta.passes.includes("breakdown")) {
+      console.log(
+        "No forced read-site sampled on this --breakdown run. The read is sampled from the CPU profile's " +
+          "per-sample executing line, so a cheap sub-interval flush can be missed; --breakdown does not " +
+          "measure the forced COUNT either. Record --deep for the exact forced count and blame. An empty " +
+          "result here is a sampling miss or a genuinely thrash-free run, not a measured 0.",
+      );
+      return;
+    }
     console.log(
       query.forced
         ? "No forced (synchronous) layout/style — no layout thrashing. 🎉"
@@ -1498,10 +1535,19 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     );
     return;
   }
-  // The source cell carries the forcing DOM property when the lane names it (Firefox read-site).
-  const sourceCell = (row: { at: string; properties: Set<string> }): string => {
+  // The source cell carries the forcing DOM property when the lane names it (Firefox read-site), and a
+  // low-confidence marker when every flush at this line was sub-interval (Chrome --breakdown sampled).
+  const sourceCell = (row: {
+    at: string;
+    properties: Set<string>;
+    confident: number;
+    lowConfidence: number;
+  }): string => {
     const at = middleEllipsis(row.at, SOURCE_COL_MAX);
-    return row.properties.size ? `${at} (${[...row.properties].join(", ")})` : at;
+    const withProperty = row.properties.size ? `${at} (${[...row.properties].join(", ")})` : at;
+    return row.confident === 0 && row.lowConfidence > 0
+      ? `${withProperty} ${dim("~low-confidence (sub-interval)")}`
+      : withProperty;
   };
   // `--all` shows the forced column so "ran but forced 0" lines are first-class.
   console.log(
@@ -1565,7 +1611,11 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   // all. Saying so over such a table would print the exact read/write confusion the semantic
   // exists to prevent (Chrome's invalidation stacks name the WRITE: docs/dev/blame-semantics.md).
   if (rows.some((row) => row.forced > 0)) {
-    const semantic = blameSemanticLine(rec.meta.blameSemantic, rec.meta.browser);
+    const semantic = blameSemanticLine(
+      rec.meta.blameSemantic,
+      rec.meta.browser,
+      rec.meta.passes.includes("breakdown"),
+    );
     if (semantic) console.log(`\n${semantic}`);
   }
 }
@@ -1621,7 +1671,7 @@ function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
   if (semantic === "invalidation-site")
     return "Firefox captures cause stacks for layout/style via the Gecko profiler";
   if (semantic === "flush-site")
-    return "the run captures the geometry read that forced the flush (Chrome via the trace's `.stack`, Firefox via the sampled DOM-accessor stacks)";
+    return "the run captures the geometry read that forced the flush (Chrome --deep via the trace's `.stack`, Chrome --breakdown + Firefox by sampling it)";
   return "this run captured no blame: the default and --precise-wall capture modes run no trace, and --target node has no DOM; record with --deep (chrome) or --target firefox";
 }
 
@@ -1635,14 +1685,26 @@ function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
 function blameSemanticLine(
   semantic: BlameSemantic | undefined,
   browser: "chrome" | "firefox" | undefined,
+  chromeSampled: boolean,
 ): string | null {
-  if (semantic === "flush-site")
-    return browser === "firefox"
-      ? "forced rows: source = the geometry read that forced the flush, named from the sampled " +
-          "DOM-accessor stacks (with the property). Same read-site semantic as Chrome; it is a " +
-          "sampled estimate, so cheap reads can be missed and the line can lag one statement."
-      : "forced rows: source = the geometry read that forced the flush. Firefox now names the same " +
-          "read site (sampled), so the two engines' forced lines are comparable at line granularity.";
+  if (semantic === "flush-site") {
+    if (browser === "firefox")
+      return (
+        "forced rows: source = the geometry read that forced the flush, named from the sampled " +
+        "DOM-accessor stacks (with the property). Same read-site semantic as Chrome; it is a " +
+        "sampled estimate, so cheap reads can be missed and the line can lag one statement."
+      );
+    // Chrome --breakdown samples the read from the CPU profile's per-sample executing line; --deep
+    // reads it exactly from Blink's `.stack`. Name which, so a sampled line is not read as exact.
+    return chromeSampled
+      ? "forced rows: source = the geometry read that forced the flush, sampled from the CPU profile's " +
+          "per-sample executing line (--breakdown has no `.stack`). A sampled estimate, so a flush " +
+          "narrower than one sampler interval can lag one statement or land on an adjacent line (marked " +
+          "~low-confidence); the forced COUNT needs --deep. Comparable to firefox's sampled read at line granularity."
+      : "forced rows: source = the geometry read that forced the flush, read exactly from Blink's " +
+          "`.stack` (--deep). Firefox and --breakdown name the same read site (sampled), so the forced " +
+          "lines are comparable at line granularity.";
+  }
   if (semantic === "invalidation-site")
     return (
       "forced rows: source = the write that dirtied the DOM (older Firefox recording), not the read " +

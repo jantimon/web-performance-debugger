@@ -3,8 +3,8 @@
 //
 // Chrome capture modes:
 //   default        sampler only, no trace           -> the four-slice CPU bar; no rendering counts
-//   --breakdown    light trace + sampler            -> the reconciling seven-slice bar + exact counts
-//   --deep         full trace (.stack + inval), OFF  -> forced-layout blame + exact counts, no bar
+//   --breakdown    light trace + sampler            -> reconciling bar + exact counts + sampled blame
+//   --deep         full trace (.stack + inval), OFF  -> exact forced-layout blame + counts, no bar
 //   --precise-wall sampler off, no trace            -> a pristine benchmark wall, nothing else
 // Firefox is one gecko pass in every capture mode (samples + markers are entangled at profiler
 // startup); its capture modes are REPORTING tiers over that one capture, not capture tiers. --deep
@@ -79,7 +79,8 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
     // the samples: trace events and samples share a clock so the seven-slice bar reconciles.
     // keepThreadIds so the engine picks the main thread. The samples come from the trace stream (not
     // the CDP sampler), which is continuous across a cross-document navigation, so a navigating driver
-    // step keeps CPU attribution. Cannot report forced counts/blame (they need `.stack`).
+    // step keeps CPU attribution. The forced COUNT needs `.stack` (unmeasured here), but forced-layout
+    // BLAME is available, sampled from the stream's per-sample executing line (trace/sampled-blame.ts).
     return {
       mode: "breakdown",
       categories: breakdownTraceCategories(),
@@ -190,14 +191,18 @@ export function capabilitiesFor(
 
 /**
  * What this run's forced-layout blame lines name (see BlameSemantic), a per-capture-mode constant.
- * Both browser lanes name the READ that forced the flush (flush-site): Chrome from Blink's `.stack` on
- * `--deep`, Firefox from the sampled DOM-accessor stacks. A capture mode with neither produces no
- * blame.
+ * Every mode that produces blame names the READ that forced the flush (flush-site): Chrome from
+ * Blink's `.stack` on `--deep` (exact), Chrome from the `v8.cpu_profiler` per-sample executing line on
+ * `--breakdown` (sampled), Firefox from the sampled DOM-accessor stacks. A capture mode with none
+ * produces no blame. On `--breakdown` the caller clears this when the trace carried no per-sample lines
+ * (older Chrome), so an unavailable feature is not advertised.
  */
 export function blameSemanticFor(config: CaptureConfig): BlameSemantic | undefined {
   if (config.gecko) return "flush-site";
-  // Flush-site blame is Blink's stack at the forced flush, which needs `.stack` -- only --deep has it.
-  if (config.categories?.includes(STACK_CATEGORY)) return "flush-site";
+  // Chrome --deep: Blink's `.stack` at the forced flush. --breakdown: the sampled per-sample executing
+  // line over a Layout/UpdateLayoutTree window (docs/dev/blame-semantics.md). Both are flush-site.
+  if (config.categories?.includes(STACK_CATEGORY) || config.mode === "breakdown")
+    return "flush-site";
   return undefined;
 }
 

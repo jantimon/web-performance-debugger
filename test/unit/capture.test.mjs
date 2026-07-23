@@ -127,11 +127,17 @@ test("capabilitiesFor: firefox counts layout/style/forced from markers, never pa
   assert.equal(caps.longTasks, false);
 });
 
-test("blameSemanticFor: --deep and firefox name the read (flush-site); the default capture mode has no blame", () => {
+test("blameSemanticFor: --deep, --breakdown, and firefox name the read (flush-site); the default capture mode has no blame", () => {
   assert.equal(blameSemanticFor(captureFor(opts({ deep: true }), "chrome")), "flush-site");
   assert.equal(blameSemanticFor(captureFor(opts(), "firefox")), "flush-site");
+  // --breakdown now names the read too, sampled from the CPU profile's per-sample executing line (the
+  // record path clears this when the trace carried no lines). --deep is exact, --breakdown is sampled.
+  assert.equal(
+    blameSemanticFor(captureFor(opts({ breakdown: true }), "chrome")),
+    "flush-site",
+    "--breakdown names the sampled read site",
+  );
   assert.equal(blameSemanticFor(captureFor(opts(), "chrome")), undefined, "default capture mode: no trace, no blame");
-  assert.equal(blameSemanticFor(captureFor(opts({ breakdown: true }), "chrome")), undefined, "light trace has no .stack, so no blame");
 });
 
 test("countScopeNote: null at one iteration or with no counts; a TOTAL disclosure otherwise", () => {

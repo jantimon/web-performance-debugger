@@ -20,6 +20,8 @@ import { attachStacks } from "../trace/stacks.js";
 import { startTrace, stopTrace } from "../trace/tracing.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { markForced } from "../trace/analysis.js";
+import { mainThread } from "../trace/main-thread.js";
+import { sampledForcedBlameEvents } from "../trace/sampled-blame.js";
 import { startCpuProfile, stopCpuProfile } from "../metrics/cdp.js";
 import { assembleTraceCpuProfile, windowTraceCpuProfile } from "../trace/profile-chunks.js";
 import { DEFAULT_CPU_INTERVAL_US, type RawCpuProfile } from "../profile/cpuprofile.js";
@@ -59,6 +61,11 @@ export interface PassResult {
   geckoDumpPath?: string;
   /** interval the CPU sampler actually ran at, read back from the profile itself */
   cpuSampleIntervalUs?: number;
+  /** --breakdown only: the sampled read-site forced-layout blame log (step/measure edge marks + the
+   * sampled Layout/RecalcStyles blame events, source-resolved and `forced`), stored as the recording's
+   * event log so `query blame --forced` answers. Undefined when the trace carried no per-sample lines
+   * (older Chrome), so the caller reports blame unavailable rather than empty-as-clean. */
+  sampledBlame?: NormalizedEvent[];
   /** Firefox: user `performance.measure` windows (profiler µs clock) for the mark-bridge spans */
   geckoMeasures?: GeckoMeasureWindow[];
   /** WARNING when chrome-headless-shell was missing and the launch fell back to new-headless */
@@ -319,6 +326,10 @@ export async function runPass(
     let stepWindows: LabelledWindow[] | undefined;
     let stepWallClock: "trace" | "page" | "none" | undefined;
     let traceDataLoss = false;
+    // --breakdown only: the sampled read-site forced-layout blame log (the step/measure marks so a span
+    // can window it, plus the sampled blame events). Undefined when the trace carried no per-sample
+    // lines, so the caller can disclose that blame is unavailable rather than reading empty as "clean".
+    let sampledBlame: NormalizedEvent[] | undefined;
     if (spec.categories && caps.trace && client) {
       const trace = await stopTrace(client);
       traceDataLoss = trace.dataLossOccurred;
@@ -351,6 +362,43 @@ export async function runPass(
               ? windowTraceCpuProfile(assembled.profile, windowStart)
               : assembled.profile;
           cpuSampleIntervalUs = assembled.sampleIntervalUs;
+          // Sampled read-site forced-layout blame from the per-sample executing lines, when the trace
+          // carried them. The light trace has no `.stack`, so this is the ONLY read-site source here;
+          // the samples keep sampling through a synchronous forced layout, so a flush window's sample
+          // names the forcing line (docs/dev/blame-semantics.md). Absent sampleLines => leave
+          // sampledBlame undefined so the caller reports blame unavailable, never empty-as-clean.
+          if (assembled.sampleLines) {
+            const urlByNode = new Map(
+              assembled.profile.nodes.map((node) => [node.id, node.callFrame.url ?? ""]),
+            );
+            const blame = sampledForcedBlameEvents(
+              events,
+              {
+                urlByNode,
+                samples: assembled.profile.samples,
+                timestampsUs: assembled.profile.sampleTimestampsUs ?? [],
+                lines: assembled.sampleLines,
+                intervalUs: assembled.sampleIntervalUs,
+              },
+              windowStart,
+              mainThread(events),
+            );
+            // Resolve the sampled frame to local source (event.at) and mark it forced, the same path
+            // the trace/gecko events take, so `query blame --forced` reads it identically.
+            await attachStacks(blame, server.url, root, maps);
+            markForced(blame);
+            // Store the run/step edge marks alongside so `query span <step>` can window the blame to a
+            // step; a shallow copy keeps `events`' own ids intact. Ids are reassigned in ts order for
+            // stable `query get <id>` addressing (parseTrace/gecko do the same).
+            const marks = events
+              .filter((event) => event.kind === "usertiming")
+              .map((event) => ({ ...event }));
+            const log = [...marks, ...blame].sort((left, right) => left.ts - right.ts);
+            log.forEach((event, index) => {
+              event.id = index;
+            });
+            sampledBlame = log;
+          }
         }
       }
       // Re-key this pass's step windows from index to label; both sides come from this one pass.
@@ -397,6 +445,7 @@ export async function runPass(
       stepWallClock,
       cpuProfile,
       cpuSampleIntervalUs,
+      sampledBlame,
       headlessFallback,
       traceDataLoss,
     };

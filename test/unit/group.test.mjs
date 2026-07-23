@@ -102,10 +102,19 @@ test("pickMember: routes each axis to the member that measures it", () => {
   assert.equal(pickMember(both, "counts").mode, "deep", "counts -> deep (preferred)");
   assert.ok(pickMember(both, "inp"), "inp -> any member");
 
-  // A breakdown-only group has no deep member: forced/blame route to nobody (a loud gap upstream).
+  // A breakdown-only group has no deep member: BLAME (the read-site) falls back to the breakdown member
+  // (it carries the sampled read-site blame), but the forced COUNT and the WRITE set (dirtied/thrash)
+  // stay deep-only -> nobody.
   const barOnly = group(["breakdown"]);
-  assert.equal(pickMember(barOnly, "forced"), null, "no deep member -> no forced answer");
+  assert.equal(pickMember(barOnly, "blame").mode, "breakdown", "blame falls back to breakdown (sampled read-site)");
+  assert.equal(pickMember(barOnly, "forced"), null, "no deep member -> no forced COUNT (assert --max-forced)");
+  assert.equal(pickMember(barOnly, "dirtied"), null, "no deep member -> no write set (dirtied)");
+  assert.equal(pickMember(barOnly, "thrash"), null, "no deep member -> no thrash");
   assert.equal(pickMember(barOnly, "counts").mode, "breakdown", "counts fall back to breakdown");
+
+  // With both members, blame/forced still prefer the exact deep member over the sampled breakdown one.
+  assert.equal(pickMember(both, "dirtied").mode, "deep", "dirtied -> deep only");
+  assert.equal(pickMember(both, "thrash").mode, "deep", "thrash -> deep only");
 
   // A deep-only group has no CPU-bearing member: cpu/bar route to nobody.
   const deepOnly = group(["deep"]);

@@ -382,9 +382,14 @@ export async function record(opts: RecordOptions): Promise<{
     notes.push(notesCatalog.breakdownNoProfile());
   } else if (opts.breakdown) {
     // The seven-slice breakdown is the product here; state its shape and, loudly, what a light trace
-    // structurally cannot measure so a 0 is never read as clean.
+    // structurally cannot measure so a 0 is never read as clean. Forced-layout blame IS available now
+    // (sampled from the per-sample executing line); the note names the sampled scope and that the
+    // COUNT still needs --deep. When the trace carried no per-sample lines, blame degrades to
+    // unavailable (breakdownBlameUnavailable below), never silently empty.
     notes.push(notesCatalog.breakdownShape());
     notes.push(notesCatalog.breakdownForcedNotMeasured());
+    if (cpuPass?.cpuProfile && pass.sampledBlame == null)
+      notes.push(notesCatalog.breakdownBlameUnavailable());
     notes.push(notesCatalog.breakdownInvalidationNotMeasured());
   } else if (opts.deep && browserName !== "firefox") {
     // Chrome --deep: exact counts + forced-layout blame are the product; slice durations are
@@ -593,7 +598,13 @@ export async function record(opts: RecordOptions): Promise<{
     driver: opts.driver,
     // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome".
     browser: browserName === "firefox" ? "firefox" : undefined,
-    blameSemantic: blameSemanticFor(capture),
+    // The read a blame line names (flush-site everywhere blame runs). On --breakdown the capture mode
+    // CAN produce sampled blame, but only when the trace carried per-sample lines; clear it when it did
+    // not, so an unavailable feature is not advertised (the breakdownBlameUnavailable note says why).
+    blameSemantic:
+      capture.mode === "breakdown" && pass.sampledBlame == null
+        ? undefined
+        : blameSemanticFor(capture),
     // The main-thread selection (via + split) as a typed field, so a reader (and assert/diff) sees the
     // cross-process split without parsing prose. Absent on a non-counting capture, where the selection
     // is null. The prose note above (crossProcessWorkSplit) stays for humans.
@@ -654,6 +665,9 @@ export async function record(opts: RecordOptions): Promise<{
   // `blame` there report "not captured in this capture mode". buildBreakdowns and per-step counts still read
   // the full `detail.events` at record time regardless -- this gates only what is STORED.
   const storeEventLog = opts.deep || browserName === "firefox";
+  // --breakdown stores ONLY the small sampled read-site blame log (edge marks + sampled forced events),
+  // not the full trace, so the artifact stays digest-sized while `query blame --forced` still answers.
+  const breakdownEventLog = opts.breakdown ? (pass.sampledBlame ?? []) : [];
   const recording: Recording = {
     meta,
     window: {
@@ -663,7 +677,7 @@ export async function record(opts: RecordOptions): Promise<{
       wallMs: runWallMs,
     },
     marks: timing.marks,
-    events: storeEventLog ? detail.events : [],
+    events: storeEventLog ? detail.events : breakdownEventLog,
     // Assembled below, once the summary is finalized and any per-span bars are built.
     spans: [],
     summary: buildSummary({
