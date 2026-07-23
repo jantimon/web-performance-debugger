@@ -104,6 +104,8 @@ try {
     "RawCpuProfile",
     "LastPointer",
     "WaitForStableOptions",
+    "DriverContext",
+    "MeasureStep",
   ];
   // A missing member in a `import type { ... }` is a hard compile error (TS2305), so listing the
   // promised types is enough to catch export drift; the value imports get a trivial reference.

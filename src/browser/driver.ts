@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import type { Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
+import { waitForStable } from "./until.js";
 import { duplicateLabelError } from "../trace/steps.js";
 import type { InteractionTiming, LoafFrame, StepLoaf } from "../model/recording.js";
 
@@ -234,6 +235,30 @@ export type Until = string | (() => unknown | Promise<unknown>) | Promise<unknow
 
 interface StepOpts {
   until?: Until;
+}
+
+/** Define one measured step, `measureStep(label, action, { until })` or the config-object form. */
+export interface MeasureStep {
+  (label: string, action: () => unknown, opts?: StepOpts): Promise<void>;
+  (config: { label: string; action: () => unknown; until?: Until }): Promise<void>;
+}
+
+/**
+ * The argument driver mode hands `prepare`/`run`/`cleanup`. `waitForStable` is injected so a driver
+ * module needs NO import from the package (it does not resolve under a bare `npx` run, whose cwd has
+ * no node_modules for the package): `until: waitForStable(page, { selector, quietMs })`. The injected
+ * helper is the same function the package exports, so the two forms are interchangeable.
+ */
+export interface DriverContext {
+  /** The Puppeteer page under test; drive it (click, type, goto) inside a measureStep action. */
+  page: Page;
+  /** Empty object shared across prepare/run/cleanup: stash a handle or test data in prepare, read it
+   * in run. */
+  ctx: Record<string, unknown>;
+  measureStep: MeasureStep;
+  /** A `measureStep` `until` for streamed / soft-navigating transitions the default settle ends
+   * before. Injected so the module imports nothing; identical to the package's `waitForStable`. */
+  waitForStable: typeof waitForStable;
 }
 
 /**
@@ -505,7 +530,10 @@ export async function runDriver(
   }
 
   const ctx: Record<string, unknown> = {};
-  if (prepare) await prepare({ page, ctx, measureStep });
+  // One arg object for every hook. ctx is the same reference throughout, so a handle prepare() stashes
+  // is visible in run()/cleanup(). waitForStable is injected so the module needs no package import.
+  const driverArg: DriverContext = { page, ctx, measureStep, waitForStable };
+  if (prepare) await prepare(driverArg);
   // Anything prepare() measured owns indices 0..n-1 permanently; the timed loop starts after them
   // and restarts there every iteration, so a label's index is the same in every iteration.
   phase = "timed";
@@ -514,7 +542,7 @@ export async function runDriver(
   // Warmup, before the counters and marks: its DOM work must not land in the counts, and its
   // wall must not land in the samples. prepare() already ran, so warmup repeats the flow itself.
   recording = false;
-  for (let warm = 0; warm < options.warmup; warm++) await run({ page, ctx, measureStep });
+  for (let warm = 0; warm < options.warmup; warm++) await run(driverArg);
   recording = true;
 
   // prepare() and warmup have run; open the CPU sampler HERE, right before the run mark, not before
@@ -543,7 +571,7 @@ export async function runDriver(
     usedLabels = new Set<string>();
     indexInIteration = timedIndexBase;
     try {
-      await run({ page, ctx, measureStep });
+      await run(driverArg);
     } catch (error) {
       // A flow that never completed a full iteration (iteration 0 failed, or --keep-partial was not
       // set) has nothing honest to salvage: rethrow so a broken flow is a hard error, not a quietly
@@ -575,7 +603,7 @@ export async function runDriver(
     cleanup: cleanup
       ? () => {
           inCleanup = true;
-          return cleanup({ page, ctx, measureStep });
+          return cleanup(driverArg);
         }
       : undefined,
   };

@@ -81,5 +81,11 @@ export type { LastPointer } from "./commands/resolve.js";
 
 // Driver helpers a user's module can import. `waitForStable` is a `measureStep` `until` that waits
 // for a streamed / soft-navigating transition to finish (the default settle can end before it does).
+// Driver mode also INJECTS `waitForStable` into the `run`/`prepare`/`cleanup` argument (DriverContext),
+// so a module driven under a bare `npx` run needs no import at all.
 export { waitForStable } from "./browser/until.js";
 export type { WaitForStableOptions } from "./browser/until.js";
+
+// The argument driver mode hands `run`/`prepare`/`cleanup`, so a TypeScript driver module can annotate
+// its hook (`run({ page, measureStep, waitForStable }: DriverContext)`) and see the injected helper.
+export type { DriverContext, MeasureStep } from "./browser/driver.js";
