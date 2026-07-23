@@ -1,6 +1,6 @@
 import type { CpuModel, FrameSideTrack, Span, SpanKind } from "../model/recording.js";
 import type { CpuOverview, FrameQueryResult } from "../model/query.js";
-import { num, table } from "../output/ascii.js";
+import { num, table, middleEllipsis, LABEL_COL_MAX } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
 import { serialize, isFormat, type Format } from "../output/format.js";
 import { spanAggregation } from "../model/spans.js";
@@ -150,7 +150,7 @@ export function printSpanBreakdowns(
   console.log(`\nCPU time breakdown ${dim("(per span: Σ slices + idle = wall)")}`);
   for (const span of bars) {
     const { wallMs, slices, residualMs } = span.breakdown!;
-    const label = `${span.label} ${dim(`(${span.kind}, ${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)})`)}`;
+    const label = `${middleEllipsis(span.label, LABEL_COL_MAX)} ${dim(`(${span.kind}, ${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)})`)}`;
     console.log(`\n${bold(label)}`);
     if (wallMs <= 0) {
       console.log(dim("  (empty window; nothing to tile)"));
