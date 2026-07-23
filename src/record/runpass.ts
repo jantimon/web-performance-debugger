@@ -321,20 +321,12 @@ export async function runPass(
     let traceDataLoss = false;
     if (spec.categories && caps.trace && client) {
       const trace = await stopTrace(client);
-      if (trace.tooLargeToParse) {
-        const mb = Math.round((trace.byteLength ?? 0) / 1e6);
-        throw new Error(
-          `The trace grew to ${mb}MB, past the ~512MB a single string can hold, so it cannot be ` +
-            `parsed and no counts are available. --deep (.stack + invalidationTracking) is the ` +
-            `heaviest trace; reduce the measured work (fewer steps per run, or scope the flow), or ` +
-            `use --breakdown (a lighter trace) if you do not need forced-layout blame.`,
-        );
-      }
       traceDataLoss = trace.dataLossOccurred;
-      // Parse the trace JSON once and feed both the event pipeline and (in the trace-sourced capture mode) the
-      // CPU-sample assembly, so the large buffer is decoded a single time.
-      const traceObject = JSON.parse(trace.text);
-      events = parseTrace(traceObject, {
+      // Parse the trace one event at a time straight from the raw bytes (scanTraceEvents), so a heavy
+      // --deep trace past the ~512MB single-string ceiling still parses and peak heap tracks the events
+      // kept, not the whole raw array. --deep runs only this scan; --breakdown scans a second time below
+      // for the CPU stream (a lighter trace, so the re-walk is cheap).
+      events = parseTrace(trace.bytes, {
         keepThreadIds: spec.keepThreadIds,
       });
       // Rewrite trace stack urls back to local source files for blame/source lookup.
@@ -352,7 +344,7 @@ export async function runPass(
       // leave cpuProfile undefined so the caller falls back to honest not-covered reporting, never a
       // fabricated zero profile.
       if (spec.cpu && spec.cpuSource === "trace") {
-        const assembled = assembleTraceCpuProfile(traceObject);
+        const assembled = assembleTraceCpuProfile(trace.bytes);
         if (assembled) {
           cpuProfile =
             windowStart != null

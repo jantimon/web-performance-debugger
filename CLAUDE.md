@@ -478,7 +478,8 @@ all live there with the probes that establish them.
   count) before adding a name to `classify.ts` or gating a count; `frame-floor.md` (the one-frame
   floor on `wall`/`INP`, and why the headless mode sets its height) before changing the headless
   option or adding a headless flag; `trace-buffer.md` (what raises the trace-buffer ceiling, what
-  drops events, and the ~512MB parse limit) before changing `trace/tracing.ts` or the buffer size.
+  drops events, the incremental event-level parser, and the `--deep` event-log serialization ceiling)
+  before changing `trace/tracing.ts`, `trace/scan.ts`, or the buffer size.
 - **Claims about engine behaviour need a probe, not a mechanism.** A plausible mechanism is not
   evidence, however obviously true it reads: sourcemaps, INP, Gecko cause stacks and sampler
   isolation all behave in ways a mechanism alone predicts wrongly. Run `examples/forces-layout.mjs`
