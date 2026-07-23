@@ -334,6 +334,24 @@ export async function record(opts: RecordOptions): Promise<{
     await server.close();
   }
 
+  // Firefox: the raw Gecko shutdown dump is a large temp file (16MB+). Copy it to the artifact and
+  // remove the temp right away, before the rest of the recording is assembled, so no later failure
+  // (step merge, model build, or the copy itself) can leave it orphaned in tmp. The try/finally
+  // clears the temp even when the copy throws; on chrome pass.geckoDumpPath is absent, so this is a
+  // no-op and cpuProfilePath is filled in from the raw .cpuprofile write below instead.
+  let cpuProfilePath: string | undefined;
+  if (pass.geckoDumpPath) {
+    // The authoritative raw artifact is the Gecko dump (loads at profiler.firefox.com);
+    // CpuModel.profile points at it. Copy atomically (temp + rename): the dump can be very large,
+    // and a killed copy must not corrupt an existing member's geckoprofile.
+    cpuProfilePath = path.join(outDir, `${base}.geckoprofile.json`);
+    try {
+      await copyFileAtomic(pass.geckoDumpPath, cpuProfilePath);
+    } finally {
+      await fs.rm(pass.geckoDumpPath, { force: true }).catch(() => {});
+    }
+  }
+
   // One pass carries everything now: wall/steps, the trace (if any), and the CPU/gecko profile.
   const timing = pass;
   const detail = pass;
@@ -680,27 +698,21 @@ export async function record(opts: RecordOptions): Promise<{
   // Built BEFORE any artifact is serialized: it resolves the last of the run's frames, so
   // meta.sourcemaps below is only complete once it has run, and `meta` is shared by reference
   // with every artifact written after this point.
-  let cpuProfilePath: string | undefined;
   let cpuModelPath: string | undefined;
   let cpuModel: CpuModel | undefined;
   if (cpuPass?.cpuProfile) {
-    if (cpuPass.geckoDumpPath) {
-      // Firefox: the authoritative raw artifact is the Gecko dump (loads at profiler.firefox.com);
-      // CpuModel.profile points at it. The model is built from the converted V8-shaped profile.
-      // Copy atomically (temp + rename), rather than round-trip through a string: the dump can be very
-      // large, and a killed copy must not corrupt an existing member's geckoprofile.
-      cpuProfilePath = path.join(outDir, `${base}.geckoprofile.json`);
-      await copyFileAtomic(cpuPass.geckoDumpPath, cpuProfilePath);
-      await fs.rm(cpuPass.geckoDumpPath, { force: true });
-    } else {
+    if (!cpuPass.geckoDumpPath) {
+      // Chrome: the firefox gecko dump was already copied to cpuProfilePath above; here write the raw
+      // .cpuprofile. Strip the trace-lane-only sampleTimestampsUs so the raw file stays the standard
+      // DevTools shape. Atomic (temp + rename): a killed write leaves no torn .cpuprofile.
       cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
-      // Strip the trace-lane-only sampleTimestampsUs so the raw file stays the standard DevTools shape.
-      // Atomic (temp + rename): a killed write leaves no torn .cpuprofile for DevTools/Speedscope.
       await writeFileAtomic(
         cpuProfilePath,
         JSON.stringify(toDevtoolsCpuProfile(cpuPass.cpuProfile)),
       );
     }
+    // Set on both lanes: the gecko dump copy above (firefox), or the raw .cpuprofile write (chrome).
+    if (!cpuProfilePath) throw new Error("internal: no raw profile path for the CPU model.");
     cpuModel = await buildCpuModel(cpuPass.cpuProfile, {
       profilePath: cpuProfilePath,
       meta,

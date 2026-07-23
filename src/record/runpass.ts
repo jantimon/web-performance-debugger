@@ -24,7 +24,9 @@ import { startCpuProfile, stopCpuProfile } from "../metrics/cdp.js";
 import { assembleTraceCpuProfile, windowTraceCpuProfile } from "../trace/profile-chunks.js";
 import { DEFAULT_CPU_INTERVAL_US, type RawCpuProfile } from "../profile/cpuprofile.js";
 import { usToMs, msToUs } from "../model/time.js";
+import { attachTeardownFailure } from "../model/teardown.js";
 import type { NormalizedEvent, TimingEntry } from "../model/recording.js";
+import type { GeckoContext } from "../profile/gecko.js";
 import type { CaptureConfig } from "./capture.js";
 import type { RecordOptions } from "../commands/record.js";
 
@@ -124,6 +126,21 @@ async function waitForGeckoDump(
   throw new Error(
     `Gecko profile dump was not written to ${dumpPath} within ${timeoutMs}ms (Firefox gecko pass).`,
   );
+}
+
+/**
+ * Wait for the Gecko shutdown dump, then parse it. If the wait or parse fails (a dump that never
+ * lands, truncated JSON, a profile missing the JavaScript category) remove the temp dump before
+ * re-throwing, so a broken dump leaves no orphaned 16MB+ file behind. On success the file is kept for
+ * the caller to copy to the artifact.
+ */
+export async function readGeckoDump(dumpPath: string): Promise<GeckoContext> {
+  try {
+    return parseGecko(JSON.parse(await waitForGeckoDump(dumpPath)));
+  } catch (error) {
+    await fs.rm(dumpPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 /**
@@ -391,9 +408,26 @@ export async function runPass(
       headlessFallback,
       traceDataLoss,
     };
-  } finally {
-    // Closing Firefox flushes the Gecko shutdown dump, so the parse below must run after this.
+  } catch (runError) {
+    // The run failed. Close the browser (which also flushes a Firefox shutdown dump) so nothing is
+    // left running, but never let a close failure replace the run error: attach it as the cause.
+    // Then remove the now-orphaned Gecko dump, since the parse below is skipped, and re-throw.
+    try {
+      await browser.close();
+    } catch (closeError) {
+      attachTeardownFailure(runError, closeError);
+    }
+    if (geckoDumpPath) await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
+    throw runError;
+  }
+
+  // The run succeeded. Close the browser, which flushes a Firefox shutdown dump, so the parse below
+  // runs after this. A close failure here is the only error, so it surfaces; drop any orphaned dump.
+  try {
     await browser.close();
+  } catch (closeError) {
+    if (geckoDumpPath) await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
+    throw closeError;
   }
 
   // Firefox: parse the shutdown dump into the same shapes the Chrome path produces. One gecko
@@ -401,28 +435,36 @@ export async function runPass(
   // Styles markers). The run window comes from the wpd:run UserTiming marks inside the profile.
   if (spec.gecko && geckoDumpPath) {
     // Parse from a scoped string so the dump (potentially hundreds of MB) is collectable once
-    // the model is built; the artifact is copied straight from the file by the caller.
-    const geckoContext = parseGecko(JSON.parse(await waitForGeckoDump(geckoDumpPath)));
-    result.geckoDumpPath = geckoDumpPath;
-    result.cpuProfile = geckoToRawCpuProfile(geckoContext);
-    // The interval the sampler actually ran at, not what we asked for.
-    result.cpuSampleIntervalUs = msToUs(geckoContext.intervalMs);
-    // User performance.measure spans, for the mark-bridge per-span breakdowns (record.ts builds them).
-    result.geckoMeasures = geckoUserMeasures(geckoContext);
-    const renderingEvents = geckoToRenderingEvents(geckoContext);
-    await attachStacks(renderingEvents, server.url, root, maps);
-    markForced(renderingEvents);
-    result.events = renderingEvents;
-    const geckoWindow = findWindow(renderingEvents);
-    result.windowStart = geckoWindow.startTs;
-    result.windowEnd = geckoWindow.endTs;
-    // Gecko's Reflow/Styles markers carry the wpd:step windows too, on the profiler clock; price the
-    // step walls off them, the same trace-clock upgrade the Chrome branch applies.
-    if (opts.driver && result.driverSteps) {
-      const stepTraceWindows = findSteps(renderingEvents);
-      applyTraceWall(result.driverSteps, stepTraceWindows);
-      result.stepWindows = labelWindows(result.driverSteps, stepTraceWindows);
-      result.stepWallClock = stepWallClockFor(result.driverSteps, true);
+    // the model is built; the artifact is copied straight from the file by the caller. readGeckoDump
+    // removes the temp dump if the wait/parse fails.
+    const geckoContext = await readGeckoDump(geckoDumpPath);
+    try {
+      result.geckoDumpPath = geckoDumpPath;
+      result.cpuProfile = geckoToRawCpuProfile(geckoContext);
+      // The interval the sampler actually ran at, not what we asked for.
+      result.cpuSampleIntervalUs = msToUs(geckoContext.intervalMs);
+      // User performance.measure spans, for the mark-bridge per-span breakdowns (record.ts builds them).
+      result.geckoMeasures = geckoUserMeasures(geckoContext);
+      const renderingEvents = geckoToRenderingEvents(geckoContext);
+      await attachStacks(renderingEvents, server.url, root, maps);
+      markForced(renderingEvents);
+      result.events = renderingEvents;
+      const geckoWindow = findWindow(renderingEvents);
+      result.windowStart = geckoWindow.startTs;
+      result.windowEnd = geckoWindow.endTs;
+      // Gecko's Reflow/Styles markers carry the wpd:step windows too, on the profiler clock; price the
+      // step walls off them, the same trace-clock upgrade the Chrome branch applies.
+      if (opts.driver && result.driverSteps) {
+        const stepTraceWindows = findSteps(renderingEvents);
+        applyTraceWall(result.driverSteps, stepTraceWindows);
+        result.stepWindows = labelWindows(result.driverSteps, stepTraceWindows);
+        result.stepWallClock = stepWallClockFor(result.driverSteps, true);
+      }
+    } catch (geckoError) {
+      // The converter or source resolution failed before the dump was handed to the caller for the
+      // copy: remove the temp so a failure past the parse leaks nothing.
+      await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
+      throw geckoError;
     }
   }
   return result;

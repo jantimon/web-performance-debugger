@@ -10,6 +10,7 @@ import {
   type RawCpuProfile,
 } from "../profile/cpuprofile.js";
 import { usToMs, msToUs } from "../model/time.js";
+import { attachTeardownFailure } from "../model/teardown.js";
 import { buildSummary, NO_RENDERING_CAPTURE } from "../metrics/summarize.js";
 import { buildRecordingSpans } from "../record/spans-build.js";
 import { writePointer } from "../commands/resolve.js";
@@ -104,6 +105,8 @@ export async function recordNode(opts: RecordOptions): Promise<{
   let windowStartNowMs: number | null = null;
   let windowEndNowMs = 0;
   let rawProfile: RawCpuProfile | undefined;
+  let runError: unknown;
+  let runFailed = false;
   try {
     for (let iteration = 0; iteration < opts.iterations; iteration++) {
       const startedAt = performance.now();
@@ -113,14 +116,24 @@ export async function recordNode(opts: RecordOptions): Promise<{
       windowEndNowMs = finishedAt;
       perIteration.push(finishedAt - startedAt);
     }
-  } finally {
-    // Best-effort teardown even if run() threw: stop the profiler, drop the inspector session,
-    // and run the user's cleanup so external resources (temp dirs, servers) are released.
-    const stopped = await post("Profiler.stop").catch(() => undefined);
-    rawProfile = stopped?.profile as RawCpuProfile | undefined;
+  } catch (error) {
+    runFailed = true;
+    runError = error;
+  }
+  // Teardown after the run, whether it succeeded or threw: stop the profiler, drop the inspector
+  // session, and run the user's cleanup so external resources (temp dirs, servers) are released.
+  const stopped = await post("Profiler.stop").catch(() => undefined);
+  rawProfile = stopped?.profile as RawCpuProfile | undefined;
+  try {
     session.disconnect();
     if (cleanup) await cleanup(ctx);
+  } catch (teardownError) {
+    // A teardown failure must never mask a run failure: attach it as the run error's cause and let
+    // the run error surface. With no run failure, the teardown failure is the one to report.
+    if (runFailed) attachTeardownFailure(runError, teardownError);
+    else throw teardownError;
   }
+  if (runFailed) throw runError;
   if (!rawProfile) throw new Error("Profiler.stop returned no profile");
 
   // Clip the profile to the timed loop's window on the profiler's own clock. The clock offset is the
