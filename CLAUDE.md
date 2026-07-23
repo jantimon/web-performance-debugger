@@ -198,7 +198,7 @@ iteration for the wall samples, a counting capture mode's counts **total across 
 (`countScopeNote` says so); a driver step's counts window to iteration 0 (`labelWindows`), so per-step
 counts stay one iteration's work. Bench `wallMs` is the **sum of the timed samples**, not a window.
 
-**The artifact is one file (schema 3).** `Recording` = the run summary + the collapsed `Span[]` (the
+**The artifact is one file (schema 4).** `Recording` = the run summary + the collapsed `Span[]` (the
 run window, each driver step, and every user `performance.measure`) + meta. Siblings: the raw
 `.cpuprofile` and the resolved `.cpu.json` `CpuModel`. The classified `events[]` DEEP EVENT LOG is
 written INTO the recording only under `--deep` (chrome) and firefox — every other capture mode leaves it
@@ -494,9 +494,9 @@ lean). **See `examples/demo-gif/README.md` for the render/publish steps.** Inter
 
 What it shows: the `--target node` CPU lane attributing SSR `renderToString` self-time to
 `react-dom` vs a styling library vs your component, down to a source line, via `query cpu`. It runs
-**`examples/ssr-demo`** (in this repo, JSX-free so no build step): `react-dom` ~44% vs
-`tailwind-merge` ~23% vs `wpd-ssr-demo` (your component) ~10%, with `tailwind-merge get
-(lib/lru-cache.ts:35)` the single hottest function (~22%) as the punchline. Both the `record` and
+**`examples/ssr-demo`** (in this repo, JSX-free so no build step): `react-dom` ~49% vs
+`tailwind-merge` ~28% vs `wpd-ssr-demo` (your component) ~12%, with `tailwind-merge get
+(lib/lru-cache.ts:35)` the single hottest function (~27%) as the punchline. Both the `record` and
 `query cpu` output carry the four-slice CPU breakdown bar (`js · gc · native · idle`, node's engine
 slice is `native`), and the `query cpu` headline names the per-iteration divisor (`summed over the
 whole window across 250 iterations (divide by 250 ...)`), so the GIF shows the slice split and the
@@ -511,11 +511,11 @@ Tape gotchas, if you tweak `demo.tape`:
 
 - **`Sleep` must outlast the process.** VHS fires the next keystroke after the `Sleep`, not when
   the command exits. The `record` step needs a Sleep longer than its real runtime (~a few seconds).
-- **`--iterations 250`** is about `(node) post (node:inspector)`, the profiler's own cost on this
-  lane. It is a **fixed ~23ms** regardless of workload, so the only way to shrink it is more real
-  work: at 80 iterations it is the single hottest function (~18-46%) and buries the punchline; at
-  250 it drops to ~7% and `tailwind-merge get` takes the top row. If you shrink the workload, re-check
-  that row before publishing.
+- **`--iterations 250`** buys sampling stability, not prefix-burying. The node lane windows the
+  profile to the timed loop, so `post (node:inspector)` (the profiler's start-up warmup) reads **0 ms**
+  and never ranks -- at 80 iterations `tailwind-merge get (lib/lru-cache.ts:35)` already leads (~23%),
+  and 250 only tightens the percentages (it leads at ~27%). Fewer iterations reads a noisier split, so
+  keep it high enough that the top rows are stable between runs.
 - **`NODE_ENV=production` is load-bearing** (hidden in the tape). Without it React resolves to its
   development build: `react` outranks `react-dom`, and the profile shows a cost nobody ships.
 - **`FontSize 18` + `Width 1580`**: the widest line is the `query cpu` iteration-divisor headline
