@@ -114,7 +114,18 @@ export async function startStaticServer(
     }
   });
 
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  // A listen failure (EADDRINUSE/EPERM on the loopback bind) fires an asynchronous 'error' event, not
+  // a throw from listen(). Without a listener that would be an uncaught exception that bypasses the
+  // CLI's `record failed:` contract; route it into a rejection instead, naming the OS cause, so record
+  // fails cleanly with exit 1. The listener is removed once listening succeeds.
+  await new Promise<void>((resolve, reject) => {
+    const onListenError = (error: Error) => reject(error);
+    server.once("error", onListenError);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", onListenError);
+      resolve();
+    });
+  });
   const port = (server.address() as AddressInfo).port;
 
   return {

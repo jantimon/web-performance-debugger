@@ -2,6 +2,7 @@ import puppeteer from "puppeteer";
 import type { Browser, CDPSession, Page } from "puppeteer";
 import type { BrowserName } from "./backend.js";
 import { shellFallback } from "../record/notes.js";
+import { attachTeardownFailure } from "../model/teardown.js";
 
 export interface BrowserHandle {
   browser: Browser;
@@ -171,6 +172,28 @@ export async function launchBrowser(opts: {
   }
 }
 
+/**
+ * Finish post-launch setup (new page, viewport, CDP session) on an already-launched browser, and if
+ * any of it throws, close the browser best-effort before re-throwing. A launch that half-succeeds and
+ * then fails setup would otherwise leave the browser process running (a resource leak, a hung CI job).
+ * The close is guarded so a close failure cannot mask the setup error (it attaches as its cause).
+ */
+export async function finishLaunchOrClose<T>(
+  browser: Pick<Browser, "close">,
+  setup: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await setup();
+  } catch (setupError) {
+    try {
+      await browser.close();
+    } catch (closeError) {
+      attachTeardownFailure(setupError, closeError);
+    }
+    throw setupError;
+  }
+}
+
 async function launchOrThrow(opts: {
   browser: BrowserName;
   headless: boolean;
@@ -188,10 +211,12 @@ async function launchOrThrow(opts: {
       protocolTimeout: opts.protocolTimeoutMs,
       env: opts.gecko ? geckoEnv(process.env, opts.gecko) : process.env,
     });
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
-    // No CDP over BiDi; the caps object keeps every CDP call site guarded.
-    return { browser, page, client: null };
+    return finishLaunchOrClose(browser, async () => {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+      // No CDP over BiDi; the caps object keeps every CDP call site guarded.
+      return { browser, page, client: null };
+    });
   }
 
   // Headed (--no-headless) => false; otherwise shell (default, ~120Hz) or new-headless.
@@ -248,8 +273,10 @@ async function launchChrome(
       throw sandboxLaunchError(error as Error);
     throw error;
   }
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
-  const client = await page.createCDPSession();
-  return { browser, page, client };
+  return finishLaunchOrClose(browser, async () => {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+    const client = await page.createCDPSession();
+    return { browser, page, client };
+  });
 }
