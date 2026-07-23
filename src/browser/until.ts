@@ -1,24 +1,25 @@
 import type { Page } from "puppeteer";
 
 /**
- * The in-page "the DOM stopped changing" detector, serialized into the page. Resolves once no
- * mutation has landed for `quietMs`, or `maxMs` elapses (a hard cap so a page that never stops
- * mutating cannot hang the step). A trailing `requestAnimationFrame` lets the last mutation paint
- * before the step's end mark. Descriptive names throughout: this is serialized, but the house rule
- * on identifiers holds in page context too.
+ * The in-page "the DOM stopped changing" detector, serialized into the page. Resolves `true` once no
+ * mutation has landed for `quietMs`, or `false` once `maxMs` elapses without such a window (the hard
+ * cap so a page that never stops mutating cannot hang the step). The caller turns a `false` at the
+ * deadline into a loud failure. A trailing `requestAnimationFrame` lets the last mutation paint before
+ * the step's end mark. Descriptive names throughout: this is serialized, but the house rule on
+ * identifiers holds in page context too.
  */
 const QUIET_SOURCE = (quietMs: number, maxMs: number) =>
-  new Promise<void>((resolve) => {
+  new Promise<boolean>((resolve) => {
     let quietTimer: ReturnType<typeof setTimeout>;
-    const finish = () => {
+    const finish = (wentQuiet: boolean) => {
       clearTimeout(quietTimer);
       clearTimeout(hardCap);
       observer.disconnect();
-      requestAnimationFrame(() => resolve());
+      requestAnimationFrame(() => resolve(wentQuiet));
     };
     const observer = new MutationObserver(() => {
       clearTimeout(quietTimer);
-      quietTimer = setTimeout(finish, quietMs);
+      quietTimer = setTimeout(() => finish(true), quietMs);
     });
     observer.observe(document.documentElement, {
       childList: true,
@@ -26,8 +27,8 @@ const QUIET_SOURCE = (quietMs: number, maxMs: number) =>
       attributes: true,
       characterData: true,
     });
-    const hardCap = setTimeout(finish, maxMs);
-    quietTimer = setTimeout(finish, quietMs);
+    const hardCap = setTimeout(() => finish(false), maxMs);
+    quietTimer = setTimeout(() => finish(true), quietMs);
   });
 
 export interface WaitForStableOptions {
@@ -43,11 +44,29 @@ export interface WaitForStableOptions {
    */
   quietMs?: number;
   /**
-   * Hard cap on the whole wait, ms (selector wait + quiet check). Default 30000. The selector wait
-   * REJECTS on timeout (standard `page.waitForSelector`), so a step whose content never lands fails
-   * loudly rather than pricing an empty wait; the quiet phase is then bounded by the remaining budget.
+   * Hard cap on the whole wait, ms (selector wait + quiet check). Default 30000. Both arms REJECT on
+   * expiry: the selector wait rejects with `page.waitForSelector`'s own timeout, and the quiet check
+   * rejects when the DOM never produced a `quietMs`-long lull within the cap (a page that never stops
+   * mutating), naming both values. Never a silent pass that prices the whole cap as a settled wall.
    */
+  timeoutMs?: number;
+  /** @deprecated alias for `timeoutMs`; `timeoutMs` wins when both are set. */
   timeout?: number;
+}
+
+/**
+ * The loud failure a never-quiet page earns: the DOM kept mutating for the whole cap, so no
+ * `quietMs`-long window ever opened. Names both knobs and the three ways forward, so the message says
+ * what to change rather than leaving a multi-minute silent wait whose cause reads as a protocol timeout.
+ */
+export function neverQuietError(quietMs: number, timeoutMs: number): Error {
+  return new Error(
+    `waitForStable: the DOM never went ${quietMs}ms without a mutation within the ${timeoutMs}ms cap, ` +
+      `so the page is still changing (a countdown, a poll, injected content that never stops). ` +
+      `Raise quietMs if a ${quietMs}ms lull is too strict, raise timeoutMs if the transition is just ` +
+      `slow, or pass a selector-based until that waits for the specific landed content instead of a ` +
+      `global quiet window.`,
+  );
 }
 
 /**
@@ -78,19 +97,19 @@ const RETRY_BACKOFF_MS = 50;
 
 export function waitForStable(page: Page, options: WaitForStableOptions = {}): () => Promise<void> {
   const quietMs = options.quietMs ?? 200;
-  const timeout = options.timeout ?? 30000;
+  const timeoutMs = options.timeoutMs ?? options.timeout ?? 30000;
   return async () => {
-    const deadlineMs = Date.now() + timeout;
-    if (options.selector) await page.waitForSelector(options.selector, { timeout });
+    const deadlineMs = Date.now() + timeoutMs;
+    if (options.selector) await page.waitForSelector(options.selector, { timeout: timeoutMs });
     // A hard navigation while the quiet check runs destroys its execution context; re-attach to the
     // new document and keep waiting for IT to go quiet. The deadline is shared across attempts, so a
-    // page that keeps hard-redirecting cannot outlast the caller's timeout.
+    // page that keeps hard-redirecting cannot outlast the caller's cap.
     for (;;) {
       const remainingMs = Math.max(0, deadlineMs - Date.now());
-      if (remainingMs === 0) return;
+      if (remainingMs === 0) break;
+      let wentQuiet: boolean;
       try {
-        await page.evaluate(QUIET_SOURCE, quietMs, remainingMs);
-        return;
+        wentQuiet = await page.evaluate(QUIET_SOURCE, quietMs, remainingMs);
       } catch (error) {
         if (!isDestroyedContextError(error) || Date.now() >= deadlineMs) throw error;
         // The document navigated out from under the quiet check. If a content selector gates the
@@ -106,8 +125,14 @@ export function waitForStable(page: Page, options: WaitForStableOptions = {}): (
           const backoffMs = Math.min(RETRY_BACKOFF_MS, Math.max(0, deadlineMs - Date.now()));
           if (backoffMs > 0) await new Promise((resolve) => setTimeout(resolve, backoffMs));
         }
+        continue;
       }
+      if (wentQuiet) return;
+      // The in-page hard cap fired without a quiet window: the DOM mutated for the whole remaining
+      // budget, so the page never settled. Fail loudly rather than pricing the cap as a settled wall.
+      break;
     }
+    throw neverQuietError(quietMs, timeoutMs);
   };
 }
 

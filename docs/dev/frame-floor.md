@@ -86,6 +86,17 @@ Flags do not fix it cleanly: `--disable-frame-rate-limit` alone does nothing; on
 change the cadence, and they change it to **uncapped** (~0 ms, unbounded), not a clean 8.3. The mode
 is the knob, not the flags.
 
+## The two headless modes are different browser implementations
+
+chrome-headless-shell and new-headless are not one browser with a flag: the shell is the old separate
+headless implementation kept as a standalone binary, while new-headless shares the full Chrome codebase
+(https://developer.chrome.com/docs/chromium/headless). They therefore have **different network stacks**,
+and a server can reject one while serving the other: a production CDN can deterministically fail the
+shell's HTTP/2 (`net::ERR_HTTP2_PROTOCOL_ERROR`) where new-headless loads the same URL. Retrying the
+same flavour fails identically, so `isTransientNavError` (browser/launch.ts) excludes that error;
+`http2GuidanceFor` instead points a shell-mode `--url` boot at `--headless-mode new`, and the switch
+carries the ~120Hz -> ~60Hz cadence cost above.
+
 ## The settle floor is exactly twice this
 
 `measureStep`'s settle is two `requestAnimationFrame`s (`browser/settle.ts`, and `paintFlush` in

@@ -5,7 +5,7 @@ import type { BrowserName } from "../browser/backend.js";
 import { startStaticServer } from "../browser/server.js";
 import { mergeSteps, type MergedStep } from "../trace/steps.js";
 import { mainThread } from "../trace/main-thread.js";
-import { retryTransientNav } from "../browser/launch.js";
+import { retryTransientNav, resolveHeadless, http2GuidanceFor } from "../browser/launch.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { buildSummary } from "../metrics/summarize.js";
 import {
@@ -330,6 +330,16 @@ export async function record(opts: RecordOptions): Promise<{
     );
     pass = outcome.value;
     navRetries = outcome.retries;
+  } catch (error) {
+    // A server that rejects chrome-headless-shell's HTTP/2 (its network stack differs from
+    // new-headless') fails the same way on every retry, so retryTransientNav rethrows it here. Under
+    // the default shell mode, turn it into a hint naming --headless-mode new; under new/headed the
+    // shell stack is not in play, so the original error surfaces unchanged.
+    if (browserName === "chrome") {
+      const guidance = http2GuidanceFor(error, resolveHeadless(opts.headless, opts.headlessMode));
+      if (guidance) throw guidance;
+    }
+    throw error;
   } finally {
     await server.close();
   }

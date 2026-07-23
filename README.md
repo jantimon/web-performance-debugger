@@ -156,8 +156,11 @@ A module + `--url` runs it against that host; a module + no `--url` runs it agai
 `--bench` modules and a local-HTML `--url` are served to the browser, so they must live **under the
 current working directory**; driver and `--target node` modules are imported in Node and can live
 anywhere, and a `--bench` module has **no `process.env`** (route parameters through the URL or page
-globals). Driving a real interaction has a few sharp edges — settle timing, clicking a page that
-never stops re-rendering, logins — collected in [driving a real interaction](#driving-a-real-interaction).
+globals). Under bare `npx` (no local install), an `import` of the package **inside your module** does
+not resolve — the module is imported from your cwd, which has no `node_modules` for the package; use the
+helpers wpd injects into `run`'s argument (`waitForStable`), or `npm install` the package locally.
+Driving a real interaction has a few sharp edges — settle timing, clicking a page that never stops
+re-rendering, logins — collected in [driving a real interaction](#driving-a-real-interaction).
 
 ## Choose a capture: what you want to know
 
@@ -457,17 +460,23 @@ one-frame floor, so a sub-frame re-render reads as the frame time; read the coun
 
 **Streamed / soft navigations.** The default settle resolves the moment the page goes briefly idle,
 which on a streamed SPA route change can be *before* the content lands. Wait on the landed content, or
-use the exported `waitForStable`, which waits for a selector and then for the DOM to stop mutating:
+use `waitForStable`, which waits for a selector and then for the DOM to stop mutating. It arrives in
+`run`'s argument, so your module imports nothing:
 
 ```js
-import { waitForStable } from "@jantimon/web-performance-debugger";
-await measureStep("open product", () => page.click(".product-link"), {
-  until: waitForStable(page, { selector: "#add-to-cart", quietMs: 200 }),
-});
+export async function run({ page, measureStep, waitForStable }) {
+  await measureStep("open product", () => page.click(".product-link"), {
+    until: waitForStable(page, { selector: "#add-to-cart", quietMs: 200 }),
+  });
+}
 ```
 
 It is opt-in: it trades a longer, more variable wall (the `quietMs` tail rides every step) for catching
-the whole transition.
+the whole transition. If the DOM never goes quiet within `timeoutMs` (default 30000) — a countdown, a
+poll, injected content that never stops — it fails loudly rather than pricing the whole cap as a
+settled wall; raise `quietMs`/`timeoutMs` or gate on a `selector` instead. `waitForStable` is also an
+`import { waitForStable } from "@jantimon/web-performance-debugger"` for a module you install, but the
+injected form needs no dependency.
 
 **Clicking a page that never stops re-rendering.** Prefer a stable selector and `page.click('#id')`. A
 raw element handle throws `Node is detached from document` when the app re-renders between grabbing the
@@ -490,7 +499,7 @@ copy it and replace the placeholder selectors with your own:
 // journey.mjs — a multi-step journey against your own site. #search / .result / #detail are
 // PLACEHOLDER selectors: replace them. Run without --url so the boot step measures a cold navigation:
 //   wpd record journey.mjs --breakdown --iterations 10 --warmup 2
-import { waitForStable } from "@jantimon/web-performance-debugger";
+// waitForStable arrives in run's argument, so this module imports nothing and runs under bare npx.
 
 const SITE = "https://example.com"; // replace with your site
 
@@ -511,7 +520,7 @@ export async function prepare({ page }) {
   await gotoWithRetry(page, SITE);
 }
 
-export async function run({ page, measureStep }) {
+export async function run({ page, measureStep, waitForStable }) {
   // Cold boot as its own step: no --url, so every iteration measures a fresh navigation.
   await measureStep("boot", () => gotoWithRetry(page, SITE));
 
