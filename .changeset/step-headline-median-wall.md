@@ -10,5 +10,7 @@ iteration-0 window (which an outlier iteration 0 could inflate ~70x).
 - The step's reconciling bar keeps tiling iteration 0 and is labeled `iteration-0 window <ms>`;
   its window rides the new `breakdownWallMs` field, which the slices reconcile to.
 - Structured-output consumers see the corrected `wallMs` value for step spans.
+- `query spans --min-wall` filters a step by that median wall in human output too, so the flood
+  filter hides and shows the same spans in the table and in `--format json`/`toon`.
 
 Run/measure spans, the stored artifact, and `assert`/`diff` are unchanged.

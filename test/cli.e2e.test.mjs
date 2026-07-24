@@ -1377,6 +1377,31 @@ e2e("query spans --min-wall and --filter narrow the overview and disclose the hi
   assert.equal(byLabel.hidden, all.spans.length - byLabel.spans.length, "hidden count is disclosed");
 });
 
+// A --breakdown driver step whose iteration 0 is an outlier: its bar tiles that window (~500 ms) while
+// its headline wall is the median across iterations (~a few ms). A --min-wall threshold between the two
+// must hide the step by its MEDIAN in BOTH json and human output -- filtering the human bar on the
+// iteration-0 window instead would show a step the structured overview omits.
+e2e("query spans --min-wall hides a divergent step by its median in json and human alike", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const out = path.join(dir, "spans");
+  runCli(["record", path.join(examples, "divergent-iteration-wall.mjs"), "--breakdown", "--iterations", "3", "--out", out]);
+
+  // Unfiltered, the step is present and its iteration-0 window dwarfs its median headline.
+  const all = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
+  const step = all.spans.find((span) => span.kind === "step" && span.label === "slow-once");
+  assert.ok(step, "the driver step is in the overview");
+  assert.ok(step.breakdownWallMs > step.wallMs * 5, "iteration 0 is an outlier: the bar window dwarfs the median wall");
+  const threshold = String((step.wallMs + step.breakdownWallMs) / 2);
+
+  // The structured overview hides the step by its median.
+  const filtered = JSON.parse(runCli(["query", "spans", out, "--min-wall", threshold, "--format", "json"]));
+  assert.ok(!filtered.spans.some((span) => span.label === "slow-once"), "json hides the step below its median wall");
+
+  // The human overview must hide the SAME step -- not show it on the iteration-0 window.
+  const human = runCli(["query", "spans", out, "--min-wall", threshold, "--color", "never"]);
+  assert.ok(!/slow-once/.test(human), "human output hides the same step, using the same median wall as json");
+});
+
 // --- Run groups: N unfused captures of ONE workload as siblings under a manifest ---
 
 // The sanctioned two-question path: `--members breakdown,deep --group` records both captures back to

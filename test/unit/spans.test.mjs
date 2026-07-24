@@ -10,6 +10,7 @@ import {
   gateSliceBudgets,
   diffSpanSlices,
   resolveSpanSelector,
+  filterSpanEntries,
 } from "../../dist/model/spans.js";
 import { querySpans } from "../../dist/commands/query.js";
 import { tmpDir } from "./helpers.mjs";
@@ -200,6 +201,23 @@ test("buildSpans: a step with a null median wall falls back to the bar window", 
   const step = buildSpans(bars, undefined, "chrome", 3).spans.find((span) => span.kind === "step");
   assert.equal(step.wallMs, 12, "the bar window is the only wall available");
   assert.equal(step.breakdownWallMs, 12, "the bar window is still disclosed");
+});
+
+// The --min-wall flood filter reads a step's MEDIAN wall (SpanEntry.wallMs), never its iteration-0 bar
+// window (breakdownWallMs). On an outlier iteration 0 the two diverge, so filtering on the window would
+// hide/show a step differently from the median. The human bar table selects its raw bars from THIS kept
+// set (by kind:label), so `query spans --min-wall` hides the same spans in json and human output.
+test("filterSpanEntries: a divergent step is filtered by its median wall, not its iteration-0 window", () => {
+  const bars = [
+    { label: "run", kind: "run", breakdown: chromeBreakdown(600) },
+    { label: "slow-once", kind: "step", wallMs: 17, breakdown: chromeBreakdown(516) },
+  ];
+  const entries = buildSpans(bars, undefined, "chrome", 3).spans;
+  const { spans: kept, hidden } = filterSpanEntries(entries, { minWallMs: 150 });
+  const keptKeys = kept.map((span) => `${span.kind}:${span.label}`);
+  assert.ok(!keptKeys.includes("step:slow-once"), "the step (median 17 ms) is hidden below --min-wall 150");
+  assert.ok(keptKeys.includes("run:run"), "the run (600 ms) survives");
+  assert.equal(hidden, 1, "exactly the divergent step was hidden, and the count is disclosed");
 });
 
 test("spanAggregation: run is a sum, step and measure are first; a repeated measure is a median", () => {

@@ -33,7 +33,6 @@ import {
   recordingLane,
   parseSpanKindLabel,
   filterSpanEntries,
-  spanPassesFilter,
   type SpanCountsOverview,
 } from "../model/spans.js";
 import { isFirefoxDeep, isGeckoCaptureMode } from "../model/capture-mode.js";
@@ -1103,7 +1102,8 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   const label = query.label;
   // --label is an exact targeted selector; --min-wall/--filter cut the flood. Apply the selector
   // first, then the flood filter, so `hidden` counts only what the filter removed, never the
-  // targeting. spanPassesFilter is shared with the human bar table below so both hide the same spans.
+  // targeting. The human bar table below reuses THIS kept set (by kind:label key) so both the
+  // structured output and the bars hide the same spans, on the same (median) wall.
   const spanFilter = { minWallMs: query.minWall, labelIncludes: query.filter };
   const selected = label ? result.spans.filter((span) => span.label === label) : result.spans;
   const { spans, hidden } = filterSpanEntries(selected, spanFilter);
@@ -1178,10 +1178,13 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   // per-span table; the synthesized run bar prints the CpuModel bar, which already labels
   // style/layout and browser/native honestly for its lane.
   if (result.source === "breakdowns") {
-    const barSpans = rec.spans.filter((span) => span.breakdown);
-    const selectedBars = label ? barSpans.filter((span) => span.label === label) : barSpans;
-    const bars = selectedBars.filter((span) =>
-      spanPassesFilter(span.label, span.breakdown!.wallMs, spanFilter),
+    // Select the raw bars whose unified SpanEntry survived the --label + flood filter, so the human
+    // table hides EXACTLY the spans the structured path hides. A step's SpanEntry.wallMs is its median
+    // headline, not the bar's iteration-0 window, so filtering the raw bar by `breakdown.wallMs` would
+    // diverge from JSON/TOON on an outlier iteration 0 (median below --min-wall, iteration-0 above).
+    const keptKeys = new Set(spans.map((entry) => `${entry.kind}:${entry.label}`));
+    const bars = rec.spans.filter(
+      (span) => span.breakdown != null && keptKeys.has(`${span.kind}:${span.label}`),
     );
     if (!bars.length && !barlessSelected.length) {
       if (label) return void console.log(`No span labelled '${label}' in ${file}.`);
