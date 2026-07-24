@@ -79,6 +79,40 @@ export function sandboxLaunchError(error: Error): Error {
   );
 }
 
+/** Whether a navigation failed with Chromium's HTTP/2 protocol rejection. chrome-headless-shell is a
+ * separate browser build with its own network stack, and some servers deterministically reject its
+ * HTTP/2 while new-headless (which shares Chrome's stack) loads the same URL. Retrying the same flavour
+ * fails identically, so this is NOT in isTransientNavError; it drives a headless-mode hint instead. */
+export function isHttp2ProtocolError(error: Error): boolean {
+  return /net::ERR_HTTP2_PROTOCOL_ERROR/i.test(error.message);
+}
+
+/** An HTTP/2 navigation failure under chrome-headless-shell, re-thrown as guidance: name the shell
+ * build's distinct network stack as the likely cause and --headless-mode new as the remedy, with the
+ * frame-cadence trade so the switch is an informed one. */
+export function http2ShellGuidanceError(error: Error): Error {
+  return new Error(
+    `The navigation failed with net::ERR_HTTP2_PROTOCOL_ERROR under chrome-headless-shell:\n\n  ${error.message}\n\n` +
+      `chrome-headless-shell is a separate browser build with its own network stack; some servers reject ` +
+      `its HTTP/2 while new-headless (which shares Chrome's network stack) loads the same URL. Re-record ` +
+      `with --headless-mode new to use that stack.\n\n` +
+      `Trade: new-headless runs frames at ~60Hz instead of shell's ~120Hz, so wall/INP carry a ~16.6ms ` +
+      `one-frame floor instead of ~8.3ms (docs/dev/frame-floor.md).`,
+  );
+}
+
+/**
+ * The HTTP/2 headless-mode guidance for a navigation failure, or null when it does not apply. Only a
+ * shell-headless launch earns the hint: under new-headless or headed the shell network stack is not in
+ * play, so pointing at --headless-mode new would be wrong. Pure (error + resolved headless value ->
+ * guidance) so the call site stays a one-liner and the decision is unit-testable.
+ */
+export function http2GuidanceFor(error: unknown, headless: boolean | "shell"): Error | null {
+  if (!(error instanceof Error) || !isHttp2ProtocolError(error)) return null;
+  if (headless !== "shell") return null;
+  return http2ShellGuidanceError(error);
+}
+
 /** Gecko profiler options for the Firefox CPU pass (dumped to `dumpPath` on browser exit). */
 export interface GeckoLaunch {
   dumpPath: string;

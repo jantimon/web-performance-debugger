@@ -135,6 +135,52 @@ test("query span run: the reconciling bar is present, and hot functions come fro
   assert.equal(anatomy.hot.functions[0].fn, "render");
 });
 
+// --- a step's headline wall is the median, the bar's own window is the iteration-0 window ---
+
+// The bar tiles iteration 0 only; on an outlier iteration 0 (a retry inside the timed action) that
+// window can be ~70x the step's median. The headline everywhere must be the median (span.wallMs); the
+// bar's iteration-0 window rides breakdownWallMs and is labeled as such, so the two never conflate.
+function divergentStepRec(name) {
+  return writeRec(name, {
+    meta: { schemaVersion: "4", target: "chrome", iterations: 3, passes: ["breakdown"] },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      { label: "run", kind: "run", aggregation: "sum", wallMs: 40, counts: measuredCounts, breakdown: breakdown(40) },
+      {
+        label: "add rows",
+        kind: "step",
+        index: 0,
+        aggregation: "first",
+        // median of the three samples; iteration 0 (2023.43) was an outlier the bar tiles.
+        wallMs: 16.03,
+        perIteration: [15, 16.03, 2023.43],
+        counts: measuredCounts,
+        breakdown: breakdown(2023.43),
+      },
+    ],
+  });
+}
+
+test("query span <step>: the JSON headline is the median wall, with the iteration-0 window on breakdownWallMs", async () => {
+  const file = divergentStepRec("anatomy-step-median.json");
+  const anatomy = await captureJson(() => querySpan(file, "step:add rows", { json: true }));
+  assert.equal(anatomy.kind, "step");
+  assert.equal(anatomy.wallMs, 16.03, "the headline is the median, never the 2023.43 ms iteration-0 window");
+  assert.equal(anatomy.breakdownWallMs, 2023.43, "the bar's own window is disclosed separately");
+});
+
+test("query span <step>: the human wall line shows the median and the provenance tag describes it truthfully", async () => {
+  const file = divergentStepRec("anatomy-step-median-text.json");
+  const text = await captureText(() => querySpan(file, "step:add rows", {}));
+  assert.match(text, /wall: 16\.03 ms.*median of 3 samples/, "the median rides the wall line, and the tag names it");
+  assert.doesNotMatch(text, /wall: 2023\.4/, "the iteration-0 window is never the headline wall");
+  // The bar names its own window the iteration-0 window, so it is not read as the step's cost.
+  assert.match(text, /iteration-0 window 2023\.4 ms/, "the bar labels its tiled window explicitly");
+  // The idle-share tag is a property of the tiled window, so it never rides the median wall line.
+  assert.doesNotMatch(text, /window, not work/, "no idle-share tag beside a median the window does not describe");
+});
+
 // --- Measured counts preserved (null vs measured 0) ---
 
 test("query span: counts preserve the Measured contract (null not-measured, 0 measured)", async () => {

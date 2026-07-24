@@ -33,7 +33,6 @@ import {
   recordingLane,
   parseSpanKindLabel,
   filterSpanEntries,
-  spanPassesFilter,
   type SpanCountsOverview,
 } from "../model/spans.js";
 import { isFirefoxDeep, isGeckoCaptureMode, hasBlameEventLog } from "../model/capture-mode.js";
@@ -350,7 +349,11 @@ function buildSpanAnatomy(
     kind: span.kind,
     aggregation: entry?.aggregation ?? span.aggregation,
     iterations,
+    // A step's headline is the MEDIAN wall (entry.wallMs), never its iteration-0 bar window; the bar
+    // window rides `breakdownWallMs` so the two are not conflated. entry.wallMs already carries the
+    // median for a step (model/spans.ts entryFromSpan); the fallback covers a capture mode with no bar.
     wallMs: entry?.wallMs ?? span.wallMs,
+    ...(entry?.breakdownWallMs != null ? { breakdownWallMs: entry.breakdownWallMs } : {}),
     ...(span.samples != null ? { samples: span.samples } : {}),
     ...(span.wallMinMs != null ? { wallMinMs: span.wallMinMs } : {}),
     ...(span.wallMaxMs != null ? { wallMaxMs: span.wallMaxMs } : {}),
@@ -464,11 +467,13 @@ function printSpanAnatomy(
   // Point-of-use provenance on the wall itself, each firing only where the bare number misleads: a
   // step's wall is a MEDIAN (its header aggregation "first" describes the counts/bar window, not this
   // number), and a settle-dominated window's width reads as workload unless its idle share sits beside
-  // it. The idle tag rides only a span whose wall IS the tiled bar window (idleShareSuffix's contract).
+  // it. The idle tag rides ONLY a span whose wall IS the tiled bar window (idleShareSuffix's contract):
+  // a step's headline is the median, not that window, so its idle share stays on the bar's own idle row
+  // (whose header names the iteration-0 window), never beside a median it does not describe.
   const wallTags: string[] = [];
   const stepMedian = spanWallProvenance(anatomy.kind, span.perIteration?.length ?? 0);
   if (stepMedian) wallTags.push(stepMedian);
-  if (span.breakdown) {
+  if (span.breakdown && anatomy.kind !== "step") {
     const idleTag = idleShareSuffix(span.breakdown.slices.idle.ms, span.breakdown.wallMs);
     if (idleTag) wallTags.push(`${idleTag} (window, not work)`);
   }
@@ -1113,7 +1118,8 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   const label = query.label;
   // --label is an exact targeted selector; --min-wall/--filter cut the flood. Apply the selector
   // first, then the flood filter, so `hidden` counts only what the filter removed, never the
-  // targeting. spanPassesFilter is shared with the human bar table below so both hide the same spans.
+  // targeting. The human bar table below reuses THIS kept set (by kind:label key) so both the
+  // structured output and the bars hide the same spans, on the same (median) wall.
   const spanFilter = { minWallMs: query.minWall, labelIncludes: query.filter };
   const selected = label ? result.spans.filter((span) => span.label === label) : result.spans;
   const { spans, hidden } = filterSpanEntries(selected, spanFilter);
@@ -1188,10 +1194,13 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   // per-span table; the synthesized run bar prints the CpuModel bar, which already labels
   // style/layout and browser/native honestly for its lane.
   if (result.source === "breakdowns") {
-    const barSpans = rec.spans.filter((span) => span.breakdown);
-    const selectedBars = label ? barSpans.filter((span) => span.label === label) : barSpans;
-    const bars = selectedBars.filter((span) =>
-      spanPassesFilter(span.label, span.breakdown!.wallMs, spanFilter),
+    // Select the raw bars whose unified SpanEntry survived the --label + flood filter, so the human
+    // table hides EXACTLY the spans the structured path hides. A step's SpanEntry.wallMs is its median
+    // headline, not the bar's iteration-0 window, so filtering the raw bar by `breakdown.wallMs` would
+    // diverge from JSON/TOON on an outlier iteration 0 (median below --min-wall, iteration-0 above).
+    const keptKeys = new Set(spans.map((entry) => `${entry.kind}:${entry.label}`));
+    const bars = rec.spans.filter(
+      (span) => span.breakdown != null && keptKeys.has(`${span.kind}:${span.label}`),
     );
     if (!bars.length && !barlessSelected.length) {
       if (label) return void console.log(`No span labelled '${label}' in ${file}.`);
