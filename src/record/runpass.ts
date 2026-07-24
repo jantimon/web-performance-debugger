@@ -18,6 +18,8 @@ import { parseTrace, findWindow, findSteps, type StepWindow } from "../trace/par
 import { labelWindows, type LabelledWindow } from "../trace/steps.js";
 import { attachStacks } from "../trace/stacks.js";
 import { startTrace, stopTrace } from "../trace/tracing.js";
+import { deepEventLogWouldOverflow } from "../model/capture-mode.js";
+import { deepEventLogOverflowError } from "./artifacts.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { markForced } from "../trace/analysis.js";
 import { mainThread } from "../trace/main-thread.js";
@@ -333,6 +335,13 @@ export async function runPass(
     if (spec.categories && caps.trace && client) {
       const trace = await stopTrace(client);
       traceDataLoss = trace.dataLossOccurred;
+      // Preflight (--deep only): the raw trace byte size is known the moment the stream completes, so
+      // a --deep trace too heavy for its stored event log to serialize is refused HERE, before the
+      // parse (which OOMs on a heavier trace at the default heap) can run. The writeRecording guard
+      // stays the backstop. --breakdown stores no full event log, so it is not gated and parses past
+      // the ceiling by design (docs/dev/trace-buffer.md).
+      if (deepEventLogWouldOverflow(spec.mode, trace.bytes.length))
+        throw deepEventLogOverflowError(trace.bytes.length);
       // Parse the trace one event at a time straight from the raw bytes (scanTraceEvents), so a heavy
       // --deep trace past the ~512MB single-string ceiling still parses and peak heap tracks the events
       // kept, not the whole raw array. --deep runs only this scan; --breakdown scans a second time below

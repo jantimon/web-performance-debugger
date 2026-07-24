@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hasBlameEventLog } from "../../dist/model/capture-mode.js";
+import { hasBlameEventLog, blameRowLowConfidence } from "../../dist/model/capture-mode.js";
 
 // Whether a recording actually carries a read-site blame / event log a reader can answer from. --deep
 // and firefox always store it. --breakdown stores a SAMPLED read-site log ONLY when the trace emitted
@@ -36,4 +36,37 @@ test("hasBlameEventLog: sampler-only capture modes carry no event log", () => {
   assert.equal(hasBlameEventLog(["default"], undefined), false, "default capture has no event log");
   assert.equal(hasBlameEventLog(["precise-wall"], undefined), false, "--precise-wall has none");
   assert.equal(hasBlameEventLog(["node-cpu"], undefined), false, "the node lane has none");
+});
+
+// The per-row confidence marker a `query blame --forced` JSON/TOON row carries (BlameEntry.lowConfidence).
+// Three-way so a consumer can tell a sampled-confident row from a not-sampled one.
+
+test("blameRowLowConfidence: a sampled sub-interval row is low-confidence (true)", () => {
+  assert.equal(
+    blameRowLowConfidence(true, 0, 3),
+    true,
+    "--breakdown, every flush sub-interval => low-confidence",
+  );
+});
+
+test("blameRowLowConfidence: a sampled row with any wide flush is confident (false, distinct from absent)", () => {
+  assert.equal(blameRowLowConfidence(true, 2, 0), false, "--breakdown, all wide => confident");
+  assert.equal(
+    blameRowLowConfidence(true, 1, 3),
+    false,
+    "--breakdown, one wide flush makes the line confident",
+  );
+});
+
+test("blameRowLowConfidence: a non-sampled (deep/firefox) row leaves the field absent (undefined)", () => {
+  assert.equal(
+    blameRowLowConfidence(false, 5, 0),
+    undefined,
+    "--deep exact row is not sampled => field absent, never a misleading false",
+  );
+  assert.equal(
+    blameRowLowConfidence(false, 0, 4),
+    undefined,
+    "a non-sampled lane never carries the marker, whatever the tallies",
+  );
 });

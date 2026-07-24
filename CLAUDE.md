@@ -51,7 +51,8 @@ dirtied-by report, the gecko converter, the XDG pointer, frame side track, the t
 notes, the LoAF shaper (`summarizeLoaf`), the `waitForStable` destroyed-context classifier, the
 comparability gate (workload/variant/ephemeral-loopback-port), the run-group core
 (formation/pickMember/count-disagreement + the artifact gates + `resolveConsumption`), the off-disk
-package rollup, and the `facts.md` ledger drift check). The **cli e2e tests** (`test/cli.e2e.test.mjs`) spawn the
+package rollup, the `--deep` event-log serialization preflight + the blame-row confidence marker, and
+the `facts.md` ledger drift check). The **cli e2e tests** (`test/cli.e2e.test.mjs`) spawn the
 built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
 `--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`), the
 trace-sourced CPU samples keeping per-step attribution across a navigation, the cross-process

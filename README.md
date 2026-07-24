@@ -455,7 +455,9 @@ in `wallClock`.
 **Settle and the frame floor.** Omitting `until` waits for the page to **settle**: two animation
 frames, each followed by an idle callback, which covers the usual state-update → render → cleanup
 pattern. Pass `until` when your step ends on something specific: a selector, or a function/promise wpd
-awaits. The settle floor is two frames — ~16 ms on the default headless mode (chrome-headless-shell,
+awaits. A function `until` is awaited **exactly once** after the action, not polled, so the step ends
+the moment it resolves — compose your waits inside the function (or wait on landed content), because an
+`until` that resolves early ends the step early. The settle floor is two frames — ~16 ms on the default headless mode (chrome-headless-shell,
 ~120 Hz) and ~31 ms under `--headless-mode new` (full Chrome, ~60 Hz). `wall`/`INP` carry this
 one-frame floor, so a sub-frame re-render reads as the frame time; read the counts, the bar, or
 `interaction.processingMs` for the work itself ([docs/dev/frame-floor.md](docs/dev/frame-floor.md)).

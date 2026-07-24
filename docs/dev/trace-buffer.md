@@ -67,11 +67,36 @@ error (the event count, the ~512 MB limit, the remedy) rather than a bare `Inval
 read path shares the ceiling (a recording file is read whole into a string before `JSON.parse`), so
 the honest `--deep` end-to-end limit is a stored event log under ~512 MB of JSON, not the trace size.
 
+The trace size at which the stored log fails DEPENDS on forced-layout density: a forced flush keeps a
+resolved `.stack` plus an `invalidationTracking` record, so a dense thrash log expands more per trace
+byte than a sparse one. [measured] the densest shape (the forced-layout thrash loop, ~28% of events
+forced) serializes a **189.8 MB** trace to a **510.5 MB** string (just under the ceiling) and throws by
+**~197 MB**; a sparser production journey holds a larger trace (~271 MB above) before failing. So the
+trace-bytes failure point is a band (~190 MB densest, ~271 MB+ sparse), not a single number.
+
 `--breakdown` stores **no** event log, so its recording stays digest-sized regardless of trace size:
 [measured] a `--breakdown` run captured and completed a **624 MB** trace (~2.41M events) end-to-end,
 counts intact, and the recording read back. So a trace past 512 MB parses and records fully on any
 capture mode that does not store the event log; only `--deep`/firefox blame is bounded by the event
 log's own serialization limit.
+
+## The `--deep` preflight: refuse before the parse can OOM
+
+`stopTrace` knows the raw trace byte size the moment the stream completes, before any parse. A `--deep`
+trace heavy enough to store an unserializable event log ALSO parses into an event array large enough to
+exhaust the default heap: at Node's default old space a heavy `--deep` journey crashes with a raw
+`FATAL ERROR: JavaScript heap out of memory` during the parse, with no wpd message, and every failed
+attempt costs a full live journey plus a long parse. So `runPass` runs a preflight the moment the
+stream completes: for a capture mode that stores the full trace event log (`storesFullTraceEventLog`,
+chrome `--deep` only), a raw trace over **180MB** (`DEEP_EVENT_LOG_TRACE_BYTE_CEILING`) is refused
+immediately with the same named guidance the serialize path gives, so the parse never runs.
+
+The 180MB floor sits below the densest measured failure (~190 MB) with headroom, so it never lets a
+serialize-failing `--deep` through, and never lets a heavier trace reach the parse OOM. It is a floor,
+not the exact failure point: a sparse journey whose trace is 180-271MB would have serialized, and is
+refused early with the actionable remedy rather than risked. `--breakdown` (which stores no event log)
+is not gated and parses past the ceiling by design. `writeRecording` keeps the serialize-time guard as
+the backstop for a trace that slips under the floor but still overruns the string limit.
 
 The ultimate ceiling is process heap: a multi-GB trace's parsed event array can exhaust old space and
 OOM. That is a raw crash the tool cannot cheaply intercept; keep the buffer sized to real journeys.
@@ -83,6 +108,11 @@ OOM. That is a raw crash the tool cannot cheaply intercept; keep the buffer size
   marker becomes the hard `mergeSteps` divergence error, whose message names the overflow outright
   when `traceDataLoss` is set.
 - **Event-log serialization overflow** (a `--deep`/firefox stored event log past the ~512 MB JSON
-  string limit): `writeRecording` throws a named hard error. Reduce the measured work (fewer steps per
-  run, or scope the flow), or use `--breakdown` (a lighter trace, no `.stack`/`invalidationTracking`,
-  no stored event log) if forced-layout blame is not needed.
+  string limit): the `--deep` preflight refuses at capture time above the 180MB trace floor, and
+  `writeRecording` throws the same named hard error as a backstop. Reduce the measured work (fewer
+  steps per run, fewer `--iterations` — every iteration is traced, so the stored log scales with the
+  count — or scope the flow), or use `--breakdown` (a lighter trace, no `.stack`/`invalidationTracking`,
+  no stored event log) if forced-layout blame is not needed. Scoping `--deep` down by changing
+  `--iterations` means it can no longer join a run group with the other members: the comparability gate
+  refuses a differing `--iterations` (counts total across iterations), so a rescoped `--deep` is
+  recorded standalone.

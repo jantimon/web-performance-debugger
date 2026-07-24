@@ -114,6 +114,12 @@ It is a sampled estimate, with one sampler interval (~132-150us) as the threshol
   appear. Such a sub-interval attribution is marked **low-confidence** in the blame output, never
   presented as exact.
 
+The `query blame --forced` JSON/TOON row carries this per row as `lowConfidence`, three-way so a
+consumer can tell a sampled-confident row from a not-sampled one: `true` when every flush at the line
+was sub-interval, `false` when at least one was wider (a confident sampled read), and ABSENT on the
+exact `--deep` (`.stack`) and firefox lanes, which do not sample the read site. Absent means "not a
+sampled row", never a misleading "confident" (`model/capture-mode.ts` `blameRowLowConfidence`).
+
 Forced COUNTS stay a `--deep` product: a sampled event is `sampled: true`, so `summarize` never counts
 it as a flush (the count needs `.stack`). Where `--deep` gives the exact count plus the write side
 (dirtied-by, thrash), `--breakdown` gives the sampled read plus the reconciling bar; a run group
