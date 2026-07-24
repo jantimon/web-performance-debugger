@@ -290,6 +290,68 @@ test("SourceMapResolver.resolveFrame skips a line-0 frame instead of throwing (F
   assert.equal(misses, 1, "the skipped line-0 frame is recorded as a position miss");
 });
 
+// A minified single-line bundle joins whole modules onto generated line 1, so that one line maps MANY
+// original lines. A CPU sample carries an executing LINE but no column (a line-only frame), so a
+// column-0 lookup would resolve to whichever segment starts the line -- an unrelated original location.
+// The line-only frame must therefore NOT be mapped: it stays on its bundle line (a sampled read may
+// miss, never point at a wrong original line).
+test("SourceMapResolver.resolveFrame: a line-only frame on a minified (ambiguous) line is left on the bundle line", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-lineonly-"));
+  const jsPath = path.join(dir, "bundle.js");
+  writeFileSync(jsPath, "var a=1;var b=2;\n//# sourceMappingURL=bundle.js.map");
+  // Generated line 1 carries two segments pointing at DIFFERENT original lines (0 and 20): ambiguous.
+  // Two segments on generated line 1: genCol 0 -> orig line 1, genCol 5 -> orig line 21 (VLQ decodes to
+  // [[0,0,0,0],[5,0,20,0]]), so the generated line maps two different original lines.
+  const mappings = "AAAA,KAoBA";
+  writeFileSync(
+    path.join(dir, "bundle.js.map"),
+    JSON.stringify({ version: 3, file: "bundle.js", sources: ["src/app.ts"], names: [], mappings }),
+  );
+  const maps = new SourceMapResolver();
+  const frame = { source: jsPath, line: 1, lineOnly: true };
+  await maps.resolveFrame(frame);
+  assert.equal(frame.source, jsPath, "the frame stays on its bundle file, not a fabricated original");
+  assert.equal(frame.line, 1, "and its generated line, never a column-0 original line");
+  assert.equal(frame.bundled, undefined, "no mapping was applied");
+  assert.equal(maps.diagnostics().positionMisses?.[jsPath]?.misses, 1, "the ambiguous line is a position miss");
+});
+
+// The guard does NOT gut the feature: when a generated line maps UNAMBIGUOUSLY to one original line (an
+// unminified build, one statement per line), a line-only sample resolves normally, at line precision.
+test("SourceMapResolver.resolveFrame: a line-only frame on an unambiguous line maps to the original", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-lineonly-ok-"));
+  const jsPath = path.join(dir, "bundle.js");
+  writeFileSync(jsPath, "function a(){}\n//# sourceMappingURL=bundle.js.map");
+  writeFileSync(path.join(dir, "bundle.js.map"), sourcemapFor("src/App.tsx", "AppRoot"));
+  const maps = new SourceMapResolver();
+  const frame = { source: jsPath, line: 1, lineOnly: true };
+  await maps.resolveFrame(frame);
+  assert.match(frame.source, /App\.tsx$/, "the single unambiguous segment maps to the original source");
+  assert.equal(frame.line, 1, "the original line the map's one segment names");
+  assert.equal(frame.column, undefined, "a line-only sample reports line precision, no fabricated column");
+});
+
+// An OBSERVED column is trusted exactly as before: the same minified line resolves through the real
+// column, since the sample truly observed it. The line-only guard only touches column-LESS samples.
+test("SourceMapResolver.resolveFrame: an observed-column frame still maps on a minified line", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-col-"));
+  const jsPath = path.join(dir, "bundle.js");
+  writeFileSync(jsPath, "var a=1;var b=2;\n//# sourceMappingURL=bundle.js.map");
+  // Two segments on generated line 1: genCol 0 -> orig line 1, genCol 5 -> orig line 21 (VLQ decodes to
+  // [[0,0,0,0],[5,0,20,0]]), so the generated line maps two different original lines.
+  const mappings = "AAAA,KAoBA";
+  writeFileSync(
+    path.join(dir, "bundle.js.map"),
+    JSON.stringify({ version: 3, file: "bundle.js", sources: ["src/app.ts"], names: [], mappings }),
+  );
+  const maps = new SourceMapResolver();
+  // column 6 (1-based) -> generated column 5 -> the second segment (original line 20, 0-based -> 21).
+  const frame = { source: jsPath, line: 1, column: 6 };
+  await maps.resolveFrame(frame);
+  assert.match(frame.source, /app\.ts$/, "an observed column maps through the map as before");
+  assert.equal(frame.line, 21, "column 6 lands on the second segment's original line");
+});
+
 // F6: webpack's module-loader runtime (webpack/bootstrap, webpack/runtime/*, (webpack)/buildin/*) is
 // named by the sourcemap's `sources` but has no real file. Left as `app` it inflates the user's own
 // bucket (~20% on a real production boot). It must bucket as (webpack); a genuine mapped module

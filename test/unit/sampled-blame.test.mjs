@@ -133,6 +133,54 @@ test("sampledForcedBlameEvents: windows to the run start and the main thread", (
   assert.equal(out[0].args.data.stackTrace[0].lineNumber, 2);
 });
 
+// The merged CPU stream interleaves every isolate (a navigation swaps renderer, a worker/OOPIF runs in
+// parallel). A main-thread flush must be blamed only on a sample that ran on THAT thread: a worker
+// sample that overlaps the flush window carries an unrelated source line and must be skipped, even when
+// it is the FIRST in-window sample. Without the per-sample thread guard the worker's line would be
+// attributed to the main-thread flush.
+test("sampledForcedBlameEvents: a same-timestamp worker sample is not attributed to a main-thread flush", () => {
+  const events = [{ ...flush("layout", 1000, 500), pid: 1, tid: 1 }]; // main thread pid1/tid1
+  const WORKER = "http://127.0.0.1:5000/worker.js";
+  const stream = {
+    urlByNode: new Map([
+      [1, APP],
+      [2, WORKER],
+    ]),
+    // The worker sample lands FIRST inside the window; the main-thread sample follows.
+    samples: [2, 1],
+    timestampsUs: [1100, 1300],
+    lines: [99, 42],
+    threads: [
+      { pid: 1, tid: 7 }, // a worker thread
+      { pid: 1, tid: 1 }, // the main thread
+    ],
+    intervalUs: 150,
+  };
+  const out = sampledForcedBlameEvents(events, stream, null, { pid: 1, tid: 1 });
+  assert.equal(out.length, 1, "the flush is still blamed, from a same-thread sample");
+  assert.equal(
+    out[0].args.data.stackTrace[0].lineNumber,
+    42,
+    "the main-thread sample's line, never the earlier worker sample's",
+  );
+  assert.equal(out[0].args.data.stackTrace[0].url, APP, "the worker url is skipped");
+});
+
+// A flush whose ONLY in-window sample ran on another thread yields no blame (the same cheap-read miss
+// as no sample at all), never a fabricated cross-thread line.
+test("sampledForcedBlameEvents: a flush with only an off-thread sample yields nothing", () => {
+  const events = [{ ...flush("layout", 1000, 500), pid: 1, tid: 1 }];
+  const stream = {
+    urlByNode: new Map([[2, "http://127.0.0.1:5000/worker.js"]]),
+    samples: [2],
+    timestampsUs: [1100],
+    lines: [99],
+    threads: [{ pid: 1, tid: 7 }],
+    intervalUs: 150,
+  };
+  assert.deepEqual(sampledForcedBlameEvents(events, stream, null, { pid: 1, tid: 1 }), []);
+});
+
 test("sampledForcedBlameEvents: an already-sampled event is never re-blamed (no double annotation)", () => {
   const events = [{ ...flush("layout", 1000, 500), sampled: true }];
   const stream = streamOf([{ node: 1, ts: 1100, line: 42 }], 150, { 1: APP });

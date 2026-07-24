@@ -30,6 +30,10 @@ export interface CpuSampleStream {
   timestampsUs: number[];
   /** per-sample executing line (1-based); a value <= 0 means no line was recorded for that sample */
   lines: number[];
+  /** per-sample owning thread (pid/tid), parallel to `samples`. A merged stream interleaves every
+   * renderer/worker/OOPIF isolate, so a flush is blamed only on a same-thread sample; absent (older
+   * assembler) disables the thread guard and keeps the timestamp-only join. */
+  threads?: { pid: number; tid: number }[];
   /** the interval the stream ran at (us); a flush narrower than this is low-confidence */
   intervalUs: number;
 }
@@ -47,7 +51,7 @@ export function sampledForcedBlameEvents(
   windowStart: number | null,
   thread: { pid: number; tid: number } | null,
 ): NormalizedEvent[] {
-  const { samples, timestampsUs, lines, urlByNode, intervalUs } = stream;
+  const { samples, timestampsUs, lines, threads, urlByNode, intervalUs } = stream;
   if (lines.length === 0 || samples.length === 0) return [];
 
   // The layout/style flushes to blame, main-thread windowed and in ts order so the sample pointer
@@ -76,6 +80,14 @@ export function sampledForcedBlameEvents(
     ) {
       const line = lines[index];
       if (line == null || line <= 0) continue;
+      // The merged stream interleaves every isolate; a flush on the main thread must be blamed only on a
+      // sample that ran on THAT thread. A worker/OOPIF/other-renderer sample can share the flush's
+      // timestamp window but names an unrelated source line, so skip it. No `thread` filter (thread ==
+      // null) leaves the flush unrestricted, so the per-sample thread guard only ever narrows.
+      if (thread != null && threads != null) {
+        const owner = threads[index];
+        if (!owner || owner.pid !== thread.pid || owner.tid !== thread.tid) continue;
+      }
       const url = urlByNode.get(samples[index]) ?? "";
       // A native accessor node (empty url) or a tool/harness frame is not the read site; keep scanning.
       if (!url || isToolFrameUrl(url)) continue;
@@ -95,7 +107,10 @@ export function sampledForcedBlameEvents(
       args: {
         data: {
           // extractStack reads `stackTrace[].url`/`lineNumber`; attachStacks maps it to local source.
-          stackTrace: [{ url: picked.url, lineNumber: picked.line }],
+          // `lineOnly`: a sample carries an executing LINE but no column, so the resolver must not map
+          // it through generated column 0 (a wrong original line on a minified single-line bundle); it
+          // maps only when the generated line is unambiguous, else keeps the bundle line.
+          stackTrace: [{ url: picked.url, lineNumber: picked.line, lineOnly: true }],
           // A flush narrower than one sampler interval may catch an adjacent line or none, so flag it.
           ...(flush.dur < intervalUs ? { lowConfidence: true } : {}),
         },

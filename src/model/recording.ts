@@ -20,6 +20,14 @@ export interface StackFrame {
   source?: string;
   line?: number;
   column?: number;
+  /**
+   * The frame carries an executing LINE but no observed column (a CPU sample's `data.lines` entry, the
+   * chrome --breakdown sampled read-site). A source-map lookup must NOT assume generated column 0 for
+   * it: on a minified single-line bundle every column-0 lookup resolves to whatever segment starts the
+   * line, an unrelated original location. resolveFrame maps a line-only frame only when its generated
+   * line is unambiguous. Absent (the usual) means the column was observed and column 0 is real.
+   */
+  lineOnly?: boolean;
   /** when source was a bundle with a sourcemap, the pre-map "file:line:col" */
   bundled?: string;
   /** the url is a remote (http) script; its sourcemap is fetched over the network */

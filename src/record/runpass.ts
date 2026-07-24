@@ -378,6 +378,7 @@ export async function runPass(
                 samples: assembled.profile.samples,
                 timestampsUs: assembled.profile.sampleTimestampsUs ?? [],
                 lines: assembled.sampleLines,
+                threads: assembled.sampleThreads,
                 intervalUs: assembled.sampleIntervalUs,
               },
               windowStart,

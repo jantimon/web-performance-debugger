@@ -12,4 +12,5 @@ flush-site semantic as `--deep` and firefox, and comparable at line granularity.
 estimate: a flush narrower than one sampler interval is marked `~low-confidence` (it can lag one
 statement). The exact forced COUNT still needs `--deep`; a sampled event never inflates a count or an
 `assert --max-forced` gate. In a run group, `query blame --forced` prefers a `--deep` member (exact)
-and falls back to a `--breakdown` member (sampled).
+and falls back to a `--breakdown` member (sampled). A `--breakdown` recording whose browser emitted no
+per-sample lines reports blame unavailable, never an empty log read as a clean run.

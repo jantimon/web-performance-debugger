@@ -36,7 +36,7 @@ import {
   spanPassesFilter,
   type SpanCountsOverview,
 } from "../model/spans.js";
-import { isFirefoxDeep, isGeckoCaptureMode } from "../model/capture-mode.js";
+import { isFirefoxDeep, isGeckoCaptureMode, hasBlameEventLog } from "../model/capture-mode.js";
 import { bold, cyan, dim } from "../output/color.js";
 import {
   num,
@@ -127,13 +127,16 @@ function eventsInWindow(rec: Recording): NormalizedEvent[] {
  */
 function requireEventLog(rec: Recording, file: string): void {
   // --breakdown stores a SAMPLED read-site blame log (edge marks + sampled forced Layout/RecalcStyles
-  // events), so blame/events/get read it there too; the full invalidation event log is still --deep/firefox.
-  if (
-    rec.meta.passes.includes("deep") ||
-    rec.meta.passes.includes("breakdown") ||
-    isGeckoCaptureMode(rec.meta.passes)
-  )
-    return;
+  // events) ONLY when the trace emitted per-sample lines, recorded as blameSemantic === "flush-site".
+  // Gate on that capability, not passes.includes("breakdown"): an old --breakdown recording or one whose
+  // browser emitted no lines has an EMPTY log and must degrade to unavailable, never read as clean.
+  if (hasBlameEventLog(rec.meta.passes, rec.meta.blameSemantic)) return;
+  if (rec.meta.passes.includes("breakdown"))
+    throw new Error(
+      `${file}: this --breakdown recording carries no sampled read-site blame log -- the browser emitted ` +
+        `no per-sample executing lines, so the CPU stream could not name the forcing reads. Re-record ` +
+        `with --deep for the exact forced-layout blame + invalidation log.`,
+    );
   throw new Error(
     `${file}: the event log was not captured in this capture mode (${rec.meta.passes.join("+")}). Events, ` +
       `forced-layout blame, and invalidation records are stored under --deep (chrome), --breakdown ` +
