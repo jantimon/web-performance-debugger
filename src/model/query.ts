@@ -85,6 +85,13 @@ export interface BlameEntry {
    * every other lane. `at` is the read (who paid), `dirtiedBy` the write (who caused).
    */
   dirtiedBy?: DirtiedByWrite[];
+  /**
+   * Chrome `--breakdown` sampled blame only: every flush attributed to this line was NARROWER than one
+   * sampler interval, so the sampled read line is low-confidence (it can lag one statement or land on
+   * an adjacent line). Absent when at least one flush at this line was wider than the interval (a
+   * confident sample), and on the exact `--deep`/firefox lanes. See docs/dev/blame-semantics.md.
+   */
+  lowConfidence?: boolean;
 }
 
 /**

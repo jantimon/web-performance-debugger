@@ -130,8 +130,12 @@ node:                  [node-cpu]                     in-process V8, four-slice 
   deltas into `meta.cpuIntervalUs`/`CpuModel.sampleIntervalUs` (never the 200us default constant, which
   does not describe this capture mode); it is not settable up without a CDP profiler, and ~150us is inside the
   interval-stable band, so the reported percentages do not move. Being one pass it runs every iteration,
-  so counts total across `--iterations`; forced counts and blame need `.stack`, so this capture mode reports
-  them `null`, never 0.
+  so counts total across `--iterations`. The forced COUNT needs `.stack`, so this capture mode reports it
+  `null`, never 0 -- but forced-layout BLAME is available: each ProfileChunk carries `args.data.lines`, a
+  per-sample EXECUTING line (1-based, matching the trace `.stack` numbering directly, NOT node's 0-based
+  function-definition `callFrame.lineNumber`), and the sampler keeps sampling through a synchronous forced
+  layout, so joining a layout/style event window against those samples recovers the forcing read line
+  (sampled flush-site, `trace/sampled-blame.ts`; [blame-semantics.md](./blame-semantics.md#chrome---breakdown-the-same-read-site-sampled-from-the-cpu-profile)).
 - **--deep**: ONE full trace (`.stack` + `invalidationTracking`) with the sampler OFF: forced-layout
   blame (read-site), dirtied-by writes, the thrash detector, invalidation rollup, exact counts and
   long tasks. No CPU model and no reconciling bar. Slice durations are suppressed (`.stack` inflates
@@ -308,6 +312,24 @@ tighter numbers stated elsewhere in this file:
 
 Directional and machine-dependent — the ordering is the load-bearing part, not the exact percent.
 Refresh with `npm run build && node examples/capture-mode-speed.mjs`.
+
+### What `--deep`'s two extra categories each cost
+
+**[measured]** `--deep`'s overhead over the light `--breakdown` base splits by which of its two extra
+categories is on, and the split depends on the workload — because `.stack` scales with the number of
+forced flushes (Blink walks the JS stack on each) and `invalidationTracking` scales with the number of
+DOM writes (one record per invalidation):
+
+| workload | `.stack` alone | `invalidationTracking` alone | both (`--deep`) |
+| --- | --- | --- | --- |
+| thrash (forced-flush-heavy) | **+45%** | **+33%** | **+70%** |
+| mutation-heavy (DOM-write-heavy) | **~0%** | **~+48%** | ~+48% |
+
+So neither category is "the expensive one" in the abstract: on a read-after-write thrash workload
+`.stack` dominates (every forced flush pays a stack walk), while on a workload that only mutates the
+DOM `.stack` is ~free and `invalidationTracking` is the whole cost. This is why `--breakdown` (which
+drops both) stays cheap regardless, and why a run group that needs the write side pays the
+`invalidationTracking` cost on the `--deep` member alone.
 
 ### The sampler interval: why 200us
 

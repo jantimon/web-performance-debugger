@@ -20,6 +20,14 @@ export interface StackFrame {
   source?: string;
   line?: number;
   column?: number;
+  /**
+   * The frame carries an executing LINE but no observed column (a CPU sample's `data.lines` entry, the
+   * chrome --breakdown sampled read-site). A source-map lookup must NOT assume generated column 0 for
+   * it: on a minified single-line bundle every column-0 lookup resolves to whatever segment starts the
+   * line, an unrelated original location. resolveFrame maps a line-only frame only when its generated
+   * line is unambiguous. Absent (the usual) means the column was observed and column 0 is real.
+   */
+  lineOnly?: boolean;
   /** when source was a bundle with a sourcemap, the pre-map "file:line:col" */
   bundled?: string;
   /** the url is a remote (http) script; its sourcemap is fetched over the network */
@@ -347,11 +355,12 @@ export interface StepLoaf {
  * What a forced-layout blame line names:
  *
  * - "flush-site": the geometry READ that forced the pending layout to flush synchronously, e.g.
- *   the `offsetHeight` access, with the DOM property named. Produced on BOTH engines: Chrome/Blink
- *   captures the stack at the flush (from the trace's `.stack` category), Firefox/Gecko samples it
- *   from the DOM-accessor label frames on the stack. Comparable across engines at line granularity
- *   (measured: 12/21 lines exact on the shared probe), with a one-statement line-lag caveat where a
- *   sampled read lands on the adjacent statement.
+ *   the `offsetHeight` access. Produced three ways, all the same read-site semantic: Chrome `--deep`
+ *   reads it exactly from the trace's `.stack` at the flush; Chrome `--breakdown` samples it from the
+ *   `v8.cpu_profiler` per-sample executing line over a layout/style window (no `.stack`); Firefox/Gecko
+ *   samples it from the DOM-accessor label frames (with the property named). Comparable at line
+ *   granularity (measured: 12/21 lines exact on the shared probe), with a one-statement line-lag caveat
+ *   on the sampled routes where a sub-interval read lands on the adjacent statement.
  * - "invalidation-site": the WRITE that dirtied the DOM and made a flush necessary, e.g. the style
  *   assignment. The legacy Firefox semantic (Gecko cause stacks, first invalidator since the last
  *   flush), present only on older recordings.

@@ -161,7 +161,9 @@ cpu on/off, keepThreadIds, gecko) from the flags; there is no multi-pass plan an
   sampler (no CDP profiler runs here), so they are continuous across a cross-document navigation: a
   navigating driver step keeps its CPU attribution. `trace/breakdown.ts` tiles the reconciling
   `js·style·layout·paint·gc·other·idle` bar per span, and layout/style/paint counts come out exact.
-  Cannot report forced counts/blame (needs `.stack`).
+  The forced COUNT needs `.stack` (unavailable here), but forced-layout BLAME is available: the read
+  that forced each flush is sampled from the stream's per-sample `data.lines` executing line
+  (`trace/sampled-blame.ts`), the same flush-site semantic `--deep` reads exactly.
 - **`--deep`** — full trace (`.stack` + `invalidationTracking`), sampler OFF. The attribution report:
   forced-by read-sites, dirtied-by writes, the thrash detector, invalidation rollup, exact counts,
   long tasks. No CPU model, and slice DURATIONS are suppressed (see below).

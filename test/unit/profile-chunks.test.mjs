@@ -202,6 +202,79 @@ test("assembleTraceCpuProfile: a navigation with hundreds of thousands of sample
     );
 });
 
+test("assembleTraceCpuProfile: threads per-sample executing lines (data.lines) parallel to samples", () => {
+  // The v8.cpu_profiler ProfileChunk carries a `data.lines` array parallel to cpuProfile.samples: the
+  // EXECUTING line at each sample (1-based, trace-stack convention), which sampled read-site forced-
+  // layout blame reads. A cross-process merge reorders the sample arrays by timestamp; sampleLines
+  // must ride along so a line still describes its own sample.
+  const node = { id: 1, callFrame: { functionName: "f", scriptId: 1, url: "u", lineNumber: 1, columnNumber: 1 } };
+  const withLines = {
+    traceEvents: [
+      { name: "Profile", pid: 1, id: "0x1", ts: 0, args: { data: { startTime: 0 } } },
+      {
+        name: "ProfileChunk",
+        pid: 1,
+        id: "0x1",
+        ts: 1,
+        args: {
+          data: { cpuProfile: { nodes: [node], samples: [1, 1, 1] }, timeDeltas: [150, 150, 150], lines: [42, 43, 44] },
+        },
+      },
+    ],
+  };
+  const assembled = assembleTraceCpuProfile(withLines);
+  assert.deepEqual(assembled.sampleLines, [42, 43, 44], "each sample keeps its executing line");
+  assert.equal(assembled.sampleLines.length, assembled.profile.samples.length, "parallel to samples");
+});
+
+test("assembleTraceCpuProfile: no data.lines => sampleLines is absent (blame degrades to unavailable)", () => {
+  const node = { id: 1, callFrame: { functionName: "f", scriptId: 1, url: "u", lineNumber: 1, columnNumber: 1 } };
+  const noLines = {
+    traceEvents: [
+      { name: "Profile", pid: 1, id: "0x1", ts: 0, args: { data: { startTime: 0 } } },
+      {
+        name: "ProfileChunk",
+        pid: 1,
+        id: "0x1",
+        ts: 1,
+        args: { data: { cpuProfile: { nodes: [node], samples: [1, 1] }, timeDeltas: [150, 150] } },
+      },
+    ],
+  };
+  const assembled = assembleTraceCpuProfile(noLines);
+  assert.equal(assembled.sampleLines, undefined, "no chunk carried lines => the field is absent, never a fake line");
+});
+
+test("assembleTraceCpuProfile: sampleThreads tags each sample with its stream's pid/tid, reorder-aligned", () => {
+  // Two concurrent isolates on one process: the renderer MAIN thread (tid 1) and a WORKER (tid 7),
+  // each its own (pid, Profile id) stream. Their samples overlap in time, so the merge reorders the
+  // parallel arrays by timestamp. sampleThreads must ride along, so a sampled read-site blame join can
+  // keep the worker's line off a main-thread flush. The worker sample lands FIRST here (earlier clock).
+  const node = (fn) => ({ id: 1, callFrame: { functionName: fn, scriptId: 1, url: "u", lineNumber: 1, columnNumber: 1 } });
+  const stream = (id, tid, deltaUs, line, fn) => [
+    { name: "Profile", pid: 1, tid, id, ts: 1_000_000, args: { data: { startTime: 1_000_000 } } },
+    {
+      name: "ProfileChunk",
+      pid: 1,
+      tid,
+      id,
+      ts: 1_000_001,
+      args: { data: { cpuProfile: { nodes: [node(fn)], samples: [1] }, timeDeltas: [deltaUs], lines: [line] } },
+    },
+  ];
+  const traceEvents = [
+    ...stream("0x1", 1, 200, 10, "mainRead"), // main thread, later sample (ts 1_000_200)
+    ...stream("0x2", 7, 100, 99, "workerLoop"), // worker, earlier sample (ts 1_000_100)
+  ];
+  const assembled = assembleTraceCpuProfile({ traceEvents });
+  assert.ok(assembled.sampleThreads, "sampleThreads is present alongside sampleLines");
+  assert.equal(assembled.sampleThreads.length, assembled.profile.samples.length, "one thread per sample");
+  // Ascending by clock: the worker sample (1_000_100) sorts before the main one (1_000_200), and every
+  // parallel array agrees on that order.
+  assert.deepEqual(assembled.sampleThreads, [{ pid: 1, tid: 7 }, { pid: 1, tid: 1 }], "each sample keeps its own thread");
+  assert.deepEqual(assembled.sampleLines, [99, 10], "lines stay aligned with their threads after the reorder");
+});
+
 test("windowTraceCpuProfile: drops samples before the run start (prepare/warmup exclusion)", () => {
   const { profile } = assembleTraceCpuProfile(fixture);
   // Keep only stream B (>= 2_000_000): the pre-navigation samples are dropped, as prepare()/warmup

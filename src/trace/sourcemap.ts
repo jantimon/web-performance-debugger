@@ -1,6 +1,6 @@
 import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
-import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
+import { TraceMap, originalPositionFor, decodedMappings } from "@jridgewell/trace-mapping";
 import type { SourceMapDiagnostics, SourceMapFailure, StackFrame } from "../model/recording.js";
 
 /** ms before a single remote .js / .map fetch is abandoned (keeps a hung CDN from stalling a run). */
@@ -257,6 +257,46 @@ function looksMinified(js: string): boolean {
   return false;
 }
 
+// Decoded-mapping segment layout: [generatedColumn, sourceIndex, originalLine, originalColumn, nameIndex?].
+const SEG_GEN_COLUMN = 0;
+const SEG_SOURCE_INDEX = 1;
+const SEG_ORIGINAL_LINE = 2;
+
+/**
+ * The generated column to look a LINE-ONLY sample up at, or null when the generated line is ambiguous.
+ *
+ * A sample carries an executing line but no column. A source-map lookup needs a column; assuming 0 is a
+ * lie on a minified single-line bundle, where generated line 1 maps every original line of every module
+ * and column 0 lands on whichever segment happens to start the line. This returns a real generated
+ * column to query at ONLY when every mapped segment on the generated line points at one original
+ * source + line, so the missing column cannot change the original line. Otherwise it returns null and
+ * the caller keeps the frame on its bundle line. 1-based `generatedLine` in, 0-based column out.
+ */
+function unambiguousLineColumn(map: TraceMap, generatedLine: number): number | null {
+  const decoded = decodedMappings(map);
+  const segments = decoded[generatedLine - 1];
+  if (!segments || segments.length === 0) return null;
+  let sourceIndex: number | null = null;
+  let originalLine: number | null = null;
+  let firstColumn: number | null = null;
+  for (const segment of segments) {
+    // A generated-column-only segment (length 1) carries no original position: it marks a gap, not a
+    // mapping, so it neither anchors nor breaks the line's uniqueness. length >= 4 guarantees the
+    // source-index and original-line fields are present (the `!` reflects that, past TS's tuple union).
+    if (segment.length < 4) continue;
+    const segSource = segment[SEG_SOURCE_INDEX]!;
+    const segLine = segment[SEG_ORIGINAL_LINE]!;
+    if (sourceIndex == null) {
+      sourceIndex = segSource;
+      originalLine = segLine;
+      firstColumn = segment[SEG_GEN_COLUMN];
+    } else if (segSource !== sourceIndex || segLine !== originalLine) {
+      return null;
+    }
+  }
+  return firstColumn;
+}
+
 /**
  * Best-effort mapping of bundled stack frames back to original source using sibling `.map`
  * files, inline data-URI maps, or (for remote scripts) the map auto-detected from the JS's
@@ -504,12 +544,26 @@ export class SourceMapResolver {
     }
     const map = await this.loadMap(target);
     if (!map) return;
+    // A line-only frame (a CPU sample carries an executing LINE but no column) must not be mapped as
+    // though generated column 0 were observed: on a minified single-line bundle every such lookup
+    // resolves through bundle:line:0 to whatever segment starts the line, an unrelated original
+    // location. Map it only when its generated line is UNAMBIGUOUS (every mapped segment on that line
+    // shares one original source+line, so no column could change the answer); otherwise leave the frame
+    // on its bundle line, so `at` is never a wrong original line (a sampled read may miss, never lie).
+    const lookupColumn = frame.lineOnly
+      ? unambiguousLineColumn(map, frame.line)
+      : Math.max(0, (frame.column ?? 1) - 1);
+    const positions = this.positionCounts.get(target) ?? { misses: 0, hits: 0 };
+    if (lookupColumn == null) {
+      positions.misses++;
+      this.positionCounts.set(target, positions);
+      return;
+    }
     // trace stack lines are 1-based; trace-mapping wants 1-based line, 0-based column.
     const pos = originalPositionFor(map, {
       line: frame.line,
-      column: Math.max(0, (frame.column ?? 1) - 1),
+      column: lookupColumn,
     });
-    const positions = this.positionCounts.get(target) ?? { misses: 0, hits: 0 };
     if (pos.source == null || pos.line == null) {
       // The map loaded but has no mapping for this line/col: the frame keeps its minified/remote
       // identity and buckets by origin. `outcomes` records only LOAD failures, so count the miss
@@ -525,7 +579,9 @@ export class SourceMapResolver {
       ? cleanRemoteSource(pos.source)
       : resolveOriginalSource(path.dirname(target), pos.source);
     frame.line = pos.line;
-    frame.column = pos.column ?? undefined;
+    // A line-only sample observed no column, so report line precision (no fabricated original column);
+    // an observed-column frame keeps its mapped column.
+    frame.column = frame.lineOnly ? undefined : (pos.column ?? undefined);
     // the map's original identifier, when present (best-effort; absent on many segments)
     if (pos.name) frame.originalName = pos.name;
   }

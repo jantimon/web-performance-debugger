@@ -31,6 +31,9 @@ interface TraceProfileNode {
 interface RawTraceEvent {
   name: string;
   pid?: number;
+  /** the trace thread the Profile/ProfileChunk was emitted on = the isolate's own thread. A sampled
+   * read-site blame join needs it to keep a worker/OOPIF sample off a main-thread flush. */
+  tid?: number;
   ts?: number;
   id?: string | number;
   args?: {
@@ -38,19 +41,28 @@ interface RawTraceEvent {
       startTime?: number;
       cpuProfile?: { nodes?: TraceProfileNode[]; samples?: number[] };
       timeDeltas?: number[];
+      /** per-sample EXECUTING line (1-based, trace-stack convention), aligned with cpuProfile.samples.
+       * Present on recent Chrome; absent on older builds, in which case sampled read-site blame
+       * degrades to unavailable rather than to a wrong (function-definition) line. */
+      lines?: number[];
     };
   };
 }
 
 interface ProfileGroup {
+  /** the stream's own thread (pid/tid), so a sample can be matched to a same-thread flush. One stream
+   * is one isolate = one thread; the main-thread flush blame must not read a worker/OOPIF sample. */
+  pid: number | undefined;
+  tid: number | undefined;
   /** the stream's base clock (base::TimeTicks us), shared with the trace events and wpd:* markers */
   startTime: number | undefined;
   /** the Profile event's own ts, a fallback base clock when args.data.startTime is absent */
   fallbackStartTs: number | undefined;
   /** node id -> node, first definition wins (a node is emitted once, in the chunk that introduces it) */
   nodes: Map<number, TraceProfileNode>;
-  /** the ProfileChunk payloads for this stream, ordered by ts before the deltas are accumulated */
-  chunks: { ts: number; samples: number[]; timeDeltas: number[] }[];
+  /** the ProfileChunk payloads for this stream, ordered by ts before the deltas are accumulated. `lines`
+   * is the per-sample executing line (undefined when the chunk carried no `data.lines`). */
+  chunks: { ts: number; samples: number[]; timeDeltas: number[]; lines: number[] | undefined }[];
 }
 
 export interface AssembledTraceCpuProfile {
@@ -58,6 +70,15 @@ export interface AssembledTraceCpuProfile {
   profile: RawCpuProfile;
   /** the interval the stream actually ran at, read back from the inter-sample deltas */
   sampleIntervalUs: number;
+  /** per-sample EXECUTING line (1-based), parallel to `profile.samples`/`profile.sampleTimestampsUs`,
+   * for sampled read-site forced-layout blame. Absent when NO chunk carried `data.lines` (older
+   * Chrome): the feature then reports unavailable, never a function-definition line. A sample whose
+   * chunk lacked the field carries -1 here (skipped downstream). */
+  sampleLines?: number[];
+  /** per-sample owning thread (pid/tid), parallel to `profile.samples`, so a sampled read-site blame
+   * join matches a sample to the flush's OWN thread and never bills a worker/OOPIF/other-renderer
+   * sample to a main-thread flush. Present only alongside `sampleLines` (blame's only consumer). */
+  sampleThreads?: { pid: number; tid: number }[];
 }
 
 const PROFILE_EVENT = "Profile";
@@ -116,7 +137,14 @@ export function assembleTraceCpuProfile(
     const key = `${event.pid ?? 0} ${event.id ?? ""}`;
     let group = groups.get(key);
     if (!group) {
-      group = { startTime: undefined, fallbackStartTs: undefined, nodes: new Map(), chunks: [] };
+      group = {
+        pid: undefined,
+        tid: undefined,
+        startTime: undefined,
+        fallbackStartTs: undefined,
+        nodes: new Map(),
+        chunks: [],
+      };
       groups.set(key, group);
     }
     return group;
@@ -124,10 +152,16 @@ export function assembleTraceCpuProfile(
   for (const event of events) {
     if (event.name === PROFILE_EVENT) {
       const group = groupFor(event);
+      group.pid = event.pid;
+      group.tid = event.tid;
       group.startTime = event.args?.data?.startTime;
       group.fallbackStartTs = event.ts;
     } else if (event.name === PROFILE_CHUNK_EVENT) {
       const group = groupFor(event);
+      // A stream may open with a ProfileChunk (no leading Profile event on some builds); stamp its
+      // thread here too so the group always carries the pid/tid its samples ran on.
+      group.pid ??= event.pid;
+      group.tid ??= event.tid;
       const data = event.args?.data;
       for (const node of data?.cpuProfile?.nodes ?? [])
         if (!group.nodes.has(node.id)) group.nodes.set(node.id, node);
@@ -135,6 +169,9 @@ export function assembleTraceCpuProfile(
         ts: event.ts ?? 0,
         samples: data?.cpuProfile?.samples ?? [],
         timeDeltas: data?.timeDeltas ?? [],
+        // undefined (not []) when the field is absent, so a chunk that lacks lines is distinguished
+        // from one that legitimately carried an empty sample set.
+        lines: data?.lines,
       });
     }
   }
@@ -150,6 +187,16 @@ export function assembleTraceCpuProfile(
   let samples: number[] = [];
   let timeDeltas: number[] = [];
   let sampleTimestampsUs: number[] = [];
+  // Per-sample executing line, parallel to `samples`. -1 = no line for this sample (its chunk carried
+  // no `data.lines`); `anyLines` stays false until a real line lands, so a stream that never emits the
+  // field returns sampleLines absent (the feature reports unavailable, never a fake line).
+  let sampleLines: number[] = [];
+  let anyLines = false;
+  // Per-sample owning thread (pid/tid), parallel to `samples`. A sampled read-site blame join reads it
+  // to keep a worker/OOPIF/other-renderer sample off a main-thread flush, which shares a timestamp
+  // window but not a source line. Number arrays (not objects) so a heavy profile stays lean.
+  let samplePids: number[] = [];
+  let sampleTids: number[] = [];
   let nextId = 1;
   let earliestStart = Infinity;
 
@@ -185,6 +232,11 @@ export function assembleTraceCpuProfile(
         samples.push(globalId);
         timeDeltas.push(deltaUs);
         sampleTimestampsUs.push(clock);
+        samplePids.push(group.pid ?? -1);
+        sampleTids.push(group.tid ?? -1);
+        const line = chunk.lines?.[index];
+        if (typeof line === "number") anyLines = true;
+        sampleLines.push(typeof line === "number" ? line : -1);
       }
     }
   }
@@ -210,6 +262,9 @@ export function assembleTraceCpuProfile(
     samples = order.map((index) => samples[index]);
     timeDeltas = order.map((index) => timeDeltas[index]);
     sampleTimestampsUs = order.map((index) => sampleTimestampsUs[index]);
+    sampleLines = order.map((index) => sampleLines[index]);
+    samplePids = order.map((index) => samplePids[index]);
+    sampleTids = order.map((index) => sampleTids[index]);
   }
 
   const startTime = Number.isFinite(earliestStart) ? earliestStart : 0;
@@ -221,7 +276,18 @@ export function assembleTraceCpuProfile(
     timeDeltas,
     sampleTimestampsUs,
   };
-  return { profile, sampleIntervalUs: medianInterval(timeDeltas) };
+  return {
+    profile,
+    sampleIntervalUs: medianInterval(timeDeltas),
+    // Absent when no chunk carried lines: the sampled-blame join then reports unavailable. The
+    // per-sample thread rides alongside, so the join can keep an off-main-thread sample off a flush.
+    ...(anyLines
+      ? {
+          sampleLines,
+          sampleThreads: samplePids.map((pid, index) => ({ pid, tid: sampleTids[index] })),
+        }
+      : {}),
+  };
 }
 
 /**

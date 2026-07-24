@@ -9,6 +9,8 @@ interface RawFrame {
   scriptId?: string | number;
   lineNumber?: number;
   columnNumber?: number;
+  /** the frame carries a line but no observed column (a sampled read-site); see StackFrame.lineOnly */
+  lineOnly?: boolean;
 }
 
 /**
@@ -44,6 +46,9 @@ export function extractStack(args: unknown): StackFrame[] | undefined {
       url: frame.url || undefined,
       line: typeof frame.lineNumber === "number" ? frame.lineNumber : undefined,
       column: typeof frame.columnNumber === "number" ? frame.columnNumber : undefined,
+      // A sampled read-site carries a line but no column; carry the flag so the resolver never assumes
+      // generated column 0 for it (a wrong original line on a minified single-line bundle).
+      ...(frame.lineOnly ? { lineOnly: true } : {}),
     }));
 }
 

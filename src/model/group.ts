@@ -168,7 +168,9 @@ export type MemberAxis =
  * Pick the member that measures `axis`, or null when no member did (a loud n/a at the call site,
  * never a silent pass). The routing:
  *   - slice-bar / cpu -> the CPU-bearing member, breakdown preferred (its reconciling bar).
- *   - forced / dirtied / thrash / blame -> the deep member (the event log lives there).
+ *   - blame -> the deep member (exact read-site), else a breakdown member (sampled read-site blame).
+ *   - forced / dirtied / thrash -> the deep member only (the forced COUNT and the WRITE set need what
+ *     --breakdown drops: `.stack` / invalidationTracking).
  *   - counts -> the deep member preferred (exact + forced), else any counting member (disclosed).
  *   - inp -> any member: INP is an in-page observer ungated by capture mode, and every member shares
  *     the group's lane + workload, so all observed the same interaction.
@@ -187,10 +189,18 @@ export function pickMember(group: RunGroup, axis: MemberAxis): GroupMember | nul
         (member) => member.mode === "breakdown",
         (member) => modeHasCpu(member.mode),
       );
+    case "blame":
+      // The read-site blame log lives in the deep event log; a chrome `breakdown` member carries it
+      // too, sampled from the CPU profile, so fall back to it when no deep member is present.
+      return prefer(
+        (member) => modeHasEventLog(member.mode),
+        (member) => member.mode === "breakdown",
+      );
     case "forced":
     case "dirtied":
     case "thrash":
-    case "blame":
+      // The forced COUNT (assert --max-forced) and the WRITE set (dirtied-by, thrash) need what
+      // --breakdown drops (`.stack` / invalidationTracking), so they are deep-only: no breakdown fallback.
       return prefer((member) => modeHasEventLog(member.mode));
     case "counts":
       return prefer(
