@@ -1,5 +1,49 @@
 # @jantimon/web-performance-debugger
 
+## 0.18.0
+
+### Minor Changes
+
+- e530ff6: Chrome `--breakdown` recordings now answer `query blame --forced` with sampled read-site
+  forced-layout blame, instead of refusing.
+
+  The light `--breakdown` trace has no `.stack`, but the fused `v8.cpu_profiler` stream keeps sampling
+  through a synchronous forced layout and carries a per-sample executing line (`data.lines`). Joining
+  each layout/style flush window against those samples recovers the forcing read line — the same
+  flush-site semantic as `--deep` and firefox, and comparable at line granularity. It is a sampled
+  estimate: a flush narrower than one sampler interval is marked `~low-confidence` (it can lag one
+  statement). The exact forced COUNT still needs `--deep`; a sampled event never inflates a count or an
+  `assert --max-forced` gate. In a run group, `query blame --forced` prefers a `--deep` member (exact)
+  and falls back to a `--breakdown` member (sampled). A `--breakdown` recording whose browser emitted no
+  per-sample lines reports blame unavailable, never an empty log read as a clean run.
+
+- eaf2617: Driver mode now hands `run`/`prepare`/`cleanup` the `waitForStable` helper in their argument
+  (`run({ page, measureStep, waitForStable })`), so a driver module needs no package import and works
+  under bare `npx`. The exported `waitForStable` still works for installed modules. TypeScript users can
+  annotate the hook with the new `DriverContext` export.
+
+  `waitForStable` gains a `timeoutMs` cap (default 30000; `timeout` kept as an alias). When the DOM never
+  goes quiet within it — a countdown, a poll, injected content — it now fails loudly naming both
+  `quietMs` and `timeoutMs`, instead of silently pricing the whole cap as a settled wall.
+
+  A `--url` boot that fails with `net::ERR_HTTP2_PROTOCOL_ERROR` under the default chrome-headless-shell
+  now re-throws guidance to retry with `--headless-mode new`, whose network stack differs.
+
+### Patch Changes
+
+- 9a17e44: A `--breakdown` driver step now headlines its MEDIAN per-iteration wall everywhere, not the bar's
+  iteration-0 window (which an outlier iteration 0 could inflate ~70x).
+
+  - `query spans`/`query span` (human and `--format json`/`toon`) report the median as a step's
+    `wallMs`; the `median of N samples` tag now describes that number truthfully.
+  - The step's reconciling bar keeps tiling iteration 0 and is labeled `iteration-0 window <ms>`;
+    its window rides the new `breakdownWallMs` field, which the slices reconcile to.
+  - Structured-output consumers see the corrected `wallMs` value for step spans.
+  - `query spans --min-wall` filters a step by that median wall in human output too, so the flood
+    filter hides and shows the same spans in the table and in `--format json`/`toon`.
+
+  Run/measure spans, the stored artifact, and `assert`/`diff` are unchanged.
+
 ## 0.17.0
 
 ### Minor Changes
