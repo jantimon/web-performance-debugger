@@ -474,7 +474,8 @@ export async function run({ page, measureStep, waitForStable }) {
 It is opt-in: it trades a longer, more variable wall (the `quietMs` tail rides every step) for catching
 the whole transition. If the DOM never goes quiet within `timeoutMs` (default 30000) — a countdown, a
 poll, injected content that never stops — it fails loudly rather than pricing the whole cap as a
-settled wall; raise `quietMs`/`timeoutMs` or gate on a `selector` instead. `waitForStable` is also an
+settled wall; lower `quietMs` if the lull requirement is too strict, raise `timeoutMs` if the
+transition is just slow, or gate on a `selector` instead. `waitForStable` is also an
 `import { waitForStable } from "@jantimon/web-performance-debugger"` for a module you install, but the
 injected form needs no dependency.
 

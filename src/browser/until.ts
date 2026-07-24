@@ -63,9 +63,9 @@ export function neverQuietError(quietMs: number, timeoutMs: number): Error {
   return new Error(
     `waitForStable: the DOM never went ${quietMs}ms without a mutation within the ${timeoutMs}ms cap, ` +
       `so the page is still changing (a countdown, a poll, injected content that never stops). ` +
-      `Raise quietMs if a ${quietMs}ms lull is too strict, raise timeoutMs if the transition is just ` +
-      `slow, or pass a selector-based until that waits for the specific landed content instead of a ` +
-      `global quiet window.`,
+      `Lower quietMs if a ${quietMs}ms lull is too strict (a shorter lull counts as stable), raise ` +
+      `timeoutMs if the transition is just slow, or pass a selector-based until that waits for the ` +
+      `specific landed content instead of a global quiet window.`,
   );
 }
 
