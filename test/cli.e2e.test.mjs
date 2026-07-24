@@ -572,6 +572,66 @@ e2e("record (driver): waitForStable survives a hard cross-document redirect mid-
   }
 });
 
+// waitForStable on a page that never stops mutating must fail FAST and LOUD within its cap, not run
+// until the protocol timeout. A small timeoutMs against a page that mutates every 20ms never yields a
+// quiet window, so the record exits non-zero with the specific "never went quiet" message.
+e2e("record (driver): waitForStable fails loudly when the DOM never goes quiet within the cap", { timeout: TIMEOUT_MS }, () => {
+  const server = startOnrampServer(
+    "<!doctype html><meta charset=utf-8><title>busy</title><div id=app></div>" +
+      "<script>setInterval(()=>{document.getElementById('app').textContent=String(Date.now());},20);<\/script>",
+  );
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const helper = path.join(repoRoot, "dist", "index.js");
+  try {
+    const flow = path.join(dir, "busy-flow.mjs");
+    writeFileSync(
+      flow,
+      `import { waitForStable } from ${JSON.stringify(helper)};
+       export async function run({ page, measureStep }) {
+         await measureStep("never-quiet", () => page.evaluate(() => void 0), {
+           until: waitForStable(page, { quietMs: 150, timeoutMs: 2000 }),
+         });
+       }`,
+    );
+    const out = path.join(dir, "busy");
+    // runCli throws on a non-zero exit with stderr attached; the specific message must be there, not a
+    // protocol-timeout error and not a silent pass. Both knobs are named so the caller knows what to change.
+    assert.throws(
+      () => runCli(["record", flow, "--url", server.url, "--iterations", "1", "--out", out]),
+      /the DOM never went 150ms without a mutation within the 2000ms cap/,
+      "the never-quiet failure surfaces with both knobs named",
+    );
+  } finally {
+    server.close();
+  }
+});
+
+// A driver module that imports NOTHING from the package still reaches waitForStable, because driver
+// mode injects it into run's argument. This is the bare-npx story: the module's cwd has no node_modules
+// for the package, so an `import` would fail; the injected helper needs none. The step completes.
+e2e("record (driver): the injected waitForStable works with no package import", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const html = path.join(repoRoot, "test", "fixtures", "streamed-nav.html");
+  assert.ok(existsSync(html), "streamed-nav.html is committed, so this test cannot silently skip");
+  const flow = path.join(dir, "injected-flow.mjs");
+  // No import line at all: waitForStable comes only from run's argument.
+  writeFileSync(
+    flow,
+    `export async function run({ page, measureStep, waitForStable }) {
+       await page.waitForSelector("#go");
+       await measureStep("wait-stable", () => page.click("#go"), {
+         until: waitForStable(page, { selector: "#landed", quietMs: 150 }),
+       });
+     }`,
+  );
+  const out = path.join(dir, "injected");
+  runCli(["record", flow, "--url", html, "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+  const stable = rec.spans.find((span) => span.kind === "step" && span.label === "wait-stable");
+  assert.ok(stable, "the step driven with only the injected waitForStable completed");
+  assert.ok(stable.wallMs > 170, `the injected wait outlasts the streamed tail (~170ms), got ${stable.wallMs}`);
+});
+
 // prepare()/warmup page-side JS must NOT reach the CPU model. In driver mode the sampler is not
 // windowed after the fact (no trace clock to slice it by in the default capture mode), so it opens at the run
 // mark, after prepare and warmup. Here prepare() and one warmup each burn ~70 ms of page-side JS while
