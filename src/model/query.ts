@@ -120,20 +120,33 @@ export interface UnifiedSlices {
 
 /**
  * One span in `query spans` output: the run window, a driver step, or a user `performance.measure`.
- * `Σ measured slices + idle` reconciles to `wallMs` (up to on-disk rounding dust or a `residualMs`),
- * the same closure the stored breakdowns promise.
+ * `Σ measured slices + idle` reconciles to the tiled window (up to on-disk rounding dust or a
+ * `residualMs`), the same closure the stored breakdowns promise: on a run/measure span that window IS
+ * `wallMs`; on a STEP span it is `breakdownWallMs` (the bar tiles iteration 0, while `wallMs` is the
+ * median headline).
  */
 export interface SpanEntry {
   label: string;
   kind: SpanKind;
   /**
-   * Headline wall (ms). On a stored per-span bar it is the trace-clock window the slices tile. On a
-   * run span SYNTHESIZED from `CpuModel.breakdown` (`SpansResult.source === "cpu-model"`: default-mode
-   * chrome, node, firefox without user measures) it is the profiler's own sampled window, which
-   * brackets the whole timed loop INCLUDING the settle wait -- so it can exceed `summary.wallMs` (the
-   * sum of the timed `run()` samples). The human header labels that case `sampled window`.
+   * Headline wall (ms). On a run span it is the trace-clock window the slices tile. On a run span
+   * SYNTHESIZED from `CpuModel.breakdown` (`SpansResult.source === "cpu-model"`: default-mode chrome,
+   * node, firefox without user measures) it is the profiler's own sampled window, which brackets the
+   * whole timed loop INCLUDING the settle wait -- so it can exceed `summary.wallMs` (the sum of the
+   * timed `run()` samples). The human header labels that case `sampled window`. On a STEP span it is
+   * the MEDIAN of the step's per-iteration walls, NOT the tiled window: the bar tiles iteration 0
+   * (`breakdownWallMs`), so on an outlier iteration 0 the two diverge and the median is the honest
+   * headline. On a `measure` span the wall IS the tiled window (a single occurrence, or the
+   * lower-median-by-wall pick of a repeated label).
    */
   wallMs: number;
+  /**
+   * The bar's own trace-clock window (ms) the slices tile, present ONLY on a STEP span (where it can
+   * differ from the median `wallMs`). The bar tiles iteration 0, so `Σ measured slices + idle`
+   * reconciles to this, not to the median headline. Absent on run/measure spans, whose `wallMs` IS the
+   * tiled window.
+   */
+  breakdownWallMs?: number;
   /**
    * How this span's numbers combine the recording's timed iterations -- the one contract a consumer
    * needs before comparing spans, because a recording mixes them. `"sum"`: the window spans every
@@ -320,7 +333,12 @@ export interface SpanAnatomy {
   aggregation: SpanAggregation;
   /** timed iterations behind this recording (`meta.iterations`) */
   iterations: number;
+  /** headline wall (ms). On a STEP span the MEDIAN of its per-iteration walls, not the tiled window
+   * (that is `breakdownWallMs`); on run/measure spans the tiled window itself. See SpanEntry.wallMs. */
   wallMs: number | null;
+  /** the bar's own iteration-0 window (ms) the slices tile, present only on a STEP span (its bar tiles
+   * iteration 0, which can diverge from the median `wallMs`). See SpanEntry.breakdownWallMs. */
+  breakdownWallMs?: number;
   /** real occurrences merged into this span when `aggregation` is `"median"` (a repeated measure) */
   samples?: number;
   wallMinMs?: number;
