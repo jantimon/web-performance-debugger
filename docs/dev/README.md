@@ -24,6 +24,7 @@ permalink).
 | [driver-timing.md](./driver-timing.md) | touching `browser/driver.ts`, or presenting a step's `wallMs` as a cost |
 | [frame-floor.md](./frame-floor.md) | changing the headless mode, adding a headless flag, or explaining why libraries with different cost report the same `wallMs` |
 | [rendering-counts.md](./rendering-counts.md) | adding a name to `trace/classify.ts`, gating a count in `diff.ts`/`assert.ts`, or calling a count "exact" |
+| [navigation-and-lcp.md](./navigation-and-lcp.md) | wiring an LCP number into a span, or deriving a static/hard/soft navigation label for a step |
 | [trace-buffer.md](./trace-buffer.md) | changing `trace/tracing.ts`, the trace buffer size, or claiming a `--deep` count is exact on a heavy page |
 | [facts.md](./facts.md) | changing any load-bearing measured number (a ledger of them + the files that must agree, checked by a unit test) |
 | [core-features.md](./core-features.md) | writing user-facing copy, prioritizing features, or claiming a capability is unique. The one file here whose evidence is market research (competitor docs and issue threads, link-verified and dated) rather than engine probes |
@@ -85,8 +86,17 @@ permalink).
 - Do trace counts match CDP's counters? -> [1:1, parses excluded](./rendering-counts.md#layout-and-style-counts-match-the-cdp-counters-11)
 - What scope is a count (OOPIF, process swaps, re-anchoring)? -> [main-thread windowed](./rendering-counts.md#the-count-is-main-thread-windowed-the-trace-is-browser-wide), [the navigation re-anchor](./rendering-counts.md#the-main-thread-follows-a-cross-process-navigation)
 - Why is `Paint` exact, and why is there no composite count? -> [Paint is per-chunk](./rendering-counts.md#paint-is-exact-and-it-is-per-chunk), [no composite count](./rendering-counts.md#there-is-no-composite-count-deliberately)
+- How many objects did a flush touch, and why is it a distribution not a sum? -> [per-flush scope](./rendering-counts.md#per-flush-layoutstyle-scope-measured-but-a-distribution-never-a-sum)
 - Why do a run's counts and its bar cover different windows? -> [count window vs bar window](./rendering-counts.md#the-run-count-window-and-the-run-bar-window-differ-by-design)
 - What overruns the trace buffer, and what is the parse ceiling? -> [trace-buffer.md](./trace-buffer.md)
+
+**Navigation and LCP** — [navigation-and-lcp.md](./navigation-and-lcp.md)
+
+- Does LCP fire headless, and is it comparable across engines? -> [LCP fires under both modes](./navigation-and-lcp.md#lcp-fires-under-both-headless-modes-and-firefox)
+- What is a usable LCP identifier on a production build, and when is `renderTime` 0? -> [url+size+tag](./navigation-and-lcp.md#the-useful-lcp-identifier-is-urlsizetag)
+- Why is there no per-soft-step LCP, and what is the clean semantic? -> [finalization](./navigation-and-lcp.md#lcp-finalizes-on-a-trusted-input-and-re-arms-per-document)
+- How is a step classified static/hard/soft without CDP or a browser flag? -> [url+timeOrigin](./navigation-and-lcp.md#the-urltimeorigin-classification)
+- Where does the URL diff break down (hash, query, reverting replaceState)? -> [the ambiguity family](./navigation-and-lcp.md#the-ambiguity-family)
 
 ## The four things most likely to bite you
 

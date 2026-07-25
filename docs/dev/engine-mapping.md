@@ -217,6 +217,22 @@ Firefox cannot give. Note the `Reflow` marker payload is only `{innerWindowID, s
 These are *size* metrics, so they belong in the "counts are exact, compare freely" trust tier —
 within an engine. They do **not** make the engines comparable (same ~2x ratio as the batch counts).
 
+Two consequences of the asymmetry in that last table, both binding on any surfacing:
+
+- **Layout scope is Chrome-only.** Chrome's `Layout` event carries `dirtyObjects` / `totalObjects` /
+  `partialLayout` / `layoutRoots`; the Gecko `Reflow (sync)` marker carries none of them. So a
+  layout-scope number cannot cross engines, and the never-fake-parity rule keeps it off the Firefox
+  lane rather than inventing a zero.
+- **Style scope compares within an engine only.** `elementsTraversed`/`elementsStyled`/
+  `elementsMatched` are the analog of Chrome's `elementCount`, but the same ~2x cross-engine batching
+  gap that moves the batch counts moves these, so they rank flushes within one engine and are not a
+  cross-engine ratio.
+
+Chrome's per-flush scope fields ride the light `--breakdown` trace (only `beginData.stackTrace` needs
+`.stack`), and their measured exactness constants (`elementCount` exact, `dirtyObjects` = N+1
+render-tree `LayoutObject`s not DOM nodes) live in
+[rendering-counts.md](./rendering-counts.md#per-flush-layoutstyle-scope-measured-but-a-distribution-never-a-sum).
+
 ## Categories (Gecko)
 
 From `profiling_categories.yaml`, which is the source of `meta.categories` in the dump, so frontend
