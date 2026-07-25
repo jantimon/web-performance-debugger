@@ -15,6 +15,30 @@ function isStringTooLongError(error: unknown): boolean {
   );
 }
 
+// The shared remedy for a --deep event log too large to serialize, named identically by the capture-time
+// preflight (record/runpass.ts) and the writeRecording backstop below so a reader gets the same next
+// step wherever the ceiling is hit. Every --iteration is traced, so the stored log scales with the
+// iteration count as well as the per-run work: fewer --iterations is a real reducer.
+const DEEP_EVENT_LOG_REMEDY =
+  "--deep stores the full event log (.stack + invalidationTracking) for forced-layout blame; reduce " +
+  "the measured work (fewer steps per run, fewer --iterations, or scope the flow), or record with " +
+  "--breakdown (a lighter trace that stores no event log) if you do not need blame.";
+
+/**
+ * The capture-time preflight error: a chrome --deep trace whose stored event log will exceed the
+ * ~512MB JSON-string ceiling, refused right after capture so the parse cannot OOM first. `traceBytes`
+ * is the raw trace byte length known when the stream completes. Shares DEEP_EVENT_LOG_REMEDY with the
+ * writeRecording backstop.
+ */
+export function deepEventLogOverflowError(traceBytes: number): Error {
+  const traceMb = Math.round(traceBytes / (1024 * 1024));
+  return new Error(
+    `The --deep trace is ~${traceMb}MB; its stored event log would exceed the ~512MB a single JSON ` +
+      `string can hold, so the recording could not be written. Refusing now (right after capture) ` +
+      `rather than after a full parse or an out-of-memory crash. ${DEEP_EVENT_LOG_REMEDY}`,
+  );
+}
+
 // Pure artifact writers: they take already-built model objects and put them on disk. No browser
 // handles, no meta mutation, so a fixture test can drive them directly. The collapse leaves two
 // writers: the one default artifact (Span[] + summary + meta, with the deep event log under --deep)
@@ -35,10 +59,8 @@ export async function writeRecording(
     if (!isStringTooLongError(error)) throw error;
     throw new Error(
       `The recording holds ${recording.events.length.toLocaleString()} trace events whose JSON is ` +
-        `larger than the ~512MB a single string can hold, so the artifact could not be written. --deep ` +
-        `stores the full event log (.stack + invalidationTracking) for forced-layout blame; reduce the ` +
-        `measured work (fewer steps per run, or scope the flow), or record with --breakdown (a lighter ` +
-        `trace that stores no event log) if you do not need blame.`,
+        `larger than the ~512MB a single string can hold, so the artifact could not be written. ` +
+        DEEP_EVENT_LOG_REMEDY,
     );
   }
   await writeFileAtomic(outPath, body);

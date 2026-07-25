@@ -35,7 +35,12 @@ import {
   filterSpanEntries,
   type SpanCountsOverview,
 } from "../model/spans.js";
-import { isFirefoxDeep, isGeckoCaptureMode, hasBlameEventLog } from "../model/capture-mode.js";
+import {
+  isFirefoxDeep,
+  isGeckoCaptureMode,
+  hasBlameEventLog,
+  blameRowLowConfidence,
+} from "../model/capture-mode.js";
 import { bold, cyan, dim } from "../output/color.js";
 import {
   num,
@@ -1496,6 +1501,11 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     ? analyzeThrash(rec.events, rec.window.startTs).dirtiedByReadSite
     : {};
 
+  // Only a --breakdown recording samples the read site, so only its rows carry a confidence marker;
+  // a --deep/firefox row is exact (or an unsampled lane) and leaves the field ABSENT, so a consumer
+  // reads absent as "not a sampled row", false as "sampled and confident", true as "sampled but
+  // sub-interval". See blameRowLowConfidence.
+  const sampledBlameLane = rec.meta.passes.includes("breakdown");
   const fmt = structuredFormat(query);
   if (fmt) {
     const entries: BlameEntry[] = rows.map((row) => ({
@@ -1506,7 +1516,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       kinds: [...row.kinds] as EventKind[],
       properties: row.properties.size ? [...row.properties] : undefined,
       dirtiedBy: dirtiedByReadSite[row.at]?.length ? dirtiedByReadSite[row.at] : undefined,
-      lowConfidence: row.confident === 0 && row.lowConfidence > 0 ? true : undefined,
+      lowConfidence: blameRowLowConfidence(sampledBlameLane, row.confident, row.lowConfidence),
     }));
     return emit(entries, fmt);
   }

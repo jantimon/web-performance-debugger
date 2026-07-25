@@ -86,10 +86,15 @@ export interface BlameEntry {
    */
   dirtiedBy?: DirtiedByWrite[];
   /**
-   * Chrome `--breakdown` sampled blame only: every flush attributed to this line was NARROWER than one
-   * sampler interval, so the sampled read line is low-confidence (it can lag one statement or land on
-   * an adjacent line). Absent when at least one flush at this line was wider than the interval (a
-   * confident sample), and on the exact `--deep`/firefox lanes. See docs/dev/blame-semantics.md.
+   * Per-row confidence of the sampled read line, three-way so a consumer can tell a sampled-confident
+   * row from a not-sampled one:
+   *   - ABSENT: not a sampled row -- the exact chrome `--deep` (`.stack`) and firefox lanes, which do
+   *     not sample the read site. Absent means "not sampled", never a misleading "confident".
+   *   - `false`: a chrome `--breakdown` sampled row with at least one flush WIDER than one sampler
+   *     interval, so the read line is confident.
+   *   - `true`: a chrome `--breakdown` sampled row every flush of which was NARROWER than one interval,
+   *     so the read line can lag one statement or land on an adjacent line.
+   * See docs/dev/blame-semantics.md and model/capture-mode.ts `blameRowLowConfidence`.
    */
   lowConfidence?: boolean;
 }
