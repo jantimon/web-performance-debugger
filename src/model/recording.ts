@@ -356,9 +356,11 @@ export interface StepLoaf {
  * step's start and end marks -- `page.url()` and the document's `performance.timeOrigin` (which a full
  * reload resets). See docs/dev/navigation-and-lcp.md.
  *
- *  - "none": the URL did not change. A same-document step (a click, a render) and a static step alike.
- *  - "hard": the URL changed AND `timeOrigin` moved (> HARD_NAV_ORIGIN_DELTA_MS), so the document
- *    reloaded -- a fresh document, a fresh LCP.
+ *  - "none": the URL did not change and `timeOrigin` held. A same-document step (a click, a render)
+ *    and a static step alike.
+ *  - "hard": `timeOrigin` moved (> HARD_NAV_ORIGIN_DELTA_MS), so the document reloaded -- a fresh
+ *    document, a fresh LCP. The clock outranks URL equality: a reload or a goto to the same URL is
+ *    hard with an unchanged URL.
  *  - "soft": the URL changed but `timeOrigin` held byte-identical, an SPA same-document route change.
  *  - "soft-hash": a soft change where the new URL differs ONLY in its fragment (`#...`). Both the
  *    url+timeOrigin rule and Chrome's experimental heuristic count a hash-route overlay as a

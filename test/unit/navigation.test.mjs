@@ -11,11 +11,14 @@ import {
 // before/after page.url() and before/after performance.timeOrigin. Its rule is the contract, so it is
 // unit-tested independently of any browser.
 
-test("unchanged URL is 'none' regardless of the clock", () => {
+test("unchanged URL + unchanged clock is 'none'", () => {
   assert.equal(classifyNavigation("https://x/a", "https://x/a", 1000, 1000), "none");
-  // Even a moved origin does not override an unchanged URL: the URL is the primary gate (a same-url
-  // reload is a documented blind spot, read as 'none').
-  assert.equal(classifyNavigation("https://x/a", "https://x/a", 1000, 9999), "none");
+});
+
+test("a moved timeOrigin is 'hard' even when the URL is unchanged (reload, same-url goto)", () => {
+  // timeOrigin is fixed per document: it cannot move without a new document, so the clock outranks
+  // URL equality.
+  assert.equal(classifyNavigation("https://x/a", "https://x/a", 1000, 9999), "hard");
 });
 
 test("changed URL + moved timeOrigin is a 'hard' navigation", () => {

@@ -103,10 +103,11 @@ function differsOnlyInFragment(beforeUrl: string, afterUrl: string): boolean {
 
 /**
  * Classify a driver step's navigation from its own before/after `page.url()` and `timeOrigin` reads --
- * pure, so the rule is unit-testable and CDP-free. The URL is the primary gate: an unchanged URL is
- * "none" regardless of the clock. A changed URL with a moved `timeOrigin` reloaded the document
- * ("hard"); with an unchanged origin it is a same-document route change ("soft"), or "soft-hash" when
- * only the fragment moved. See NavigationKind and docs/dev/navigation-and-lcp.md.
+ * pure, so the rule is unit-testable and CDP-free. The clock is the primary gate: `timeOrigin` is
+ * fixed per document, so a moved origin means a NEW document ("hard") even when the URL is unchanged
+ * (a reload, a goto to the same URL). With the origin held, the URL splits the rest: unchanged is
+ * "none", changed is a same-document route change ("soft"), or "soft-hash" when only the fragment
+ * moved. See NavigationKind and docs/dev/navigation-and-lcp.md.
  */
 export function classifyNavigation(
   beforeUrl: string,
@@ -114,8 +115,8 @@ export function classifyNavigation(
   beforeOriginMs: number,
   afterOriginMs: number,
 ): NavigationKind {
-  if (beforeUrl === afterUrl) return "none";
   if (Math.abs(afterOriginMs - beforeOriginMs) > HARD_NAV_ORIGIN_DELTA_MS) return "hard";
+  if (beforeUrl === afterUrl) return "none";
   if (differsOnlyInFragment(beforeUrl, afterUrl)) return "soft-hash";
   return "soft";
 }
