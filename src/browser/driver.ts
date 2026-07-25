@@ -3,7 +3,13 @@ import type { Page } from "puppeteer";
 import { SETTLE_SOURCE } from "./settle.js";
 import { waitForStable } from "./until.js";
 import { duplicateLabelError } from "../trace/steps.js";
-import type { InteractionTiming, LoafFrame, StepLoaf } from "../model/recording.js";
+import type {
+  InteractionTiming,
+  LoafFrame,
+  NavigationKind,
+  StepLcp,
+  StepLoaf,
+} from "../model/recording.js";
 
 export interface DriverStep {
   /** this step's position WITHIN its iteration; the same label gets the same index every time */
@@ -60,6 +66,99 @@ export interface DriverStep {
    * a firefox step never reports a fabricated zero. See summarizeLoaf.
    */
   loaf?: StepLoaf;
+  /** how the document changed across the step (none/hard/soft/soft-hash); see classifyNavigation */
+  navigation?: NavigationKind;
+  /** `page.url()` at the step's start mark */
+  beforeUrl?: string;
+  /** `page.url()` at the step's end mark; a step's pair is self-contained (no cross-step continuity) */
+  afterUrl?: string;
+  /** boot LCP, present only on a HARD-navigation step (a fresh document); see shapeLcp */
+  lcp?: StepLcp;
+}
+
+/**
+ * A `timeOrigin` delta above this (ms) is a document reload, below it is measurement jitter: a reload
+ * moves `timeOrigin` by far more than jitter, so this cleanly separates a hard navigation from a
+ * same-document one (docs/dev/navigation-and-lcp.md, [measured] byte-identical across every soft step).
+ */
+export const HARD_NAV_ORIGIN_DELTA_MS = 0.5;
+
+/** Whether two URLs differ ONLY in their fragment (`#...`): origin + path + query equal, hash differs. */
+function differsOnlyInFragment(beforeUrl: string, afterUrl: string): boolean {
+  try {
+    const before = new URL(beforeUrl);
+    const after = new URL(afterUrl);
+    return (
+      before.hash !== after.hash &&
+      before.origin === after.origin &&
+      before.pathname === after.pathname &&
+      before.search === after.search
+    );
+  } catch {
+    // A non-parseable URL (about:blank edge cases) cannot be shown to be fragment-only; fall back to
+    // plain soft rather than guess.
+    return false;
+  }
+}
+
+/**
+ * Classify a driver step's navigation from its own before/after `page.url()` and `timeOrigin` reads --
+ * pure, so the rule is unit-testable and CDP-free. The URL is the primary gate: an unchanged URL is
+ * "none" regardless of the clock. A changed URL with a moved `timeOrigin` reloaded the document
+ * ("hard"); with an unchanged origin it is a same-document route change ("soft"), or "soft-hash" when
+ * only the fragment moved. See NavigationKind and docs/dev/navigation-and-lcp.md.
+ */
+export function classifyNavigation(
+  beforeUrl: string,
+  afterUrl: string,
+  beforeOriginMs: number,
+  afterOriginMs: number,
+): NavigationKind {
+  if (beforeUrl === afterUrl) return "none";
+  if (Math.abs(afterOriginMs - beforeOriginMs) > HARD_NAV_ORIGIN_DELTA_MS) return "hard";
+  if (differsOnlyInFragment(beforeUrl, afterUrl)) return "soft-hash";
+  return "soft";
+}
+
+/** One `largest-contentful-paint` entry, serialized in-page (its `element` is a live node). */
+export interface RawLcpEntry {
+  url: string;
+  size: number;
+  tag: string;
+  id: string;
+  className: string;
+  renderTimeMs: number;
+  loadTimeMs: number;
+  startTimeMs: number;
+}
+
+/** A `startTime` this far (ms) beyond the step's own window is the new-headless anomaly (~60s on a
+ * ~40ms page), not real; suppress it rather than print it as fact. Generous, so real variance passes. */
+export const LCP_STARTTIME_SLACK_MS = 1000;
+
+/**
+ * Shape the largest observed `largest-contentful-paint` entry into the stored `StepLcp`, keeping only
+ * the fields that carry signal. Returns null when nothing was observed (no contentful paint in the
+ * window, or no LCP support), so the caller stores nothing rather than a fabricated zero.
+ *
+ * `boundMs` is the step's own end-of-window page clock (`performance.now()` on the step's final
+ * document); when the entry's `startTime` sits implausibly beyond it, the paint clock is the
+ * new-headless anomaly and the entry is stored `suppressed` with no timing, never a 60s LCP as fact.
+ */
+export function shapeLcp(raw: RawLcpEntry | undefined, boundMs: number | null): StepLcp | null {
+  if (!raw) return null;
+  if (boundMs != null && raw.startTimeMs > boundMs + LCP_STARTTIME_SLACK_MS)
+    return { suppressed: true };
+  const lcp: StepLcp = {};
+  if (raw.url) lcp.url = raw.url;
+  if (raw.size > 0) lcp.size = raw.size;
+  if (raw.tag) lcp.tag = raw.tag;
+  if (raw.id) lcp.id = raw.id;
+  if (raw.className) lcp.className = raw.className;
+  if (raw.renderTimeMs > 0) lcp.renderTimeMs = raw.renderTimeMs;
+  if (raw.loadTimeMs > 0) lcp.loadTimeMs = raw.loadTimeMs;
+  if (raw.startTimeMs > 0) lcp.startTimeMs = raw.startTimeMs;
+  return lcp;
 }
 
 /** One `long-animation-frame` entry's script attribution, as read back out of the page. */
@@ -406,6 +505,45 @@ export async function runDriver(
   await page.evaluateOnNewDocument(installLoafObserver);
   await page.evaluate(installLoafObserver);
 
+  // Observe Largest Contentful Paint so a step that booted a fresh document can attribute its boot LCP.
+  // Same re-arm-on-navigation install as the other two observers: LCP entries are per document, so a
+  // cross-document navigation starts a fresh stream the re-armed observer picks up. `buffered: true`
+  // replays the entries that fired before the observer registered. Keep the WHOLE stream; the last
+  // entry is the largest (each LCP entry supersedes the previous). Cross-browser Baseline, so unlike
+  // LoAF this is not Chrome-gated; a browser without support leaves `win.__cpLcp` [] and stores nothing.
+  const installLcpObserver = () => {
+    const win = window as any;
+    win.__cpLcp = [];
+    const supported =
+      typeof PerformanceObserver !== "undefined" &&
+      (PerformanceObserver.supportedEntryTypes || []).includes("largest-contentful-paint");
+    if (!supported) return;
+    try {
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const paint = entry as any;
+          const element = paint.element;
+          const className =
+            element && typeof element.className === "string" ? element.className : "";
+          win.__cpLcp.push({
+            url: paint.url || "",
+            size: paint.size || 0,
+            tag: element && element.tagName ? element.tagName : "",
+            id: paint.id || "",
+            className: className.slice(0, 80),
+            renderTimeMs: paint.renderTime || 0,
+            loadTimeMs: paint.loadTime || 0,
+            startTimeMs: paint.startTime || 0,
+          });
+        }
+      }).observe({ type: "largest-contentful-paint", buffered: true } as any);
+    } catch {
+      /* largest-contentful-paint unsupported */
+    }
+  };
+  await page.evaluateOnNewDocument(installLcpObserver);
+  await page.evaluate(installLcpObserver);
+
   async function waitDone(until: Until): Promise<void> {
     if (until == null) return void (await settle());
     if (typeof until === "string") await page.waitForSelector(until);
@@ -463,11 +601,18 @@ export async function runDriver(
     await page.evaluate(() => {
       (window as any).__cpInp = [];
       (window as any).__cpLoaf = [];
+      (window as any).__cpLcp = [];
     });
     const startClock = await stepClock(`wpd:step:${stepMark}:start`);
+    // page.url() is CDP-free (Puppeteer reads it off the page handle). Read it at both marks so the
+    // step's navigation is decidable without a browser flag; each step's pair is self-contained (a
+    // replaceState can fire between steps, so the end URL is not assumed to be the next start URL).
+    const beforeUrl = page.url();
     await action();
     await waitDone(until);
     const endClock = await stepClock(`wpd:step:${stepMark}:end`);
+    const afterUrl = page.url();
+    const navigation = classifyNavigation(beforeUrl, afterUrl, startClock.origin, endClock.origin);
     // The page's own view of [start mark, end mark]. Null across a navigation (the two marks are on
     // documents with different timeOrigins, so their performance.now() delta is not one interval);
     // record.ts upgrades this to the trace-clock window when a trace was captured.
@@ -480,21 +625,31 @@ export async function runDriver(
     // Event-Timing entries: one round trip, both signals settled.
     const flushed = (await page.evaluate(
       () =>
-        new Promise<{ inp: RawEventTiming[]; loaf: RawLoafFrame[] }>((resolve) => {
-          requestAnimationFrame(() =>
-            setTimeout(
-              () =>
-                resolve({
-                  inp: ((window as any).__cpInp as RawEventTiming[]) ?? [],
-                  loaf: ((window as any).__cpLoaf as RawLoafFrame[]) ?? [],
-                }),
-              0,
-            ),
-          );
-        }),
-    )) as { inp: RawEventTiming[]; loaf: RawLoafFrame[] };
+        new Promise<{ inp: RawEventTiming[]; loaf: RawLoafFrame[]; lcp: RawLcpEntry[] }>(
+          (resolve) => {
+            requestAnimationFrame(() =>
+              setTimeout(
+                () =>
+                  resolve({
+                    inp: ((window as any).__cpInp as RawEventTiming[]) ?? [],
+                    loaf: ((window as any).__cpLoaf as RawLoafFrame[]) ?? [],
+                    lcp: ((window as any).__cpLcp as RawLcpEntry[]) ?? [],
+                  }),
+                0,
+              ),
+            );
+          },
+        ),
+    )) as { inp: RawEventTiming[]; loaf: RawLoafFrame[]; lcp: RawLcpEntry[] };
     const observed = flushed.inp;
     const loaf = summarizeLoaf(flushed.loaf);
+    // LCP attaches ONLY to a step that started a fresh document (a hard navigation, which includes the
+    // built-in load step): LCP freezes at the first trusted interaction and never re-fires on a soft
+    // navigation, so a per-soft-step LCP would be structurally empty. The last entry is the largest.
+    // The bound for the anomaly check is the step's own end-of-window page clock (endClock.now, on the
+    // post-navigation document, the same clock LCP's startTime rides).
+    const lcp =
+      navigation === "hard" ? shapeLcp(flushed.lcp[flushed.lcp.length - 1], endClock.now) : null;
     // INP stays max-over-every-entry, deliberately: Chrome emits the whole pointer sequence with
     // every entry sharing one duration to the same next paint, and Firefox emits only the events
     // that did work, so this finds the interaction's latency in both. Verified in both engines:
@@ -515,6 +670,10 @@ export async function runDriver(
       inpMs: inp,
       interaction,
       ...(loaf ? { loaf } : {}),
+      navigation,
+      beforeUrl,
+      afterUrl,
+      ...(lcp ? { lcp } : {}),
     });
     activeStepLabel = null;
   }

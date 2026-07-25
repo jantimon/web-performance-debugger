@@ -154,7 +154,8 @@ export function printSpanBreakdowns(
     // of its samples, printed separately). Name it the iteration-0 window so the two are not conflated
     // when an outlier iteration 0 makes them diverge.
     const windowLabel = span.kind === "step" ? "iteration-0 window " : "";
-    const label = `${middleEllipsis(span.label, LABEL_COL_MAX)} ${dim(`(${span.kind}, ${windowLabel}${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)})`)}`;
+    const nav = span.navigation && span.navigation !== "none" ? `, nav: ${span.navigation}` : "";
+    const label = `${middleEllipsis(span.label, LABEL_COL_MAX)} ${dim(`(${span.kind}, ${windowLabel}${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)}${nav})`)}`;
     console.log(`\n${bold(label)}`);
     if (wallMs <= 0) {
       console.log(dim("  (empty window; nothing to tile)"));

@@ -185,7 +185,10 @@ e2e(
   "record --url with no module runs the built-in load flow on firefox",
   { timeout: TIMEOUT_MS },
   () => {
-    const html = "<!doctype html><meta charset=utf-8><title>onramp</title><body><h1>hello</h1><p>on-ramp</p></body>";
+    const html =
+      "<!doctype html><meta charset=utf-8><title>onramp</title>" +
+      "<h1 id=hero style='font-size:64px;margin:0'>Largest Contentful Heading On The Firefox Boot</h1>" +
+      "<p>on-ramp</p>";
     const server = startOnrampServer(html);
     const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
     try {
@@ -200,6 +203,14 @@ e2e(
       // Long Animation Frames are Chrome-only: Firefox has no such API, so the step stores nothing
       // rather than a fabricated zero (the in-page supportedEntryTypes guard degrades honestly).
       assert.equal(loadStep.loaf, undefined, "a firefox step carries no LoAF (no fake zero)");
+      // Navigation classification is lane-independent (page.url() + timeOrigin, no CDP): the built-in
+      // load step is a hard navigation on firefox too.
+      assert.equal(loadStep.navigation, "hard", "the load step is a hard navigation on firefox");
+      // Boot LCP carries usable element/size attribution on the gecko lane (probed: tag/size/id/
+      // renderTime populate), so wpd ships it on firefox rather than storing a fake zero.
+      assert.ok(loadStep.lcp, "the firefox load step carries boot LCP");
+      assert.equal(loadStep.lcp.tag, "H1", "firefox names the LCP element tag");
+      assert.ok(loadStep.lcp.size > 0, "firefox reports the LCP size");
       // The gecko pass windows layout/style counts to the boot, so the load step carries real counts.
       assert.ok(loadStep.counts.layoutCount >= 1, "the boot's layout is counted from the gecko markers");
       assert.equal(recording.summary.inpMs, null, "a page load has no interaction, so INP is null");

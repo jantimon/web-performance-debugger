@@ -1,6 +1,6 @@
 import type { DriverStep } from "../browser/driver.js";
 import type { StepWindow } from "./parse.js";
-import type { InteractionTiming, StepLoaf } from "../model/recording.js";
+import type { InteractionTiming, NavigationKind, StepLcp, StepLoaf } from "../model/recording.js";
 
 /**
  * A step's trace window keyed by label instead of index. The one pass produces both the step
@@ -44,6 +44,16 @@ export interface MergedStep {
    * step reports iteration 0's frames rather than a synthetic merge. Absent when none were observed.
    */
   loaf?: StepLoaf;
+  /**
+   * The step's navigation classification + its before/after URLs, from the FIRST timed iteration
+   * (iterations replay the same flow, so iteration 0's pair is the representative). Absent on a
+   * hand-built step that carried none. See NavigationKind.
+   */
+  navigation?: NavigationKind;
+  beforeUrl?: string;
+  afterUrl?: string;
+  /** boot LCP from the FIRST timed iteration (a hard-navigation step); absent otherwise. See StepLcp. */
+  lcp?: StepLcp;
   startTs: number | null;
   endTs: number | null;
 }
@@ -284,6 +294,13 @@ export function mergeSteps(
       inpMs: inpSamples.length ? median(inpSamples) : null,
       interaction,
       ...(first.loaf ? { loaf: first.loaf } : {}),
+      // Navigation classification + URLs + boot LCP come from iteration 0, matching the per-step
+      // counts/LoAF windowing: a URL pair and a nav kind cannot be medianed, and the flow replays the
+      // same navigation every iteration, so iteration 0's is the honest representative.
+      ...(first.navigation ? { navigation: first.navigation } : {}),
+      ...(first.beforeUrl != null ? { beforeUrl: first.beforeUrl } : {}),
+      ...(first.afterUrl != null ? { afterUrl: first.afterUrl } : {}),
+      ...(first.lcp ? { lcp: first.lcp } : {}),
       startTs: window?.startTs ?? null,
       endTs: window?.endTs ?? null,
     });

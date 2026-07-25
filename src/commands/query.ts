@@ -6,12 +6,14 @@ import type {
   CpuFunction,
   CpuModel,
   EventKind,
+  NavigationKind,
   NormalizedEvent,
   Recording,
   RecordingMeta,
   Span,
   SpanCounts,
   SpanHot,
+  StepLcp,
 } from "../model/recording.js";
 import { matchedFrameFloorMs } from "../model/frame-floor.js";
 import type {
@@ -369,6 +371,10 @@ function buildSpanAnatomy(
     ...(span.inpMs != null ? { inpMs: span.inpMs } : {}),
     ...(span.interaction ? { interaction: span.interaction } : {}),
     ...(span.loaf ? { loaf: span.loaf } : {}),
+    ...(span.navigation ? { navigation: span.navigation } : {}),
+    ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
+    ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
+    ...(span.lcp ? { lcp: span.lcp } : {}),
     ...(forced ? { forced } : {}),
     ...(thrash ? { thrash } : {}),
     ...(firefoxDirtied ? { firefoxDirtiedBy: firefoxDirtied } : {}),
@@ -449,6 +455,55 @@ function resolveStoredHot(
   return { ...base, functions };
 }
 
+/** A compact navigation marker for a step row in a `query spans` table, "" for none/absent (the
+ * common static step, which earns no marker). */
+function navMarker(navigation: NavigationKind | undefined): string {
+  return navigation && navigation !== "none" ? dim(` [nav: ${navigation}]`) : "";
+}
+
+/** The step's navigation line for `query span`: the classification and its before -> after URLs. */
+function printStepNavigation(
+  navigation: NavigationKind | undefined,
+  beforeUrl: string | undefined,
+  afterUrl: string | undefined,
+): void {
+  if (!navigation) return;
+  if (navigation === "none") {
+    console.log(
+      `\nNavigation: ${bold("none")}${beforeUrl ? dim(` (stayed on ${beforeUrl})`) : ""}`,
+    );
+    return;
+  }
+  console.log(
+    `\nNavigation: ${bold(navigation)} ${dim(`(${beforeUrl ?? "?"} -> ${afterUrl ?? "?"})`)}`,
+  );
+}
+
+/** The boot-LCP block for `query span` (wall-tier directional, frozen at the first trusted input). */
+function printStepLcp(lcp: StepLcp): void {
+  if (lcp.suppressed) {
+    console.log(
+      `\nLCP (boot): ${dim("suppressed -- implausible startTime (the new-headless clock anomaly; navigation-and-lcp.md)")}`,
+    );
+    return;
+  }
+  const identity = `${lcp.tag ?? "(element)"}${lcp.id ? `#${lcp.id}` : ""}${lcp.url ? ` ${lcp.url}` : ""}`;
+  console.log(
+    `\nLCP (boot, wall-tier directional; frozen at first interaction): ${bold(identity)}`,
+  );
+  const parts: string[] = [];
+  if (lcp.size != null) parts.push(`size ${lcp.size}`);
+  if (lcp.renderTimeMs != null) parts.push(`render ${num(lcp.renderTimeMs, 1)} ms`);
+  // loadTime is the timing left when renderTime is unavailable (cross-origin without Timing-Allow-Origin).
+  else if (lcp.loadTimeMs != null)
+    parts.push(
+      `load ${num(lcp.loadTimeMs, 1)} ms (no render time: cross-origin, no Timing-Allow-Origin)`,
+    );
+  if (lcp.startTimeMs != null) parts.push(`start ${num(lcp.startTimeMs, 1)} ms`);
+  if (parts.length) console.log(dim(`  ${parts.join(" · ")}`));
+  if (lcp.className) console.log(dim(`  class ${lcp.className}`));
+}
+
 /** Human report for `query span`: the bar, wall/counts/interaction, forced attribution, hot list. */
 function printSpanAnatomy(
   anatomy: SpanAnatomy,
@@ -501,6 +556,10 @@ function printSpanAnatomy(
       dim(`  wall sits on the ~${num(wallFloor, 1)} ms frame floor${detail} (frame-floor.md)`),
     );
   }
+
+  // A driver step's navigation (what its document did) and, on a hard navigation, its boot LCP.
+  printStepNavigation(anatomy.navigation, anatomy.beforeUrl, anatomy.afterUrl);
+  if (anatomy.lcp) printStepLcp(anatomy.lcp);
 
   // The reconciling bar, when the capture mode built one. A stored bar prints the seven-slice per-span
   // table; a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled).
@@ -805,6 +864,9 @@ async function buildGroupSpanStitch(
     member ? perMember.get(member) : undefined;
   const kind = [...perMember.values()][0].kind;
   const target = [...perMember.values()][0].target;
+  // Navigation/URLs/LCP are a property of the step's own window, identical across every member of a
+  // group (one workload, replayed), so any member's anatomy carries them.
+  const navAnatomy = [...perMember.values()][0];
 
   const barMember = pickMember(group, "slice-bar");
   const countsMember = pickMember(group, "counts");
@@ -863,6 +925,10 @@ async function buildGroupSpanStitch(
     ...(inpAnatomy?.inpMs != null ? { inpMs: inpAnatomy.inpMs } : {}),
     ...(inpAnatomy?.interaction ? { interaction: inpAnatomy.interaction } : {}),
     ...(inpAnatomy?.loaf ? { loaf: inpAnatomy.loaf } : {}),
+    ...(navAnatomy?.navigation ? { navigation: navAnatomy.navigation } : {}),
+    ...(navAnatomy?.beforeUrl != null ? { beforeUrl: navAnatomy.beforeUrl } : {}),
+    ...(navAnatomy?.afterUrl != null ? { afterUrl: navAnatomy.afterUrl } : {}),
+    ...(navAnatomy?.lcp ? { lcp: navAnatomy.lcp } : {}),
     ...(forcedAnatomy?.forced ? { forced: forcedAnatomy.forced } : {}),
     ...(forcedAnatomy?.thrash ? { thrash: forcedAnatomy.thrash } : {}),
     ...(forcedAnatomy?.firefoxDirtiedBy
@@ -920,6 +986,9 @@ function printGroupSpanStitch(stitch: GroupSpanStitch): void {
       ],
     ),
   );
+
+  printStepNavigation(stitch.navigation, stitch.beforeUrl, stitch.afterUrl);
+  if (stitch.lcp) printStepLcp(stitch.lcp);
 
   if (stitch.inpMs != null || stitch.interaction) {
     const inp = stitch.inpMs == null ? "—" : `${num(stitch.inpMs)} ms`;
@@ -1280,7 +1349,7 @@ function printBarlessStepRows(spans: SpanCountsEntry[], hint: string): void {
     table(
       ["span", "kind", "wall", "agg", "inp"],
       spans.map((span) => [
-        middleEllipsis(span.label, LABEL_COL_MAX),
+        middleEllipsis(span.label, LABEL_COL_MAX) + navMarker(span.navigation),
         span.kind,
         span.wallMs == null ? "—" : `${num(span.wallMs, 1)} ms`,
         span.aggregation,
@@ -1338,7 +1407,7 @@ async function printBarlessSpans(
     table(
       ["span", "kind", "wall", "agg", "layout", "style", "paint", "forced", "long≥50ms"],
       spans.map((span) => [
-        middleEllipsis(span.label, LABEL_COL_MAX),
+        middleEllipsis(span.label, LABEL_COL_MAX) + navMarker(span.navigation),
         span.kind,
         span.wallMs == null ? "—" : `${num(span.wallMs, 1)} ms`,
         span.aggregation,
