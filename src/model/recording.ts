@@ -382,9 +382,11 @@ export type NavigationKind = "none" | "hard" | "soft" | "soft-hash";
  *
  * Wall-tier directional (a paint timestamp on the page's own clock, same trust tier as INP). The
  * identifiers to trust across a production build are `url` + `size` + `tag`; `id` is often absent and
- * `className` is a hashed CSS-module name kept only as a tertiary hint. `renderTimeMs` is populated
- * only for a same-origin resource or one whose server sends `Timing-Allow-Origin`; absent it reads 0
- * by spec and `loadTimeMs` is the timing left, so both are surfaced.
+ * `className` is a hashed CSS-module name kept only as a tertiary hint. `renderTimeMs` is the paint
+ * time; the spec gates it behind `Timing-Allow-Origin` for a cross-origin resource, but current Chrome
+ * populates it for cross-origin images more often than that rule implies. When it is absent (a
+ * genuinely TAO-gated resource) the entry reads 0 by spec and `loadTimeMs` is the timing left, so both
+ * are surfaced.
  */
 export interface StepLcp {
   /**
@@ -705,6 +707,77 @@ export interface SpanCounts {
 }
 
 /**
+ * Layout/style SCOPE for one forced read-site (chrome --deep): how much the flush(es) at this source
+ * line relaid out or recalculated. A COUNT-tier fact, read from the flush event's trace `args` at read
+ * time; shown BESIDE the ms, never as a proxy for it (per-object cost ranges ~30x, so the object count
+ * does not rank flushes by time). A row that mixes a layout and a style flush at one line carries both
+ * fields; layout and style have DIFFERENT denominators and are never merged into one figure.
+ */
+export interface FlushScope {
+  /**
+   * render-tree LayoutObjects relaid out by the widest Layout flush at this line, over that flush's
+   * `totalObjects` denominator (e.g. `801/2006`). NOT DOM nodes: anonymous boxes split one element
+   * into several ([measured] `dirtyObjects` = N+1 LayoutObjects for N dirtied boxes). Absent on a
+   * style-only line and on traces predating the scope fields. Chrome only (Gecko Reflow markers carry
+   * no scope).
+   */
+  layoutObjects?: { dirty: number; total: number };
+  /**
+   * elements recalculated by the widest UpdateLayoutTree flush at this line (`elementCount`, [measured]
+   * exact). A different denominator from `layoutObjects`, never merged. Absent on a layout-only line.
+   * Chrome; the Gecko analog is `elementsStyled` (compares within an engine only).
+   */
+  elementsStyled?: number;
+  /**
+   * a subtree-contained flush at this line (`partialLayout` true): the container root `nodeName` (e.g.
+   * "DIALOG"). Absent when every flush was whole-document (the near-constant case on a framework app).
+   * Chrome only.
+   */
+  containedRoot?: string;
+}
+
+/** A p50/max distribution over a set of flushes. A DISTRIBUTION, never a sum: a thrash loop re-dirties
+ * the same nodes every flush, so summing double-counts them. `flushes` is how many the distribution
+ * covers. */
+export interface ScopeStats {
+  /** median flush size across the window */
+  p50: number;
+  /** the widest single flush */
+  max: number;
+  /** flushes this distribution covers */
+  flushes: number;
+}
+
+/**
+ * Per-span layout/style SCOPE distribution across a span window's main-thread flushes (chrome
+ * --breakdown; firefox style only). A COUNT-tier fact, computed at record time like the counts and
+ * shown BESIDE the reconciling bar's ms, never as a proxy for it. Aggregated as a DISTRIBUTION
+ * (p50/max), NEVER a sum. Layout scope and style scope have different denominators and stay separate.
+ */
+export interface SpanScope {
+  /**
+   * `dirtyObjects` (render-tree LayoutObjects, not DOM nodes) across the window's Layout flushes.
+   * Chrome only -- Gecko Reflow markers carry no scope, so the field stays absent on firefox rather
+   * than a fake zero. Absent when the window laid out nothing.
+   */
+  layoutObjects?: ScopeStats;
+  /**
+   * `elementCount` (elements recalculated) across the window's UpdateLayoutTree flushes. Chrome, and
+   * firefox from the `Styles` markers' `elementsStyled`. Same DEFINITION across engines but a ~2x
+   * cross-engine batching gap, so it ranks flushes WITHIN one engine only. Absent when the window
+   * recalculated no style.
+   */
+  elementsStyled?: ScopeStats;
+  /**
+   * subtree-contained flushes (`partialLayout` true) in the window: how many, and one container root
+   * `nodeName` as a sample. `partialLayout` is near-constant whole-document on a framework app, so this
+   * is a per-window fact ("this flush was contained"), not a per-span metric. Absent when every flush
+   * was whole-document. Chrome only.
+   */
+  contained?: { flushes: number; sampleRoot?: string };
+}
+
+/**
  * The one labelled unit of measured work in a recording -- the run window (`kind: "run"`), a driver
  * step (`"step"`), or a user `performance.measure` (`"measure"`). Everything the recording used to
  * model as separate artifacts (the run, the step index, the per-span bars) is one `Span[]`.
@@ -810,6 +883,13 @@ export interface Span {
    * sampler, and on older recordings. Refs join to the sibling CpuModel.functions[]. See SpanHot.
    */
   hot?: SpanHot;
+  /**
+   * Per-span layout/style scope distribution (chrome --breakdown run/step/measure; firefox style only).
+   * A count-tier distribution shown beside the bar's ms, never a proxy for it. Absent in capture modes
+   * that store no per-span bar (default/--deep/--precise-wall), on windows with no flush, and on older
+   * recordings. See SpanScope.
+   */
+  scope?: SpanScope;
 }
 
 /** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure). */
@@ -843,6 +923,12 @@ export interface SpanBreakdown {
    * single occurrence), so the list has a firmer sample footing than the bar's lower-median sample.
    */
   hot?: SpanHot;
+  /**
+   * Per-span layout/style scope distribution (chrome --breakdown; firefox style only), copied onto the
+   * stored `Span.scope`. When a measure merged occurrences this is the KEPT occurrence's window
+   * verbatim (like the bar and frames), not pooled. Absent on a window with no flush. See SpanScope.
+   */
+  scope?: SpanScope;
 }
 
 /**

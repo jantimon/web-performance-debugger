@@ -6,6 +6,7 @@ import type {
   CpuFunction,
   CpuModel,
   EventKind,
+  FlushScope,
   NavigationKind,
   NormalizedEvent,
   Recording,
@@ -13,6 +14,7 @@ import type {
   Span,
   SpanCounts,
   SpanHot,
+  SpanScope,
   StepLcp,
 } from "../model/recording.js";
 import { matchedFrameFloorMs } from "../model/frame-floor.js";
@@ -56,6 +58,7 @@ import {
 import { analyzeThrash } from "../trace/thrash.js";
 import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
 import { forcedLayouts } from "../trace/analysis.js";
+import { scopeByReadSite } from "../trace/scope.js";
 import { findSteps } from "../trace/parse.js";
 import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
 import { assertRecordingArtifact } from "../model/artifact.js";
@@ -311,11 +314,24 @@ function buildSpanAnatomy(
       ? analyzeThrash(rec.events, rec.window.startTs)
       : null;
     const dirtiedByReadSite = thrashAnalysis?.dirtiedByReadSite ?? {};
+    // Layout/style scope per read site (chrome --deep: the stored flush events carry the trace args).
+    // Empty on --breakdown (sampled events, no flush args) and firefox (the read is sampled), so those
+    // rows carry no scope -- the never-fake-parity rule, from the data's own absence.
+    const scopeByAt = rec.meta.passes.includes("deep")
+      ? scopeByReadSite(
+          windowed.filter((event) => window.startTs == null || event.ts >= window.startTs),
+        )
+      : new Map<string, FlushScope>();
     forced = forcedLayouts(windowed, window.startTs).map((group) => {
       const dirtiedBy = dirtiedByReadSite[group.at];
-      return dirtiedBy?.length
-        ? { at: group.at, count: group.count, durMs: group.durMs, dirtiedBy }
-        : { at: group.at, count: group.count, durMs: group.durMs };
+      const scope = scopeByAt.get(group.at);
+      return {
+        at: group.at,
+        count: group.count,
+        durMs: group.durMs,
+        ...(dirtiedBy?.length ? { dirtiedBy } : {}),
+        ...(scope ? { scope } : {}),
+      };
     });
     if (span.kind === "run" && thrashAnalysis) thrash = thrashAnalysis.report;
     if (isFirefoxDeep(rec.meta.passes))
@@ -367,6 +383,7 @@ function buildSpanAnatomy(
     slices: entry?.slices ?? null,
     ...(residualMs != null ? { residualMs } : {}),
     ...(span.frames ? { frames: span.frames } : {}),
+    ...(span.scope ? { scope: span.scope } : {}),
     counts: span.counts,
     ...(span.inpMs != null ? { inpMs: span.inpMs } : {}),
     ...(span.interaction ? { interaction: span.interaction } : {}),
@@ -504,6 +521,52 @@ function printStepLcp(lcp: StepLcp): void {
   if (lcp.className) console.log(dim(`  class ${lcp.className}`));
 }
 
+/**
+ * A compact dim suffix naming a forced flush's scope for a blame/forced row's source cell: layout
+ * objects relaid out over the document total, elements recalculated, and a contained flush's root.
+ * "" when the row carries no scope (the sampled --breakdown/firefox lanes). Chrome --deep only.
+ */
+function flushScopeSuffix(scope: FlushScope | undefined): string {
+  if (!scope) return "";
+  const parts: string[] = [];
+  if (scope.layoutObjects)
+    parts.push(`${scope.layoutObjects.dirty}/${scope.layoutObjects.total} layout objects`);
+  if (scope.elementsStyled != null) parts.push(`${scope.elementsStyled} styled`);
+  if (scope.containedRoot) parts.push(`contained ${scope.containedRoot}`);
+  return parts.length ? ` ${dim(`[${parts.join(" · ")}]`)}` : "";
+}
+
+/**
+ * The per-span scope block for `query span`: the layout/style scope distribution beside the counts.
+ * A count-tier fact (how much relaid out / recalculated), a DISTRIBUTION not a sum, and never a proxy
+ * for the ms. Prints nothing when the capture stored no scope. Firefox carries the style row only.
+ */
+function printSpanScope(scope: SpanScope): void {
+  const rows: string[] = [];
+  if (scope.layoutObjects)
+    rows.push(
+      `  layout objects    p50 ${num(scope.layoutObjects.p50, 0)} · max ${scope.layoutObjects.max}  ` +
+        dim(`(over ${scope.layoutObjects.flushes} flush(es); render-tree objects, not DOM nodes)`),
+    );
+  if (scope.elementsStyled)
+    rows.push(
+      `  elements styled   p50 ${num(scope.elementsStyled.p50, 0)} · max ${scope.elementsStyled.max}  ` +
+        dim(`(over ${scope.elementsStyled.flushes} flush(es))`),
+    );
+  if (scope.contained)
+    rows.push(
+      `  contained flushes ${scope.contained.flushes}  ` +
+        dim(
+          `(subtree-scoped${scope.contained.sampleRoot ? `, e.g. ${scope.contained.sampleRoot}` : ""})`,
+        ),
+    );
+  if (!rows.length) return;
+  console.log(
+    "\nScope (what relaid out; distribution across the window's flushes, never a sum; beside the ms, not a proxy for it)\n",
+  );
+  for (const row of rows) console.log(row);
+}
+
 /** Human report for `query span`: the bar, wall/counts/interaction, forced attribution, hot list. */
 function printSpanAnatomy(
   anatomy: SpanAnatomy,
@@ -585,6 +648,9 @@ function printSpanAnatomy(
       ],
     ),
   );
+  // Layout/style scope beside the counts: how much each flush relaid out / recalculated, as a
+  // distribution (never a sum). Present only where the capture stored it (--breakdown / firefox style).
+  if (anatomy.scope) printSpanScope(anatomy.scope);
   // Firefox forced counts come from the Reflow/Styles markers, and the read that forced each flush is
   // a sampled estimate: a cheap read can be missed, so `query blame --forced` can locate fewer sites
   // than the count (or none). Say so, so a count with no locatable site is not read as a contradiction.
@@ -690,7 +756,7 @@ function printSpanAnatomy(
         shown.map((entry) => [
           entry.count,
           num(entry.durMs, 2),
-          middleEllipsis(entry.at, SOURCE_COL_MAX),
+          middleEllipsis(entry.at, SOURCE_COL_MAX) + flushScopeSuffix(entry.scope),
         ]),
       ),
     );
@@ -921,6 +987,7 @@ async function buildGroupSpanStitch(
     slices,
     ...(barAnatomy?.residualMs != null ? { residualMs: barAnatomy.residualMs } : {}),
     ...(barAnatomy?.frames ? { frames: barAnatomy.frames } : {}),
+    ...(barAnatomy?.scope ? { scope: barAnatomy.scope } : {}),
     counts,
     ...(inpAnatomy?.inpMs != null ? { inpMs: inpAnatomy.inpMs } : {}),
     ...(inpAnatomy?.interaction ? { interaction: inpAnatomy.interaction } : {}),
@@ -986,6 +1053,7 @@ function printGroupSpanStitch(stitch: GroupSpanStitch): void {
       ],
     ),
   );
+  if (stitch.scope) printSpanScope(stitch.scope);
 
   printStepNavigation(stitch.navigation, stitch.beforeUrl, stitch.afterUrl);
   if (stitch.lcp) printStepLcp(stitch.lcp);
@@ -1016,7 +1084,7 @@ function printGroupSpanStitch(stitch: GroupSpanStitch): void {
         shown.map((entry) => [
           entry.count,
           num(entry.durMs, 2),
-          middleEllipsis(entry.at, SOURCE_COL_MAX),
+          middleEllipsis(entry.at, SOURCE_COL_MAX) + flushScopeSuffix(entry.scope),
         ]),
       ),
     );
@@ -1515,6 +1583,12 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   if (query.forced && !query.all) events = events.filter((event) => event.forced);
   if (query.kind) events = events.filter((event) => event.kind === query.kind);
 
+  // Layout/style scope per read site (chrome --deep: the stored flush events carry the trace args).
+  // Empty on the sampled --breakdown lane and firefox (no flush args), so those rows carry no scope.
+  const blameScope = rec.meta.passes.includes("deep")
+    ? scopeByReadSite(events)
+    : new Map<string, FlushScope>();
+
   const groups = new Map<
     string,
     {
@@ -1586,6 +1660,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       properties: row.properties.size ? [...row.properties] : undefined,
       dirtiedBy: dirtiedByReadSite[row.at]?.length ? dirtiedByReadSite[row.at] : undefined,
       lowConfidence: blameRowLowConfidence(sampledBlameLane, row.confident, row.lowConfidence),
+      scope: blameScope.get(row.at),
     }));
     return emit(entries, fmt);
   }
@@ -1636,9 +1711,11 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   }): string => {
     const at = middleEllipsis(row.at, SOURCE_COL_MAX);
     const withProperty = row.properties.size ? `${at} (${[...row.properties].join(", ")})` : at;
+    // The flush scope (chrome --deep: how much this read relaid out / recalculated) as a dim suffix.
+    const withScope = withProperty + flushScopeSuffix(blameScope.get(row.at));
     return row.confident === 0 && row.lowConfidence > 0
-      ? `${withProperty} ${dim("~low-confidence (sub-interval)")}`
-      : withProperty;
+      ? `${withScope} ${dim("~low-confidence (sub-interval)")}`
+      : withScope;
   };
   // `--all` shows the forced column so "ran but forced 0" lines are first-class.
   console.log(

@@ -9,11 +9,18 @@
  */
 
 import { functionIdByNode, type RawCpuProfile } from "./cpuprofile.js";
-import type { Breakdown, CpuBreakdown, SpanBreakdown, SpanHot } from "../model/recording.js";
+import type {
+  Breakdown,
+  CpuBreakdown,
+  NormalizedEvent,
+  SpanBreakdown,
+  SpanHot,
+} from "../model/recording.js";
 import { tallySpanHot, type SpanHotSample, type SpanHotWindow } from "./span-hot.js";
 import { usToMs } from "../model/time.js";
 import { reconcileResidual } from "../model/reconcile.js";
 import { mergeSpanOccurrences } from "../model/span-merge.js";
+import { spanScope } from "../trace/scope.js";
 
 /** Per-slice microsecond sums for one window, plus the js by-package subdivision. */
 interface SliceSums {
@@ -209,22 +216,34 @@ export function buildGeckoSpanBreakdowns(
   measures: GeckoMeasureWindow[],
   runWindow: { startTs: number | null; endTs: number | null },
   sampleIntervalUs: number,
+  /** the Reflow/Styles marker events, for the STYLE-scope distribution (elementsStyled). Gecko markers
+   * carry no layout scope, so the firefox bars get only the style side (never a fake layout zero). The
+   * marker ts share the profiler clock with the measure/run windows (both msToUs of the marker time). */
+  renderingEvents: NormalizedEvent[] = [],
 ): SpanBreakdown[] {
   if (!raw.gecko || measures.length === 0) return [];
+  // Style-scope distribution over the flushes that STARTED in [startTs, endTs]. Firefox only: layout
+  // scope stays absent (Gecko Reflow markers carry none), so spanScope yields elementsStyled alone.
+  const scopeFor = (startTs: number, endTs: number): SpanBreakdown["scope"] =>
+    spanScope(renderingEvents.filter((event) => event.ts >= startTs && event.ts < endTs));
   const spans: SpanBreakdown[] = [];
   if (runWindow.startTs != null && runWindow.endTs != null) {
+    const scope = scopeFor(runWindow.startTs, runWindow.endTs);
     spans.push({
       label: "run",
       kind: "run",
       breakdown: spanBreakdown(raw, packageByNode, 0, raw.samples.length),
+      ...(scope ? { scope } : {}),
     });
   }
   for (const measure of measures) {
     const bounds = windowBounds(raw, measure.startTs, measure.endTs);
+    const scope = scopeFor(measure.startTs, measure.endTs);
     spans.push({
       label: measure.label,
       kind: "measure",
       breakdown: spanBreakdown(raw, packageByNode, bounds.from, bounds.to),
+      ...(scope ? { scope } : {}),
     });
   }
 

@@ -15,9 +15,11 @@ import type {
   FrameSideTrack,
   InteractionTiming,
   NavigationKind,
+  FlushScope,
   SpanAggregation,
   SpanCounts,
   SpanKind,
+  SpanScope,
   StepLcp,
   StepLoaf,
   ThrashReport,
@@ -99,6 +101,14 @@ export interface BlameEntry {
    * See docs/dev/blame-semantics.md and model/capture-mode.ts `blameRowLowConfidence`.
    */
   lowConfidence?: boolean;
+  /**
+   * Layout/style SCOPE of the widest flush at this read site: how much it relaid out
+   * (`layoutObjects` dirty/total) or recalculated (`elementsStyled`), and the container root of a
+   * subtree-contained flush. A count-tier fact beside `durMs`, never a proxy for it. Chrome `--deep`
+   * only (its stored flush events carry the trace `args`); absent on the sampled `--breakdown` and
+   * firefox rows, which have no flush args. See FlushScope.
+   */
+  scope?: FlushScope;
 }
 
 /**
@@ -197,6 +207,13 @@ export interface SpanEntry {
   beforeUrl?: string;
   /** the URL the step ended on; absent on run/measure spans */
   afterUrl?: string;
+  /**
+   * Layout/style scope distribution across this span window's flushes (chrome --breakdown; firefox
+   * style only). A count-tier distribution beside the slice ms, never a proxy for it. Absent when the
+   * capture stored none. The `query spans` HUMAN table omits it to stay legible; drill with `query
+   * span` for the block. See SpanScope.
+   */
+  scope?: SpanScope;
 }
 
 /**
@@ -293,6 +310,8 @@ export interface SpanForced {
   durMs: number;
   /** the mutation(s) that dirtied the DOM so this read forced a flush (chrome --deep only) */
   dirtiedBy?: DirtiedByWrite[];
+  /** layout/style scope of the widest flush at this read site (chrome --deep only). See FlushScope. */
+  scope?: FlushScope;
 }
 
 /**
@@ -375,6 +394,9 @@ export interface SpanAnatomy {
   residualMs?: number;
   /** off-thread compositor frame side track (chrome --breakdown only). Display-only. */
   frames?: FrameSideTrack;
+  /** per-span layout/style scope distribution (chrome --breakdown; firefox style only); absent when
+   * the capture stored none. A count-tier distribution beside the slice ms. See SpanScope. */
+  scope?: SpanScope;
   /** exact rendering counts windowed to this span's representative occurrence; Measured throughout */
   counts: SpanCounts;
   /** worst-interaction INP (ms) for a driver step; null when no interaction crossed the 16ms floor */
@@ -443,6 +465,8 @@ export interface GroupSpanStitch {
   slices: UnifiedSlices | null;
   residualMs?: number;
   frames?: FrameSideTrack;
+  /** per-span layout/style scope distribution (from the bar member); absent when none stored */
+  scope?: SpanScope;
   /** exact rendering counts (from the counts member); Measured throughout */
   counts: SpanCounts;
   inpMs?: number | null;

@@ -813,6 +813,8 @@ export async function record(opts: RecordOptions): Promise<{
       cpuPass.geckoMeasures,
       { startTs: detail.windowStart, endTs: detail.windowEnd },
       sampleIntervalUs,
+      // The Reflow/Styles marker events, for the firefox style-scope distribution (elementsStyled).
+      detail.events,
     );
   }
 
