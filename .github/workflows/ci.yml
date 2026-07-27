@@ -64,21 +64,21 @@ jobs:
       # completes and prints wpd's/Chrome's own output + exit code, instead of hanging silently.
       - name: which chrome
         run: node -e "console.log('exe:', require('puppeteer').executablePath())" && npx puppeteer browsers list || true
-      - name: headless driver record (240s cap)
+      - name: bench --deep (first e2e test shape, 200s cap)
         run: |
           set +e -x
-          timeout --signal=SIGTERM 240 node dist/cli.js record --url test/fixtures/driver-probe.html --keep-partial 2>&1
-          echo "HEADLESS_EXIT=$?"
-      - name: headless bench record (240s cap)
+          timeout --signal=SIGTERM 200 node dist/cli.js record examples/forces-layout.mjs --bench --deep --iterations 3 --out /tmp/deep 2>&1 | tail -30
+          echo "DEEP_EXIT=${PIPESTATUS[0]}"
+      - name: bench --breakdown (200s cap)
         run: |
           set +e -x
-          timeout --signal=SIGTERM 240 node dist/cli.js record examples/forces-layout.mjs --bench --iterations 1 2>&1
-          echo "BENCH_EXIT=$?"
-      - name: headed record under xvfb (240s cap)
+          timeout --signal=SIGTERM 200 node dist/cli.js record examples/forces-layout.mjs --bench --breakdown --iterations 5 --out /tmp/bd 2>&1 | tail -30
+          echo "BREAKDOWN_EXIT=${PIPESTATUS[0]}"
+      - name: bench --precise-wall (sampler off, trace off; 120s cap)
         run: |
           set +e -x
-          timeout --signal=SIGTERM 240 xvfb-run -a node dist/cli.js record --url test/fixtures/driver-probe.html --no-headless --keep-partial 2>&1
-          echo "HEADED_EXIT=$?"
+          timeout --signal=SIGTERM 120 node dist/cli.js record examples/forces-layout.mjs --bench --precise-wall --iterations 3 --out /tmp/pw 2>&1 | tail -12
+          echo "PRECISE_EXIT=${PIPESTATUS[0]}"
 
   release:
     # Publishing waits for the whole suite to pass on THIS commit: `needs` blocks on the other jobs
