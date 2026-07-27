@@ -1,97 +1,35 @@
 import type { Measured } from "./measured.js";
+import type { NormalizedEvent } from "./events.js";
+import type { CpuSlice, CpuJsSlice } from "./cpu.js";
+import type { RecordingMeta } from "./meta.js";
+import type { FrameSideTrack } from "./frames.js";
 
-export type EventKind =
-  | "layout"
-  | "style"
-  | "paint"
-  | "composite"
-  | "invalidation"
-  | "scripting"
-  | "gc"
-  | "task"
-  | "usertiming"
-  | "other";
-
-export interface StackFrame {
-  functionName?: string;
-  /** original (served) url from the trace */
-  url?: string;
-  /** url rewritten to a local file path when it came from the local module server */
-  source?: string;
-  line?: number;
-  column?: number;
-  /**
-   * The frame carries an executing LINE but no observed column (a CPU sample's `data.lines` entry, the
-   * chrome --breakdown sampled read-site). A source-map lookup must NOT assume generated column 0 for
-   * it: on a minified single-line bundle every column-0 lookup resolves to whatever segment starts the
-   * line, an unrelated original location. resolveFrame maps a line-only frame only when its generated
-   * line is unambiguous. Absent (the usual) means the column was observed and column 0 is real.
-   */
-  lineOnly?: boolean;
-  /** when source was a bundle with a sourcemap, the pre-map "file:line:col" */
-  bundled?: string;
-  /** the url is a remote (http) script; its sourcemap is fetched over the network */
-  remote?: boolean;
-  /** original identifier from the sourcemap's `names`, when it differs from the minified one */
-  originalName?: string;
-}
-
-export interface NormalizedEvent {
-  id: number;
-  name: string;
-  /** trace clock, microseconds */
-  ts: number;
-  /** microseconds (0 for instant events) */
-  dur: number;
-  ph: string;
-  kind: EventKind;
-  /**
-   * Trace process/thread the event ran on. Populated ONLY in --breakdown mode (parseTrace keeps
-   * them when asked): the seven-slice engine tiles the renderer main thread alone, so it must tell
-   * main-thread work from raster/compositor threads. Every other mode leaves these fields absent.
-   */
-  pid?: number;
-  tid?: number;
-  /**
-   * The trace async-slice id (`id2.local`/`id2.global`/`id`) for a b/e async event. Populated ONLY
-   * in --breakdown mode (parseTrace keeps it alongside pid/tid), so the frame side track can pair
-   * each `PipelineReporter` begin/end into a frame; absent in every other mode, which keeps their
-   * stored events byte-for-byte.
-   */
-  asyncId?: string;
-  /** JS stack that triggered this event (top frame first), if Chrome captured one */
-  stack?: StackFrame[];
-  /** convenience: top meaningful frame as "source:line:col" */
-  at?: string;
-  /** layout/style synchronously forced by JS (layout thrashing) */
-  forced?: boolean;
-  /**
-   * A sampled blame annotation, not a measured event (Firefox read-site forced blame). It carries a
-   * source line + property for `query blame --forced` but is NOT a countable flush, so the summary
-   * skips it: the counts come from the Gecko Reflow/Styles markers, one per real flush. Absent on
-   * every trace-derived event.
-   */
-  sampled?: boolean;
-  /**
-   * The WRITE that dirtied this flush, resolved from a Firefox Gecko cause stack (the innermost JS
-   * caller of the FIRST invalidation since the last flush). Set on a forced Reflow/Styles marker
-   * event under `--deep --target firefox`; absent everywhere else. It is a WRITE, deliberately never
-   * surfaced as `at` (which stays the blame read-site), so write and read never collide. Being
-   * first-invalidation-only it is Gecko's write, NOT chrome's full write set, and drives no thrash
-   * detector. See trace/firefox-dirtied.ts.
-   */
-  dirtiedBy?: DirtiedByWrite;
-  args?: unknown;
-}
-
-export interface InvalidationRecord {
-  kind: "layout" | "paint" | "style" | "other";
-  name: string;
-  ts: number;
-  reason?: string;
-  nodeName?: string;
-  at?: string;
-}
+// The model is split across focused domain files by domain; this module keeps the
+// Recording/RecordingSummary/Span core and RE-EXPORTS the moved types every reader consumes through
+// it, so `../model/recording.js` stays the one import path. (WorkloadLane has no consumer through the
+// barrel, so it is not re-exported; import it from ./meta.js if one ever needs it.)
+export type { EventKind, StackFrame, NormalizedEvent, InvalidationRecord } from "./events.js";
+export type {
+  CpuFunction,
+  CpuGroupStat,
+  CpuEdge,
+  CpuSystem,
+  CpuSlice,
+  CpuJsSlice,
+  CpuBreakdown,
+  CpuModel,
+} from "./cpu.js";
+export type { FrameState, FrameRecord, FrameSideTrack } from "./frames.js";
+export type {
+  BlameSemantic,
+  DirtiedByWrite,
+  ThrashStep,
+  ThrashReport,
+  DirtiedByWriteRollup,
+  FirefoxDirtiedByReport,
+} from "./attribution.js";
+export type { SourceMapFailure, SourceMapDiagnostics } from "./sourcemap-meta.js";
+export type { WorkloadIdentity, RecordingMeta } from "./meta.js";
 
 export interface TimingEntry {
   name: string;
@@ -210,58 +148,6 @@ export interface RecordingWindow {
   startTs: number | null;
   endTs: number | null;
   wallMs: number | null;
-}
-
-/** Why a script's sourcemap could not be applied. */
-export type SourceMapFailure =
-  | /** the script carries neither a sourceMappingURL comment nor a SourceMap header */ "no-sourcemap-url"
-  | /** the script itself could not be fetched/read */ "script-fetch-failed"
-  | /** the script or its map answered 401/403: it is behind authentication wpd's fetches do not carry */ "auth-required"
-  | /** the script named a map, but it could not be fetched/read */ "map-fetch-failed"
-  | /** the map was fetched but is not valid JSON/not a sourcemap */ "map-parse-failed"
-  | /** the script body exceeded the remote-fetch size cap */ "script-too-large"
-  | /** the map body exceeded the remote-fetch size cap */ "map-too-large"
-  | /** the per-run remote-sourcemap time budget was spent before this fetch */ "fetch-budget-exhausted"
-  | /** the fetch was refused: a non-http(s) scheme, or a private host reached from a public page */ "blocked-fetch";
-
-/**
- * What happened to every script a run tried to map. Failure is otherwise invisible: frames keep
- * their minified names and bundle path, so per-package CPU numbers look plausible while
- * attributing everything to the bundle.
- */
-export interface SourceMapDiagnostics {
-  /** scripts a map was attempted for */
-  scripts: number;
-  /** of those, how many resolved */
-  resolved: number;
-  /**
-   * Of the ones that did NOT resolve, how many look like build output (a minified body).
-   *
-   * This is the honest trigger for "the package rollup below cannot be believed", and it is a
-   * different question from `resolved === 0`. Plain unbundled source has no sourcemap because it
-   * needs none: its frames already carry real names and real lines. A minified bundle with no map
-   * is the opposite -- every frame keeps its mangled name and its cost rolls up under whatever
-   * package.json sits above the bundle, which reads as a real package. 0 here means a missing map
-   * cost you nothing. Optional: an older recording may not carry it.
-   */
-  unmappedBundles?: number;
-  /**
-   * failing script urls grouped by reason. Capped per reason (a page can carry hundreds of
-   * unmapped third-party scripts), so `scripts`/`resolved` are the authoritative totals.
-   */
-  failed?: Partial<Record<SourceMapFailure, string[]>>;
-  /**
-   * Per script whose map RESOLVED but had no mapping for some frame lookups: how many lookups the
-   * map answered (`hits`) vs silently dropped (`misses`). Counts are per-lookup, not per distinct
-   * position -- the shared resolver queries each frame once per pass (attachStacks x2 +
-   * buildCpuModel), so one leaking position lands here once per pass it appears in; the miss share
-   * stays honest either way. A miss keeps the frame's minified/remote identity and buckets it by
-   * origin, so a map that LOADS fine can still leak attribution -- a different failure from the
-   * load-failure reasons in `failed`, and invisible to `resolved` (which counts this script a
-   * success). Only scripts with a nonzero miss appear, sorted by miss count and capped, so
-   * `scripts`/`resolved` stay authoritative. Optional: an older recording may not carry it.
-   */
-  positionMisses?: Record<string, { misses: number; hits: number }>;
 }
 
 /**
@@ -414,132 +300,6 @@ export interface StepLcp {
 }
 
 /**
- * What a forced-layout blame line names: "flush-site", the geometry READ that forced the pending
- * layout to flush synchronously, e.g. the `offsetHeight` access. Produced three ways, all the same
- * read-site semantic: Chrome `--deep` reads it exactly from the trace's `.stack` at the flush; Chrome
- * `--breakdown` samples it from the `v8.cpu_profiler` per-sample executing line over a layout/style
- * window (no `.stack`); Firefox/Gecko samples it from the DOM-accessor label frames (with the property
- * named). Comparable at line granularity (measured: 12/21 lines exact on the shared probe), with a
- * one-statement line-lag caveat on the sampled routes where a sub-interval read lands on the adjacent
- * statement.
- *
- * See docs/dev/blame-semantics.md.
- */
-export type BlameSemantic = "flush-site";
-
-/**
- * Which way the run executed the flow:
- *   - "driver": a module drove the page via Puppeteer (measureStep).
- *   - "bench": a module was import()'d inside the browser (--bench).
- *   - "builtin-load": no module; the built-in on-ramp navigated a host page and settled.
- *   - "node": the module ran in-process (--target node), CPU only.
- */
-export type WorkloadLane = "driver" | "bench" | "builtin-load" | "node";
-
-/**
- * The executed flow's identity, kept SEPARATE from `target` (a single display string that a host
- * page overwrites with itself, dropping the module). Two recordings share a workload only when all
- * three axes match: the same lane ran the same module against the same host. A different module (or
- * the built-in load flow) against the same host is a DIFFERENT workload, so a `diff`/`cpu-diff` gate
- * across it refuses instead of subtracting two programs.
- */
-export interface WorkloadIdentity {
-  lane: WorkloadLane;
-  /** the host page a module drove or the on-ramp loaded: a URL, a root-relative HTML path, or null
-   * (blank page / node lane). */
-  host: string | null;
-  /** the executed module, root-relative (stableWorkloadPath), or null on the built-in load flow. */
-  module: string | null;
-}
-
-export interface RecordingMeta {
-  tool: string;
-  /** the package version that wrote this artifact (e.g. "0.1.0") */
-  version: string;
-  /** on-disk schema epoch (major-only); see SCHEMA_VERSION. Makes artifacts self-describing. */
-  schemaVersion: string;
-  createdAt: string;
-  mode: "module" | "html" | "url";
-  target: string;
-  /**
-   * The executed flow's structured identity (lane + host + module), so a diff distinguishes two
-   * different programs run against the same host page, which `target` alone cannot. Absent on
-   * recordings written before this field: a pair that both lack it falls back to the `target`
-   * comparison; a structured-vs-absent pair cannot verify the flow and warns rather than blocking.
-   */
-  workload?: WorkloadIdentity;
-  /**
-   * Opt-in variant label (`--variant <label>`), for when ONE module path runs several techniques
-   * switched by an env var so `workload` reads them as the same flow. A diff/cpu-diff gate refuses
-   * across differing (or present-vs-absent) variants. Absent by default, so old recordings and runs
-   * without the flag stay valid and compare as before.
-   */
-  variant?: string;
-  fn: string;
-  iterations: number;
-  warmup: number;
-  headless: boolean;
-  /** Headless frame-cadence axis, stamped when a chrome run is headless. Current runs always stamp
-   * "new" (Chrome's built-in headless, ~60Hz); "shell" only appears on an older recording (~120Hz).
-   * Absent => headed, or firefox/node. Frame cadence sets the wall/INP floor, so a diff across it is
-   * not comparable (docs/dev/frame-floor.md), which is why the axis is retained. */
-  headlessMode?: "shell" | "new";
-  /** CPU sampler interval (microseconds) this run requested. Absent on older recordings. */
-  cpuIntervalUs?: number;
-  /** persistent Chrome profile reused across passes/runs (shorter of relative|absolute), or null */
-  userDataDir: string | null;
-  /** lifecycle hooks found and called */
-  lifecycle: string[];
-  /**
-   * The one capture that ran, by capture-mode name: "default" (sampler only) | "breakdown" | "deep" |
-   * "precise-wall" | "gecko" (firefox) | "node-cpu". Every invocation is exactly one pass (one
-   * browser launch, one run of the flow), so this is a single-element array naming the capture mode, not a
-   * multi-pass plan.
-   */
-  passes: string[];
-  notes: string[];
-  /**
-   * Sourcemap resolution for this run: how many scripts a map was attempted for, how many
-   * resolved, and why the rest did not. Absent on runs that attempted none, and on older
-   * recordings. When resolution fails, CPU self-time is attributed to
-   * minified bundle names rather than the originating package, so this is the field that says
-   * whether `query cpu --by package` can be trusted.
-   */
-  sourcemaps?: SourceMapDiagnostics;
-  /** driver (puppeteer) mode: run executed in Node with { page, ctx, measureStep } */
-  driver: boolean;
-  /** browser backend: "chrome" (default, CDP) or "firefox" (BiDi + Gecko profiler). Absent => chrome. */
-  browser?: "chrome" | "firefox";
-  /**
-   * Which code this run's forced-layout blame names (see BlameSemantic): "flush-site" (the read),
-   * comparable at line granularity across both engines. Absent => the run produced no blame
-   * (--target node, or a chrome capture mode without a .stack trace).
-   */
-  blameSemantic?: BlameSemantic;
-  /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
-  runtime?: "chrome" | "node";
-  /**
-   * The renderer main thread the trace-derived counts and the reconciling bar were scoped to, and how
-   * it was chosen (see trace/main-thread.ts). `split` is the load-bearing signal: true when the run's
-   * rendering landed on MORE than one renderer process one after another (successive cross-process
-   * navigations), so the selected thread holds only part of it and the counts are known-INCOMPLETE.
-   * `assert`/`diff --fail-on-regression` refuse count and count-derived thresholds when it is set,
-   * the same honest-refusal the Measured contract makes for a not-measured count. Absent on non-counting
-   * captures (the sampler-only/precise-wall modes, firefox) and on recordings written before this field. */
-  mainThread?: { via: "marker" | "reanchored" | "heuristic"; split: boolean };
-  /**
-   * The trace buffer overran and Chrome dropped events (`trace: true`). Trace-derived counts then
-   * UNDERCOUNT, so they are known-incomplete: `assert`/`diff --fail-on-regression` refuse count and
-   * count-derived thresholds, and `meta.notes` carries the loud disclosure. Absent when no loss
-   * occurred and on recordings written before this field. */
-  dataLoss?: { trace: boolean };
-  /** artificial slowdown applied during the run */
-  throttle?: { cpuRate?: number };
-  /** when this recording is one step of a stepped run */
-  step?: { index: number; label: string };
-}
-
-/**
  * The seven work slices of a span, plus idle. Every slice is main-thread self-time from the TRACE
  * (children subtracted from parents), so they never overlap; `idle` is the window remainder. The
  * `js` slice alone is subdivided by package, from the CPU samples that landed inside its self-time
@@ -635,52 +395,6 @@ export type SpanKind = "run" | "step" | "measure";
  * model speak in.
  */
 export type SpanAggregation = "first" | "sum" | "median";
-
-/** Terminal verdict of a compositor frame, from PipelineReporter's `frame_reporter.state`. */
-export type FrameState = "presented" | "presentedPartial" | "dropped" | "noUpdate";
-
-/**
- * One compositor frame from Chrome's off-thread frame pipeline (a `PipelineReporter` async slice).
- *
- * DISPLAY-ONLY. These are scheduler/settle noise on unchanged code (compositor warmth + how many
- * vsync ticks the settle window happens to span), and 20 recolored boxes present as the same frame
- * count as 1 box, so a frame count does not even track paint work. Only main-thread `Paint` is exact
- * enough to gate. See docs/dev/rendering-counts.md.
- */
-export interface FrameRecord {
-  /** compositor `frame_sequence`: the frame's identity within the run */
-  sequence: number;
-  state: FrameState;
-  /** the frame was on the smoothness-critical path (a dropped/late one is visible jank) */
-  affectsSmoothness: boolean;
-  /** frame-pipeline duration (begin-impl-frame -> presentation), ms */
-  durMs: number;
-}
-
-/**
- * The per-span off-thread frame side track (Chrome --breakdown only). Tallies `PipelineReporter`
- * verdicts, and for the slowest presented (incl. partial) frame carries its top pipeline-stage
- * durations.
- *
- * DISPLAY-ONLY, and the type is shaped so the rule is enforced by construction: this lives on
- * SpanBreakdown, NEVER on RecordingSummary, so the gate readers (`assert`/`diff`, which see only the
- * summary) structurally cannot reach it. Nothing here is summed into any breakdown bar either -- the
- * wall is main-thread self-time and these frames run on compositor/viz threads (the §9 rule). The
- * counts are scheduler noise, the one reason they must not gate; see FrameRecord and
- * docs/dev/rendering-counts.md.
- */
-export interface FrameSideTrack {
-  presented: number;
-  presentedPartial: number;
-  dropped: number;
-  noUpdate: number;
-  /** every frame in the span's window (presented + partial + dropped + noUpdate) */
-  total: number;
-  /** top pipeline-stage durations of the slowest presented (incl. partial) frame; absent when none presented */
-  worstStages?: { name: string; ms: number }[];
-  /** raw per-frame records (few per span), for JSON drill-in */
-  frames: FrameRecord[];
-}
 
 /**
  * Exact rendering counts windowed to ONE span's representative occurrence (the run window; a step's
@@ -954,76 +668,6 @@ export interface Recording {
 }
 
 /**
- * The WRITE end of a forced flush: a DOM mutation that dirtied layout/style so a later geometry read
- * had to flush it synchronously. `at` is the mutation's source line.
- *
- * Both browser lanes reach it, by different routes (docs/dev/blame-semantics.md):
- *  - Chrome `--deep`: from the STYLE-kind invalidation records the trace's invalidationTracking
- *    carries, with the invalidation `reason` (e.g. "Inline CSS style declaration was mutated"). The
- *    layout-kind `LayoutInvalidationTracking` stack names the forcing READ on style-driven
- *    invalidations, not the write, so it is never a dirtied-by (measured). This is the FULL write set
- *    in a flush's gap, which is what lets the thrash detector run.
- *  - Firefox `--deep`: from a Gecko Reflow/Styles marker's cause stack (its innermost JS caller),
- *    with no `reason`. Gecko records only the FIRST invalidation since the last flush, so this is one
- *    write per flush, NOT the full set -- comparable at line granularity but never a thrash input.
- */
-export interface DirtiedByWrite {
-  /** source line of the mutation (the write), relative to root */
-  at: string;
-  /** the Chrome invalidation reason string, when the record carried one (absent on firefox) */
-  reason?: string;
-}
-
-/**
- * One step of the layout-thrashing interleave: a forced flush that re-read geometry an intervening
- * write had re-dirtied since the previous flush in the same task. `read` is the geometry read that
- * paid (the flush-site), `dirtiedBy` the mutation(s) that caused the re-dirty (the write end). A
- * layout-flush step can carry an empty `dirtiedBy`: it is a thrash step because a layout-kind write
- * sat in its gap, but that write's stack names the read, not a surfaceable write (see DirtiedByWrite).
- */
-export interface ThrashStep {
-  kind: "layout" | "style";
-  read?: string;
-  dirtiedBy: DirtiedByWrite[];
-}
-
-/**
- * The layout-thrashing detector's rollup over a window (Chrome `--deep` only). `count` is Σ thrash
- * steps -- forced flushes re-dirtied since the previous flush in the same top-level task, matched by
- * kind (a layout flush needs a layout write in its gap, a style flush a style write). `steps` is the
- * write->read interleave, capped for size; `omitted` counts thrash steps past the cap. Absent, never
- * a fabricated `count: 0`, on any lane that cannot observe it (the default/--breakdown capture modes drop the
- * invalidation records, Firefox has none).
- */
-export interface ThrashReport {
-  count: number;
-  steps: ThrashStep[];
-  omitted: number;
-}
-
-/** One write line Gecko blamed (firefox `--deep`), rolled up across the forced flushes that named it. */
-export interface DirtiedByWriteRollup {
-  /** source line of the write (the cause stack's innermost JS caller), relative to root */
-  at: string;
-  /** which flush kinds this write dirtied (layout, style, or both) */
-  kinds: ("layout" | "style")[];
-  /** how many forced flushes named this write as their first-since-last-flush invalidation */
-  count: number;
-}
-
-/**
- * The firefox `--deep` dirtied-by report: Gecko's native cause-stack write identity as a first-class
- * rollup. `semantic: "first-invalidation"` marks the honest scope -- Gecko records only the FIRST
- * invalidation since the last flush, so `writes` is the write Gecko blames, NOT chrome's full write
- * set. This is why the firefox lane runs no thrash detector and fabricates no forced-by read side
- * (the read stays the sampled read-site blame on the same gecko pass). See trace/firefox-dirtied.ts.
- */
-export interface FirefoxDirtiedByReport {
-  semantic: "first-invalidation";
-  writes: DirtiedByWriteRollup[];
-}
-
-/**
  * One step of a stepped (driver) run, projected from its `kind: "step"` span. Feeds the per-step
  * `assert` targets and the `query span <step-label>` anatomy; carries no per-step file pointers,
  * since the whole run is one recording.
@@ -1048,159 +692,4 @@ export interface StepIndexEntry {
     styleInvalidations: Measured<number>;
     longTaskCount: Measured<number>;
   };
-}
-
-/** One function aggregated across a CPU sampling profile (self/total time). */
-export interface CpuFunction {
-  /** stable id = rank by self time; used by `query frame <id>` */
-  id: number;
-  fn: string;
-  /** resolved original "file:line" when a sourcemap was available */
-  source?: string;
-  /** bare resolved file path (no line), for the by-file rollup */
-  file?: string;
-  /**
-   * Owning npm/workspace package, e.g. "react-dom", "next-yak", "app". Parenthesized buckets are
-   * not real packages: "(native)"/"(node)"/"(blob)"/"(inline)"/"(wasm)", and "(<host>)" for a
-   * remote script whose sourcemap did not resolve (its owner is genuinely unknown; see
-   * RecordingMeta.sourcemaps). "app" means code that IS the profiled app: a resolved source
-   * outside node_modules.
-   */
-  package: string;
-  /** the minified V8 name, when `fn` is the sourcemap-resolved original (else absent) */
-  minified?: string;
-  selfMs: number;
-  selfPct: number;
-  totalMs: number;
-}
-
-/** Self time grouped by some key (package or file). */
-export interface CpuGroupStat {
-  key: string;
-  selfMs: number;
-  selfPct: number;
-  functions: number;
-}
-
-/** A call-graph edge: time the callee's subtree spent directly under the caller. */
-export interface CpuEdge {
-  caller: number;
-  callee: number;
-  ms: number;
-}
-
-/** Sampled time outside user JS: idle (no JS on stack), GC, and V8 program/runtime. */
-export interface CpuSystem {
-  idleMs: number;
-  gcMs: number;
-  programMs: number;
-}
-
-/** One slice of the CPU-time breakdown. */
-export interface CpuSlice {
-  ms: number;
-}
-
-/** The `js` slice, subdivided by owning package (same buckets as packageRollup). */
-export interface CpuJsSlice extends CpuSlice {
-  /** self ms per owning package; sums to `ms` */
-  byPackage: Record<string, number>;
-}
-
-/**
- * A reconciling decomposition of the CPU profile's own sampled window into where time went.
- *
- * Built from the raw profile's `samples[]` + `timeDeltas[]`: every time delta is attributed to its
- * sample's node, and each node classifies into exactly one slice, so
- * `js + browser + gc + idle === wallMs` EXACTLY in memory, with zero residual. On disk the numbers
- * are rounded to 4 decimals by serialize, so a persisted slice sum can differ from `wallMs` by up to
- * ~1e-3 ms; that rounding dust is not a residual. `wallMs` is the sum of the profile's own time
- * deltas (not an external wall), which is also `CpuModel.totalMs`. That exact tiling is the product
- * promise; it is not a proportional allocation.
- *
- * Honesty constraints, both from docs/dev:
- *  - On browser lanes the `js` slice is NOT pure JS: synchronous engine work JS triggered (a forced
- *    layout) is billed to the forcing frame (~85% of the layout probe's "JS" self-time is reflow).
- *    Only `--target node` measures pure JS. The report annotates this on browser lanes.
- *  - `browser` is engine/runtime work with the profiled JS not on the stack ((program)/(root) plus
- *    the tool's own harness frames), left UNSPLIT: no invented style/layout/paint numbers, which
- *    would require fusing the trace onto this timeline.
- *
- * On chrome/node this carries `js · browser · gc · idle`, all from V8's synthetic frames. On
- * Firefox (js,cpu) it additionally splits `style` and `layout` out of the engine work, from the
- * per-sample Layout-category frame, and idle is the per-sample CPU-usage signal (`threadCPUDelta`),
- * not a category. Absent on a Firefox dump with no CPU signal (a fabricated idle is worse than
- * none) and on older `.cpu.json` files. Optional throughout, so a reader that predates the field or
- * the style/layout slices keeps working.
- */
-export interface CpuBreakdown {
-  /** sum of the profile's time deltas, ms; equals CpuModel.totalMs */
-  wallMs: number;
-  slices: {
-    js: CpuJsSlice;
-    /** style recalc (Firefox: Layout-category style frames). Absent on chrome/node. */
-    style?: CpuSlice;
-    /** layout/reflow (Firefox: Layout-category reflow frames). Absent on chrome/node. */
-    layout?: CpuSlice;
-    /**
-     * (program)/(root) + tool harness frames on chrome/node; on Firefox also DOM-accessor time and
-     * Profiler self-overhead. Engine/runtime work with the profiled JS not on the stack, unsplit.
-     */
-    browser: CpuSlice;
-    gc: CpuSlice;
-    idle: CpuSlice;
-  };
-  /** wallMs - Σ slices; present only when a node's owner resolved to null so its time landed in no
-   * slice (the tiling did not close within float dust). Absent/0 in the normal case. */
-  residualMs?: number;
-}
-
-/**
- * Resolved, self-contained model of a CPU sampling profile. Sized by function count
- * (not sample count), already sourcemap-resolved, so `query cpu` / `query frame` /
- * `cpu-diff` read it post-hoc without the ephemeral capture server. The raw
- * `.cpuprofile` is written alongside for humans (DevTools / Speedscope).
- */
-export interface CpuModel {
-  /** path to the raw .cpuprofile */
-  profile: string;
-  meta: RecordingMeta;
-  sampleCount: number;
-  sampleIntervalUs: number;
-  /** wall span of the sampled window, ms */
-  totalMs: number;
-  /**
-   * JS self-time, ms: the sum over rankable user functions -- the SAME set `packageRollup`/`fileRollup`
-   * tile, so their percentages reconcile to 100% against it. This is the CPU headline and the axis
-   * `cpu-diff --fail-on-regression` gates. On the browser lanes it folds in the synchronous engine work
-   * JS triggered (a forced layout bills to the forcing frame; ~85% of the layout probe's JS self-time is
-   * reflow); only `--target node` measures pure JS. Excludes gc, engine/(program), idle, and tool frames.
-   */
-  jsSelfMs: number;
-  /**
-   * Non-idle sampled total, ms (`js + gc + engine/native`, i.e. everything sampled that was not idle).
-   * Informational and honestly named: it is NOT JS self-time, so a per-package share must never
-   * denominate on it. `jsSelfMs` is the headline; `breakdown` splits this into its slices.
-   */
-  activeMs: number;
-  system: CpuSystem;
-  /**
-   * Reconciling decomposition of the sampled window (the slices tile it exactly): `js · browser ·
-   * gc · idle` on chrome/node, `js · style · layout · browser · gc · idle` on Firefox (js,cpu).
-   * Absent on a Firefox dump with no `threadCPUDelta` signal (idle would be fabricated) and on
-   * older models. Additive: readers that predate it are unaffected.
-   */
-  breakdown?: CpuBreakdown;
-  /** functions sorted by self time descending; id is the index */
-  functions: CpuFunction[];
-  /** caller->callee edges (thresholded), for callers/callees drilling */
-  edges: CpuEdge[];
-  /**
-   * How many distinct frames could not be attributed to an owner and fell back to an origin
-   * bucket (`(cdn.example.com)`). This is what a failed sourcemap actually costs you, and the
-   * only honest trigger for "the package rollup cannot be believed". 0 means every frame found
-   * its owner -- including when no sourcemap resolved at all, which is the normal case for plain
-   * unbundled source that needs no map. Optional: an older model may not carry it.
-   */
-  unmappedFrames?: number;
 }

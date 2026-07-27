@@ -14,7 +14,7 @@ import {
   isRunOrStepEdgeMark,
   WPD_MARK_PREFIX,
 } from "../model/marks.js";
-import type { RawCallFrame, RawCpuProfile, RawProfileNode } from "./cpuprofile.js";
+import type { GeckoSlice, RawCallFrame, RawCpuProfile, RawProfileNode } from "./raw.js";
 import { isToolFrameUrl } from "../trace/stacks.js";
 import type { GeckoMeasureWindow } from "./gecko-breakdown.js";
 
@@ -54,12 +54,6 @@ interface GeckoContainer {
   threads?: GeckoThread[];
   processes?: GeckoContainer[];
 }
-
-/** The reconciling breakdown slice a sample's wall-delta lands in (Firefox lane). `idle` comes from
- * the per-sample CPU-usage signal; style/layout/gc/js from the leaf-ward frame category; `other` is
- * DOM-accessor time, Profiler self-overhead, and everything else. Parallel to a converted profile's
- * `samples`, so summing `timeDeltas` by this classification tiles the profile window exactly. */
-export type GeckoSlice = "js" | "style" | "layout" | "gc" | "idle" | "other";
 
 /** Everything the two converters need, computed once so the JSON is walked a single time. */
 export interface GeckoContext {

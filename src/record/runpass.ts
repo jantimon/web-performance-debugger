@@ -12,7 +12,8 @@ import {
 } from "../profile/gecko.js";
 import type { GeckoMeasureWindow } from "../profile/gecko-breakdown.js";
 import { runHarness } from "../browser/harness.js";
-import { runDriver, type DriverStep, type PartialRun } from "../browser/driver.js";
+import { runDriver, type PartialRun } from "../browser/driver.js";
+import type { DriverStep } from "../model/driver-step.js";
 import { applyCpuThrottle } from "../browser/throttle.js";
 import { parseTrace, findWindow, findSteps, type StepWindow } from "../trace/parse.js";
 import { labelWindows, type LabelledWindow } from "../trace/steps.js";

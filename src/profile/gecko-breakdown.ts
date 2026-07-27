@@ -8,7 +8,7 @@
  * package from the sample's node, reusing the run's resolver via `packagesByProfileNode`.
  */
 
-import { functionIdByNode, type RawCpuProfile } from "./cpuprofile.js";
+import { functionIdByNode, type RawCpuProfile } from "./raw.js";
 import type {
   Breakdown,
   CpuBreakdown,
