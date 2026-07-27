@@ -519,10 +519,12 @@ test("query span: a wall/INP median at the frame floor surfaces the min sample a
     ],
   });
   const text = await captureText(() => querySpan(file, "inp:frame", {}));
-  assert.match(text, /wall sits on the ~16\.6 ms frame floor/, "names the floor under wall");
+  // Token-level: the wall-floor disclosure names the metric, its floor value, and the `frame floor`
+  // marker; connective wording between them is free to change.
+  assert.match(text, /wall[^\n]*16\.6[^\n]*frame floor/, "names the wall frame floor at its value");
   assert.match(text, /min sample 2\.7 ms/, "surfaces the faster sample the median hid");
   assert.match(text, /js 1 ms/, "surfaces the js slice as the sub-frame work signal");
-  assert.match(text, /INP sits on the ~16\.6 ms one-frame floor/, "names the floor under INP");
+  assert.match(text, /INP[^\n]*16\.6[^\n]*one-frame floor/, "names the INP one-frame floor at its value");
 });
 
 test("query span: real sub-frame-or-above work prints no floor note", async () => {
@@ -580,8 +582,10 @@ test("query span: firefox forced count discloses it is marker-derived with a sam
     ],
   });
   const text = await captureText(() => querySpan(file, "mount", {}));
-  assert.match(text, /forced layout\/style is marker-derived/, "names the count provenance");
-  assert.match(text, /sampled estimate.*can miss cheap reads/s, "warns the site can be missed");
+  // Token-level: the `marker-derived` provenance word and the `sampled`/`cheap reads` trust markers
+  // are the disclosure; the sentence around them is free to change.
+  assert.match(text, /marker-derived/, "discloses the count provenance");
+  assert.match(text, /sampled estimate.*cheap reads/s, "warns the sampled site can miss cheap reads");
 });
 
 // --- Defect: a measure span's bar shows real style/layout/paint ms but its counts are not windowed ---
@@ -604,7 +608,9 @@ test("query span <measure>: discloses that counts are not windowed to a performa
     ],
   });
   const text = await captureText(() => querySpan(file, "measure:render list", {}));
-  assert.match(text, /counts are not windowed to a performance\.measure span/, "the disclosure prints");
+  // Disclosure contract, token-level: `not windowed` + `performance.measure` must survive; the
+  // connective prose need not.
+  assert.match(text, /not windowed.*performance\.measure/s, "the not-windowed disclosure prints");
   // The bar is present with real style/layout ms while the counts table reads "—": the disclosure is
   // the bridge, not a fabricated count.
   assert.match(text, /style recalc\s+—/, "counts still read not-measured, never a fake 0");
@@ -634,7 +640,7 @@ test("query span <measure>: no disclosure over an all-idle bar (no real style/la
   const text = await captureText(() => querySpan(file, "measure:wait", {}));
   assert.doesNotMatch(
     text,
-    /counts are not windowed to a performance\.measure span/,
+    /not windowed.*performance\.measure/s,
     "an all-idle bar measured no style/layout/paint, so there is no contradiction to disclose",
   );
 });

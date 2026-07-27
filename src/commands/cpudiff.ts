@@ -1,7 +1,7 @@
 import type { CpuDiffResult, CpuFunctionDelta, CpuPackageDelta } from "../model/query.js";
 import type { CpuFunction } from "../model/recording.js";
 import { num, table } from "../output/ascii.js";
-import { serialize, isFormat, type Format } from "../output/format.js";
+import { serialize, structuredFormat, type StructuredOutOpts } from "../output/format.js";
 import {
   packageRollup,
   functionJoinKey,
@@ -38,18 +38,8 @@ function functionsByJoinKey(functions: CpuFunction[]): Map<string, CpuFunction> 
   return byKey;
 }
 
-interface DiffOpts {
+interface DiffOpts extends StructuredOutOpts {
   failOnRegression?: boolean;
-  json?: boolean;
-  format?: string;
-}
-
-function structuredFormat(opts: DiffOpts): Format | null {
-  if (opts.format) {
-    if (!isFormat(opts.format)) throw new Error("--format must be json or toon");
-    return opts.format;
-  }
-  return opts.json ? "json" : null;
 }
 
 /** Compare two CPU models: per-package and per-function self-time deltas, noise-filtered. */
