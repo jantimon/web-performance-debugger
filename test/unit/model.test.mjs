@@ -287,6 +287,19 @@ test("diff: an identical loopback ephemeral host raises no workload note at all"
   assert.ok(!logs.some((line) => /workload/.test(line)), "an exact host match carries no ephemeral-fold note");
 });
 
+// The `localhost` hostname folds its ephemeral port exactly as the 127.0.0.1 dotted-quad does: the
+// same page served on a fresh `listen(0)` port each run is ONE workload. The 127.0.0.1 case exercises
+// the numeric-IP branch; a differing-port `localhost` pair is the only thing that pins the
+// `host === "localhost"` branch (an exact-host match folds regardless of that branch).
+test("diff: a `localhost` ephemeral-port difference does NOT refuse the gate", async () => {
+  const base = writeRecMeta("lb-localhost-base.json", { target: "host.html", driver: false, ...workload("bench", "http://localhost:54927/app", "flow.mjs") }, { layoutCount: 1 });
+  const current = writeRecMeta("lb-localhost-cur.json", { target: "host.html", driver: false, ...workload("bench", "http://localhost:61003/app", "flow.mjs") }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(!logs.some((line) => /Refusing to gate/.test(line)), "localhost with a re-picked ephemeral port is one workload");
+  assert.ok(logs.some((line) => /workload: .*localhost:54927.* → .*localhost:61003/.test(line)), "the raw ports are disclosed non-blocking, same as the 127.0.0.1 case");
+  assert.equal(code, undefined, "the gate passes across a re-picked ephemeral localhost port");
+});
+
 // A registered port names a service the user runs on purpose, and a non-loopback host is a real
 // remote: both keep their port, so a port difference there is a genuine workload difference.
 test("diff: a loopback REGISTERED-port difference still refuses the gate", async () => {
