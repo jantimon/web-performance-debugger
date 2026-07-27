@@ -285,9 +285,8 @@ Two things this rule is **not**, both documented in
   `kind:label`, with comparability warnings when a metric is measured on one side only.
 - `commands/resolve.ts`: the `latest` keyword resolves via a **cwd-keyed** pointer file under the XDG
   state dir (`$XDG_STATE_HOME/wpd/pointers/<hash>.json`, else `~/.local/state/wpd/pointers/`) that
-  `record` writes — so no `recordings/` dir is dropped into a consumer's cwd. A legacy in-cwd
-  `recordings/.wpd-last.json` is still READ as a fallback, never written. **Never resolve recordings
-  by mtime**. `resolveConsumption` is the group-aware entry: `latest` resolves to the group manifest
+  `record` writes — so no `recordings/` dir is dropped into a consumer's cwd. **Never resolve
+  recordings by mtime**. `resolveConsumption` is the group-aware entry: `latest` resolves to the group manifest
   when the pointer carries `group` (a group-forming record set it; a later non-group record cleared
   it), an explicit `.group.json` path is a group, and every other explicit path is a recording (so a
   member path always resolves to the recording). Group-aware verbs (`query spans`/`span`, `assert`,
