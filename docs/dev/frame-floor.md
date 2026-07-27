@@ -118,12 +118,21 @@ BeginFrame default is set by the display compositor, not the GPU. Headless CI ha
 so this also aligns a developer machine's headless with CI. Headed (`--no-headless`) keeps the GPU: it
 drives a real window off a real display, where the stall does not occur.
 
-The residual ~0.5% is caught by a belt to that brace: the driver's settle bounds each rAF at
-`STALL_CEILING_MS` (3 s, far above the ~24 ms worst legit frame gap, far below the protocol timeout).
-A rAF past it is a stall, so the settle throws a retryable frame-stall error and `record`'s
+The residual ~0.5% is caught by a belt to that brace, in two places. The driver's settle bounds each
+rAF at `STALL_CEILING_MS` (3 s, far above the ~24 ms worst legit frame gap, far below the protocol
+timeout): a rAF past it is a stall, so the settle throws a retryable frame-stall error and `record`'s
 `retryTransientNav` relaunches the whole pass on a fresh browser (`meta.notes` discloses it, via
 `frameStallRetried`); exhausting the retries fails loudly rather than emitting a frameless recording.
-The same stall degrades LCP timing on the losing browser (docs/dev/navigation-and-lcp.md).
+But a settle only runs at a step's end, so a born-dead browser would first hang the flow's own rAF
+waits -- including a user `page.waitForFunction`, whose **default polling is `requestAnimationFrame`**
+and so never re-checks its predicate on a dead compositor, hanging to the protocol timeout (an error
+the retry cannot classify). So the driver also runs a **frame-health probe** before the flow's first
+action (`FRAME_PROBE_SOURCE`, `FRAME_PROBE_FRAMES` bounded frames): the stall shows by the second
+frame after a load [measured], so the probe catches a born-dead browser and throws the same retryable
+error before any wait can hang. **[measured]** Over 150 launches at the base rate, the probe flags
+exactly the 25 browsers whose rAF-polling wait would hang -- no miss, no false positive. Mid-run
+deaths (a later navigation) are caught by that step's settle. The same stall degrades LCP timing on
+the losing browser (docs/dev/navigation-and-lcp.md).
 
 ## The two headless implementations
 

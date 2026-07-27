@@ -38,6 +38,42 @@ export const SETTLE_SOURCE = (ceilingMs: number) =>
     frameThen(() => idle(() => frameThen(() => idle(() => resolve({ stalled: false })))));
   });
 
+/** Frames the start-of-flow health probe requests. The stall shows by the SECOND frame after a load
+ * (the first rAF rides the load's own frame; the second needs a fresh BeginFrame, which is where the
+ * source intermittently fails to arm), so three frames catch it with a margin [measured]. */
+export const FRAME_PROBE_FRAMES = 3;
+
+/**
+ * Start-of-flow frame-health probe: request `FRAME_PROBE_FRAMES` bounded animation frames before any
+ * user action runs. Chrome's built-in headless can come up with a dead compositor BeginFrame source
+ * (permanent, browser-wide), which would hang any later rAF-based wait -- a settle, or a user
+ * `page.waitForFunction` whose default polling is rAF -- to the protocol timeout. Resolving
+ * `{ stalled: true }` at the ceiling lets the driver convert that into a retryable frame-stall error
+ * before the flow can hang on it. A healthy browser resolves `{ stalled: false }` in ~3 frames.
+ */
+export const FRAME_PROBE_SOURCE = (ceilingMs: number, frames: number) =>
+  new Promise<{ stalled: boolean }>((resolve) => {
+    const frameThen = (remaining: number) => {
+      if (remaining === 0) {
+        resolve({ stalled: false });
+        return;
+      }
+      let done = false;
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        resolve({ stalled: true });
+      }, ceilingMs);
+      requestAnimationFrame(() => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        frameThen(remaining - 1);
+      });
+    };
+    frameThen(frames);
+  });
+
 /**
  * A bounded double `requestAnimationFrame` (the `paintFlush` after an explicit `until`): waits two
  * frames so a deferred paint lands, with the same per-frame stall ceiling as SETTLE_SOURCE.

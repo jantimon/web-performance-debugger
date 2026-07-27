@@ -1,6 +1,12 @@
 import { pathToFileURL } from "node:url";
 import type { Page } from "puppeteer";
-import { SETTLE_SOURCE, PAINT_FLUSH_SOURCE, STALL_CEILING_MS } from "./settle.js";
+import {
+  SETTLE_SOURCE,
+  PAINT_FLUSH_SOURCE,
+  FRAME_PROBE_SOURCE,
+  FRAME_PROBE_FRAMES,
+  STALL_CEILING_MS,
+} from "./settle.js";
 import { frameStallError } from "./launch.js";
 import { waitForStable } from "./until.js";
 import { duplicateLabelError } from "../trace/steps.js";
@@ -549,6 +555,16 @@ export async function runDriver(
   };
   await page.evaluateOnNewDocument(installLcpObserver);
   await page.evaluate(installLcpObserver);
+
+  // Frame-health gate, before any user action. Chrome's built-in headless can come up with a dead
+  // compositor BeginFrame source (permanent, browser-wide), which would hang ANY rAF-based wait in
+  // the flow -- a settle, or a user `page.waitForFunction` whose default polling is rAF -- to the
+  // 180s protocol timeout, an error the retry cannot classify. The stall shows by the second frame
+  // after a load [measured], so probing a few frames here converts a born-dead browser into a
+  // retryable frame-stall error that record relaunches on a fresh browser, before the flow can hang
+  // on it. Mid-run deaths (e.g. a later navigation) are caught by each step's bounded settle.
+  const frameHealth = await page.evaluate(FRAME_PROBE_SOURCE, STALL_CEILING_MS, FRAME_PROBE_FRAMES);
+  if (frameHealth.stalled) throw frameStallError(STALL_CEILING_MS);
 
   async function waitDone(until: Until): Promise<void> {
     if (until == null) return void (await settle());
