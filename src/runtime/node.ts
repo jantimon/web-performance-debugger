@@ -19,7 +19,7 @@ import { serialize, extFor } from "../output/format.js";
 import type { CpuModel, Recording, RecordingMeta } from "../model/recording.js";
 import { RUN_MEASURE } from "../model/marks.js";
 import { nodeRuntime } from "../record/notes.js";
-import type { RecordOptions } from "../commands/record.js";
+import type { RecordOptions } from "../record/options.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 import { stableWorkloadPath } from "../model/compat.js";
