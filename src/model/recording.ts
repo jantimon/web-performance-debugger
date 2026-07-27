@@ -414,22 +414,18 @@ export interface StepLcp {
 }
 
 /**
- * What a forced-layout blame line names:
- *
- * - "flush-site": the geometry READ that forced the pending layout to flush synchronously, e.g.
- *   the `offsetHeight` access. Produced three ways, all the same read-site semantic: Chrome `--deep`
- *   reads it exactly from the trace's `.stack` at the flush; Chrome `--breakdown` samples it from the
- *   `v8.cpu_profiler` per-sample executing line over a layout/style window (no `.stack`); Firefox/Gecko
- *   samples it from the DOM-accessor label frames (with the property named). Comparable at line
- *   granularity (measured: 12/21 lines exact on the shared probe), with a one-statement line-lag caveat
- *   on the sampled routes where a sub-interval read lands on the adjacent statement.
- * - "invalidation-site": the WRITE that dirtied the DOM and made a flush necessary, e.g. the style
- *   assignment. The legacy Firefox semantic (Gecko cause stacks, first invalidator since the last
- *   flush), present only on older recordings.
+ * What a forced-layout blame line names: "flush-site", the geometry READ that forced the pending
+ * layout to flush synchronously, e.g. the `offsetHeight` access. Produced three ways, all the same
+ * read-site semantic: Chrome `--deep` reads it exactly from the trace's `.stack` at the flush; Chrome
+ * `--breakdown` samples it from the `v8.cpu_profiler` per-sample executing line over a layout/style
+ * window (no `.stack`); Firefox/Gecko samples it from the DOM-accessor label frames (with the property
+ * named). Comparable at line granularity (measured: 12/21 lines exact on the shared probe), with a
+ * one-statement line-lag caveat on the sampled routes where a sub-interval read lands on the adjacent
+ * statement.
  *
  * See docs/dev/blame-semantics.md.
  */
-export type BlameSemantic = "flush-site" | "invalidation-site";
+export type BlameSemantic = "flush-site";
 
 /**
  * Which way the run executed the flow:
@@ -514,10 +510,9 @@ export interface RecordingMeta {
   /** browser backend: "chrome" (default, CDP) or "firefox" (BiDi + Gecko profiler). Absent => chrome. */
   browser?: "chrome" | "firefox";
   /**
-   * Which code this run's forced-layout blame names (see BlameSemantic). "flush-site" (the read) on
-   * both engines today, comparable at line granularity; "invalidation-site" (the write) only on
-   * older Firefox recordings. Absent => the run produced no blame (--target node, or a chrome
-   * capture mode without a .stack trace).
+   * Which code this run's forced-layout blame names (see BlameSemantic): "flush-site" (the read),
+   * comparable at line granularity across both engines. Absent => the run produced no blame
+   * (--target node, or a chrome capture mode without a .stack trace).
    */
   blameSemantic?: BlameSemantic;
   /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
@@ -779,8 +774,8 @@ export interface SpanScope {
 
 /**
  * The one labelled unit of measured work in a recording -- the run window (`kind: "run"`), a driver
- * step (`"step"`), or a user `performance.measure` (`"measure"`). Everything the recording used to
- * model as separate artifacts (the run, the step index, the per-span bars) is one `Span[]`.
+ * step (`"step"`), or a user `performance.measure` (`"measure"`). The run, its steps, and every
+ * per-span bar are one `Span[]`.
  *
  * `aggregation` says how the numbers combine the timed iterations (see SpanAggregation). Fields are
  * populated by what the capture mode measured: `breakdown` (the reconciling seven-slice bar) only under
