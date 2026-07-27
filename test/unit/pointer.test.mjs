@@ -9,7 +9,7 @@ import { writePointer, resolveTarget } from "../../dist/commands/resolve.js";
 // The `latest` pointer must resolve from the cwd it was recorded in WITHOUT dropping a recordings/
 // dir into that cwd -- recording with --out somewhere else should leave the working tree untouched.
 // Single top-level test so the chdir/env mutation below never races another test in this file.
-test("latest pointer: cwd-keyed under XDG_STATE_HOME, no recordings/ in cwd, legacy read fallback", async () => {
+test("latest pointer: cwd-keyed under XDG_STATE_HOME, no recordings/ in cwd, legacy file ignored", async () => {
   const stateHome = mkdtempSync(path.join(tmpdir(), "wpd-state-"));
   const workDir = mkdtempSync(path.join(tmpdir(), "wpd-cwd-"));
   const legacyDir = mkdtempSync(path.join(tmpdir(), "wpd-legacy-"));
@@ -26,8 +26,7 @@ test("latest pointer: cwd-keyed under XDG_STATE_HOME, no recordings/ in cwd, leg
     assert.ok(existsSync(path.join(stateHome, "wpd", "pointers")), "pointer written under state dir");
     assert.equal(await resolveTarget("latest", "recording"), recording, "latest resolves from state");
 
-    // A stale legacy in-cwd pointer must NEVER shadow the state file: when both exist, the state
-    // file wins. This is the change's central invariant.
+    // A stale legacy in-cwd pointer must NEVER shadow the state file: only the state file resolves.
     const staleRecording = path.join(workDir, "recordings", "stale.json");
     mkdirSync(path.join(workDir, "recordings"), { recursive: true });
     writeFileSync(
@@ -38,12 +37,12 @@ test("latest pointer: cwd-keyed under XDG_STATE_HOME, no recordings/ in cwd, leg
     assert.equal(
       await resolveTarget("latest", "recording"),
       recording,
-      "state file wins over a stale legacy recordings/.wpd-last.json",
+      "state file resolves, a stale legacy recordings/.wpd-last.json is ignored",
     );
 
-    // A different cwd is keyed separately, so it does not see workDir's pointer.
+    // A different cwd is keyed separately, so it does not see workDir's pointer. A legacy in-cwd
+    // pointer left by an old record is NOT read: `latest` fails cleanly, naming the remedy.
     process.chdir(legacyDir);
-    // Legacy in-cwd pointer (left by an older record) still resolves via the read-only fallback.
     const legacyRecording = path.join(legacyDir, "runs", "old.json");
     mkdirSync(path.join(legacyDir, "recordings"), { recursive: true });
     writeFileSync(
@@ -51,14 +50,13 @@ test("latest pointer: cwd-keyed under XDG_STATE_HOME, no recordings/ in cwd, leg
       JSON.stringify({ recording: legacyRecording, digest: legacyRecording }),
       "utf8",
     );
-    assert.equal(
-      await resolveTarget("latest", "recording"),
-      legacyRecording,
-      "legacy recordings/.wpd-last.json still resolves when no state entry exists",
+    await assert.rejects(
+      () => resolveTarget("latest", "recording"),
+      /No previous recording found for 'latest'.*Run `record` first/s,
+      "a legacy recordings/.wpd-last.json is ignored: latest fails cleanly with the remedy",
     );
 
-    // A corrupt state pointer (bad JSON) must THROW, never fall back to a legacy pointer that also
-    // exists: resolving a stale legacy recording to answer `latest` is a quiet wrong answer.
+    // A corrupt state pointer (bad JSON) must THROW, naming the state file, never resolve anything.
     const corruptDir = mkdtempSync(path.join(tmpdir(), "wpd-corrupt-"));
     process.chdir(corruptDir);
     // Key by the canonical cwd the resolver sees (tmpdir may be a symlink, e.g. /var -> /private/var).
@@ -70,20 +68,10 @@ test("latest pointer: cwd-keyed under XDG_STATE_HOME, no recordings/ in cwd, leg
     );
     mkdirSync(path.dirname(corruptStateFile), { recursive: true });
     writeFileSync(corruptStateFile, "{ not valid json", "utf8");
-    // A legacy pointer that WOULD resolve if the corrupt state file were ignored.
-    mkdirSync(path.join(corruptDir, "recordings"), { recursive: true });
-    writeFileSync(
-      path.join(corruptDir, "recordings", ".wpd-last.json"),
-      JSON.stringify({
-        recording: path.join(corruptDir, "runs", "legacy.json"),
-        digest: path.join(corruptDir, "runs", "legacy.json"),
-      }),
-      "utf8",
-    );
     await assert.rejects(
       () => resolveTarget("latest", "recording"),
       /Failed to read the 'latest' pointer/,
-      "a corrupt state pointer throws instead of falling back to the legacy pointer",
+      "a corrupt state pointer throws",
     );
   } finally {
     process.chdir(prevCwd);

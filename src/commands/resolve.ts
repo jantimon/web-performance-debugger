@@ -24,9 +24,6 @@ function pointerFileFor(cwd: string): string {
   return path.join(stateBase(), `${hash}.json`);
 }
 
-/** Legacy in-cwd pointer. Still READ (so an in-flight `latest` keeps resolving) but never WRITTEN. */
-const LEGACY_POINTER = "recordings/.wpd-last.json";
-
 export interface LastPointer {
   /** the one default artifact (Span[] + summary + meta); the `query span`/`spans` views derive from it */
   recording: string;
@@ -52,28 +49,14 @@ async function readPointer(): Promise<LastPointer> {
   try {
     return JSON.parse(await fs.readFile(stateFile, "utf8")) as LastPointer;
   } catch (error) {
-    // Fall back to the legacy in-cwd pointer ONLY when the state file is absent. A corrupt state
-    // pointer (bad JSON) or an unreadable one (EACCES) must surface: silently resolving a stale
-    // legacy pointer would answer `latest` with the wrong recording, the quiet-wrong-answer this
-    // tool refuses.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw new Error(
         `Failed to read the 'latest' pointer at ${stateFile}: ${(error as Error).message}`,
       );
     }
-    const legacyFile = path.resolve(LEGACY_POINTER);
-    try {
-      return JSON.parse(await fs.readFile(legacyFile, "utf8")) as LastPointer;
-    } catch (legacyError) {
-      if ((legacyError as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw new Error(
-          `Failed to read the legacy 'latest' pointer at ${legacyFile}: ${(legacyError as Error).message}`,
-        );
-      }
-      throw new Error(
-        `No previous recording found for 'latest' (looked in ${stateFile} and ${legacyFile}). Run \`record\` first, or pass an explicit file path.`,
-      );
-    }
+    throw new Error(
+      `No previous recording found for 'latest' in this directory. Run \`record\` first, or pass an explicit file path.`,
+    );
   }
 }
 
