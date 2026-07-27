@@ -26,7 +26,7 @@ import { SCHEMA_VERSION } from "../schema.js";
 
 /** The chrome capture modes a `--members` group can span (mutually exclusive per member, so a list of
  * them is the two-question path). Firefox/node are rejected upstream: each is one pass at every mode. */
-export const GROUP_MEMBER_MODES = ["default", "breakdown", "deep", "precise-wall"] as const;
+export const GROUP_MEMBER_MODES = ["default", "breakdown", "deep"] as const;
 export type GroupMemberMode = (typeof GROUP_MEMBER_MODES)[number];
 
 export function isGroupMemberMode(value: string): value is GroupMemberMode {
@@ -381,7 +381,6 @@ export async function runMembers(
       ...baseOpts,
       breakdown: mode === "breakdown",
       deep: mode === "deep",
-      preciseWall: mode === "precise-wall",
       group: name,
       // Thread the full requested set so each append derives partial status structurally (a later
       // member's failure leaves the correct "N of M, missing X" note without a separate annotate step).

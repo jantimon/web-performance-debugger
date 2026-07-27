@@ -34,10 +34,14 @@ test("record --target node with no module errors (node imports and profiles run(
   assert.match(result.stderr, /--target node needs a module/, "explains node needs a module");
 });
 
-test("record --precise-wall without a module is refused (nothing would be measured)", () => {
-  const result = runCli(["record", "--url", "http://127.0.0.1:1/x", "--precise-wall"]);
+test("--precise-wall is removed and fires before the no-module/target guards", () => {
+  // No module and no --url would otherwise hit the no-module guard; the retirement message must win.
+  const result = runCli(["record", "--precise-wall"]);
   assert.equal(result.status, 1, "exits non-zero");
-  assert.match(result.stderr, /--precise-wall needs a module/, "explains why nothing would be measured");
+  assert.match(result.stderr, /--precise-wall was removed/, "names the removal");
+  assert.match(result.stderr, /cancels in `diff`\/`cpu-diff`/, "gives the rationale");
+  assert.doesNotMatch(result.stderr, /needs a module path/, "the retirement message preempts the no-module guard");
+  assert.doesNotMatch(result.stderr, /at Object\.|node:internal/, "no stack trace");
 });
 
 test("--html is removed and points at --url", () => {

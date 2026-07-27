@@ -189,7 +189,7 @@ function describeDivergence(timingLabels: string[], tracedLabels: string[]): str
  * trace lost some wpd:step markers (a buffer overflow), so it is a hard error, not a silent degrade.
  *
  * `tracedWindows` of undefined is NOT divergence: it means the pass captured no trace at all (the
- * default/precise-wall capture mode, or firefox), so there is nothing to pair with and every step
+ * default capture mode, or firefox), so there is nothing to pair with and every step
  * legitimately has no window. That case is the caller's to detect and is reported as a note.
  */
 export function mergeSteps(

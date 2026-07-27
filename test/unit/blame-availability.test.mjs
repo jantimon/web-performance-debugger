@@ -34,8 +34,9 @@ test("hasBlameEventLog: --breakdown WITHOUT the capability degrades to unavailab
 
 test("hasBlameEventLog: sampler-only capture modes carry no event log", () => {
   assert.equal(hasBlameEventLog(["default"], undefined), false, "default capture has no event log");
-  assert.equal(hasBlameEventLog(["precise-wall"], undefined), false, "--precise-wall has none");
   assert.equal(hasBlameEventLog(["node-cpu"], undefined), false, "the node lane has none");
+  // A recording written by the retired --precise-wall mode still opens honestly: no event log.
+  assert.equal(hasBlameEventLog(["precise-wall"], undefined), false, "an old precise-wall recording reads as none");
 });
 
 // The per-row confidence marker a `query blame --forced` JSON/TOON row carries (BlameEntry.lowConfidence).

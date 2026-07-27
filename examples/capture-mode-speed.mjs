@@ -13,10 +13,9 @@
 // carryover. Chrome instrumentation matches src/record/capture.ts verbatim: default = the CDP
 // sampler at the 200us default interval; --breakdown = a light trace (breakdownTraceCategories,
 // carrying the v8.cpu_profiler sample stream, NO CDP profiler); --deep = the full .stack +
-// invalidationTracking trace, sampler off; --precise-wall = nothing beyond the baseline (its whole
-// point is a pristine wall), so it reads within noise of it. Firefox is one gecko pass in every
-// mode, so gecko and gecko-deep share one capture and one overhead; --breakdown/--precise-wall do
-// not exist there.
+// invalidationTracking trace, sampler off. The baseline cell captures nothing (no trace, no
+// sampler), so every mode's overhead is read against it. Firefox is one gecko pass in every mode, so
+// gecko and gecko-deep share one capture and one overhead; --breakdown does not exist there.
 //
 // Requires a build first (imports the real category/trace helpers from dist/):
 //   npm run build
@@ -154,7 +153,7 @@ function median(values) {
 
 const CELLS = [];
 if (ENGINES.includes("chrome")) {
-  for (const mode of ["baseline", "default", "breakdown", "deep", "precise-wall"])
+  for (const mode of ["baseline", "default", "breakdown", "deep"])
     CELLS.push({ engine: "chrome", mode });
 }
 if (ENGINES.includes("firefox")) {

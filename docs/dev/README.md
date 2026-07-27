@@ -39,7 +39,7 @@ permalink).
 - Why does the sampler open at `wpd:run:start`, not before `prepare()`? -> [the sampler opens at the run mark](./cpu-profiling.md#the-sampler-opens-at-the-run-mark-not-before-prepare)
 - Why must the sampler never ride a `.stack` trace (+21%, ~4.6x)? -> [never rides `.stack`](./cpu-profiling.md#why-the-sampler-never-rides-a-stack-trace)
 - Are trace durations worse than CDP's counters? (No.) -> [trace durations vs CDP](./cpu-profiling.md#layoutmsstylemspaintms-are-trace-durations-and-cdp-would-be-no-finer)
-- Why 200us, and what does sampling cost the wall? -> [the interval](./cpu-profiling.md#the-sampler-interval-why-200us), [the wall cost](./cpu-profiling.md#the-sampler-costs-wall-and---precise-wall-reclaims-it)
+- Why 200us, and what does sampling cost the wall? -> [the interval](./cpu-profiling.md#the-sampler-interval-why-200us), [the wall cost](./cpu-profiling.md#the-sampler-is-always-on-in-chromes-sampling-modes)
 - Can work below one frame be measured at all? -> [sub-frame CPU](./cpu-profiling.md#sub-frame-cpu-work-is-measurable-on-both-engines-off-the-frame-floor-axis)
 
 **Where CPU samples land** — [cpu-attribution.md](./cpu-attribution.md)

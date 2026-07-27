@@ -66,9 +66,9 @@ export interface RecordingMeta {
   lifecycle: string[];
   /**
    * The one capture that ran, by capture-mode name: "default" (sampler only) | "breakdown" | "deep" |
-   * "precise-wall" | "gecko" (firefox) | "node-cpu". Every invocation is exactly one pass (one
-   * browser launch, one run of the flow), so this is a single-element array naming the capture mode, not a
-   * multi-pass plan.
+   * "gecko" (firefox) | "node-cpu" (plus "precise-wall" on retired recordings). Every invocation is
+   * exactly one pass (one browser launch, one run of the flow), so this is a single-element array
+   * naming the capture mode, not a multi-pass plan.
    */
   passes: string[];
   notes: string[];
@@ -99,7 +99,7 @@ export interface RecordingMeta {
    * navigations), so the selected thread holds only part of it and the counts are known-INCOMPLETE.
    * `assert`/`diff --fail-on-regression` refuse count and count-derived thresholds when it is set,
    * the same honest-refusal the Measured contract makes for a not-measured count. Absent on non-counting
-   * captures (the sampler-only/precise-wall modes, firefox) and on recordings written before this field. */
+   * captures (the sampler-only default mode, firefox) and on recordings written before this field. */
   mainThread?: { via: "marker" | "reanchored" | "heuristic"; split: boolean };
   /**
    * The trace buffer overran and Chrome dropped events (`trace: true`). Trace-derived counts then

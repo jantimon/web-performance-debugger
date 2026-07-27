@@ -172,8 +172,8 @@ program
     toPositiveInt,
   )
   // The chrome capture modes. Default (no flag): CPU sampler only, no trace, cleanest wall -- the
-  // four-slice CPU bar, no rendering counts. --breakdown and --deep each capture more; --precise-wall
-  // is the default mode minus the sampler. Every invocation is exactly ONE pass.
+  // four-slice CPU bar, no rendering counts. --breakdown and --deep each capture more. Every
+  // invocation is exactly ONE pass.
   .option(
     "--breakdown",
     "chrome capture mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span, plus exact layout/style/paint counts. Cannot report forced-layout counts or blame (they need the `.stack` category, which --deep captures)",
@@ -182,14 +182,14 @@ program
     "--deep",
     "attribution-report capture mode. Chrome: ONE full-trace pass (.stack + invalidationTracking), sampler OFF -- exact forced-layout blame, dirtied-by writes, invalidation rollup, exact counts, long tasks; slice durations suppressed (the trace distorts them), no CPU model. Firefox: the SAME gecko pass, adding a dirtied-by (first-invalidation-only) write report from Gecko's cause stacks (no exact-count parity, no forced-by, no thrash detector)",
   )
-  .option(
-    "--precise-wall",
-    "the default capture mode minus the CPU sampler: a pristine benchmark wall that buys back the sampler's overhead (~4-7% on mixed work, ~1% on a long JS-heavy window). No CPU model and no rendering counts",
-  )
   // Removed: wpd always runs Chrome's built-in headless (full Chrome, windowless) or --no-headless.
   // Kept as a hidden option so an explicit --headless-mode gets a clear removal message from the
   // action, not commander's generic unknown-option error.
   .addOption(new Option("--headless-mode <mode>").hideHelp())
+  // Removed: the CPU sampler now rides every chrome sampling capture; its wall cost is systematic and
+  // cancels in diff/cpu-diff. Kept as a hidden option so an explicit --precise-wall gets a clear
+  // removal message from the action, not commander's generic unknown-option error.
+  .addOption(new Option("--precise-wall").hideHelp())
   .option(
     "--variant <label>",
     "label this recording's technique (e.g. when one module runs several, switched by an env var), so a diff/cpu-diff --fail-on-regression gate refuses to compare two different variants",
@@ -217,6 +217,12 @@ program
     // local-file case) so it gets a migration message, not a silently ignored flag.
     if (cmdOpts.html !== undefined)
       program.error("--html was removed in this version. Use --url <file-or-url>.");
+    // --precise-wall is removed: fires before the firefox/node/no-module guards so any invocation
+    // carrying it gets the retirement message, not a lane-specific complaint about the same flag.
+    if (cmdOpts.preciseWall !== undefined)
+      program.error(
+        "--precise-wall was removed. The CPU sampler now rides every chrome sampling capture; its wall cost is systematic, so it cancels in `diff`/`cpu-diff`. A sampler-free wall serves only absolute-wall benchmarking, which wpd does not measure. Record in the default capture mode and compare with `diff`.",
+      );
     // --url names the host page and accepts a live URL OR a local HTML file path; the detection
     // (URL vs file) sets cmdOpts.url or cmdOpts.html to the resolved value. node has no page, so its
     // own guard (below) rejects --url with a lane-specific message; skip the detection there so a bad
@@ -254,10 +260,6 @@ program
         program.error(
           "record needs a module path, or --url to run the built-in load flow. Try: wpd record --url https://example.com",
         );
-      if (cmdOpts.preciseWall)
-        program.error(
-          "record --precise-wall needs a module: the built-in load flow's only step is a navigation, whose wall the page clock cannot price in a no-trace capture mode (nothing would be measured). Drop --precise-wall, or pass a module.",
-        );
     }
     // --headless-mode is removed: wpd measures how real Chrome performs, so it always runs Chrome's
     // built-in headless (full Chrome, windowless), and chrome-headless-shell is gone. Fail an explicit
@@ -272,19 +274,14 @@ program
       program.error(
         "--breakdown and --deep are two different capture modes (two captures, two questions): --breakdown is the reconciling bar, --deep is the attribution report. Record both into one group: `record --members breakdown,deep --group <name>`.",
       );
-    if (cmdOpts.preciseWall && (cmdOpts.breakdown || cmdOpts.deep))
-      program.error(
-        `--precise-wall is the default capture mode minus the sampler; it cannot combine with ${cmdOpts.breakdown ? "--breakdown" : "--deep"} (another capture mode). Drop one.`,
-      );
     if (firefox) {
-      // On firefox the ONE gecko pass IS the lane in every capture mode. --breakdown/--precise-wall have no
-      // meaning over it, and --cpu-throttle needs CDP, which BiDi does not expose. --deep IS
-      // supported: it is a reporting tier (the dirtied-by write report from Gecko's cause stacks), not
-      // a capture change. --protocol-timeout is deliberately allowed: puppeteer threads it into BiDi.
+      // On firefox the ONE gecko pass IS the lane in every capture mode. --breakdown has no meaning
+      // over it, and --cpu-throttle needs CDP, which BiDi does not expose. --deep IS supported: it is
+      // a reporting tier (the dirtied-by write report from Gecko's cause stacks), not a capture
+      // change. --protocol-timeout is deliberately allowed: puppeteer threads it into BiDi.
       const unsupported = [
         cmdOpts.breakdown &&
           "--breakdown (firefox's reconciling bar comes from the Gecko profile automatically; your performance.measure() spans surface in recording.spans without a flag)",
-        cmdOpts.preciseWall && "--precise-wall (the gecko pass IS the firefox lane)",
         // Presence-based, not truthiness: --cpu-throttle 0 is still unsupported here, and 0 is falsy.
         cmdOpts.cpuThrottle != null && "--cpu-throttle (needs CDP)",
         cmdOpts.disableBrowserSandbox && "--disable-browser-sandbox (chrome-only launch flag)",
@@ -306,7 +303,6 @@ program
         cmdOpts.disableBrowserSandbox && "--disable-browser-sandbox",
         cmdOpts.breakdown && "--breakdown",
         cmdOpts.deep && "--deep",
-        cmdOpts.preciseWall && "--precise-wall",
         // No browser to make headless/visible, no driver iteration to salvage, no protocol to time
         // out: this lane runs in-process.
         cmdOpts.headless === false && "--no-headless",
@@ -380,9 +376,9 @@ program
         program.error(
           `--members is chrome only: --target ${cmdOpts.target} is one capture at every mode (firefox is one gecko pass, node is one lane). Use --group <name> to add this single recording to a group.`,
         );
-      if (cmdOpts.breakdown || cmdOpts.deep || cmdOpts.preciseWall)
+      if (cmdOpts.breakdown || cmdOpts.deep)
         program.error(
-          "--members sets the capture mode per member: drop --breakdown/--deep/--precise-wall (list them in --members instead).",
+          "--members sets the capture mode per member: drop --breakdown/--deep (list them in --members instead).",
         );
       const rawModes = String(cmdOpts.members)
         .split(",")
@@ -430,13 +426,12 @@ program
       keepPartial: !!cmdOpts.keepPartial,
       runtime: node ? "node" : "chrome",
       cpuThrottle: cmdOpts.cpuThrottle,
-      // On by default; captureFor turns it off on --deep (the sampler cannot ride a .stack trace)
-      // and --precise-wall. On firefox it is what produces counts + blame at all.
+      // On by default; captureFor turns it off on --deep (the sampler cannot ride a .stack trace).
+      // On firefox it is what produces counts + blame at all.
       cpuProfile: true,
       protocolTimeoutMs: cmdOpts.protocolTimeout,
       breakdown: !!cmdOpts.breakdown,
       deep: !!cmdOpts.deep,
-      preciseWall: !!cmdOpts.preciseWall,
       // Trim to a non-empty label or drop it: an empty/whitespace --variant would otherwise persist
       // into meta and block a comparability gate while every truthiness-guarded output omitted it,
       // so gating and disclosure would disagree.

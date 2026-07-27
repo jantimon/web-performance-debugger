@@ -106,7 +106,6 @@ A capture mode picks WHAT that pass captures, never how many passes run. `captur
 chrome default:        [sampler]                     four-slice CPU bar; no rendering counts
 chrome --breakdown:    [light-trace + trace samples]  seven-slice reconciling bar + exact counts
 chrome --deep:         [full trace, sampler OFF]     forced-layout blame + exact counts, no bar
-chrome --precise-wall: [no trace, no sampler]        pristine benchmark wall, nothing else
 firefox:               [gecko]                        one pass; every capture mode is a reporting tier over it
 node:                  [node-cpu]                     in-process V8, four-slice bar (engine slice "native")
 ```
@@ -124,7 +123,7 @@ node:                  [node-cpu]                     in-process V8, four-slice 
   sampler resets per navigation), so a navigating driver step or an early measure occurrence keeps its
   CPU attribution -- the gap the CDP sampler leaves is closed here. **[measured]** the fused pass leaves
   self-time clean (**+0-1%** vs the sampler-only baseline, no invented functions) and costs **~2-5%**
-  wall over `--precise-wall` (measured cpu-busywork +4.0%, fixed-js-work +2.4%); dropping `.stack` is
+  wall over a sampler-only wall (measured cpu-busywork +4.0%, fixed-js-work +2.4%); dropping `.stack` is
   what removes the +21% contamination below (`v8.cpu_profiler` is not `.stack`: same order as the light
   trace's own cost). The stream samples at a **fixed ~150us** it sets itself, read back from the chunk
   deltas into `meta.cpuIntervalUs`/`CpuModel.sampleIntervalUs` (never the 200us default constant, which
@@ -140,8 +139,6 @@ node:                  [node-cpu]                     in-process V8, four-slice 
   blame (read-site), dirtied-by writes, the thrash detector, invalidation rollup, exact counts and
   long tasks. No CPU model and no reconciling bar. Slice durations are suppressed (`.stack` inflates
   them, style up to +38% below); the span's wall (window width) is still reported.
-- **--precise-wall**: the default capture mode minus the sampler: a pristine benchmark wall, no sampler
-  perturbation, no counts, no CPU model.
 - **gecko**: firefox only; one Gecko-profiler run yields CPU samples *and* layout/style markers. It
   is the firefox lane in every capture mode (the profiler is a whole-browser-lifetime startup feature), so
   the capture modes are reporting tiers over this one capture. `--deep` adds a dirtied-by write report from
@@ -151,9 +148,9 @@ node:                  [node-cpu]                     in-process V8, four-slice 
   with the engine slice labeled `native`.
 
 CPU profiling is **on by default** wherever a capture mode samples (chrome default and `--breakdown`, firefox,
-node) and costs no extra pass. The sampler-free capture modes are chrome's `--precise-wall` and `--deep`;
-node and firefox have none, because node would measure nothing without the sampler and firefox
-without the gecko pass reports every rendering count as 0.
+node) and costs no extra pass. The one sampler-free chrome capture mode is `--deep` (which must run the
+sampler off: it needs `.stack`); node and firefox have none, because node would measure nothing without
+the sampler and firefox without the gecko pass reports every rendering count as 0.
 
 ### The sampler opens at the run mark, not before prepare
 
@@ -252,17 +249,27 @@ into the one signal the trust table calls "real: trustworthy in aggregate". Runn
 a `.stack` trace removes the error instead of modelling it. Prefer the design where the number is
 measured.
 
-### The sampler costs wall, and `--precise-wall` reclaims it
+### The sampler is always on in chrome's sampling modes
 
 **[measured]** The sampler adds no pass (it is on or off the one capture), but it does cost wall on
-the capture mode it rides: **perIteration +10% median and ~3x the variance** at a 50us interval, most of
-which the 200us default below buys back. The CPU model itself is intact (+4%, overlapping ranges,
-same function count).
+the capture mode it rides: **~4-7% on mixed work, ~1% on a long JS-heavy window**, and at a 50us
+interval **perIteration +10% median with ~3x the variance** (most of which the 200us default below
+buys back). The CPU model itself is intact (+4%, overlapping ranges, same function count).
 
-That trade respects the existing trust hierarchy — wall is declared *directional*, CPU self-time is
-declared *real* — and systematic inflation cancels in `diff`, where both sides carry it. So the
-sampling capture modes (default, `--breakdown`) are not pristine on wall, which is what `--precise-wall` is
-for: clean-wall and `--iterations` benchmarking work.
+That cost is **systematic**, and that is the whole argument for keeping the sampler on wherever a
+chrome capture samples (default, `--breakdown`). It respects the existing trust hierarchy — wall is
+declared *directional*, CPU self-time is declared *real* — and a systematic inflation that both sides
+carry **cancels in `diff`/`cpu-diff`**. The only thing a sampler-free wall buys is absolute-wall
+benchmarking: reading a single sampled wall as the page's true speed. wpd does not measure that. On
+wpd's trust hierarchy the wall is directional and the identity — which line, which package, which
+count — is the product, so a bare benchmark wall is not a number wpd reports as trustworthy in
+isolation. A capture mode that reclaimed the sampler's overhead would hand back exactly that
+never-reported number, which is why there is no such mode.
+
+Firefox is the same shape, and always was: the Gecko profiler is a whole-browser-lifetime startup
+feature, so a firefox recording has no sampler-free counterpart either. **Neither engine offers a
+sampler-free wall**, for one reason — the sampled wall is directional on both, and the attribution is
+the product.
 
 ### Per-capture-mode wall overhead (the README Speed column)
 
@@ -280,7 +287,6 @@ ledger fact below.
 
 | chrome mode | Δ vs no-measurement | vs sampler-only (default) |
 | --- | --- | --- |
-| `--precise-wall` | ~0% (captures nothing beyond the baseline) | removes the sampler |
 | default (sampler) | ~4-7% | 0 (this IS sampler-only) |
 | `--breakdown` | ~25% | ~19% |
 | `--deep` | ~70% | n/a (sampler off) |
@@ -307,8 +313,8 @@ tighter numbers stated elsewhere in this file:
   and this workload has rendering the trace must record.
 - **Firefox has no cheap mode.** The Gecko profiler is on for the whole browser lifetime (a startup
   feature), so its ONE pass carries ~150% here and there is no sampler-free counterpart to buy it
-  back. That asymmetry is the honest point: Chrome's `--precise-wall` reclaims the sampler; a Firefox
-  number is a floor, not a benchmark wall.
+  back. Chrome is now the same in kind: neither engine offers a sampler-free wall, so every wpd number
+  is a directional wall over a real attribution, never a benchmark wall.
 
 Directional and machine-dependent — the ordering is the load-bearing part, not the exact percent.
 Refresh with `npm run build && node examples/capture-mode-speed.mjs`.

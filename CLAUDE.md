@@ -174,11 +174,14 @@ cpu on/off, keepThreadIds, gecko) from the flags; there is no multi-pass plan an
 - **`--deep`** — full trace (`.stack` + `invalidationTracking`), sampler OFF. The attribution report:
   forced-by read-sites, dirtied-by writes, the thrash detector, invalidation rollup, exact counts,
   long tasks. No CPU model, and slice DURATIONS are suppressed (see below).
-- **`--precise-wall`** — default capture mode minus the sampler: a pristine benchmark wall, nothing else.
 
 Firefox is one gecko pass at every capture mode (`gecko`/`gecko-deep`); node is the in-process `node-cpu`
 lane. The capture modes are mutually exclusive (`--breakdown --deep` is rejected: two questions, two
-invocations), and the CLI rejects `--breakdown`/`--precise-wall` on firefox/node.
+invocations), and the CLI rejects `--breakdown` on firefox/node. There is no sampler-free wall mode:
+the sampler's ~4-7% cost is systematic and cancels in `diff`/`cpu-diff`, so a bare benchmark wall
+(absolute-wall benchmarking) is a signal wpd does not measure. `--precise-wall` is retired -- an early
+`program.error` names the migration, and readers keep the `"precise-wall"` mode string alive
+(the `CaptureMode` union arm, `model/group.ts` `modeHasCpu`) so an old recording still opens honestly.
 
 **Why the split, present-tense [measured] constraints** (docs/dev/cpu-profiling.md):
 
@@ -308,7 +311,7 @@ Two things this rule is **not**, both documented in
   `commands/record.ts`): heat-colored `self %`, cyan packages, dimmed paths/source/secondary counts,
   bold headline numbers.
 
-### CPU profiling (on by default on the sampling capture modes; `--precise-wall` opts out)
+### CPU profiling (always on wherever a chrome capture samples; no opt-out)
 
 For JS cost (render/reconcile/hot loops), the V8 sampling profiler runs via CDP
 `Profiler.start/stop` (`metrics/cdp.ts`, the only calls left there), bracketed around the timed
@@ -317,7 +320,8 @@ window, in the **default capture mode**. On **`--breakdown`** the samples instea
 `RawCpuProfile` shape, merging the per-process streams a navigation splits, windowed to the run
 onward) with NO CDP profiler running -- one profiler at a time, and the trace stream is continuous
 across navigation (the CDP sampler resets per navigation). The profiler rides the ONE capture mode,
-never a pass of its own; it costs ~1% on wall in the default capture mode, which `--precise-wall` buys back.
+never a pass of its own; it costs ~1% on wall in the default capture mode. That cost is systematic and
+cancels in `diff`/`cpu-diff`, so there is no sampler-free wall mode to buy it back.
 It is OFF on `--deep` (the sampler cannot ride a `.stack` trace, +21%). `profile/cpuprofile.ts` turns the raw `.cpuprofile` into a
 **resolved, self-contained `CpuModel`**
 (per-function self/total time + a thresholded call graph), reusing `makeSourceResolver` +
@@ -383,8 +387,8 @@ cpuProfile/geckoProfiler`) so `runPass` stays one function with capability guard
 tree. `browser/launch.ts` returns `client: CDPSession | null` (null on firefox); every CDP call
 site (throttle/`page.tracing`/`startCpuProfile`) is gated by the caps or a null check (never
 `client!`), and `runDriver` takes a nullable client (per-step `cdpDelta` becomes `{}`). Firefox has
-**no** CDP trace, invalidationTracking, or throttling; the CLI errors on `--breakdown`/`--precise-wall`/
-`--cpu-throttle` and `meta.notes` says so loudly (never fake zeros). **INP is NOT in that list** — it
+**no** CDP trace, invalidationTracking, or throttling; the CLI errors on `--breakdown`/`--cpu-throttle`
+and `meta.notes` says so loudly (never fake zeros). **INP is NOT in that list** — it
 never came from CDP, it is an in-page Event Timing observer in `driver.ts`, ungated by caps, and it
 works. `meta.browser` is `"firefox"` (absent = chrome, so old recordings stay valid).
 

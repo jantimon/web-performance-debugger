@@ -115,15 +115,13 @@ e2e(
   },
 );
 
-// --breakdown / --precise-wall have no meaning on firefox (the ONE gecko pass IS the lane) and are
-// refused. --deep is NOT refused: it is a reporting tier over that same pass. The guards fire before
-// any browser launches, so this runs everywhere (not gated on Firefox).
-test("record --target firefox --breakdown/--precise-wall are refused (the gecko pass IS the lane)", () => {
-  for (const flag of ["--breakdown", "--precise-wall"]) {
-    const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", flag], { encoding: "utf8" });
-    assert.notEqual(result.status, 0, `${flag} exits non-zero`);
-    assert.match(result.stderr, /unsupported/, `${flag} explains why it is refused`);
-  }
+// --breakdown has no meaning on firefox (the ONE gecko pass IS the lane) and is refused. --deep is
+// NOT refused: it is a reporting tier over that same pass. The guard fires before any browser
+// launches, so this runs everywhere (not gated on Firefox).
+test("record --target firefox --breakdown is refused (the gecko pass IS the lane)", () => {
+  const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--breakdown"], { encoding: "utf8" });
+  assert.notEqual(result.status, 0, "--breakdown exits non-zero");
+  assert.match(result.stderr, /unsupported/, "--breakdown explains why it is refused");
 });
 
 // --deep --target firefox is the partial dirtied-by report: the SAME gecko pass, plus Gecko's native

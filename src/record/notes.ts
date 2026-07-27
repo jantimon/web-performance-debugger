@@ -16,7 +16,7 @@ export function breakdownNoProfile(): string {
 }
 
 export function breakdownShape(): string {
-  return "Breakdown mode: ONE fused pass (light trace + CPU samples from the trace's v8.cpu_profiler stream) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (Σ slices + idle = wall). The light trace + sampling ride the same pass as the timing, so per-iteration wall is ~2-5% above a sampler-off wall (--precise-wall).";
+  return "Breakdown mode: ONE fused pass (light trace + CPU samples from the trace's v8.cpu_profiler stream) yields a reconciling js/style/layout/paint/gc/other/idle bar per span (Σ slices + idle = wall). The light trace + sampling ride the same pass as the timing, so per-iteration wall is ~2-5% above a sampler-only wall on JS-heavy work.";
 }
 
 /** The --breakdown CPU sample source + the trace stream's fixed interval. Pushed after the CPU model
@@ -122,17 +122,12 @@ export function defaultCaptureMode(): string {
 }
 
 export function cpuSamplerOnDefaultMode(): string {
-  return "The CPU sampler perturbs per-iteration wall by ~4-7% on mixed work (~1% on a long JS-heavy window) in this capture mode: it is systematic, so it cancels in `diff`. Use --precise-wall for a sampler-off benchmark wall (no CPU model).";
+  return "The CPU sampler rides every chrome sampling capture and perturbs per-iteration wall by ~4-7% on mixed work (~1% on a long JS-heavy window): the cost is systematic, so it cancels in `diff`/`cpu-diff` (both sides carry it). wpd does not offer a sampler-free wall — a bare benchmark wall is not a signal it measures.";
 }
 
 /** --deep: full trace, sampler off; exact counts + blame, durations suppressed. */
 export function deepCaptureMode(): string {
   return "Deep capture mode (--deep): full trace (.stack + invalidationTracking) with the CPU sampler OFF. Exact counts (layout/style/paint/forced), forced-layout blame, the invalidation rollup and long tasks are the product. Slice DURATIONS (layoutMs/styleMs/paintMs) are suppressed (—): the .stack trace inflates them (style up to +38%), and a distorted number is worse than none. Run --breakdown for the reconciling bar and a CPU model; span wall (the window width) is still honest here.";
-}
-
-/** --precise-wall: the default capture mode minus the sampler. */
-export function preciseWall(): string {
-  return "Precise-wall capture mode: the CPU sampler is OFF for a pristine benchmark wall, buying back its overhead (~4-7% on mixed work, ~1% on a long JS-heavy window). No CPU model and no rendering counts — the wall is the only product. Drop --precise-wall for the four-slice CPU bar.";
 }
 
 // --- Driver step wall ---

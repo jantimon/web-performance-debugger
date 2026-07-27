@@ -596,7 +596,7 @@ export interface Span {
   /**
    * Per-span layout/style scope distribution (chrome --breakdown run/step/measure; firefox style only).
    * A count-tier distribution shown beside the bar's ms, never a proxy for it. Absent in capture modes
-   * that store no per-span bar (default/--deep/--precise-wall), on windows with no flush, and on older
+   * that store no per-span bar (default/--deep), on windows with no flush, and on older
    * recordings. See SpanScope.
    */
   scope?: SpanScope;
@@ -654,8 +654,8 @@ export interface Recording {
   marks: TimingEntry[];
   /**
    * The deep event log: resolved trace events with `.stack` frames and invalidation records. Present
-   * only in a capture mode that captured one (--deep, firefox); an EMPTY array in the default/--breakdown/
-   * --precise-wall capture modes, where `query events`/`get`/`blame` report "not captured in this capture mode".
+   * only in a capture mode that captured one (--deep, firefox); an EMPTY array in the default and
+   * --breakdown capture modes, where `query events`/`get`/`blame` report "not captured in this capture mode".
    */
   events: NormalizedEvent[];
   summary: RecordingSummary;

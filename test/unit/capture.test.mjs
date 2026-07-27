@@ -21,13 +21,6 @@ test("captureFor: chrome default capture mode is the sampler alone, no trace", (
   assert.equal(config.gecko, false);
 });
 
-test("captureFor: --precise-wall is the default capture mode minus the sampler", () => {
-  const config = captureFor(opts({ preciseWall: true }), "chrome");
-  assert.equal(config.mode, "precise-wall");
-  assert.equal(config.categories, null, "no trace");
-  assert.equal(config.cpu, false, "the sampler is off for a pristine wall");
-});
-
 test("captureFor: --breakdown is the light trace fused with the sampler (no .stack, no invalidationTracking)", () => {
   const config = captureFor(opts({ breakdown: true }), "chrome");
   assert.equal(config.mode, "breakdown");
@@ -52,7 +45,6 @@ test("captureFor: --breakdown is the light trace fused with the sampler (no .sta
 test("captureFor: cpuSource is 'cdp' in every capture mode but --breakdown (only that one runs a trace profiler)", () => {
   assert.equal(captureFor(opts(), "chrome").cpuSource, "cdp", "default capture mode uses the CDP sampler");
   assert.equal(captureFor(opts({ deep: true }), "chrome").cpuSource, "cdp");
-  assert.equal(captureFor(opts({ preciseWall: true }), "chrome").cpuSource, "cdp");
   assert.equal(captureFor(opts(), "firefox").cpuSource, "cdp", "firefox samples come from the gecko dump");
   assert.equal(captureFor(opts({ breakdown: true }), "chrome").cpuSource, "trace");
 });
