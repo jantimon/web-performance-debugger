@@ -17,6 +17,8 @@ permissions:
 jobs:
   firefox-e2e:
     runs-on: ubuntu-latest
+    # a wedged job fails fast instead of burning toward the 6h ceiling (the gecko suite runs ~minutes)
+    timeout-minutes: 25
     env:
       # The gecko suite drives Firefox, never puppeteer's bundled Chrome, so skip that download.
       PUPPETEER_SKIP_DOWNLOAD: "true"

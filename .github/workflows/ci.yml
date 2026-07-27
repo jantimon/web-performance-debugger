@@ -12,6 +12,8 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    # a wedged job fails fast instead of burning toward the 6h ceiling (normal runs finish well under half this)
+    timeout-minutes: 10
     env:
       # Lint/format/build/unit tests don't launch a browser, so skip the Chromium download.
       PUPPETEER_SKIP_DOWNLOAD: "true"
@@ -33,6 +35,8 @@ jobs:
     # published surface works: the bin runs, a --target node record writes an artifact, and the
     # documented root types compile against the installed package. Browser-free, so it stays fast.
     runs-on: ubuntu-latest
+    # a wedged job fails fast instead of burning toward the 6h ceiling (normal runs finish well under half this)
+    timeout-minutes: 10
     env:
       PUPPETEER_SKIP_DOWNLOAD: "true"
     steps:
@@ -47,6 +51,8 @@ jobs:
   e2e:
     # Drives the real CLI against headless Chrome end-to-end (record -> query, trace + CPU).
     runs-on: ubuntu-latest
+    # a wedged job fails fast instead of burning toward the 6h ceiling (normal runs finish well under half this)
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -67,6 +73,8 @@ jobs:
     needs: [ci, pack-smoke, e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # publish waits on needs; the job itself is minutes (normal runs finish well under half this)
+    timeout-minutes: 15
     permissions:
       contents: write # changesets pushes the "Version Packages" PR and tags
       pull-requests: write # changesets opens/updates the "Version Packages" PR
