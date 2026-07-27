@@ -104,6 +104,42 @@ server.listen(0, ${JSON.stringify(host)}, () => writeFileSync(${JSON.stringify(p
   return { url: `http://${host}:${port}/`, close: () => child.kill() };
 }
 
+// A multi-route sibling of startOnrampServer for the remote-sourcemap probe: a host page, a JS bundle,
+// and its map on distinct paths, each with its own content-type and response headers (the SourceMap
+// header is set on the bundle route). Same separate-process + poll-for-port design and reasons as
+// startOnrampServer. `routes` maps a request path to { contentType, body, headers? }. Default host is
+// "localhost" so the served origin differs by SITE from wpd's own 127.0.0.1 static server, which is
+// what flags the bundle's frames remote (a mere port change on 127.0.0.1 could prefix-match).
+function startRouteServer(routes, host = "localhost") {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-routes-"));
+  const portFile = path.join(dir, "port");
+  const script = `import http from "node:http";
+import { writeFileSync } from "node:fs";
+const routes = ${JSON.stringify(routes)};
+const server = http.createServer((request, response) => {
+  const route = routes[request.url];
+  if (!route) { response.writeHead(404); response.end("not found"); return; }
+  response.writeHead(200, { "content-type": route.contentType, ...(route.headers ?? {}) });
+  response.end(route.body);
+});
+server.listen(0, ${JSON.stringify(host)}, () => writeFileSync(${JSON.stringify(portFile)}, String(server.address().port)));
+`;
+  const scriptFile = path.join(dir, "server.mjs");
+  writeFileSync(scriptFile, script);
+  const child = spawn(process.execPath, [scriptFile], { stdio: "ignore" });
+  const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  let port;
+  for (let attempt = 0; attempt < 100 && !port; attempt++) {
+    if (existsSync(portFile)) port = readFileSync(portFile, "utf8").trim() || undefined;
+    if (!port) sleep(50);
+  }
+  if (!port) {
+    child.kill();
+    throw new Error("route test server did not start within 5s");
+  }
+  return { url: `http://${host}:${port}/`, close: () => child.kill() };
+}
+
 // A boot that does real, countable rendering work: 200 absolutely-positioned boxes appended with a
 // forced synchronous layout read (offsetWidth while dirty) and a per-box background, so the load
 // window carries layout + style + paint the counts and bar must report.
@@ -268,23 +304,8 @@ e2e("record --deep detects layout thrashing and dual-annotates read + dirtied-by
   assert.ok(annotated.at.includes("forces-layout.mjs"), "the read (headline) is a forces-layout.mjs line");
 });
 
-// --target node profiles in-process via node's V8 inspector, so it needs no browser and
-// runs everywhere (not gated on Chrome).
-test("record --target node resolves hot functions to source without a browser", () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
-  const out = path.join(dir, "nodecpu");
-  runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--target", "node", "--iterations", "3", "--out", out]);
-  assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
-  assert.ok(existsSync(`${out}.cpuprofile`), "raw cpuprofile written");
-
-  const model = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
-  assert.ok(model.jsSelfMs > 0, "non-zero sampled JS self-time");
-  const named = model.hot.find(
-    (fn) => fn.fn === "hashString" || fn.fn === "buildRows" || fn.fn === "serializeStyle",
-  );
-  assert.ok(named, "a named busywork function is hot");
-  assert.ok(named.source?.includes("cpu-busywork.mjs"), "hot function resolved to its source file");
-});
+// The browser-free `--target node` hot-functions test lives in test/unit/cli-wiring.test.mjs (the
+// node lane needs no Chrome, so it runs in the fast unit lane, not this Chrome-gated job).
 
 e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
@@ -302,6 +323,77 @@ e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   );
   assert.ok(named, "a named busywork function is hot");
   assert.ok(named.source?.includes("cpu-busywork.mjs"), "hot function resolved to its source file");
+});
+
+// The remote-sourcemap-via-RESPONSE-HEADER path end to end: a production build often strips the
+// `//# sourceMappingURL` comment and keeps only the `SourceMap` response header. Its silent failure
+// mode is the per-package rollup collapsing to one bundle-shaped bucket, which is exactly the
+// mis-attribution the resolver's diagnostics exist to catch. Serve a minified bundle of two tiny fake
+// "packages" (one function each, each on its own generated line so the map is unambiguous), announced
+// ONLY by the header, from a DIFFERENT SITE ("localhost") than wpd's own 127.0.0.1 static server so the
+// bundle's frames are remote. Under --breakdown the CPU samples come from the trace stream, which is
+// continuous across the blank-host -> localhost process swap (the CDP sampler resets there), so the
+// navigated bundle is reliably sampled. The map maps generated line 1 -> node_modules/pkg-alpha and
+// line 2 -> node_modules/pkg-beta, so a resolved rollup must split into BOTH packages.
+const HEADER_BUNDLE =
+  "function pkgAlphaWork(iterations){let accumulator=0;for(let index=0;index<iterations;index++)accumulator+=Math.sqrt(index*1.7+1);return accumulator;}\n" +
+  "function pkgBetaWork(iterations){let accumulator=0;for(let index=0;index<iterations;index++)accumulator+=Math.sin(index)+Math.cos(accumulator);return accumulator;}\n" +
+  "(function(){var deadline=Date.now()+400;var sink=0;while(Date.now()<deadline){sink+=pkgAlphaWork(20000);sink+=pkgBetaWork(20000);}window.__sink=sink;})();\n";
+// Hand-built v3 map, no trailing-comment reference: sources are two node_modules packages, and the two
+// four-field segments map generated line 1 col 0 -> source 0 and line 2 col 0 -> source 1. The line-2
+// segment "ACAA" decodes [genCol delta 0, sourceIndex delta +1, origLine delta 0, origCol delta 0], so
+// it resolves to the second source. One segment per line, so any sampled column on a line resolves to
+// that segment (never the ambiguous single-line-bundle case).
+const HEADER_MAP = JSON.stringify({
+  version: 3,
+  file: "bundle.js",
+  sources: ["node_modules/pkg-alpha/index.js", "node_modules/pkg-beta/index.js"],
+  names: [],
+  mappings: "AAAA;ACAA",
+});
+const HEADER_HOST_HTML =
+  "<!doctype html><meta charset=utf-8><title>header-sourcemap</title>" +
+  '<body><h1>header sourcemap probe</h1><script src="/bundle.js"></script></body>';
+e2e("record --url: a SourceMap response header (no comment) splits a minified bundle by package", { timeout: TIMEOUT_MS }, () => {
+  const server = startRouteServer({
+    "/": { contentType: "text/html; charset=utf-8", body: HEADER_HOST_HTML },
+    "/bundle.js": {
+      contentType: "text/javascript; charset=utf-8",
+      body: HEADER_BUNDLE,
+      headers: { SourceMap: "/bundle.js.map" },
+    },
+    "/bundle.js.map": { contentType: "application/json; charset=utf-8", body: HEADER_MAP },
+  });
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  try {
+    const out = path.join(dir, "header-sourcemap");
+    runCli(["record", "--url", server.url, "--breakdown", "--out", out]);
+    const rec = JSON.parse(readFileSync(out, "utf8"));
+
+    // The bundle's map was announced ONLY by the SourceMap header (the bundle body carries no comment),
+    // and it resolved: at least one of the run's remote scripts got a working map.
+    assert.ok(rec.meta.sourcemaps, "sourcemap diagnostics are recorded on meta");
+    assert.ok(
+      rec.meta.sourcemaps.resolved >= 1,
+      `at least one remote map resolved via the header, got ${JSON.stringify(rec.meta.sourcemaps)}`,
+    );
+
+    // The payoff the header path exists to enable: the per-package rollup splits into BOTH fake
+    // packages instead of collapsing to one bundle-shaped bucket. Without the header (or on a swallowed
+    // failure) both functions would bucket by the bundle's origin, and neither package name would show.
+    const cpu = JSON.parse(runCli(["query", "cpu", out, "--by", "package", "--format", "json"]));
+    const packages = new Set(cpu.byPackage.map((entry) => entry.key));
+    assert.ok(
+      packages.has("pkg-alpha"),
+      `pkg-alpha resolved to its own package, got ${[...packages].join(", ")}`,
+    );
+    assert.ok(
+      packages.has("pkg-beta"),
+      `pkg-beta resolved to its own package, got ${[...packages].join(", ")}`,
+    );
+  } finally {
+    server.close();
+  }
 });
 
 // The single-axis capture invariant after the one-pass cutover. Every invocation is one pass, so
@@ -1248,22 +1340,8 @@ e2e("query span <step>: --deep driver recording shows the step's counts and forc
   assert.equal(anatomy.hot, null, "hot is not-available for a step span");
 });
 
-// The removed `query digest` / `query index` verbs exit 1 with a message naming the replacement, not
-// commander's bare "unknown command" and not a stack trace. Browser-free, so a plain test (never
-// skipped): the stub errors before any recording is read.
-for (const removed of ["digest", "index"]) {
-  test(`query ${removed} was removed and points at the replacement`, () => {
-    const result = spawnSync(process.execPath, [cli, "query", removed, "latest", "--format", "json"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    });
-    assert.equal(result.status, 1, `query ${removed} exits non-zero`);
-    const output = `${result.stdout}${result.stderr}`;
-    assert.match(output, new RegExp(`\`query ${removed}\` was removed`), "names the removed verb");
-    assert.match(output, /query span[s]?/, "names the replacement verb");
-    assert.doesNotMatch(output, /at Object\.|node:internal/, "no stack trace");
-  });
-}
+// The browser-free removed-verb stubs (`query digest`/`query index`) live in
+// test/unit/cli-wiring.test.mjs: the stub errors before any recording is read, so they need no browser.
 
 // The off-thread frame side track (Chrome --breakdown). It is DISPLAY-ONLY -- the frame count is
 // scheduler/settle noise that swings 1->28 on unchanged code (FP-1), so this asserts PRESENCE and
@@ -1485,56 +1563,9 @@ e2e("record --url boot: counts/bar follow a cross-process navigation, not the bl
   }
 });
 
-// --headless-mode is removed: wpd always runs Chrome's built-in headless (or --no-headless). An
-// explicit flag fails with a clear removal message, not commander's generic unknown-option. The guard
-// rejects before any browser launches, so this runs everywhere (not gated on Chrome).
-test("record --headless-mode errors with a clear removal message", () => {
-  const result = spawnSync(
-    process.execPath,
-    [cli, "record", path.join(examples, "forces-layout.mjs"), "--headless-mode", "new"],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  assert.notEqual(result.status, 0, "the removed flag exits non-zero");
-  assert.match(result.stderr, /--headless-mode was removed in this version/);
-  assert.match(result.stderr, /--no-headless/, "points at the surviving headed opt-out");
-});
-
-// The capture modes are mutually exclusive: two capture modes are two captures / two questions, so wpd
-// points at running twice rather than fusing them. Guards fire before any browser launches.
-const guardError = (args) =>
-  spawnSync(process.execPath, [cli, "record", path.join(examples, "forces-layout.mjs"), ...args], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-
-test("record --breakdown --deep is rejected (two capture modes, two invocations)", () => {
-  const result = guardError(["--breakdown", "--deep"]);
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /--breakdown and --deep are two different capture modes/);
-});
-
-test("record --precise-wall is retired and names the migration (fires before any browser launch)", () => {
-  const result = guardError(["--precise-wall", "--breakdown"]);
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /--precise-wall was removed/);
-  assert.match(result.stderr, /cancels in `diff`\/`cpu-diff`/, "gives the systematic-cost rationale");
-});
-
-test("record --breakdown on firefox is rejected (the gecko pass IS the firefox lane)", () => {
-  // --deep on firefox is a reporting tier over the same gecko pass (its dirtied-by write report
-  // is covered in test/firefox.e2e.test.mjs). --breakdown has no meaning on firefox and is
-  // refused before any browser launches.
-  const result = guardError(["--target", "firefox", "--breakdown"]);
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /unsupported/);
-  assert.match(result.stderr, /--breakdown/);
-});
-
-test("record --deep on node is rejected (CPU-only lane, no trace)", () => {
-  const result = guardError(["--target", "node", "--deep"]);
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /CPU-only lane/);
-});
+// The browser-free flag-rejection guards (--headless-mode removal, --breakdown --deep, --precise-wall
+// retirement, --breakdown on firefox, --deep on node) live in test/unit/cli-wiring.test.mjs: each
+// `program.error`s before any browser launches, so they belong in the fast unit lane.
 
 // The documented regression workflow ("Did my change regress a budget"): forced counts and slice ms
 // come from different capture modes, so the README gates each on its own recording. This exercises that exact
@@ -1920,28 +1951,5 @@ e2e("record --group: a duplicate capture-mode member refuses before writing anyt
   }
 });
 
-// B-01 end-to-end on the node lane (no browser): the profiler-start prefix (~9-30 ms the sampler
-// spends warming up before the first run()) is windowed out, so a near-no-op workload reports ~0 JS
-// self-time and two runs of it do NOT manufacture a cpu-diff regression from prefix jitter. Plain
-// `test` (not the Chrome-gated `e2e`): --target node imports the module in-process, no browser.
-test("node lane: a near-no-op --target node run gates stable under cpu-diff (B-01)", () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "wpd-node-e2e-"));
-  const probe = path.join(examples, "near-zero.mjs");
-  const base = path.join(dir, "base.json");
-  const current = path.join(dir, "current.json");
-  runCli(["record", probe, "--target", "node", "--iterations", "20", "--out", base]);
-  runCli(["record", probe, "--target", "node", "--iterations", "20", "--out", current]);
-
-  const baseModel = JSON.parse(readFileSync(`${base.replace(/\.json$/, "")}.cpu.json`, "utf8"));
-  assert.ok(baseModel.jsSelfMs < 5, `a near-no-op reports ~0 JS self-time, got ${baseModel.jsSelfMs}`);
-  // No `post (node:inspector)` prefix frame should top the list; the windowing removed it.
-  const topFn = baseModel.functions[0];
-  assert.ok(
-    !topFn || !(topFn.fn === "post" && (topFn.file ?? "").includes("inspector")),
-    `the profiler-start prefix must not be the hottest function, got ${topFn?.fn}`,
-  );
-
-  // --fail-on-regression must exit 0: runCli throws on a non-zero exit, so no throw is the assertion.
-  const diff = JSON.parse(runCli(["cpu-diff", base, current, "--fail-on-regression", "--format", "json"]));
-  assert.ok(Math.abs(diff.netJsSelfMs) < 5, `two identical no-op runs net ~0, got ${diff.netJsSelfMs}`);
-});
+// The browser-free B-01 node-lane cpu-diff stability test lives in test/unit/cli-wiring.test.mjs
+// (--target node imports the module in-process, no browser).

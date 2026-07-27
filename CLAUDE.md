@@ -52,8 +52,10 @@ dirtied-by report, the gecko converter, the XDG pointer, frame side track, the t
 notes, the LoAF shaper (`summarizeLoaf`), the `waitForStable` destroyed-context classifier, the
 comparability gate (workload/variant/ephemeral-loopback-port), the run-group core
 (formation/pickMember/count-disagreement + the artifact gates + `resolveConsumption`), the off-disk
-package rollup, the `--deep` event-log serialization preflight + the blame-row confidence marker, and
-the `facts.md` ledger drift check). The **cli e2e tests** (`test/cli.e2e.test.mjs`) spawn the
+package rollup, the `--deep` event-log serialization preflight + the blame-row confidence marker, the
+browser-free CLI wiring spawns (`cli-wiring.test.mjs`: the flag-rejection guards, the removed-verb
+spawn stubs, and the `--target node` hot-functions + cpu-diff lane, all of which launch no browser),
+and the `facts.md` ledger drift check). The **cli e2e tests** (`test/cli.e2e.test.mjs`) spawn the
 built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
 `--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`), the
 trace-sourced CPU samples keeping per-step attribution across a navigation, the cross-process
@@ -61,9 +63,9 @@ re-anchor surviving a stray pre-nav flush and the loud split note on successive 
 `waitForStable` surviving a hard cross-document redirect, `query spans` (incl. the `--min-wall`/
 `--filter` flood filter, and the bar-less counts overview on --deep), `query span` (a run span's bar +
 hot functions, a --deep step's counts + forced), per-step LoAF script attribution in the default capture mode,
-`waitForStable` catching a streamed transition, `--keep-partial` salvage, the
-digest/index removal, the frame side track, and the two-capture assert workflow (a forced budget on
-`--breakdown` and a slice budget on `--deep` each fail loudly). They **self-skip when Chrome is not installed** (so
+`waitForStable` catching a streamed transition, `--keep-partial` salvage, the remote
+SourceMap-header package split, the frame side track, and the two-capture assert workflow (a forced
+budget on `--breakdown` and a slice budget on `--deep` each fail loudly). They **self-skip when Chrome is not installed** (so
 `npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a
 missing browser into a hard failure so the e2e job can't silently pass. The firefox e2e tests
 (`test/firefox.e2e.test.mjs`, self-skipping) cover the gecko lane end-to-end.
