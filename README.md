@@ -592,6 +592,12 @@ is the finding — a median of 40 ms next to a max of 255 ms says one iteration 
 is that step's own min/median/mean/max. There is deliberately no median *across* steps: "mount" and "inp"
 measure different work, so pooling them would produce a real-looking number that means nothing.
 
+**How many runs?** A single reading can sit anywhere in the run-to-run spread, so on its own it
+misleads; the median of a few runs is far steadier — about twice as stable at five runs as at one.
+Lighthouse measures the same effect: its score's confidence interval narrows from roughly ±15 points
+at 1 run to ±8 at 5 ([variability docs](https://github.com/GoogleChrome/lighthouse/blob/main/docs/variability.md)).
+wpd's per-step medians already consume `--iterations`, so `--iterations 5` is the calibration knob.
+
 Each iteration must measure the **same steps** — wpd fails the run rather than report a median over
 fewer samples than it claims. On a flaky production site, add `--keep-partial`: if a **later**
 iteration fails, wpd keeps the completed iterations and writes the recording with a loud note naming
@@ -648,6 +654,10 @@ browser/runtime/capture-mode/workload/`--iterations`/`--warmup`/headless flavour
 names the mismatch and declines to gate. The **workload** is the executed flow (lane + host page +
 module), not just the target string, so a different module — or the built-in load flow — against the
 *same* host page is a different workload and refuses.
+
+Never run two measurement processes at once on the same machine: concurrent runs contend for the CPU
+and contaminate self-time and wall alike, so scale a CI matrix across machines, not across cores on one
+([Lighthouse variability](https://github.com/GoogleChrome/lighthouse/blob/main/docs/variability.md)).
 
 ## What one record writes
 

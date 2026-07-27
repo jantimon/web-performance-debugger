@@ -2,7 +2,7 @@ import type { CpuModel, FrameSideTrack, Span, SpanKind } from "../model/recordin
 import type { CpuOverview, FrameQueryResult } from "../model/query.js";
 import { num, table, middleEllipsis, LABEL_COL_MAX } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
-import { serialize, isFormat, type Format } from "../output/format.js";
+import { structuredFormat, emit, type StructuredOutOpts } from "../output/format.js";
 import { spanAggregation } from "../model/spans.js";
 import { resolveVerbTarget, routingNote } from "./group.js";
 
@@ -253,23 +253,9 @@ function printFrameSideTrack(frames: FrameSideTrack, showFrames: boolean): void 
   }
 }
 
-interface OutOpts {
-  json?: boolean;
-  format?: string;
+interface OutOpts extends StructuredOutOpts {
   top?: number;
   by?: string;
-}
-
-function structuredFormat(opts: OutOpts): Format | null {
-  if (opts.format) {
-    if (!isFormat(opts.format)) throw new Error("--format must be json or toon");
-    return opts.format;
-  }
-  return opts.json ? "json" : null;
-}
-
-function emit(value: unknown, fmt: Format): void {
-  console.log(serialize(value, fmt));
 }
 
 const DEFAULT_TOP = 25;
