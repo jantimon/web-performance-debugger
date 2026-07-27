@@ -44,31 +44,13 @@ browser-free), and `e2e` (downloads Chrome, runs `test:e2e`). A final `release` 
 OIDC publish) `needs: [ci, pack-smoke, e2e]` and runs only on a push to main, so a broken main can
 never publish. The gecko `test:e2e:firefox` suite runs nightly in `.github/workflows/firefox-e2e.yml`
 (installs Firefox, `WPD_E2E_FIREFOX_REQUIRED=1` so a missing browser is a hard failure), not on every
-PR. The unit tests (`test/unit/*.test.mjs`) cover pure functions against compiled
-`dist/` (classify/summarize/analysis/format, plus the breakdown engine, the trace CPU-chunk merge
-(`profile-chunks`), `query spans` adapter + its bar-less counts overview + its
-flood filter, the `query span` anatomy + removed-verb stubs, the thrash detector, the firefox
-dirtied-by report, the gecko converter, the XDG pointer, frame side track, the trace-overflow/partial
-notes, the LoAF shaper (`summarizeLoaf`), the `waitForStable` destroyed-context classifier, the
-comparability gate (workload/variant/ephemeral-loopback-port), the run-group core
-(formation/pickMember/count-disagreement + the artifact gates + `resolveConsumption`), the off-disk
-package rollup, the `--deep` event-log serialization preflight + the blame-row confidence marker, the
-browser-free CLI wiring spawns (`cli-wiring.test.mjs`: the flag-rejection guards, the removed-verb
-spawn stubs, and the `--target node` hot-functions + cpu-diff lane, all of which launch no browser),
-and the `facts.md` ledger drift check). The **cli e2e tests** (`test/cli.e2e.test.mjs`) spawn the
-built CLI against real headless Chrome: forced-layout `blame`, CPU source resolution, the
-`--breakdown` reconciling spans (incl. an idle-dominated span and a user `performance.measure`), the
-trace-sourced CPU samples keeping per-step attribution across a navigation, the cross-process
-re-anchor surviving a stray pre-nav flush and the loud split note on successive navigations,
-`waitForStable` surviving a hard cross-document redirect, `query spans` (incl. the `--min-wall`/
-`--filter` flood filter, and the bar-less counts overview on --deep), `query span` (a run span's bar +
-hot functions, a --deep step's counts + forced), per-step LoAF script attribution in the default capture mode,
-`waitForStable` catching a streamed transition, `--keep-partial` salvage, the remote
-SourceMap-header package split, the frame side track, and the two-capture assert workflow (a forced
-budget on `--breakdown` and a slice budget on `--deep` each fail loudly). They **self-skip when Chrome is not installed** (so
-`npm test` and the `ci` job stay green and fast); `WPD_E2E_REQUIRED=1` (set by `test:e2e`) turns a
-missing browser into a hard failure so the e2e job can't silently pass. The firefox e2e tests
-(`test/firefox.e2e.test.mjs`, self-skipping) cover the gecko lane end-to-end.
+PR. Three test lanes: **unit** (`test/unit/*.test.mjs`) exercises pure functions against compiled
+`dist/`, launching no browser; **chrome e2e** (`test/cli.e2e.test.mjs`) spawns the built CLI against
+real headless Chrome; **firefox e2e** (`test/firefox.e2e.test.mjs`) drives the gecko lane. Each e2e
+suite **self-skips when its browser is absent** so `npm test` and `ci` stay green without one;
+`WPD_E2E_REQUIRED=1` (chrome, set by `test:e2e`) and `WPD_E2E_FIREFOX_REQUIRED=1` (the nightly firefox
+job) make a missing browser a hard failure so the e2e jobs can't silently pass. Grep the test dirs for
+a feature's coverage; the per-feature inventory is not tracked here.
 The broader smoke tests below stay manual (always `npm run build` first — the CLI runs `dist/`):
 
 ```bash
@@ -83,7 +65,9 @@ node dist/cli.js query span latest "add rows"                       # one span's
 ## Architecture
 
 Flow: **`record` produces a `Recording` (model/recording.ts) → `query`/`assert`/`diff` consume it.**
-`src/cli.ts` (commander) is the only entry point and wires every command. The model is split across
+`src/cli.ts` (commander) is the only entry point and wires every command; `cli-validation.ts` holds
+the one numeric-validation policy (whole-number/ms-threshold parsers that throw an
+`InvalidArgumentError` at the argument boundary before any browser launches). The model is split across
 `model/`: `recording.ts` (the `Recording`/`RecordingSummary`/`Span`/`Breakdown` core, and a BARREL that
 re-exports the domain files so `../model/recording.js` stays the one import path: `events.ts` (`EventKind`/
 `NormalizedEvent`/`StackFrame`), `cpu.ts` (`CpuModel`/`CpuFunction`/`CpuBreakdown`), `frames.ts`
@@ -104,8 +88,9 @@ fabricating a pass/fail), and `group.ts` (the **run-group** manifest: `RunGroup`
 routing a consumption axis to the member that measured it, and `countDisagreements` surfacing both
 values when two members disagree on an exact count -- pure; the fs writer/runner is `record/group.ts`,
 the consumer primitives are `commands/group.ts`). `record` orchestration lives in
-`src/record/`: `capture.ts` (`captureFor` picks the ONE capture mode + `capabilitiesFor`/
-`blameSemanticFor`/`countScopeNote`), `page-option.ts` (`PageResolution`: resolves the `--url <value>`
+`src/record/`: `options.ts` (`RecordOptions`, the internal flags shape `cli.ts` fills), `capture.ts`
+(`captureFor` picks the ONE capture mode + `capabilitiesFor`/`blameSemanticFor`/`countScopeNote`),
+`page-option.ts` (`PageResolution`: resolves the `--url <value>`
 host page to a live URL to navigate or a local HTML file to serve),
 `runpass.ts` (runs that one capture), `artifacts.ts`
 (serialization), `spans-build.ts` (assembles `Span[]` from the run/steps/summary), `breakdown-spans.ts`
@@ -180,10 +165,10 @@ cpu on/off, keepThreadIds, gecko) from the flags; there is no multi-pass plan an
 Firefox is one gecko pass at every capture mode (`gecko`/`gecko-deep`); node is the in-process `node-cpu`
 lane. The capture modes are mutually exclusive (`--breakdown --deep` is rejected: two questions, two
 invocations), and the CLI rejects `--breakdown` on firefox/node. There is no sampler-free wall mode:
-the sampler's ~4-7% cost is systematic and cancels in `diff`/`cpu-diff`, so a bare benchmark wall
-(absolute-wall benchmarking) is a signal wpd does not measure. `--precise-wall` is retired -- an early
-`program.error` names the migration, and readers keep the `"precise-wall"` mode string alive
-(the `CaptureMode` union arm, `model/group.ts` `modeHasCpu`) so an old recording still opens honestly.
+the sampler's ~4-7% cost is systematic and cancels in `diff`/`cpu-diff`, so absolute-wall benchmarking
+is a signal wpd does not measure. `--precise-wall` is retired -- an early `program.error` names the
+migration, and readers keep the `"precise-wall"` mode string alive (the `CaptureMode` arm,
+`model/group.ts` `modeHasCpu`) so an old recording still opens honestly.
 
 **Why the split, present-tense [measured] constraints** (docs/dev/cpu-profiling.md):
 
@@ -234,7 +219,9 @@ Alongside: `taxonomy.ts` (the `EventKind` → work-slice map
 and paint classification), `main-thread.ts` (picks the renderer main-thread `pid/tid` the counts and
 the bar share), `steps.ts` (per-step windowing/merge), `frames.ts` (the off-thread frame side track
 parsed from the already-enabled `devtools.timeline.frame` category — display-only,
-[rendering-counts.md](docs/dev/rendering-counts.md)), and `breakdown.ts` (the `--breakdown` engine:
+[rendering-counts.md](docs/dev/rendering-counts.md)), `scope.ts` (per-flush layout/style scope from
+the event `args` — dirtyObjects/elementCount, a p50/max distribution per span, NEVER a sum), and
+`breakdown.ts` (the `--breakdown` engine:
 `(trace events, profile samples, window) → Breakdown`, disjoint main-thread self-time tiled
 `js/style/layout/paint/gc/other`, `idle := window − Σ`).
 
@@ -274,7 +261,8 @@ Two things this rule is **not**, both documented in
 - `metrics/summarize.ts` builds `RecordingSummary` from trace events alone (counts main-thread
   windowed, durations wall-tier on the light trace, `Measured` null where the capture mode observed nothing).
 - `commands/query.ts` = 6 verbs: `spans`, `span`, `events`, `blame`, `get`, and the `--dirtied` mode
-  of `blame` (plus `cpu`/`frame` in `commands/cpu.ts`). `query spans` (via `model/spans.ts`) is the
+  of `blame` (plus `cpu`/`frame` in `commands/cpu.ts`); `commands/query-view.ts` renders each verb's
+  view shape into the human report. `query spans` (via `model/spans.ts`) is the
   compact **overview**: a read-only OUTPUT ADAPTER that folds whatever bar a recording already holds
   (seven-slice `SpanBreakdown` or four/six-slice `CpuBreakdown`) onto one `UnifiedSlices` shape — no
   new stored type — surfacing each span's `aggregation` (`first`/`sum`/`median`) and, for a merged
@@ -315,123 +303,92 @@ Two things this rule is **not**, both documented in
 
 ### CPU profiling (always on wherever a chrome capture samples; no opt-out)
 
-For JS cost (render/reconcile/hot loops), the V8 sampling profiler runs via CDP
-`Profiler.start/stop` (`metrics/cdp.ts`, the only calls left there), bracketed around the timed
-window, in the **default capture mode**. On **`--breakdown`** the samples instead come from the trace's
-`v8.cpu_profiler` ProfileChunk stream (assembled by `trace/profile-chunks.ts` into the same
-`RawCpuProfile` shape, merging the per-process streams a navigation splits, windowed to the run
-onward) with NO CDP profiler running -- one profiler at a time, and the trace stream is continuous
-across navigation (the CDP sampler resets per navigation). The profiler rides the ONE capture mode,
-never a pass of its own; it costs ~1% on wall in the default capture mode. That cost is systematic and
-cancels in `diff`/`cpu-diff`, so there is no sampler-free wall mode to buy it back.
-It is OFF on `--deep` (the sampler cannot ride a `.stack` trace, +21%). `profile/cpuprofile.ts` turns the raw `.cpuprofile` into a
-**resolved, self-contained `CpuModel`**
-(per-function self/total time + a thresholded call graph), reusing `makeSourceResolver` +
-`SourceMapResolver` for source attribution. Self time rolls up by **package** (`packageRollup`,
-pnpm-safe: last `node_modules/<pkg>` segment, and monorepo workspace packages via nearest
-`package.json` name) or **file** (`fileRollup`); `query cpu --by package|file|function` picks the
-lens. Two files are written: the raw
-`.cpuprofile` (DevTools/Speedscope) and `<base>.cpu.json` (the model, read by the verbs). Resolution
-happens at record time because the served-server URL is ephemeral; the model is sized by function
-count, not sample count. Verbs: `query cpu` (bounded overview), `query frame <id>` (callers/callees
-from the model's edges), `cpu-diff` (per-function/per-module self-time deltas, noise-filtered).
-Non-obvious: CDP callFrame line/column are **0-based** (converted to 1-based in `resolveCallFrame`,
-unlike the 1-based trace stack frames); puppeteer harness frames are dropped via `isToolFrameUrl`.
-`SourceMapResolver` handles three map sources: local sidecar `.map`, inline data-URI, and **remote**
-(for `--url` sites, `frame.remote` set in `makeSourceResolver`) by fetching the script, reading its
-`sourceMappingURL` **or its `SourceMap`/`X-SourceMap` response header** (production builds often
-strip the comment and keep the header), and fetching the map (5s timeout). Minification is
-irrelevant once the map resolves: a minified single bundle splits per package normally.
-**ONE resolver per run**, constructed in `record()` and threaded through `runPass` ->
-`attachStacks` (x2) and `buildCpuModel` (both take it as an optional param defaulting to a fresh
-instance, so `runtime/node.ts` and programmatic callers are unaffected): it shares the cache (a
-remote script+map is fetched once, not once per pass) and, critically, the **diagnostics**. Every
-`loadMap` attempt records an outcome (`no-sourcemap-url` / `script-fetch-failed` /
-`map-fetch-failed` / `map-parse-failed`); `maps.diagnostics()` returns them grouped by reason.
-Swallowing a failure (a bare `catch { return null }`) makes it invisible, which reads as "the
-feature does not exist": frames keep minified names and the per-package rollup silently reports one
-bundle-shaped bucket. So `record()` mutates `meta.sourcemaps` + pushes a note (WARNING only when 0
-of N resolved) **after** `buildCpuModel` but **before** any artifact is serialized -- that ordering
-is load-bearing, since `meta` is shared by reference with every artifact. An unmapped remote frame
-buckets by **origin** (`(cdn.example.com)`), never `"app"`: blaming unmapped third-party code on the
-user's own bundle is exactly the mis-attribution `classifyPseudoUrl` already guards against. Local
-source paths are resolved with a `/private` symlink fallback (`resolveOriginalSource`) because
-bundlers record sources against the symlinked cwd while Node canonicalizes it; remote frames get
-string-based package attribution (no fs). Resolved local source paths (`event.at`/`stack[].source` and cpu
-`source`/`file`) are stored **relative to root** via `relativizeSource` *after* fs-dependent
-resolution: smaller files, portable recordings, and stable `cpu-diff`/`functionJoinKey` joins across
-machines (the `/private` mismatch stops breaking joins). `node:` builtins, remote urls, and paths
-outside root stay absolute; artifact back-pointers (`recording`/`profile`, the `latest`
-pointer) stay absolute for cwd-independent re-opening -- but the terminal report prints them through
-`displayPath` (relative to cwd when shorter). Display and storage answer different questions: stored
-absolute so any cwd can reopen them, shown relative because an absolute path is noise to read and
-puts your home directory into every pasted report, screenshot and recorded terminal. On-disk numbers are rounded to 4 decimals in
-`serialize` (drops binary-float dust; the raw `.cpuprofile` is written via direct `JSON.stringify`
-and stays exact). Display names prefer the sourcemap's original identifier (`pos.name`)
-over the minified V8 name (kept as `CpuFunction.minified`), which also makes `cpu-diff` join stably
-across different minified builds.
+For JS cost, the V8 sampling profiler runs bracketed around the timed window, its source set by the
+capture mode (per the capture-mode list above): CDP `Profiler.start/stop` (`metrics/cdp.ts`, the only
+calls left there) on the default mode, the trace's `v8.cpu_profiler` ProfileChunk stream
+(`trace/profile-chunks.ts`, same `RawCpuProfile` shape, merging the per-process streams a navigation
+splits) on `--breakdown`. It rides the ONE capture mode, never a pass of its own, and is **OFF on
+`--deep`, where the sampler cannot ride a `.stack` trace (+21%)**. `profile/cpuprofile.ts` resolves the
+raw `.cpuprofile` into a self-contained `CpuModel`
+(per-function self/total + a thresholded call graph) **at record time** (the served-server URL is
+ephemeral), reusing `makeSourceResolver` + `SourceMapResolver`. Self-time rolls up by **package**
+(`packageRollup`, pnpm-safe) or **file** (`fileRollup`); `query cpu --by package|file|function` picks
+the lens. Two files land: the raw `.cpuprofile` (DevTools/Speedscope) and `<base>.cpu.json` (the model
+the verbs read). Verbs: `query cpu` (overview), `query frame <id>` (callers/callees), `cpu-diff`
+(self-time deltas, noise-filtered). The narrative is [cpu-profiling.md](docs/dev/cpu-profiling.md); for
+per-span CPU attribution (which spans carry samples, the hot list, sourcemap trust)
+[cpu-attribution.md](docs/dev/cpu-attribution.md).
 
-**Node runtime (`--target node`)**: a CPU-only lane that skips Chrome entirely. `runtime/node.ts`
-(`recordNode`) imports the module *in this process* and profiles `run()` with node's built-in
-`inspector` Session (`Profiler.start/stop` returns the same `RawCpuProfile` shape as CDP), bracketed
-around the timed loop so only `run()` + callees are sampled. It reuses `buildCpuModel` unchanged via
-`{ runtime: "node" }`, which swaps `makeSourceResolver` for `makeNodeSourceResolver` (rewrites
-`file://` frames to local paths; `node:` builtins fall to the `(node)` package bucket in
-`resolveCallFrame`). The tool's own loop frames are dropped by extending `isToolFrameUrl` to match
-`/runtime/node.`. CPU-only means no Recording rendering counts: `recordAndReport` dispatches to
-`recordNode` + `printNodeReport` (CPU headline + per-iteration timing, no DOM tables). The CLI sets
-`runtime: "node"` from `--target node` and errors on browser-only flags (`--url/...`).
-`meta.runtime` records the lane; `meta.passes` is `["node-cpu"]`.
+Non-obvious constraints:
 
-**Firefox backend (`--target firefox`)**: a second browser lane driven over WebDriver BiDi (no
-CDP). `browser/backend.ts` `capsFor()` is a plain caps object (`cdpCounts/trace/throttle/
-cpuProfile/geckoProfiler`) so `runPass` stays one function with capability guards, not a class
-tree. `browser/launch.ts` returns `client: CDPSession | null` (null on firefox); every CDP call
-site (throttle/`page.tracing`/`startCpuProfile`) is gated by the caps or a null check (never
-`client!`), and `runDriver` takes a nullable client (per-step `cdpDelta` becomes `{}`). Firefox has
+- **CDP callFrame line/column are 0-based** (converted to 1-based in `resolveCallFrame`, unlike the
+  1-based trace stack frames); puppeteer harness frames drop via `isToolFrameUrl`.
+- **`SourceMapResolver` reads remote maps** (for `--url` sites) via the script's `sourceMappingURL`
+  **or its `SourceMap`/`X-SourceMap` response header** (production builds often strip the comment, keep
+  the header); once a map resolves, minification is irrelevant.
+- **ONE resolver per run**, constructed in `record()` and threaded through `runPass`/`attachStacks`/
+  `buildCpuModel`: it shares the fetch cache AND the **diagnostics**. Every `loadMap` records an
+  outcome (`no-sourcemap-url`/`script-fetch-failed`/`map-fetch-failed`/`map-parse-failed`); a swallowed
+  failure reads as "the feature does not exist" (minified names, one bundle-shaped bucket). So
+  `record()` mutates `meta.sourcemaps` + pushes a note (WARNING only when 0 of N resolved) **after
+  `buildCpuModel` but before any artifact is serialized** -- that ordering is load-bearing, since
+  `meta` is shared by reference with every artifact.
+- **An unmapped remote frame buckets by origin** (`(cdn.example.com)`), never `"app"`: blaming
+  unmapped third-party code on the user's bundle is the mis-attribution `classifyPseudoUrl` guards
+  against.
+- Resolved local source paths are stored **relative to root** (`relativizeSource`, with a `/private`
+  symlink fallback in `resolveOriginalSource`): portable recordings, stable `cpu-diff` joins across
+  machines. `node:` builtins, remote urls, and paths outside root stay absolute, as do artifact
+  back-pointers (so any cwd reopens them); the terminal report prints paths through `displayPath` so an
+  absolute home path never leaks into a pasted report. On-disk numbers round to 4 decimals in
+  `serialize`; the raw `.cpuprofile` stays exact. Display names prefer the sourcemap's `pos.name` over
+  the minified V8 name (`CpuFunction.minified`), which also joins `cpu-diff` across builds.
+
+**Node runtime (`--target node`)**: a CPU-only lane skipping Chrome. `runtime/node.ts` (`recordNode`)
+imports the module *in this process* and profiles `run()` with node's built-in `inspector` Session
+(`Profiler.start/stop`, same `RawCpuProfile` shape as CDP), bracketed around the timed loop. It reuses
+`buildCpuModel` via `{ runtime: "node" }`, which swaps in `makeNodeSourceResolver` (rewrites `file://`
+frames to local paths; `node:` builtins fall to the `(node)` bucket); the tool's own loop frames drop
+via `isToolFrameUrl` (`/runtime/node.`). CPU-only means no rendering counts: `recordAndReport`
+dispatches to `recordNode` + `printNodeReport` (CPU headline + per-iteration timing, no DOM tables).
+The CLI errors on browser-only flags; `meta.runtime` records the lane, `meta.passes` is `["node-cpu"]`.
+
+**Firefox backend (`--target firefox`)**: a second browser lane over WebDriver BiDi (no CDP).
+`browser/backend.ts` `capsFor()` is a plain caps object (`cdpCounts/trace/throttle/cpuProfile/
+geckoProfiler`) so `runPass` stays one function with capability guards, not a class tree.
+`browser/launch.ts` returns `client: CDPSession | null` (null on firefox); every CDP call site is
+gated by a cap or a null check, never `client!`, and `runDriver` takes a nullable client. Firefox has
 **no** CDP trace, invalidationTracking, or throttling; the CLI errors on `--breakdown`/`--cpu-throttle`
-and `meta.notes` says so loudly (never fake zeros). **INP is NOT in that list** — it
-never came from CDP, it is an in-page Event Timing observer in `driver.ts`, ungated by caps, and it
-works. `meta.browser` is `"firefox"` (absent = chrome, so old recordings stay valid).
+and `meta.notes` says so loudly (never fake zeros). **INP is NOT in that list** -- it is an in-page
+Event Timing observer in `driver.ts`, ungated by caps, and it works. `meta.browser` is `"firefox"`
+(absent = chrome, so old recordings stay valid).
 
-The lane is ONE gecko pass at every capture mode (`captureFor` returns `mode: "gecko"`, or `"gecko-deep"` when
-`--deep` requests the dirtied-by write report — same capture, a reporting tier over it). The CLI
-refuses to turn the profiler off here, because the gecko pass is this lane's *only* source of CPU
-samples, layout/style markers, the reconciling bar, AND read-site blame — without it a firefox
-recording would report every rendering count as 0. The **gecko pass** launches Firefox with the Gecko
-profiler env vars, runs the flow, closes the browser (which flushes a shutdown dump), then
-`waitForGeckoDump` polls the file to stable before parsing. The dump stays a **path** on `PassResult`
-(never a retained string) and is `copyFile`d to the artifact: a 16M-entry ring buffer serializes to a
-very large file (16MB+ even for a trivial probe). The internal sampler interval
-(`DEFAULT_CPU_INTERVAL_US`) is converted to Gecko's ms and clamped up to `GECKO_MIN_INTERVAL_MS`;
-`sampleIntervalUs` is read back from the dump's `meta.interval` (what the sampler *actually* ran at),
-never hardcoded.
+The lane is ONE gecko pass at every capture mode (`mode: "gecko"`, or `"gecko-deep"` when `--deep` adds
+the dirtied-by write report — same capture, a reporting tier over it). The CLI refuses to turn the
+profiler off here: the gecko pass is this lane's *only* source of CPU samples, layout/style markers,
+the reconciling bar, AND read-site blame, so without it every rendering count reads 0. The pass
+launches Firefox with the Gecko profiler env vars, runs the flow, closes the browser (flushing a
+shutdown dump), then `waitForGeckoDump` polls the file to stable. The dump stays a **path** on
+`PassResult` (never a retained string) and is `copyFile`d to the artifact: a 16M-entry ring buffer
+serializes to 16MB+ even for a trivial probe. `sampleIntervalUs` is read back from the dump's
+`meta.interval` (what the sampler actually ran at), never hardcoded.
 
-`profile/gecko.ts` converts the raw dump (v34) to a standard `RawCpuProfile` fed to `buildCpuModel`
-unchanged, plus `NormalizedEvent[]`: Reflow/Styles markers (kind layout/style, `forced` from a JS
-cause, driving the flush COUNTS) and **sampled read-site blame events** (`sampled:true`, the
-read line + property, driving `blame --forced`; `summarize` skips them so they never double-count a
-flush). One gecko pass thus yields CPU + blame. Launched with `MOZ_PROFILER_STARTUP_FEATURES=js,cpu`:
-the `cpu` feature populates the per-sample `threadCPUDelta` column, whose ~0 values are the honest
-`idle` signal `computeGeckoCpuBreakdown` (`profile/gecko-breakdown.ts`) tiles into a
-`js·style·layout·browser·gc·idle` bar (style/layout from the sampled Layout-category frame). Firefox
-`performance.measure` spans (from UserTiming interval markers) become per-span `Span`s carrying a
-`breakdown`, and a label repeated across `--iterations` is collapsed by the same `mergeSpanOccurrences`
-the chrome lane uses (lower-median-by-wall occurrence, verbatim). Under `--deep`, `firefox-dirtied.ts`
-reads the Reflow/Styles marker cause stacks into the first-invalidation dirtied-by report. `parseGecko`
-**throws** on a missing `JavaScript` category or an empty thread
-list: both would otherwise yield an empty-but-valid model reporting ~0 scripting time, the fake zero
-this lane refuses to emit. `isToolFrameUrl` also drops `/__wpd_blank__` (BiDi attributes bench
-harness frames to the served host page). Fixture: a trimmed real dump at
-`test/fixtures/gecko-shutdown.trimmed.json`; e2e is self-skipping (`test/firefox.e2e.test.mjs`,
-`npm run test:e2e:firefox`), gated by its own `WPD_E2E_FIREFOX_REQUIRED` (set by that script, so a
-missing Firefox hard-fails there) and run nightly in `.github/workflows/firefox-e2e.yml`, separate
-from the chrome `WPD_E2E_REQUIRED` lane.
-
-**Before touching any of this, read [docs/dev/](docs/dev/README.md)** — the raw-format schemas, the
-INP measurements, the Gecko<->Blink name map, and the honest caveats (Firefox `forcedLayoutMs`
-under-reports ~7x from the markers; read-site blame is a sampled estimate that can lag one statement)
-all live there with the probes that establish them.
+`profile/gecko.ts` converts the raw dump (v34) to a `RawCpuProfile` (fed to `buildCpuModel` unchanged)
+plus `NormalizedEvent[]`: Reflow/Styles markers (kind layout/style, `forced` from a JS cause, driving
+flush COUNTS — though `forcedLayoutMs` under-reports **~7x** vs Chrome from these markers) and
+**sampled read-site blame events** (`sampled:true`, the read line + property, driving `blame --forced`;
+`summarize` skips them so they never double-count a flush; a sampled estimate that can lag one
+statement). Launched `MOZ_PROFILER_STARTUP_FEATURES=js,cpu`: the `cpu` feature populates the per-sample
+`threadCPUDelta`, whose ~0 values are the honest `idle` signal `computeGeckoCpuBreakdown`
+(`profile/gecko-breakdown.ts`) tiles into a `js·style·layout·browser·gc·idle` bar. Firefox
+`performance.measure` spans become per-span `Span`s carrying a `breakdown`, collapsed across
+`--iterations` by the same `mergeSpanOccurrences`. Under `--deep`, `firefox-dirtied.ts` reads the
+marker cause stacks into the first-invalidation dirtied-by report. `parseGecko` **throws** on a missing
+`JavaScript` category or an empty thread list: both would yield an empty-but-valid model reporting ~0
+scripting time, the fake zero this lane refuses. `isToolFrameUrl` also drops `/__wpd_blank__` (BiDi
+attributes bench harness frames to the served host page). Fixture:
+`test/fixtures/gecko-shutdown.trimmed.json`. Read [firefox-cpu.md](docs/dev/firefox-cpu.md) and
+[gecko-profile-format.md](docs/dev/gecko-profile-format.md) before touching any of it.
 
 ## Conventions / gotchas
 
@@ -500,7 +457,14 @@ all live there with the probes that establish them.
   floor on `wall`/`INP`, and why the headless mode sets its height) before changing the headless
   option or adding a headless flag; `trace-buffer.md` (what raises the trace-buffer ceiling, what
   drops events, the incremental event-level parser, and the `--deep` event-log serialization ceiling)
-  before changing `trace/tracing.ts`, `trace/scan.ts`, or the buffer size.
+  before changing `trace/tracing.ts`, `trace/scan.ts`, or the buffer size; `driver-timing.md` (what a
+  step's `wallMs` times, the settle floor, the INP input/processing/presentation split) before
+  touching `browser/driver.ts` or presenting a step's wall as a cost; `navigation-and-lcp.md` (whether
+  LCP fires headless, the boot-entry race, the static/hard/soft step classification) before wiring an
+  LCP number into a span; and `facts.md` (the ledger of load-bearing measured numbers + the files that
+  must agree, checked by a unit test) before changing any pinned number. The scope/market files
+  (`core-features.md`, `orchestrator-boundary.md`, `measurement-ecosystem.md`) inform user-facing copy,
+  feature scope, and field comparisons rather than engine code.
 - **Claims about engine behaviour need a probe, not a mechanism.** A plausible mechanism is not
   evidence, however obviously true it reads: sourcemaps, INP, Gecko cause stacks and sampler
   isolation all behave in ways a mechanism alone predicts wrongly. Run `examples/forces-layout.mjs`
