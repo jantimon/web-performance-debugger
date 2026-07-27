@@ -43,6 +43,7 @@ permalink).
 - Are trace durations worse than CDP's counters? (No.) -> [trace durations vs CDP](./cpu-profiling.md#layoutmsstylemspaintms-are-trace-durations-and-cdp-would-be-no-finer)
 - Why 200us, and what does sampling cost the wall? -> [the interval](./cpu-profiling.md#the-sampler-interval-why-200us), [the wall cost](./cpu-profiling.md#the-sampler-is-always-on-in-chromes-sampling-modes)
 - Can work below one frame be measured at all? -> [sub-frame CPU](./cpu-profiling.md#sub-frame-cpu-work-is-measurable-on-both-engines-off-the-frame-floor-axis)
+- What does `--cpu-throttle` do to counts, attribution, and wall (and is 4x really 4x)? -> [what `--cpu-throttle` does to each tier](./cpu-profiling.md#what---cpu-throttle-does-to-each-trust-tier)
 
 **Where CPU samples land** — [cpu-attribution.md](./cpu-attribution.md)
 

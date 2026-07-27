@@ -103,8 +103,13 @@ reopen one needs a new fact, not a re-argument.
   INP problems actually live, and throttling is wpd's one lever on that device gap. It is CDP applied
   throttling, which the field calls a coarse model of a real phone, not a device emulator
   ([measurement-ecosystem.md](./measurement-ecosystem.md#lighthouses-default-throttling-is-simulated)):
-  it closes part of the gap, and how much it distorts a given number is not separately measured, so it
-  is a lever the caller reaches for knowingly, not a default.
+  it closes part of the gap. What it does to each trust tier IS measured
+  ([cpu-profiling.md](./cpu-profiling.md#what---cpu-throttle-does-to-each-trust-tier)): exact counts
+  stay byte-identical, per-function attribution shares hold within noise (0.65pp max drift at 4x), and
+  the multiplier lands cleanly on CPU self-time (~4x). The one boundary is calibration: a multiplier is
+  relative to the host, so a throttled number compares only against another run on the same machine,
+  and wpd does not normalize for host speed. So it is a lever the caller reaches for knowingly, not a
+  default.
 - **`query events` and `query get` exist** as the forensic escape hatch. When a curated aggregation is
   distrusted, `events` lists the raw flushes with ids, and `get` renders one event's full stack and
   args with resolved source paths. In a drill against the raw JSON, these beat `jq` for semantics (a
