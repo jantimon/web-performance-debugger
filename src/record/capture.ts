@@ -27,7 +27,7 @@ import { traceCategories, breakdownTraceCategories, STACK_CATEGORY } from "../tr
 import type { BrowserName } from "../browser/backend.js";
 import type { BlameSemantic } from "../model/recording.js";
 import type { CaptureCapabilities } from "../metrics/summarize.js";
-import type { RecordOptions } from "../commands/record.js";
+import type { RecordOptions } from "./options.js";
 
 export type CaptureMode =
   | "default"

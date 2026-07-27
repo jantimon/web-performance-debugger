@@ -1,12 +1,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { BrowserName } from "../browser/backend.js";
-import { startStaticServer } from "../browser/server.js";
+import { startStaticServer, type StaticServer } from "../browser/server.js";
 import { mergeSteps, type MergedStep } from "../trace/steps.js";
-import { mainThread } from "../trace/main-thread.js";
+import { mainThread, type MainThreadSelection } from "../trace/main-thread.js";
 import { retryTransientNav } from "../browser/launch.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
-import { buildSummary } from "../metrics/summarize.js";
+import { buildSummary, type CaptureCapabilities } from "../metrics/summarize.js";
 import {
   buildCpuModel,
   packagesByProfileNode,
@@ -20,8 +20,10 @@ import {
   capabilitiesFor,
   blameSemanticFor,
   countScopeNote,
+  type CaptureConfig,
 } from "../record/capture.js";
 import { runPass, type PassResult } from "../record/runpass.js";
+import type { RecordOptions } from "../record/options.js";
 import { buildBreakdowns, userMeasureSpans } from "../record/breakdown-spans.js";
 import { buildRecordingSpans } from "../record/spans-build.js";
 import { writeRecording, writeCpuModel } from "../record/artifacts.js";
@@ -40,7 +42,7 @@ import { printSummary } from "./summaryView.js";
 import { kv, num, sparkline } from "../output/ascii.js";
 import { bold, cyan, dim } from "../output/color.js";
 import { writePointer, displayPath } from "./resolve.js";
-import { extFor, type Format } from "../output/format.js";
+import { extFor } from "../output/format.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 import { stableWorkloadPath } from "../model/compat.js";
@@ -60,70 +62,10 @@ import type {
 /** @testOnly reached from the compiled `dist/commands/record.js` barrel by unit tests;
  * `blameSemanticFor`/`countScopeNote` are also called in-file, `userMeasureSpans` only here. */
 export { blameSemanticFor, countScopeNote, userMeasureSpans };
-
-export interface RecordOptions {
-  /** the user's driver/bench/node module; omitted for the built-in on-ramp flow (--url only) */
-  module?: string;
-  fn: string;
-  /** browser backend: "chrome" (default, full CDP) or "firefox" (BiDi + Gecko profiler) */
-  browser?: BrowserName;
-  html?: string;
-  url?: string;
-  /** --url named a host with no scheme, so http:// was assumed for `url`; a note discloses it. */
-  urlSchemeAssumed?: boolean;
-  iterations: number;
-  warmup: number;
-  out?: string;
-  headless: boolean;
-  /** persistent Chrome profile dir (resolved absolute); reuse one login across passes/runs */
-  userDataDir?: string;
-  /** chrome only: launch with --no-sandbox (reduced containment). Off by default; opt in only in a
-   * trusted, isolated environment. */
-  disableSandbox?: boolean;
-  /** ms to wait after run() for async paints to flush; internal default 200 (no user flag) */
-  settleMs: number;
-  format: Format;
-  /** driver (puppeteer) mode: run executes in Node and receives { page, ctx } */
-  driver: boolean;
-  /** keep the iterations that completed when a later iteration fails, with a loud note (driver mode) */
-  keepPartial?: boolean;
-  /** artificial slowdown: CPU throttling multiplier (e.g. 4 = 4x slower) */
-  cpuThrottle?: number;
-  /** capture a CPU sampling profile (writes .cpuprofile + .cpu model); on by default, off on --deep
-   * (the sampler cannot ride a `.stack` trace) and --precise-wall. */
-  cpuProfile?: boolean;
-  /** CPU sampler interval in microseconds (default DEFAULT_CPU_INTERVAL_US); internal, no user flag */
-  cpuIntervalUs?: number;
-  /** execution runtime: "chrome" (default, Puppeteer page) or "node" (in-process V8, CPU only) */
-  runtime?: "chrome" | "node";
-  /** CDP protocol timeout (ms); raise above the 180s default for heavy traced interactions */
-  protocolTimeoutMs?: number;
-  /**
-   * The --breakdown capture mode (chrome only): a light trace (no `.stack`, no invalidationTracking)
-   * fused with the CPU sampler in ONE pass, producing a reconciling js/style/layout/paint/gc/other/idle
-   * bar per span. Cannot report forced-layout counts or blame (they need `.stack`).
-   */
-  breakdown?: boolean;
-  /**
-   * The --deep capture mode (chrome only): ONE full-trace pass (`.stack` + invalidationTracking) with
-   * the sampler OFF. The attribution report -- exact forced-layout blame, invalidation rollup, exact
-   * counts -- with slice durations suppressed (the `.stack` trace distorts them). No CPU model, no bar.
-   */
-  deep?: boolean;
-  /** The default capture mode minus the sampler: a pristine benchmark wall, no profiler, no counts. */
-  preciseWall?: boolean;
-  /** Opt-in variant label stamped on meta, so a diff/cpu-diff gate refuses across two techniques
-   * that run through one module path (env-switched). Absent by default. */
-  variant?: string;
-  /** Append this recording to a named run-group manifest (`--group <name>`), so a two-question flow
-   * (e.g. --breakdown AND --deep) records as siblings under one manifest. The join refuses an
-   * incompatible member (see model/group.ts). Absent for a plain single recording. */
-  group?: string;
-  /** The full set of capture modes a `--members` run asked for, set by the runner on every member so
-   * each append derives partial status structurally. Internal (no CLI flag); absent for a plain
-   * single `--group` record, which is complete-by-construction. */
-  groupRequested?: string[];
-}
+// RecordOptions lives in record/options.ts so the record/ implementation files it orchestrates
+// (capture/runpass/group, runtime/node) can type against it without importing back into this
+// orchestrator. Re-exported here to keep the compiled dist surface stable for cli.ts and callers.
+export type { RecordOptions };
 
 /** Bounded retries for a transient cross-process navigation failure (fresh browser each attempt). */
 const NAV_RETRY_LIMIT = 2;
@@ -243,15 +185,48 @@ function hostPageOrigin(
   }
 }
 
-export async function record(opts: RecordOptions): Promise<{
-  recording: Recording;
+/** Paths, capture config, and browser/mode resolution -- everything settled before the browser launches. */
+interface RecordSetup {
+  opts: RecordOptions;
+  root: string;
+  isOnramp: boolean;
+  absModule: string | undefined;
+  browserName: BrowserName;
+  mode: "module" | "html" | "url";
   outPath: string;
-  cpuProfilePath?: string;
-  cpuModelPath?: string;
-  cpuModel?: CpuModel;
-  /** the group manifest this member was appended to, when --group was set */
-  groupManifestPath?: string;
-}> {
+  outDir: string;
+  base: string;
+  capture: CaptureConfig;
+  capabilities: CaptureCapabilities;
+  wantTrace: boolean;
+}
+
+/** The one capture pass's products: the pass result, the (closed) server whose url string stays valid
+ * for frame rewriting, the run's single sourcemap resolver, retry counts, and the raw-profile path
+ * (the gecko dump copy fills it for firefox; the chrome .cpuprofile write fills it later). */
+interface CapturedPass {
+  pass: PassResult;
+  server: StaticServer;
+  maps: SourceMapResolver;
+  navRetries: number;
+  frameStallRetries: number;
+  cpuProfilePath: string | undefined;
+}
+
+/** The notes array (shared by reference into meta.notes, so later phases keep pushing to it) plus the
+ * derived verdicts meta and the recording read: merged steps, the sampler pass, and the
+ * trace-window/effective-capability/main-thread selections. */
+interface DerivedNotes {
+  notes: string[];
+  mergedSteps: MergedStep[] | undefined;
+  cpuPass: PassResult | undefined;
+  traceWindowMissing: boolean;
+  effectiveCapabilities: CaptureCapabilities;
+  threadSelection: MainThreadSelection | null;
+}
+
+/** Module resolve, out-path resolution, captureFor, and the --group preflight. */
+async function resolveSetup(opts: RecordOptions): Promise<RecordSetup> {
   const root = process.cwd();
   // No module = the built-in on-ramp: a driver flow that loads --url and settles, so a first
   // run needs zero authoring. runPass/runDriver synthesize the single "load" step from the target.
@@ -304,6 +279,26 @@ export async function record(opts: RecordOptions): Promise<{
     );
   }
 
+  return {
+    opts,
+    root,
+    isOnramp,
+    absModule,
+    browserName,
+    mode,
+    outPath,
+    outDir,
+    base,
+    capture,
+    capabilities,
+    wantTrace,
+  };
+}
+
+/** Start the static server, run the one capture pass (retrying a transient nav on a fresh browser),
+ * then copy off and delete the gecko temp dump. */
+async function runCapturePass(setup: RecordSetup): Promise<CapturedPass> {
+  const { opts, root, mode, absModule, capture, outDir, base } = setup;
   // In --url bench mode the host page is a remote origin that import()s the served module cross-origin,
   // so that one origin is granted CORS read access; every other mode serves the host page same-origin
   // and needs none. Never a wildcard: it would expose cwd files to any site open in the operator's
@@ -354,6 +349,14 @@ export async function record(opts: RecordOptions): Promise<{
     }
   }
 
+  return { pass, server, maps, navRetries, frameStallRetries, cpuProfilePath };
+}
+
+/** Assemble meta.notes and the derived verdicts (merged steps, sampler pass, trace-window /
+ * capability / main-thread selections) in the one order the terminal report and stderr depend on. */
+function assembleNotes(setup: RecordSetup, captured: CapturedPass): DerivedNotes {
+  const { opts, browserName, capabilities, wantTrace, isOnramp } = setup;
+  const { pass, navRetries, frameStallRetries } = captured;
   // One pass carries everything now: wall/steps, the trace (if any), and the CPU/gecko profile.
   const timing = pass;
   const detail = pass;
@@ -559,6 +562,28 @@ export async function record(opts: RecordOptions): Promise<{
   );
   if (stepEndMarkLost) notes.push(notesCatalog.stepEndMarkLost());
 
+  return {
+    notes,
+    mergedSteps,
+    cpuPass,
+    traceWindowMissing,
+    effectiveCapabilities,
+    threadSelection,
+  };
+}
+
+/** The recording meta: identity, workload, capture-mode name, the notes array (shared by reference so
+ * later phases keep pushing to it), and the typed main-thread/data-loss carriers. */
+function buildMeta(
+  setup: RecordSetup,
+  captured: CapturedPass,
+  derived: DerivedNotes,
+): RecordingMeta {
+  const { opts, root, browserName, mode, capture } = setup;
+  const { pass } = captured;
+  const { notes, threadSelection } = derived;
+  const detail = pass;
+
   const throttle = opts.cpuThrottle ? { cpuRate: opts.cpuThrottle } : undefined;
 
   const meta: RecordingMeta = {
@@ -620,6 +645,22 @@ export async function record(opts: RecordOptions): Promise<{
     dataLoss: detail.traceDataLoss ? { trace: true } : undefined,
     throttle,
   };
+
+  return meta;
+}
+
+/** The run summary + window + marks + event log, assembled into the Recording (spans filled later). */
+function buildRecordingObject(
+  setup: RecordSetup,
+  captured: CapturedPass,
+  derived: DerivedNotes,
+  meta: RecordingMeta,
+): Recording {
+  const { opts, browserName } = setup;
+  const { pass } = captured;
+  const { mergedSteps, traceWindowMissing, effectiveCapabilities } = derived;
+  const timing = pass;
+  const detail = pass;
 
   // Last resort for an in-page run whose harness reported no samples (e.g. run() threw after the
   // marks landed): the wpd:run marks span the timed loop on the clean pass.
@@ -710,29 +751,44 @@ export async function record(opts: RecordOptions): Promise<{
     }),
   };
 
+  return recording;
+}
+
+/** Build the resolved CPU model (writing the raw chrome .cpuprofile first), patch the model-derived
+ * fields onto the summary/meta, and push the sample-source notes. Runs BEFORE any artifact is
+ * serialized: it resolves the last of the run's frames, so meta.sourcemaps (finalized later) is only
+ * complete once it has run, and `meta` is shared by reference with every artifact written after. */
+async function buildCpuArtifacts(
+  setup: RecordSetup,
+  captured: CapturedPass,
+  derived: DerivedNotes,
+  meta: RecordingMeta,
+  recording: Recording,
+): Promise<CpuModel | undefined> {
+  const { opts, browserName, outDir, base, root } = setup;
+  const { server, maps } = captured;
+  const { cpuPass, notes } = derived;
+
   // CPU profile: write the raw .cpuprofile (for DevTools/Speedscope) + a resolved,
   // self-contained model the query/cpu-diff verbs read. server.url is still valid here
   // (the server object is closed but its url string is captured for frame rewriting).
-  // Built BEFORE any artifact is serialized: it resolves the last of the run's frames, so
-  // meta.sourcemaps below is only complete once it has run, and `meta` is shared by reference
-  // with every artifact written after this point.
-  let cpuModelPath: string | undefined;
   let cpuModel: CpuModel | undefined;
   if (cpuPass?.cpuProfile) {
     if (!cpuPass.geckoDumpPath) {
       // Chrome: the firefox gecko dump was already copied to cpuProfilePath above; here write the raw
       // .cpuprofile. Strip the trace-lane-only sampleTimestampsUs so the raw file stays the standard
       // DevTools shape. Atomic (temp + rename): a killed write leaves no torn .cpuprofile.
-      cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
+      captured.cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
       await writeFileAtomic(
-        cpuProfilePath,
+        captured.cpuProfilePath,
         JSON.stringify(toDevtoolsCpuProfile(cpuPass.cpuProfile)),
       );
     }
     // Set on both lanes: the gecko dump copy above (firefox), or the raw .cpuprofile write (chrome).
-    if (!cpuProfilePath) throw new Error("internal: no raw profile path for the CPU model.");
+    if (!captured.cpuProfilePath)
+      throw new Error("internal: no raw profile path for the CPU model.");
     cpuModel = await buildCpuModel(cpuPass.cpuProfile, {
-      profilePath: cpuProfilePath,
+      profilePath: captured.cpuProfilePath,
       meta,
       // Firefox reports the interval the Gecko sampler actually ran at; V8 honours what we asked for.
       sampleIntervalUs:
@@ -771,6 +827,22 @@ export async function record(opts: RecordOptions): Promise<{
       cpuModel?.breakdown ? notesCatalog.firefoxBreakdown() : notesCatalog.firefoxNoCpuBreakdown(),
     );
   }
+
+  return cpuModel;
+}
+
+/** The reconciling per-span bars, then the collapsed Span[] set onto the recording. */
+async function buildSpanBars(
+  setup: RecordSetup,
+  captured: CapturedPass,
+  derived: DerivedNotes,
+  recording: Recording,
+  cpuModel: CpuModel | undefined,
+): Promise<void> {
+  const { opts, browserName, root } = setup;
+  const { server, maps } = captured;
+  const { mergedSteps, cpuPass, notes, effectiveCapabilities } = derived;
+  const detail = captured.pass;
 
   // The reconciling per-span bars (run + driver steps + user measures), when the capture mode built any.
   // --breakdown: built here because it needs both the trace events (with pid/tid) and the raw CPU
@@ -822,6 +894,16 @@ export async function record(opts: RecordOptions): Promise<{
     bars,
     runWindowEnd: detail.windowEnd,
   });
+}
+
+/** Finalize the sourcemap diagnostics onto meta and push the sourcemap/position-miss notes. */
+function finalizeSourcemapMeta(
+  captured: CapturedPass,
+  meta: RecordingMeta,
+  notes: string[],
+  cpuModel: CpuModel | undefined,
+): void {
+  const { maps } = captured;
 
   // Every frame the run will ever resolve has now been resolved, so the tally is final. A failed
   // map is otherwise silent: frames keep their minified names and bundle path, and per-package CPU
@@ -845,6 +927,19 @@ export async function record(opts: RecordOptions): Promise<{
     const missNote = positionMissNote(sourcemaps);
     if (missNote) notes.push(missNote);
   }
+}
+
+/** Write the recording and CPU model, append the --group member, then repoint `latest`. */
+async function writeAllArtifacts(
+  setup: RecordSetup,
+  captured: CapturedPass,
+  recording: Recording,
+  meta: RecordingMeta,
+  cpuModel: CpuModel | undefined,
+): Promise<{ cpuModelPath: string | undefined; groupManifestPath: string | undefined }> {
+  const { opts, outDir, base, outPath } = setup;
+  const { cpuProfilePath } = captured;
+  let cpuModelPath: string | undefined;
 
   // Artifact writes, kept together and AFTER the meta mutation above: `meta` is shared by reference
   // with every file below, so its sourcemap verdict has to be final before the first serialize. The
@@ -887,7 +982,49 @@ export async function record(opts: RecordOptions): Promise<{
     await writePointer({ recording: outPath, cpuProfile: cpuProfilePath, cpuModel: cpuModelPath });
   }
 
-  return { recording, outPath, cpuProfilePath, cpuModelPath, cpuModel, groupManifestPath };
+  return { cpuModelPath, groupManifestPath };
+}
+
+/**
+ * Record one capture pass and write its artifacts. Reads as a table of contents: resolve setup ->
+ * run the pass -> assemble notes/meta -> build the recording -> build the CPU model -> build span
+ * bars -> finalize sourcemap meta -> write artifacts. The phase order is load-bearing: the CPU model
+ * resolves the last frames BEFORE finalizeSourcemapMeta stamps its verdict onto `meta`, which is
+ * shared by reference with every artifact writeAllArtifacts serializes.
+ */
+export async function record(opts: RecordOptions): Promise<{
+  recording: Recording;
+  outPath: string;
+  cpuProfilePath?: string;
+  cpuModelPath?: string;
+  cpuModel?: CpuModel;
+  /** the group manifest this member was appended to, when --group was set */
+  groupManifestPath?: string;
+}> {
+  const setup = await resolveSetup(opts);
+  const captured = await runCapturePass(setup);
+  const derived = assembleNotes(setup, captured);
+  const meta = buildMeta(setup, captured, derived);
+  const recording = buildRecordingObject(setup, captured, derived, meta);
+  const cpuModel = await buildCpuArtifacts(setup, captured, derived, meta, recording);
+  await buildSpanBars(setup, captured, derived, recording, cpuModel);
+  finalizeSourcemapMeta(captured, meta, derived.notes, cpuModel);
+  const { cpuModelPath, groupManifestPath } = await writeAllArtifacts(
+    setup,
+    captured,
+    recording,
+    meta,
+    cpuModel,
+  );
+
+  return {
+    recording,
+    outPath: setup.outPath,
+    cpuProfilePath: captured.cpuProfilePath,
+    cpuModelPath,
+    cpuModel,
+    groupManifestPath,
+  };
 }
 
 /** Terminal report for a --target node run: CPU headline + per-iteration timing, no DOM tables. */

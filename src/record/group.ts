@@ -20,7 +20,7 @@ import {
   type MemberCounts,
 } from "../model/group.js";
 import type { Recording, RecordingMeta, RecordingSummary } from "../model/recording.js";
-import type { RecordOptions } from "../commands/record.js";
+import type { RecordOptions } from "./options.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 

@@ -32,7 +32,7 @@ import { attachTeardownFailure } from "../model/teardown.js";
 import type { NormalizedEvent, TimingEntry } from "../model/recording.js";
 import type { GeckoContext } from "../profile/gecko.js";
 import type { CaptureConfig } from "./capture.js";
-import type { RecordOptions } from "../commands/record.js";
+import type { RecordOptions } from "./options.js";
 
 export interface PassResult {
   name: string;
