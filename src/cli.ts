@@ -43,7 +43,7 @@ program
   .option("--color <when>", "colorize human output: auto | always | never", "auto");
 
 // Resolve color once before any command runs. Human tables/reports use it; structured
-// (--json/--format) output never calls the color helpers, so it stays plain regardless.
+// (--format) output never calls the color helpers, so it stays plain regardless.
 // auto = on only for an interactive TTY with NO_COLOR unset (https://no-color.org).
 program.hook("preAction", (thisCommand) => {
   const when = thisCommand.opts().color;
@@ -136,11 +136,10 @@ program
     "--url <url-or-file>",
     "the host page: a live URL (http://localhost:5173) or a local HTML file path. Run the module against it, or run it alone (no module) as the built-in load flow",
   )
-  // --html is the pre-unification spelling, kept as a hidden alias that resolves onto the same host
-  // page as --url. Zero behavior change for existing invocations; absent from --help.
-  .addOption(
-    new Option("--html <file>", "host page: a local HTML file (alias of --url)").hideHelp(),
-  )
+  // --html is removed: --url names the host page and accepts a local HTML file or a live URL. Kept
+  // hidden so an explicit --html gets a migration message from the action, not commander's generic
+  // unknown-option error.
+  .addOption(new Option("--html <file>").hideHelp())
   .option(
     "--bench",
     "run(ctx) executes inside the page with live document/window (no page handle), timed in-page, so its wall excludes the driver's dispatch and settle. Pair with --url for a host page; repeat with --iterations",
@@ -213,15 +212,17 @@ program
     const bench = !!cmdOpts.bench;
     const node = cmdOpts.target === "node";
     const firefox = cmdOpts.target === "firefox";
-    // --url is the one documented way to name the host page, and it accepts a live URL OR a local
-    // HTML file path; --html is a hidden alias that resolves onto the same host page. Whichever is
-    // given feeds the same detection (URL vs file), so exactly one may be present. node has no page,
-    // so its own guard (below) rejects either flag with a lane-specific message; skip the detection
-    // there so a bad value does not preempt it.
+    // --html is removed: --url names the host page and accepts a local HTML file or a live URL.
+    // Intercept an explicit --html here (before resolution reuses cmdOpts.html for the resolved
+    // local-file case) so it gets a migration message, not a silently ignored flag.
+    if (cmdOpts.html !== undefined)
+      program.error("--html was removed in this version. Use --url <file-or-url>.");
+    // --url names the host page and accepts a live URL OR a local HTML file path; the detection
+    // (URL vs file) sets cmdOpts.url or cmdOpts.html to the resolved value. node has no page, so its
+    // own guard (below) rejects --url with a lane-specific message; skip the detection there so a bad
+    // value does not preempt it.
     let urlSchemeAssumed = false;
-    if (cmdOpts.url != null && cmdOpts.html != null)
-      program.error("--url and --html name the same host page two ways: pass just one.");
-    const rawHostPage = cmdOpts.url ?? cmdOpts.html;
+    const rawHostPage = cmdOpts.url;
     if (rawHostPage != null && !node) {
       try {
         const resolved = resolvePageOption(rawHostPage);
@@ -296,8 +297,8 @@ program
     }
     if (node) {
       const browserOnly = [
-        // Detection is skipped on node (above), so these hold the raw flag the user passed.
-        (cmdOpts.url || cmdOpts.html) && (cmdOpts.url ? "--url" : "--html"),
+        // Detection is skipped on node (above), so this holds the raw flag the user passed.
+        cmdOpts.url && "--url",
         // Presence-based where the value can be falsy (0 throttle, 0 timeout): the lane consumes
         // none of these, so a passed-but-falsy value is still a flag on the wrong lane.
         cmdOpts.cpuThrottle != null && "--cpu-throttle",
@@ -463,7 +464,9 @@ const query = program
   .description("Browse/search a recording (start with `spans`). Any <file> may be 'latest'.");
 const fmtOpts = (command: Command) =>
   command
-    .option("--json", "emit raw JSON")
+    // --json is the hidden alias of --format json: kept working (structuredFormat reads it), kept out
+    // of help. --format is the documented spelling.
+    .addOption(new Option("--json").hideHelp())
     .option("--format <fmt>", "structured output: json | toon");
 // Surface query errors (bad --kind, missing recording, unknown id) as a clean message
 // and exit 1, not a raw unhandled-rejection stack trace.
@@ -629,7 +632,8 @@ program
     "--fail-on-regression",
     "exit 1 if net JS self-time increased (gc/native/idle changes and sampler noise do not count)",
   )
-  .option("--json", "emit raw JSON")
+  // --json is the hidden alias of --format json: kept working, kept out of help.
+  .addOption(new Option("--json").hideHelp())
   .option("--format <fmt>", "structured output: json | toon")
   .action((baseline, current, opts) =>
     cpuDiffCmd(baseline, current, {

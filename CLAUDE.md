@@ -99,7 +99,7 @@ values when two members disagree on an exact count -- pure; the fs writer/runner
 the consumer primitives are `commands/group.ts`). `record` orchestration lives in
 `src/record/`: `capture.ts` (`captureFor` picks the ONE capture mode + `capabilitiesFor`/
 `blameSemanticFor`/`countScopeNote`), `page-option.ts` (`PageResolution`: resolves the `--url <value>`
-host page, or its hidden `--html` alias, to a live URL to navigate or a local HTML file to serve),
+host page to a live URL to navigate or a local HTML file to serve),
 `runpass.ts` (runs that one capture), `artifacts.ts`
 (serialization), `spans-build.ts` (assembles `Span[]` from the run/steps/summary), `breakdown-spans.ts`
 (per-span bar assembly, FIFO measure pairing, then `mergeSpanOccurrences`), and `notes.ts`
@@ -121,7 +121,7 @@ contracts** — keep them straight:
   `page.goto` inside a `measureStep` is traced, so a navigation step measures a cold boot.
 - **Bench mode** (`--bench`): the module is served over http and `import()`'d *inside the
   browser*; `run(ctx)` gets no `page` handle (there is nothing to drive from inside) but has live
-  `document`/`window`, and `--html`/`--url` still supply the host page. Implemented by
+  `document`/`window`, and `--url` still supplies the host page. Implemented by
   `browser/harness.ts` (a function serialized into `page.evaluate`) + `browser/server.ts` (a
   temp static server — ESM `import()` can't use `file://`, and the blank host page is served
   same-origin to avoid cross-origin import). It measures only `run()` (page load/boot is
@@ -135,7 +135,7 @@ not within the run: the repetitions are a label's samples, so
 per pass, while `index` is the step's stable position within an iteration.
 
 Modules/HTML must live under the cwd (the static server is rooted there). `--url` names the host page
-(a live URL or a local HTML file, `page-option.ts`); `--html` is its hidden alias. A module + `--url`
+(a live URL or a local HTML file, `page-option.ts`). A module + `--url`
 runs the module against that host; a module + no `--url` runs it against a blank page. **No module +
 `--url` is the zero-authoring on-ramp**: the built-in load flow navigates to the target inside one
 `"load"` step and settles, so the recorded window is the page's own cold boot (`runpass.ts`,
@@ -298,7 +298,7 @@ Two things this rule is **not**, both documented in
   stay aligned). `output/color.ts`: TTY-aware ANSI helpers; **disabled by default** (the library
   stays plain when called directly, so unit tests and programmatic/agent use get no escape codes).
   Only `cli.ts` opts in, via a `preAction` hook resolving the global `--color auto|always|never`
-  (auto = `isTTY && !NO_COLOR`). Structured `--json`/`--format` output never calls the helpers, so it
+  (auto = `isTTY && !NO_COLOR`). Structured `--format` output never calls the helpers, so it
   is plain regardless. Color lives only in the human report/table builders (`commands/cpu.ts`,
   `commands/record.ts`): heat-colored `self %`, cyan packages, dimmed paths/source/secondary counts,
   bold headline numbers.
@@ -369,7 +369,7 @@ around the timed loop so only `run()` + callees are sampled. It reuses `buildCpu
 `resolveCallFrame`). The tool's own loop frames are dropped by extending `isToolFrameUrl` to match
 `/runtime/node.`. CPU-only means no Recording rendering counts: `recordAndReport` dispatches to
 `recordNode` + `printNodeReport` (CPU headline + per-iteration timing, no DOM tables). The CLI sets
-`runtime: "node"` from `--target node` and errors on browser-only flags (`--url/--html/...`).
+`runtime: "node"` from `--target node` and errors on browser-only flags (`--url/...`).
 `meta.runtime` records the lane; `meta.passes` is `["node-cpu"]`.
 
 **Firefox backend (`--target firefox`)**: a second browser lane driven over WebDriver BiDi (no

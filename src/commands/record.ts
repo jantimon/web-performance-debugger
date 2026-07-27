@@ -228,7 +228,7 @@ interface DerivedNotes {
 /** Module resolve, out-path resolution, captureFor, and the --group preflight. */
 async function resolveSetup(opts: RecordOptions): Promise<RecordSetup> {
   const root = process.cwd();
-  // No module = the built-in on-ramp: a driver flow that loads --url/--html and settles, so a first
+  // No module = the built-in on-ramp: a driver flow that loads --url and settles, so a first
   // run needs zero authoring. runPass/runDriver synthesize the single "load" step from the target.
   const isOnramp = !opts.module;
   // The CLI guards this, but record() is also a programmatic API: without a module there is

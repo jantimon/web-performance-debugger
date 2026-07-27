@@ -3,7 +3,7 @@
 <title>wpd driver cpu probe</title>
 <!--
   Host page for the per-step CPU-attribution e2e. Committed (not generated into a temp dir) because
-  --html is served by a static server rooted at the cwd, so the file has to live under the repo.
+  a local-file --url is served by a static server rooted at the cwd, so the file has to live under the repo.
 
   Clicking #work runs a substantial JS hot loop IN THE PAGE (not via page.evaluate, whose injected
   call the trace files under `other`, not `js`), so each measured step accrues many CPU samples on the

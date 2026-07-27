@@ -40,24 +40,17 @@ test("record --precise-wall without a module is refused (nothing would be measur
   assert.match(result.stderr, /--precise-wall needs a module/, "explains why nothing would be measured");
 });
 
-test("--html still works as a hidden alias of --url", () => {
-  // Zero behavior change for pre-unification invocations: --html resolves onto the same host page as
-  // --url, so the bench guard (which needs the host page set) still fires as it would for --url.
+test("--html is removed and points at --url", () => {
   const result = runCli(["record", "--html", "test/fixtures/driver-probe.html", "--bench"]);
   assert.equal(result.status, 1, "exits non-zero");
-  assert.match(result.stderr, /--bench needs a module/, "the --html alias reached the same guard");
-});
-
-test("--url cannot combine with the --html alias (they name one host page)", () => {
-  const result = runCli(["record", "--url", "http://x/", "--html", "a.html"]);
-  assert.equal(result.status, 1, "exits non-zero");
-  assert.match(result.stderr, /--url and --html name the same host page/, "tells the user to pick one");
+  assert.match(result.stderr, /--html was removed in this version\. Use --url/, "names the replacement");
+  assert.doesNotMatch(result.stderr, /at Object\.|node:internal/, "no stack trace");
 });
 
 test("--url is documented, --html is absent from --help", () => {
   const result = runCli(["record", "--help"]);
   assert.match(result.stdout, /--url <url-or-file>/, "the documented option is shown");
-  assert.doesNotMatch(result.stdout, /--html <file>/, "the alias is hidden");
+  assert.doesNotMatch(result.stdout, /--html <file>/, "the removed alias stays hidden");
 });
 
 test("--disable-browser-sandbox with --user-data-dir is refused (unsandboxed renderer + real profile)", () => {

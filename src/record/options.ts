@@ -2,7 +2,7 @@ import type { BrowserName } from "../browser/backend.js";
 import type { Format } from "../output/format.js";
 
 export interface RecordOptions {
-  /** the user's driver/bench/node module; omitted for the built-in on-ramp flow (--url/--html only) */
+  /** the user's driver/bench/node module; omitted for the built-in on-ramp flow (--url only) */
   module?: string;
   fn: string;
   /** browser backend: "chrome" (default, full CDP) or "firefox" (BiDi + Gecko profiler) */

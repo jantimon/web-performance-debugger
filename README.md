@@ -80,8 +80,8 @@ idle    26.5  41.2%  (waiting, not work)
 ```
 
 `--url` names the host page — a live URL or a local HTML file path — and wpd tells the two apart.
-(The `--html` spelling still works as a hidden alias, and a host with no scheme like `localhost:5173`
-gets `http://` assumed.) Default gives the boot's four-slice CPU bar; `--breakdown` adds the
+(A host with no scheme like `localhost:5173` gets `http://` assumed.) Default gives the boot's
+four-slice CPU bar; `--breakdown` adds the
 reconciling js/style/layout/paint bar and exact counts above; `--deep` adds forced-layout blame.
 
 A page load has no interaction, so `INP` stays null there. To measure a click, a re-render, or SSR
@@ -564,7 +564,7 @@ Each `query spans` entry carries `aggregation` and `iterations`, which say what 
 One recording mixes these, and `aggregation` is how a consumer tells them apart. Human output appends
 the contract to each bar, e.g. `run (run, 5.9 ms, sum of 5 iterations)`. Output is colorized when
 stdout is a terminal; control it with `--color auto|always|never` (`NO_COLOR` honored), and piped,
-redirected, and `--json`/`--format` output is always plain, so CI and scripts are unaffected.
+redirected, and `--format` output is always plain, so CI and scripts are unaffected.
 
 Not every span carries a CPU/hot-functions number: the run span does in every sampling capture mode,
 steps only under chrome `--breakdown`, measures under chrome `--breakdown` and firefox, and none under
