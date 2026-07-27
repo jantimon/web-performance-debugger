@@ -82,7 +82,12 @@ node dist/cli.js query span latest "add rows"                       # one span's
 
 Flow: **`record` produces a `Recording` (model/recording.ts) → `query`/`assert`/`diff` consume it.**
 `src/cli.ts` (commander) is the only entry point and wires every command. The model is split across
-`model/`: `recording.ts` (the `Recording`/`EventKind`/`Breakdown` types), `marks.ts` (the `wpd:*`
+`model/`: `recording.ts` (the `Recording`/`RecordingSummary`/`Span`/`Breakdown` core, and a BARREL that
+re-exports the domain files so `../model/recording.js` stays the one import path: `events.ts` (`EventKind`/
+`NormalizedEvent`/`StackFrame`), `cpu.ts` (`CpuModel`/`CpuFunction`/`CpuBreakdown`), `frames.ts`
+(`FrameSideTrack`), `attribution.ts` (`ThrashReport`/`DirtiedBy*`/`BlameSemantic`), `meta.ts`
+(`RecordingMeta`/`WorkloadIdentity`), `sourcemap-meta.ts` (`SourceMapDiagnostics`)), `driver-step.ts`
+(`DriverStep`, the driver→steps contract), `marks.ts` (the `wpd:*`
 mark namespace), `time.ts` (clock/us↔ms helpers), `measured.ts` (the `Measured<T>` not-measured-vs-0
 honesty wrapper), `reconcile.ts` (slice-sum-vs-wall residual), `span-merge.ts`
 (`mergeSpanOccurrences`: collapse a repeated `measure` label to its lower-median-by-wall occurrence,
@@ -427,7 +432,8 @@ all live there with the probes that establish them.
 - ESM throughout: relative imports **must** use `.js` extensions in `.ts` source (NodeNext).
 - Naming is standardized on **layout** (not "reflow") everywhere except the idiom *forced
   reflow*; **paint** (not "repaint"). Don't reintroduce the old names.
-- The `EventKind` union (`model/recording.ts`, mapped by `classify.ts`), the `wpd:*` mark namespace
+- The `EventKind` union (`model/events.ts`, re-exported by the `model/recording.ts` barrel so
+  `../model/recording.js` still resolves it; mapped by `classify.ts`), the `wpd:*` mark namespace
   (`model/marks.ts`), and the trace category list (`trace/categories.ts`) are the coupling points
   across files; change each in its one home.
 - **No single-letter identifiers.** Locals, params, loop counters, `for...of`/`catch` bindings,

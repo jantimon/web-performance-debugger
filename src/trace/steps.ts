@@ -1,4 +1,4 @@
-import type { DriverStep } from "../browser/driver.js";
+import type { DriverStep } from "../model/driver-step.js";
 import type { StepWindow } from "./parse.js";
 import type { InteractionTiming, NavigationKind, StepLcp, StepLoaf } from "../model/recording.js";
 

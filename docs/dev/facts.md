@@ -13,7 +13,7 @@ listed here), and only list a file that genuinely contains the string.
 | Fact | Value | Test string | Canonical anchor | Cited in |
 | --- | --- | --- | --- | --- |
 | Sampler contamination during tracing | +21% self-time inflation | 21% | docs/dev/cpu-profiling.md (why the sampler never rides a .stack trace) | src/record/capture.ts, src/trace/categories.ts, docs/dev/cpu-profiling.md, CLAUDE.md |
-| Folded reflow in browser-lane self-time | ~85% of the layout probe's "JS" is reflow | 85% | docs/dev/cpu-profiling.md (what self-time includes) | src/model/recording.ts, docs/dev/cpu-profiling.md, docs/dev/README.md, CLAUDE.md |
+| Folded reflow in browser-lane self-time | ~85% of the layout probe's "JS" is reflow | 85% | docs/dev/cpu-profiling.md (what self-time includes) | src/model/cpu.ts, docs/dev/cpu-profiling.md, docs/dev/README.md, CLAUDE.md |
 | Frame cadence, chrome headless (~60 Hz) | 16.6 ms one-frame floor | 16.6 | docs/dev/frame-floor.md | src/model/frame-floor.ts, README.md, docs/dev/frame-floor.md |
 | Frame cadence, Firefox headless (~120 Hz) | 8.3 ms one-frame floor | 8.3 | docs/dev/frame-floor.md | src/model/frame-floor.ts, docs/dev/frame-floor.md |
 | Driver settle floor | ~31 ms chrome headless (~half on Firefox) | ~31 | docs/dev/driver-timing.md | docs/dev/driver-timing.md, docs/dev/README.md, docs/dev/frame-floor.md |
@@ -22,7 +22,7 @@ listed here), and only list a file that genuinely contains the string.
 | Default CPU sampler interval | 200 us | 200 | docs/dev/cpu-profiling.md (why 200) | src/profile/cpuprofile.ts, docs/dev/cpu-profiling.md |
 | Fused (--breakdown) pass wall cost | ~2-5% above the sampler-only default capture mode | 2-5% | src/record/capture.ts (the breakdown capture mode) | src/record/capture.ts, src/record/notes.ts |
 | Fused (--breakdown) pass CPU cleanliness | light trace leaves sampled self-time clean vs sampler-only | +0-1% | docs/dev/cpu-profiling.md (the four capture modes, --breakdown bullet) | src/record/capture.ts, docs/dev/cpu-profiling.md |
-| Firefox read-site blame line overlap with Chrome | 12 of Chrome's 21 forced read lines matched exactly | 12/21 | docs/dev/blame-semantics.md (forced-layout blame) | docs/dev/blame-semantics.md, docs/dev/engine-mapping.md, src/model/recording.ts |
+| Firefox read-site blame line overlap with Chrome | 12 of Chrome's 21 forced read lines matched exactly | 12/21 | docs/dev/blame-semantics.md (forced-layout blame) | docs/dev/blame-semantics.md, docs/dev/engine-mapping.md, src/model/attribution.ts |
 | Firefox sub-ms sampling declined (keep the 1ms floor) | 0.5ms is delivered on macOS but worsens reconciliation/size | 0.499 | docs/dev/firefox-cpu.md (the Firefox sampler config) | docs/dev/firefox-cpu.md |
 | Firefox honest idle via threadCPUDelta | js,cpu populates the CPU column; a pure-wait window reads 95.7% idle (js-only leaves it 0% populated) | 95.7% | docs/dev/firefox-cpu.md | src/browser/launch.ts, src/profile/gecko.ts, src/record/notes.ts, docs/dev/firefox-cpu.md |
 | Frame side-track swing on unchanged code | PipelineReporter total swings 1->28 on an identical 20-box paint | 1->28 | docs/dev/rendering-counts.md (the off-thread frame side track is display-only) | src/trace/frames.ts, docs/dev/rendering-counts.md |
