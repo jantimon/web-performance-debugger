@@ -43,13 +43,24 @@ const e2e = ready ? test : (name, _opts, fn) => test(name, { skip: "Chrome not i
 
 // Chrome launch + one capture pass; generous so a slow CI runner does not flake.
 const TIMEOUT_MS = 180_000;
+// Per-CLI-invocation ceiling, OS-enforced. spawnSync pins this process's event loop, so node's
+// per-test timeout timers cannot fire while a child runs; without this, a CLI child wedged on a
+// stuck Chrome hangs the whole job to the CI ceiling in silence. The OS kills the child instead,
+// and the error names the invocation. Sits under TIMEOUT_MS so the test fails as itself.
+const CLI_KILL_MS = 150_000;
 
 function runCli(args) {
   const result = spawnSync(process.execPath, [cli, ...args], {
     cwd: repoRoot,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    timeout: CLI_KILL_MS,
+    killSignal: "SIGKILL",
   });
+  if (result.error && result.error.code === "ETIMEDOUT")
+    throw new Error(
+      `cli ${args.join(" ")} killed after ${CLI_KILL_MS}ms (wedged child; likely a stuck Chrome on this runner)\n${result.stderr ?? ""}`,
+    );
   if (result.status !== 0)
     throw new Error(`cli ${args.join(" ")} exited ${result.status}\n${result.stderr}`);
   return result.stdout;
