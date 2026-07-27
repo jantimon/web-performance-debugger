@@ -938,7 +938,7 @@ function printNodeReport(result: {
 /**
  * One line qualifying the package table above it: can that table be believed?
  *
- * Silent when a missing map cost nothing — plain unbundled source needs none, and claiming
+ * Silent when a missing map cost nothing: plain unbundled source needs none, and claiming
  * "packages below are minified bundles" about a hand-written `.mjs` whose frames resolved to their
  * own source file is simply false. Same trigger as sourcemapNote(); see the reasoning there.
  */

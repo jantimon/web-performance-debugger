@@ -69,7 +69,7 @@ export function mainThread(events: NormalizedEvent[]): MainThreadSelection | nul
   const start = events.find((event) => event.name === RUN_START_MARK);
   // Count layout/paint per thread, restricted to the run window (start-onward from the marker) so a
   // pre-navigation blank-page flush on the marker thread does not mask the process swap. With no
-  // marker there is no window bound, so every layout/paint event is admitted (the legacy heuristic).
+  // marker there is no window bound, so every layout/paint event is admitted (the marker-less fallback).
   const windowStart = start?.ts ?? null;
   const activity = new Map<
     string,
