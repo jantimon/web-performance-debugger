@@ -64,21 +64,21 @@ jobs:
       # completes and prints wpd's/Chrome's own output + exit code, instead of hanging silently.
       - name: which chrome
         run: node -e "console.log('exe:', require('puppeteer').executablePath())" && npx puppeteer browsers list || true
-      - name: bench --deep (first e2e test shape, 200s cap)
+      - name: deep headless baseline (repro, 120s)
         run: |
           set +e -x
-          timeout --signal=SIGTERM 200 node dist/cli.js record examples/forces-layout.mjs --bench --deep --iterations 3 --out /tmp/deep 2>&1 | tail -30
-          echo "DEEP_EXIT=${PIPESTATUS[0]}"
-      - name: bench --breakdown (200s cap)
+          timeout -k 15 -s TERM 120 node dist/cli.js record examples/forces-layout.mjs --bench --deep --iterations 3 --out /tmp/d1 > /tmp/d1.log 2>&1
+          echo "DEEP_HEADLESS_EXIT=$?"; tail -30 /tmp/d1.log; pkill -9 -f chrome-linux64/chrome || true
+      - name: deep headed under xvfb (candidate fix, 120s)
         run: |
           set +e -x
-          timeout --signal=SIGTERM 200 node dist/cli.js record examples/forces-layout.mjs --bench --breakdown --iterations 5 --out /tmp/bd 2>&1 | tail -30
-          echo "BREAKDOWN_EXIT=${PIPESTATUS[0]}"
-      - name: bench --precise-wall (sampler off, trace off; 120s cap)
+          timeout -k 15 -s TERM 120 xvfb-run -a node dist/cli.js record examples/forces-layout.mjs --bench --deep --no-headless --iterations 3 --out /tmp/d2 > /tmp/d2.log 2>&1
+          echo "DEEP_HEADED_EXIT=$?"; tail -30 /tmp/d2.log; pkill -9 -f chrome-linux64/chrome || true
+      - name: deep headless no-sandbox (candidate fix, 120s)
         run: |
           set +e -x
-          timeout --signal=SIGTERM 120 node dist/cli.js record examples/forces-layout.mjs --bench --precise-wall --iterations 3 --out /tmp/pw 2>&1 | tail -12
-          echo "PRECISE_EXIT=${PIPESTATUS[0]}"
+          timeout -k 15 -s TERM 120 node dist/cli.js record examples/forces-layout.mjs --bench --deep --disable-browser-sandbox --iterations 3 --out /tmp/d3 > /tmp/d3.log 2>&1
+          echo "DEEP_NOSANDBOX_EXIT=$?"; tail -30 /tmp/d3.log; pkill -9 -f chrome-linux64/chrome || true
 
   release:
     # Publishing waits for the whole suite to pass on THIS commit: `needs` blocks on the other jobs
