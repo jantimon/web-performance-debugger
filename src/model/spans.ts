@@ -173,7 +173,7 @@ function runEntryFromCpuBreakdown(cpu: CpuBreakdown, iterations: number): SpanEn
  * Build the unified `query spans` result. Prefers the recording's spans that carry a reconciling bar
  * (`span.breakdown`); falls back to synthesizing a single `run` span from a
  * `CpuModel.breakdown` so the verb never comes back empty when any bar exists. Returns null when the
- * recording holds neither (an old recording, or a sampler-off capture mode like --deep/--precise-wall),
+ * recording holds neither (an old recording, or a sampler-off capture mode like --deep),
  * which the caller turns into a non-zero error. `iterations` (the recording's `meta.iterations`) is stamped on
  * every entry alongside its `aggregation`, so a consumer can read what a span's numbers represent.
  */

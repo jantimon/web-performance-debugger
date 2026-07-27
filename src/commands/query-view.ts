@@ -578,7 +578,7 @@ export function printSpanFilterNote(hidden: number): void {
 
 /**
  * The bar-less span rows that sit BELOW a bar in a mixed overview: driver steps a sampler-only capture
- * (default/--precise-wall) built no per-span bar for, or a step that navigated cross-document in a
+ * (default) built no per-span bar for, or a step that navigated cross-document in a
  * --breakdown recording. Listed by wall + INP rather than dropped from the overview; slices/counts are
  * not on these rows, so the table stays to what is real (wall, aggregation, INP). `hint` names WHY the
  * rows have no bar (it differs by capture mode), so a --breakdown user is not told to run --breakdown.
@@ -600,10 +600,10 @@ export function printBarlessStepRows(spans: SpanCountsEntry[], hint: string): vo
 }
 
 /**
- * `query spans` on a bar-less recording (default/--deep/--precise-wall): the overview it CAN render
+ * `query spans` on a bar-less recording (default/--deep): the overview it CAN render
  * honestly -- label/kind/wall/aggregation and the Measured rendering counts -- with the reconciling
- * bar shown as not-measured. --deep leads with its exact counts here; the sampler-off wall capture modes
- * carry only the wall (counts —). Never a fabricated all-zero bar.
+ * bar shown as not-measured. --deep leads with its exact counts here; the default mode
+ * carries only the wall (counts —). Never a fabricated all-zero bar.
  */
 export async function printBarlessSpans(
   overview: SpanCountsOverview,

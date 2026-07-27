@@ -1475,10 +1475,11 @@ test("record --breakdown --deep is rejected (two capture modes, two invocations)
   assert.match(result.stderr, /--breakdown and --deep are two different capture modes/);
 });
 
-test("record --precise-wall --breakdown is rejected (the default capture mode minus sampler vs another capture mode)", () => {
+test("record --precise-wall is retired and names the migration (fires before any browser launch)", () => {
   const result = guardError(["--precise-wall", "--breakdown"]);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /--precise-wall is the default capture mode minus the sampler/);
+  assert.match(result.stderr, /--precise-wall was removed/);
+  assert.match(result.stderr, /cancels in `diff`\/`cpu-diff`/, "gives the systematic-cost rationale");
 });
 
 test("record --breakdown on firefox is rejected (the gecko pass IS the firefox lane)", () => {

@@ -150,7 +150,8 @@ correctness hazard:
   ceiling.
 
 So the ~140% is the honest floor of the Firefox lane on rendering-heavy work, and Firefox has no
-sampler-free counterpart to buy it back (Chrome's `--precise-wall` reclaims its sampler; the gecko
-profiler is a whole-lifetime startup feature). Directional and machine-dependent — the ordering and
+sampler-free counterpart to buy it back (the gecko profiler is a whole-lifetime startup feature).
+Chrome offers none either: neither engine has a sampler-free wall, because the sampled wall is
+directional and the attribution is the product. Directional and machine-dependent — the ordering and
 the per-reflow-vs-per-sample split are the load-bearing part, not the exact percent. Refresh with
 `npm run build && node examples/gecko-overhead.mjs`.

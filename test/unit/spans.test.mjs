@@ -330,7 +330,7 @@ test("buildSpans: never empty when any bar exists (the run span is always synthe
   assert.equal(buildSpans([], nodeCpu, "node").spans[0].kind, "run");
 });
 
-// --- Mixed overview: a run bar alongside bar-less driver steps (default/--precise-wall capture) ---
+// --- Mixed overview: a run bar alongside bar-less driver steps (default capture) ---
 
 // On the sampler-only default capture a driver flow stores a bar-less run span (priced by the
 // CpuModel window) plus bar-less step spans. The overview must list the steps, not just the run.

@@ -365,8 +365,8 @@ function assembleNotes(setup: RecordSetup, captured: CapturedPass): DerivedNotes
   // per-iteration steps disagree, and that rejection has to happen before the recording, the digest
   // and the `latest` pointer exist: a run that failed after writing artifacts but before repointing
   // `latest` would leave `assert latest` silently gating the PREVIOUS run instead. Pair by LABEL:
-  // the step timings and the trace windows come from the same pass. No window (default/precise-wall
-  // capture mode, or lost markers) means nothing to pair with -- pass undefined rather than an empty list,
+  // the step timings and the trace windows come from the same pass. No window (default capture
+  // mode, or lost markers) means nothing to pair with -- pass undefined rather than an empty list,
   // which would read as divergence.
   const mergedSteps =
     opts.driver && timing.driverSteps?.length
@@ -402,9 +402,6 @@ function assembleNotes(setup: RecordSetup, captured: CapturedPass): DerivedNotes
     // bar/CPU model. Firefox --deep is NOT this capture mode -- it is the gecko pass plus a report
     // tier, so it falls to the firefox branch below (which adds the dirtied-by note).
     notes.push(notesCatalog.deepCaptureMode());
-  } else if (opts.preciseWall) {
-    // The default capture mode minus the sampler: only the wall is measured. No counts, no CPU model.
-    notes.push(notesCatalog.preciseWall());
   } else if (browserName === "firefox") {
     notes.push(notesCatalog.firefoxBackend());
     // The counts are NOT simply absent on Firefox: with a gecko pass, summarize falls back to
@@ -442,8 +439,8 @@ function assembleNotes(setup: RecordSetup, captured: CapturedPass): DerivedNotes
   }
   // The built-in on-ramp flow: disclose what the single "load" step measures, and (when repeated)
   // either the warm/cold caveat on the resulting wall median, or -- when this capture mode priced no
-  // wall at all (the navigating load step resets the page clock and the default/precise-wall capture
-  // mode has no trace clock to span it) -- that there IS no median here and --breakdown is what produces
+  // wall at all (the navigating load step resets the page clock and the default capture mode has no
+  // trace clock to span it) -- that there IS no median here and --breakdown is what produces
   // one. Emitting the warm/cold note in the no-wall capture mode would promise a median (`stats`) the
   // recording does not carry.
   if (isOnramp) {
@@ -475,7 +472,7 @@ function assembleNotes(setup: RecordSetup, captured: CapturedPass): DerivedNotes
   // user_timing category got dropped). Without a window, inWindow() would count the ENTIRE trace
   // (page load, nav, prepare, teardown) as the measured region, silently inflating every
   // trace-derived count. The rendering capture degrades to not-measured and the note says so.
-  // Firefox has its own honest notes (above); the default/precise-wall capture mode has no trace, so a
+  // Firefox has its own honest notes (above); the default capture mode has no trace, so a
   // missing window there is the capture mode working, not a buffer overflow.
   const traceWindowMissing = detail.windowStart == null && browserName !== "firefox" && wantTrace;
   const effectiveCapabilities = capabilitiesAfterParse(capabilities, !traceWindowMissing);

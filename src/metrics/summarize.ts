@@ -109,7 +109,7 @@ export interface CaptureCapabilities {
   forced: boolean;
 }
 
-/** Everything not-measured: the default/precise-wall capture mode and node, which capture no rendering work. */
+/** Everything not-measured: the default capture mode and node, which capture no rendering work. */
 export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
   counts: false,
   paintCount: false,

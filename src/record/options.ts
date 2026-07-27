@@ -30,7 +30,7 @@ export interface RecordOptions {
   /** artificial slowdown: CPU throttling multiplier (e.g. 4 = 4x slower) */
   cpuThrottle?: number;
   /** capture a CPU sampling profile (writes .cpuprofile + .cpu model); on by default, off on --deep
-   * (the sampler cannot ride a `.stack` trace) and --precise-wall. */
+   * (the sampler cannot ride a `.stack` trace). */
   cpuProfile?: boolean;
   /** CPU sampler interval in microseconds (default DEFAULT_CPU_INTERVAL_US); internal, no user flag */
   cpuIntervalUs?: number;
@@ -50,8 +50,6 @@ export interface RecordOptions {
    * counts -- with slice durations suppressed (the `.stack` trace distorts them). No CPU model, no bar.
    */
   deep?: boolean;
-  /** The default capture mode minus the sampler: a pristine benchmark wall, no profiler, no counts. */
-  preciseWall?: boolean;
   /** Opt-in variant label stamped on meta, so a diff/cpu-diff gate refuses across two techniques
    * that run through one module path (env-switched). Absent by default. */
   variant?: string;

@@ -20,7 +20,7 @@ export function countProvenance(rec: Recording): string {
   if (isGeckoCaptureMode(rec.meta.passes)) {
     return "counts come from Gecko markers — approximate, not comparable to Chrome; durations are coarse";
   }
-  // The default/precise-wall mode captures no trace, so it counts nothing: a — is not-measured, not 0.
+  // The default mode captures no trace, so it counts nothing: a — is not-measured, not 0.
   if (rec.summary.layoutCount == null) {
     return "counts NOT measured in this capture mode (no trace): shown as —, never 0. Add --breakdown or --deep; see notes";
   }

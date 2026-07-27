@@ -680,7 +680,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   const iterations = rec.meta.iterations ?? 1;
   const result = buildSpans(rec.spans, cpuBreakdown, recordingLane(rec.meta), iterations);
   if (!result) {
-    // No reconciling bar at this capture (default/--deep/--precise-wall) and no CpuModel run bar to
+    // No reconciling bar at this capture (default/--deep) and no CpuModel run bar to
     // fall back on. The recording still carries spans with wall + (on --deep) exact counts, so render
     // THAT overview -- label/kind/wall/aggregation/counts, bars not-measured -- rather than refusing
     // the documented overview -> drill flow on the capture with the richest attribution. Only a
@@ -701,7 +701,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   const spanFilter = { minWallMs: query.minWall, labelIncludes: query.filter };
   const selected = label ? result.spans.filter((span) => span.label === label) : result.spans;
   const { spans, hidden } = filterSpanEntries(selected, spanFilter);
-  // Bar-less step/measure rows (a default/--precise-wall driver step whose only bar is the run's) get
+  // Bar-less step/measure rows (a default driver step whose only bar is the run's) get
   // the same --label selector then flood filter, so a mixed recording lists them alongside the bar
   // rows. Selector first, flood filter second, so `hidden` counts only what the flood filter removed
   // (never the targeting) -- the same order the bar path above uses. A null-wall span (a navigating
@@ -1170,7 +1170,7 @@ async function queryDirtied(rec: Recording, file: string, query: BlameQuery): Pr
 function whatCapturesStacks(semantic: BlameSemantic | undefined): string {
   if (semantic === "flush-site")
     return "the run captures the geometry read that forced the flush (Chrome --deep via the trace's `.stack`, Chrome --breakdown + Firefox by sampling it)";
-  return "this run captured no blame: the default and --precise-wall capture modes run no trace, and --target node has no DOM; record with --deep (chrome) or --target firefox";
+  return "this run captured no blame: the default capture mode runs no trace, and --target node has no DOM; record with --deep (chrome) or --target firefox";
 }
 
 /**

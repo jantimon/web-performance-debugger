@@ -174,15 +174,12 @@ question with different instrumentation, and wanting two answers means running `
 | Capture mode (chrome) | CPU sampler | Reconciling bar | Rendering counts | Forced-layout blame | Speed |
 | --- | :---: | :---: | :---: | :---: | --- |
 | **no measurement** *(not a mode)* | — | — | — | — | 🏆 baseline |
-| **`--precise-wall`** | — | — | — | — | 🏆 Δ ~0% |
 | **default** (no flag) | ✅ | — | — | — | 🐌 Δ ~4-7% |
 | **`--breakdown`** | ✅ | ✅ | ✅ | ◐ sampled | 🐌🐌 Δ ~25% |
 | **`--deep`** | — | — | ✅ | ✅ exact | 🐌🐌🐌 Δ ~70% |
 
 - **no measurement** — plain browser, no trace, no CPU sampler: just the wall, the baseline the Speed
   column is measured against. Not a flag you pass.
-- **`--precise-wall`** — the CPU sampler off and no trace: a pristine benchmark wall that buys back
-  the CPU sampler's cost, and nothing else.
 - **default** — the CPU sampler only: the four-slice CPU bar (`js · browser · gc · idle`) and the run
   span's hot functions, the cleanest wall, no rendering counts.
 - **`--breakdown`** — a light trace fused with the CPU sampler: the reconciling **seven-slice bar**
@@ -198,6 +195,11 @@ question with different instrumentation, and wanting two answers means running `
 mid-size mixed JS + layout workload (`examples/capture-mode-speed.mjs`). It is directional and
 machine-dependent: the ordering holds, the exact percentages will not, and the trace-based modes cost
 more the more the page renders.
+
+The CPU sampler's ~4-7% cost is systematic, so it cancels in `diff`/`cpu-diff` (both sides carry it).
+wpd has no sampler-free wall mode: a bare benchmark wall is absolute-wall benchmarking, which wpd does
+not measure — the wall is directional, and the attribution (line, package, count) is the product. To
+compare two runs, record both in the same mode and `diff` them.
 
 The split is what keeps the numbers honest. The CPU sampler must never ride a `.stack` trace (it
 inflates sampled self-time +21%, billing the trace's own stack-walk to the JS frame that forced a
@@ -235,20 +237,18 @@ rather than what you switch on:
 | **default** (no flag) | ✅ gecko pass | ✅ | ✅ | ✅ | ✅ | — | 🐌🐌🐌 Δ ~150% |
 | **`--deep`** | ✅ same capture | ✅ | ✅ | ✅ | ✅ | ✅ | same capture, same cost |
 | **`--breakdown`** | not available* | | | | | | |
-| **`--precise-wall`** | not available* | | | | | | |
 
 \* The Firefox lane is one Gecko-profiler pass — the only source of its CPU samples, markers,
-reconciling bar, and read-site blame. That pass cannot be switched off (the point of `--precise-wall`)
-and offers no separate light or deep trace to pick (what `--breakdown` picks on chrome), so neither
-flag has anything to select.
+reconciling bar, and read-site blame. It offers no separate light trace to pick (what `--breakdown`
+picks on chrome), so the flag has nothing to select.
 
 `--target firefox` entangles samples and markers at profiler startup, so the capture modes are
 reporting tiers over that one capture. That pass has no sampler-free counterpart, so even Firefox's
 fastest capture pays for it: **🐌🐌🐌 Δ ~150%** over a plain Firefox launch, and `--deep` is the same
 capture at the same cost. The tax is reflow-weighted, not flat — each synchronous reflow's marker
 captures a JS cause stack (the blame signal), so the probe's reflow-heavy workload pays ~150% while
-pure-JS work pays ~5% ([details](docs/dev/firefox-cpu.md)). Chrome can buy the CPU sampler back with
-`--precise-wall`; Firefox cannot, so its numbers are a floor, not a benchmark wall. `--target node` is
+pure-JS work pays ~5% ([details](docs/dev/firefox-cpu.md)). Neither engine offers a sampler-free wall,
+so every wall is directional over a real attribution, not a benchmark wall. `--target node` is
 a CPU-only lane with the four-slice bar. See [what each target gives you](#what-each-target-gives-you).
 
 ## Read the results
@@ -484,7 +484,7 @@ transition is just slow, or gate on a `selector` instead. `waitForStable` is als
 injected form needs no dependency.
 
 **Hard navigations.** A step that reloads or navigates to a new document (a cold boot, a `page.goto`)
-reports `wall: —` in the sampler-only capture modes (default / `--precise-wall`): the step spans two
+reports `wall: —` in the sampler-only default capture mode: the step spans two
 documents, and one `performance.now` clock cannot measure across them. Record with `--breakdown` or
 `--deep` to price it — those windows sit on the trace clock, which does span the swap. The counts, bar,
 and boot LCP are unaffected.
@@ -568,7 +568,7 @@ redirected, and `--format` output is always plain, so CI and scripts are unaffec
 
 Not every span carries a CPU/hot-functions number: the run span does in every sampling capture mode,
 steps only under chrome `--breakdown`, measures under chrome `--breakdown` and firefox, and none under
-`--deep`/`--precise-wall`. On the CPU-only lanes (chrome default, `--target node`, Firefox without user
+`--deep`. On the CPU-only lanes (chrome default, `--target node`, Firefox without user
 measures) there is no stored per-span bar, so `query spans` synthesizes the run span from the CPU
 model's sampled window (labeled `sampled window`, JSON `source: "cpu-model"`), whose `wallMs` differs
 from the sum of the timed `run()` samples. See

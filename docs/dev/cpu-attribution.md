@@ -26,13 +26,12 @@ gave that span its own window.
 | chrome default | yes (CpuModel) | no | no (no trace = no measure spans) |
 | chrome `--breakdown` | yes (CpuModel) | yes (`SpanHot`) | yes (`SpanHot`) |
 | chrome `--deep` | no (sampler OFF) | no | no |
-| chrome `--precise-wall` | no (sampler OFF) | no | no |
 | firefox (`gecko`/`gecko-deep`) | yes (CpuModel) | no | yes (`SpanHot`) |
 | node | yes (CpuModel) | n/a (no steps) | n/a (no measures) |
 
 So the run span is the only span with CPU attribution on the default and node lanes; steps get it only
-under chrome `--breakdown`; measures get it under chrome `--breakdown` and firefox. `--deep` and
-`--precise-wall` run the sampler OFF, so no span carries a CPU number on them.
+under chrome `--breakdown`; measures get it under chrome `--breakdown` and firefox. `--deep` runs the
+sampler OFF, so no span carries a CPU number on it.
 
 ## The CDP sampler's window resets on a cross-process navigation (the default capture mode); `--breakdown` does not
 

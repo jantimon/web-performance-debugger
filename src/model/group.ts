@@ -131,7 +131,8 @@ export function modeIsDeep(mode: string): boolean {
   return mode === "deep" || mode === "gecko-deep";
 }
 
-/** A member's mode ran a CPU sampler, so it carries a CpuModel and (breakdown/gecko/node) a bar. */
+/** A member's mode ran a CPU sampler, so it carries a CpuModel and (breakdown/gecko/node) a bar.
+ * The retired "precise-wall" arm stays so an old recording carrying it reports no CPU, never a crash. */
 export function modeHasCpu(mode: string): boolean {
   return mode !== "deep" && mode !== "precise-wall";
 }

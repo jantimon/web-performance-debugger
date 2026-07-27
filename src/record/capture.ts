@@ -5,7 +5,6 @@
 //   default        sampler only, no trace           -> the four-slice CPU bar; no rendering counts
 //   --breakdown    light trace + sampler            -> reconciling bar + exact counts + sampled blame
 //   --deep         full trace (.stack + inval), OFF  -> exact forced-layout blame + counts, no bar
-//   --precise-wall sampler off, no trace            -> a pristine benchmark wall, nothing else
 // Firefox is one gecko pass in every capture mode (samples + markers are entangled at profiler
 // startup); its capture modes are REPORTING tiers over that one capture, not capture tiers. --deep
 // adds a reporting tier (mode "gecko-deep"): it surfaces Gecko's native cause-stack write identity as
@@ -33,6 +32,8 @@ export type CaptureMode =
   | "default"
   | "breakdown"
   | "deep"
+  // retired: no invocation produces it; kept so an old recording carrying the string opens and
+  // reports not-measured rather than failing the schema gate.
   | "precise-wall"
   | "gecko"
   | "gecko-deep";
@@ -41,7 +42,7 @@ export type CaptureMode =
 export interface CaptureConfig {
   /** capture-mode name, recorded verbatim as meta.passes (a one-element array; no multi-pass plan) */
   mode: CaptureMode;
-  /** DevTools trace categories, or null for a trace-free pass (default mode, precise-wall, firefox) */
+  /** DevTools trace categories, or null for a trace-free pass (default mode, firefox) */
   categories: string[] | null;
   /** run the CPU sampler on this pass */
   cpu: boolean;
@@ -100,18 +101,6 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
       cpu: false,
       cpuSource: "cdp",
       keepThreadIds: true,
-      gecko: false,
-    };
-  }
-  if (opts.preciseWall) {
-    // The default capture mode minus the sampler: a pristine benchmark wall, no profiler perturbation,
-    // no counts.
-    return {
-      mode: "precise-wall",
-      categories: null,
-      cpu: false,
-      cpuSource: "cdp",
-      keepThreadIds: false,
       gecko: false,
     };
   }
@@ -174,7 +163,7 @@ export function capabilitiesFor(
     };
   }
   if (config.categories == null) {
-    // Default mode / precise-wall: no trace, so no rendering work is observed at all.
+    // Default mode: no trace, so no rendering work is observed at all.
     return { ...NO_RENDERING_CAPTURE };
   }
   const hasStack = config.categories.includes(STACK_CATEGORY);
