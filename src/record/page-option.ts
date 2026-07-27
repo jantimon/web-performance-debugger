@@ -1,9 +1,8 @@
 import fs from "node:fs";
 
 /**
- * The resolved meaning of the host-page option (`--url <value>`, or its `--html` alias): either a
- * live URL to navigate to, or a local HTML file to serve and load. The option accepts both spellings
- * of a host page and discovers which one from the value.
+ * The resolved meaning of the host-page option (`--url <value>`): either a live URL to navigate to,
+ * or a local HTML file to serve and load. The option discovers which one from the value.
  */
 export type PageResolution =
   | { kind: "url"; url: string; schemeAssumed: boolean }

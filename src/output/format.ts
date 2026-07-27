@@ -51,14 +51,15 @@ export function extFor(format: Format): string {
   return format === "toon" ? ".toon" : ".json";
 }
 
-/** The `--json`/`--format` surface a query verb reads to decide structured-vs-human output. */
+/** The `--format` surface a query verb reads to decide structured-vs-human output. */
 export interface StructuredOutOpts {
+  /** Hidden alias of `--format json`: kept working, kept out of help. `--format` is the documented spelling. */
   json?: boolean;
   format?: string;
 }
 
-/** The structured format a verb should emit, or null for the human report. `--format` wins over
- * the legacy `--json` boolean; an unknown format name fails loudly. */
+/** The structured format a verb should emit, or null for the human report. `--format` wins over the
+ * hidden `--json` alias; an unknown format name fails loudly. */
 export function structuredFormat(opts: StructuredOutOpts): Format | null {
   if (opts.format) {
     if (!isFormat(opts.format)) throw new Error("--format must be json or toon");

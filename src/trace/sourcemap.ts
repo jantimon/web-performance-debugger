@@ -333,7 +333,7 @@ export class SourceMapResolver {
 
   /**
    * @param options.pageUrl the profiled page's URL (--url), used to decide whether private fetch
-   *   targets are expected. Absent (bench/module/--html) means the page is wpd's own localhost
+   *   targets are expected. Absent (bench/module/local-file --url) means the page is wpd's own localhost
    *   server, i.e. private, so private targets are permitted.
    */
   constructor(options: { pageUrl?: string } = {}) {

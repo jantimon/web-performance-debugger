@@ -113,7 +113,7 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", "3", "--out", out]);
   assert.ok(existsSync(out), "recording file written");
 
-  const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
+  const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
   assert.ok(Array.isArray(blame) && blame.length > 0, "at least one forced-layout source group");
   const fromExample = blame.filter((row) => row.at?.includes("forces-layout.mjs"));
   assert.ok(fromExample.length > 0, "forced layout attributed to forces-layout.mjs");
@@ -153,7 +153,7 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
   // The forced COUNT stays not-measured on --breakdown (it needs .stack); only the blame is added.
   assert.equal(recording.summary.forcedLayoutCount, null, "forced COUNT is still not measured (— ), never a fake 0");
 
-  const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
+  const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
   assert.ok(Array.isArray(blame) && blame.length > 0, "at least one sampled forced-layout source group");
   const fromExample = blame.filter((row) => row.at?.includes("forces-layout.mjs"));
   assert.ok(fromExample.length > 0, "sampled forced layout attributed to forces-layout.mjs");
@@ -193,7 +193,7 @@ e2e("record --deep detects layout thrashing and dual-annotates read + dirtied-by
 
   // The thrash rollup rides the run span's anatomy. N = 3 is the headline threshold; this workload
   // thrashes far over it (measured ~42 steps over ~21 geometry reads).
-  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
+  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--format", "json"]));
   assert.ok(anatomy.thrash, "the run span carries a thrash rollup on --deep");
   assert.ok(anatomy.thrash.count >= 3, `thrashCount >= N=3, got ${anatomy.thrash.count}`);
   assert.ok(Array.isArray(anatomy.thrash.steps) && anatomy.thrash.steps.length > 0, "the interleave has steps");
@@ -211,7 +211,7 @@ e2e("record --deep detects layout thrashing and dual-annotates read + dirtied-by
 
   // The dual annotation also hangs on `query blame --forced`: the read stays the headline, the write
   // is attached as dirtiedBy with its Chrome invalidation reason.
-  const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
+  const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
   const annotated = blame.find((row) => row.dirtiedBy?.some((w) => /forces-layout\.mjs:16\b/.test(w.at)));
   assert.ok(annotated, "a forced read-site carries a dirtied-by write");
   const bumpWrite = annotated.dirtiedBy.find((w) => /forces-layout\.mjs:16\b/.test(w.at));
@@ -228,7 +228,7 @@ test("record --target node resolves hot functions to source without a browser", 
   assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
   assert.ok(existsSync(`${out}.cpuprofile`), "raw cpuprofile written");
 
-  const model = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+  const model = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
   assert.ok(model.jsSelfMs > 0, "non-zero sampled JS self-time");
   const named = model.hot.find(
     (fn) => fn.fn === "hashString" || fn.fn === "buildRows" || fn.fn === "serializeStyle",
@@ -245,7 +245,7 @@ e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   assert.ok(existsSync(`${out}.cpuprofile`), "raw cpuprofile written");
 
   // Query by the bare --out path (no extension): exercises the sibling .cpu.json resolution.
-  const model = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+  const model = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
   assert.ok(model.jsSelfMs > 0, "non-zero sampled JS self-time");
   assert.ok(model.sampleCount > 0, "profiler collected samples");
   const named = model.hot.find(
@@ -310,7 +310,7 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   // A committed fixture, not examples/react-counter, whose dist/ is git-ignored and never built in
   // CI: the test would have returned early and reported green without exercising anything. It has
-  // to live under the repo because --html is served by a static server rooted at the cwd; the
+  // to live under the repo because a local-file --url is served by a static server rooted at the cwd; the
   // driver module is import()ed in Node, so that one can be written to a temp dir.
   const html = path.join(repoRoot, "test", "fixtures", "driver-probe.html");
   assert.ok(existsSync(html), "driver-probe.html is committed, so this test cannot silently skip");
@@ -329,7 +329,7 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
     const out = path.join(dir, `drv-${iterations}`);
     runCli([
       "record", flow,
-      "--html", html, "--deep", "--iterations", String(iterations), "--out", out,
+      "--url", html, "--deep", "--iterations", String(iterations), "--out", out,
     ]);
     // The collapse: one artifact. Steps are spans of kind "step" on the recording -- there is no
     // separate index file to read.
@@ -428,7 +428,7 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
   );
   assert.ok(runSpan.scope.elementsStyled, "style scope (elementCount) is present, a separate denominator");
   // The `query span` JSON carries the same scope, and the human report prints the Scope block.
-  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
+  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--format", "json"]));
   assert.deepEqual(anatomy.scope, runSpan.scope, "query span JSON carries the span scope");
   const spanHuman = runCli(["query", "span", out, "run"]);
   assert.match(spanHuman, /layout objects\s+p50/, "the human anatomy prints the scope distribution");
@@ -457,7 +457,7 @@ e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed
      }`,
   );
   const out = path.join(dir, "bd-step-cpu");
-  runCli(["record", flow, "--html", html, "--breakdown", "--iterations", "3", "--out", out]);
+  runCli(["record", flow, "--url", html, "--breakdown", "--iterations", "3", "--out", out]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
   const step = rec.spans.find((span) => span.kind === "step" && span.label === "compute");
@@ -483,7 +483,7 @@ e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed
   assert.ok(step.hot.functions[0].samples > 0, "a hot ref carries a real sample count");
 
   // The full anatomy resolves the same unsuppressed hot list (names via the sibling CpuModel).
-  const anatomy = JSON.parse(runCli(["query", "span", out, "step:compute", "--json"]));
+  const anatomy = JSON.parse(runCli(["query", "span", out, "step:compute", "--format", "json"]));
   assert.notEqual(anatomy.hot.suppressed, true, "query span shows the step's hot list, unsuppressed");
   assert.ok(anatomy.hot.functions.length > 0, "and it resolves to named functions");
 
@@ -543,13 +543,13 @@ e2e("record (default capture mode): a driver step carries LoAF script attributio
   assert.equal(quick.loaf, undefined, "a trivial step carries no LoAF: the slow step's frames did not leak forward");
 
   // The full anatomy surfaces the same LoAF frames (JSON contract).
-  const anatomy = JSON.parse(runCli(["query", "span", out, "step:slow-click", "--json"]));
-  assert.ok(anatomy.loaf, "query span --json carries the loaf field");
+  const anatomy = JSON.parse(runCli(["query", "span", out, "step:slow-click", "--format", "json"]));
+  assert.ok(anatomy.loaf, "query span --format json carries the loaf field");
   assert.ok(anatomy.loaf.frames[0].scripts[0].invoker, "and it names the blamed script");
 
   // The overview lists the driver steps even though only the run carries a bar in this capture: the
   // run bar (from the sibling CpuModel) plus every step bar-less, never the run alone.
-  const overview = JSON.parse(runCli(["query", "spans", out, "--json"]));
+  const overview = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
   assert.equal(overview.source, "cpu-model", "the run bar comes from the sibling CpuModel");
   assert.deepEqual(
     overview.spans.map((span) => span.kind),
@@ -785,7 +785,7 @@ e2e("record --breakdown: a navigating step keeps CPU attribution across the proc
        }`,
     );
     const out = path.join(dir, "nav-breakdown");
-    runCli(["record", flow, "--html", html, "--breakdown", "--iterations", "1", "--out", out]);
+    runCli(["record", flow, "--url", html, "--breakdown", "--iterations", "1", "--out", out]);
     const rec = JSON.parse(readFileSync(out, "utf8"));
 
     // THE proof: the pre-navigation step carries real CPU attribution. Under the CDP sampler this
@@ -1073,7 +1073,7 @@ e2e("query spans: unified per-span shape over a chrome --breakdown recording", {
     "--bench", "--breakdown", "--iterations", "2", "--out", out,
   ]);
 
-  const spans = JSON.parse(runCli(["query", "spans", out, "--json"]));
+  const spans = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
   assert.equal(spans.source, "breakdowns", "chrome --breakdown sources the stored per-span bars");
   assert.ok(Array.isArray(spans.spans) && spans.spans.length > 0, "spans present");
   const runSpan = spans.spans.find((span) => span.kind === "run");
@@ -1095,7 +1095,7 @@ e2e("query spans: unified per-span shape over a chrome --breakdown recording", {
   assert.equal(measure.iterations, 2, "the measure span carries the recording's iteration count");
 
   // --label narrows to the exact span.
-  const filtered = JSON.parse(runCli(["query", "spans", out, "--json", "--label", "user-span"]));
+  const filtered = JSON.parse(runCli(["query", "spans", out, "--format", "json", "--label", "user-span"]));
   assert.equal(filtered.spans.length, 1);
   assert.equal(filtered.spans[0].label, "user-span");
 });
@@ -1110,7 +1110,7 @@ e2e("query span run: --breakdown recording shows the bar and the run-window hot 
     "record", path.join(examples, "forces-layout.mjs"),
     "--bench", "--breakdown", "--iterations", "5", "--out", out,
   ]);
-  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
+  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--format", "json"]));
   assert.equal(anatomy.kind, "run");
   assert.equal(anatomy.aggregation, "sum", "the run window is a total across iterations");
   assert.ok(anatomy.slices, "the reconciling bar's unified slices are present");
@@ -1137,7 +1137,7 @@ e2e("query span <measure>: --breakdown surfaces per-span hot functions, suppress
     "--bench", "--breakdown", "--iterations", String(iterations), "--out", out,
   ]);
 
-  const heavy = JSON.parse(runCli(["query", "span", out, "measure:heavy", "--json"]));
+  const heavy = JSON.parse(runCli(["query", "span", out, "measure:heavy", "--format", "json"]));
   assert.ok(heavy.hot, "the heavy measure carries a per-span hot list");
   assert.equal(heavy.hot.scope, "measure-pooled", "a measure span pools its occurrences");
   assert.equal(heavy.hot.occurrences, iterations, "every occurrence is pooled and disclosed");
@@ -1152,7 +1152,7 @@ e2e("query span <measure>: --breakdown surfaces per-span hot functions, suppress
     "the dominant work resolves to a named source function",
   );
 
-  const trivial = JSON.parse(runCli(["query", "span", out, "measure:trivial", "--json"]));
+  const trivial = JSON.parse(runCli(["query", "span", out, "measure:trivial", "--format", "json"]));
   assert.ok(trivial.hot, "the trivial measure still reports a hot object");
   // Whether this window stays under the 10-sample floor depends on runner speed (a stalled CI
   // machine stretches even this loop across enough sampler ticks to rank), so assert the
@@ -1183,9 +1183,9 @@ e2e("query span <step>: --deep driver recording shows the step's counts and forc
      }`,
   );
   const out = path.join(dir, "span-step");
-  runCli(["record", flow, "--html", html, "--deep", "--iterations", "1", "--out", out]);
+  runCli(["record", flow, "--url", html, "--deep", "--iterations", "1", "--out", out]);
 
-  const anatomy = JSON.parse(runCli(["query", "span", out, "add rows", "--json"]));
+  const anatomy = JSON.parse(runCli(["query", "span", out, "add rows", "--format", "json"]));
   assert.equal(anatomy.kind, "step", "a bare label resolves the single matching step span");
   // Exact windowed counts (--deep).
   assert.ok(anatomy.counts.layoutCount > 0, "the step's layout count is present");
@@ -1204,7 +1204,7 @@ e2e("query span <step>: --deep driver recording shows the step's counts and forc
 // skipped): the stub errors before any recording is read.
 for (const removed of ["digest", "index"]) {
   test(`query ${removed} was removed and points at the replacement`, () => {
-    const result = spawnSync(process.execPath, [cli, "query", removed, "latest", "--json"], {
+    const result = spawnSync(process.execPath, [cli, "query", removed, "latest", "--format", "json"], {
       cwd: repoRoot,
       encoding: "utf8",
     });
@@ -1387,7 +1387,7 @@ e2e("driver flow: step navigation classification + boot LCP on the hard-nav step
     assert.ok(!hash.lcp, "a soft navigation carries no LCP (frozen, never a fake 0)");
 
     // The anatomy view surfaces the same navigation + LCP a consumer reads via query span.
-    const anatomy = JSON.parse(runCli(["query", "span", out, "step:goto", "--json"]));
+    const anatomy = JSON.parse(runCli(["query", "span", out, "step:goto", "--format", "json"]));
     assert.equal(anatomy.navigation, "hard", "query span carries the navigation classification");
     if (lcpSane) assert.equal(anatomy.lcp.tag, "H1", "query span carries the boot LCP");
     // The human report prints the before -> after line, and the LCP element when it is not suppressed.
@@ -1632,7 +1632,7 @@ e2e("record --members breakdown,deep forms a group and query span stitches acros
   assert.ok(group.members[1].annotations.some((note) => /sampler-interval/.test(note)), "the interval difference annotated rather than refused the join");
 
   // The stitch: one anatomy drawing each panel from the member that measures it.
-  const stitch = JSON.parse(runCli(["query", "span", manifest, "run", "--json"]));
+  const stitch = JSON.parse(runCli(["query", "span", manifest, "run", "--format", "json"]));
   assert.equal(stitch.members.length, 2, "each member's own wall is listed separately");
   assert.ok(stitch.members.every((member) => member.wallMs > 0), "each member reports its OWN wall, never one combined number");
   assert.equal(stitch.sources.slices, "breakdown", "the reconciling bar comes from the breakdown member");
@@ -1706,8 +1706,8 @@ e2e("assert gates a driver run-group per step, matching the plain recording's ve
   );
 
   const plain = path.join(dir, "plain.json");
-  runCli(["record", flow, "--html", html, "--deep", "--iterations", "1", "--out", plain]);
-  runCli(["record", flow, "--html", html, "--members", "breakdown,deep", "--group", "grp", "--iterations", "1", "--out", path.join(dir, "grp.json")]);
+  runCli(["record", flow, "--url", html, "--deep", "--iterations", "1", "--out", plain]);
+  runCli(["record", flow, "--url", html, "--members", "breakdown,deep", "--group", "grp", "--iterations", "1", "--out", path.join(dir, "grp.json")]);
   const manifest = path.join(dir, "grp.group.json");
   assert.ok(existsSync(manifest), "the group manifest was written");
 
@@ -1833,7 +1833,7 @@ e2e("record --group: a refused formation join leaves latest on the prior group",
     assert.match(`${mismatch.stdout}\n${mismatch.stderr}`, /iterations|Refusing to add/, "the refusal names the mismatch");
 
     // `latest` still resolves to the intact group, not the orphan b.json.
-    const spans = JSON.parse(runCli(["query", "spans", "latest", "--json"]));
+    const spans = JSON.parse(runCli(["query", "spans", "latest", "--format", "json"]));
     assert.ok(spans.group, "latest still resolves to a group after the refused join");
     assert.equal(spans.group.name, "perf", "and it is the prior group, not downgraded to an orphan recording");
   } finally {
@@ -1892,6 +1892,6 @@ test("node lane: a near-no-op --target node run gates stable under cpu-diff (B-0
   );
 
   // --fail-on-regression must exit 0: runCli throws on a non-zero exit, so no throw is the assertion.
-  const diff = JSON.parse(runCli(["cpu-diff", base, current, "--fail-on-regression", "--json"]));
+  const diff = JSON.parse(runCli(["cpu-diff", base, current, "--fail-on-regression", "--format", "json"]));
   assert.ok(Math.abs(diff.netJsSelfMs) < 5, `two identical no-op runs net ~0, got ${diff.netJsSelfMs}`);
 });
