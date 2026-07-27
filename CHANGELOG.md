@@ -1,5 +1,71 @@
 # @jantimon/web-performance-debugger
 
+## 0.20.0
+
+### Minor Changes
+
+- 1f8b28a: Surface per-flush layout/style **scope** (how much of the page relaid out or recalculated).
+
+  - `query blame --forced` and the `query span` forced section (chrome `--deep`) now tag each
+    read-site with the flush it caused: `N/M layout objects`, `K styled`, and the container root of a
+    subtree-contained flush.
+  - `query span` and the `query spans`/`query span` JSON now carry a per-span scope **distribution**
+    (`dirtyObjects`/`elementCount` p50 + max) on `--breakdown`.
+  - Layout scope is chrome-only; style scope is dual-engine (firefox reads the Gecko `Styles` markers'
+    `elementsStyled`), compared within an engine. Aggregated as a distribution, never a sum, and shown
+    beside the ms, never as a proxy for it.
+
+- 9498642: **Breaking:** `record --html <file>` is removed. Use `--url <file-or-url>`: it already accepts a
+  local HTML file or a live URL. An explicit `--html` now fails with a message naming the replacement.
+
+  `--json` is no longer documented on the `query`/`cpu-diff` verbs; the documented spelling is
+  `--format json`. The old `--json` flag keeps working as a hidden alias, so existing scripts are
+  unaffected.
+
+- c66f79a: **Breaking:** Chrome's built-in headless (full Chrome, windowless) is now the only headless mode.
+  chrome-headless-shell is removed, and `--headless-mode` is removed (an explicit flag now errors with
+  a clear message). wpd measures how real Chrome performs, so it runs real Chrome, not a scraping/PDF
+  build.
+
+  Consequences:
+
+  - The `wall`/`INP` one-frame floor is now ~16.6 ms (Chromium's synthetic 60 Hz default) and
+    deterministic across machines and CI, instead of shell's environment-contingent ~8.3 ms.
+  - Launch costs ~380 ms more per invocation than shell.
+  - A recording taken under the old shell mode gate-refuses a `diff`/`cpu-diff` against a new one (the
+    frame-cadence axis differs), rather than comparing two different floors as one.
+  - chrome-headless-shell is no longer used; skip its Puppeteer download with
+    `PUPPETEER_SKIP_CHROME_HEADLESS_SHELL_DOWNLOAD=true` (see README).
+  - Headless launches Chrome with `--disable-gpu` (software compositing) to avoid an intermittent
+    GPU-process frame-production stall that hung driver records; the frame cadence and wall/INP floor
+    are unchanged. Headed (`--no-headless`) keeps the GPU. A rare residual stall is caught by a bounded
+    settle and retried on a fresh browser (disclosed in `meta.notes`).
+
+### Patch Changes
+
+- 6fc02c9: Remove dead internal exports: `longTasks`/`extractInvalidations` (`trace/analysis`), `isBrowserName`
+  (`browser/backend`), and the unused `colorEnabled`/`green`/`magenta` palette entries (`output/color`).
+  None are part of the public `index.ts` surface; no CLI output or behavior changes.
+- 9553690: Drop the legacy in-cwd `recordings/.wpd-last.json` fallback when resolving `latest`. The pointer
+  lives under the XDG state dir; a stale in-cwd file is ignored. If `latest` no longer resolves, run
+  `record` once to write the pointer.
+- 9eaea20: Fold the `structuredFormat`/`emit` copies in `commands/cpu` and `commands/cpudiff` onto the shared
+  `output/format` helper; their option interfaces now extend `StructuredOutOpts`. No CLI output changes.
+
+  Docs: a "how many runs" note where `--iterations` is documented (the median of a few runs is far
+  steadier than one; `--iterations 5` is the calibration knob), and a CI caution against running two
+  measurement processes at once on one machine.
+
+- a5956a2: Retire the dead `invalidation-site` blame semantic and its two reader branches. No recording this
+  build reads can carry it (production stopped emitting it before the schema-4 bump, and `model/artifact`
+  rejects any other schema), so the value is unreachable.
+
+  `BlameSemantic` (exported from `index.ts`) narrows from `"flush-site" | "invalidation-site"` to
+  `"flush-site"`. A consumer matching the removed member no longer type-checks.
+
+  No CLI output or behavior changes: terminal printing for `query span`/`query spans` moved to
+  `commands/query-view.ts`, byte-identical.
+
 ## 0.19.0
 
 ### Minor Changes
