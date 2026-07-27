@@ -5,8 +5,9 @@
 > These files record empirically-verified facts that the code depends on but cannot state itself,
 > so that whoever touches that code next does not have to re-derive them from a browser.
 
-Everything here is **measured, not read off vendor docs** (with one flagged exception, the
-market-research file below). Both engines' public docs are silent or wrong on most of this. Claims
+Everything here is **measured, not read off vendor docs** (with two flagged exceptions, the
+market-research and measurement-ecosystem files below, whose evidence is other tools' code and docs).
+Both engines' public docs are silent or wrong on most of this. Claims
 are marked **[measured]** (reproduced locally, usually against `examples/forces-layout.mjs` in
 both engines) or **[source]** (read out of mozilla-central / chromium at tip-of-tree, with a
 permalink).
@@ -28,7 +29,8 @@ permalink).
 | [trace-buffer.md](./trace-buffer.md) | changing `trace/tracing.ts`, the trace buffer size, or claiming a `--deep` count is exact on a heavy page |
 | [facts.md](./facts.md) | changing any load-bearing measured number (a ledger of them + the files that must agree, checked by a unit test) |
 | [core-features.md](./core-features.md) | writing user-facing copy, prioritizing features, or claiming a capability is unique. The one file here whose evidence is market research (competitor docs and issue threads, link-verified and dated) rather than engine probes |
-| [orchestrator-boundary.md](./orchestrator-boundary.md) | answering a feature request that asks wpd to grade, compare, recommend, or scaffold — the standing scope boundary and why each capability stays with the caller |
+| [orchestrator-boundary.md](./orchestrator-boundary.md) | answering a feature request that asks wpd to grade, compare, recommend, or scaffold — the standing scope boundary, why each capability stays with the caller, and the register of surfaces already evaluated (present and absent) |
+| [measurement-ecosystem.md](./measurement-ecosystem.md) | placing a headless/throttling/frame-cadence/variance choice against what the major tools do. The second file here (with core-features.md) whose evidence is other tools' code and docs, link-verified, rather than engine probes |
 
 ## Find it by question
 
@@ -93,10 +95,17 @@ permalink).
 **Navigation and LCP** — [navigation-and-lcp.md](./navigation-and-lcp.md)
 
 - Does LCP fire headless, and is it comparable across engines? -> [LCP fires headless](./navigation-and-lcp.md#lcp-fires-under-headless-chrome-and-firefox)
+- Why does the boot LCP need a bounded wait, and how does absence stay honest? -> [the entry-delivery race](./navigation-and-lcp.md#the-boot-lcp-entry-delivery-race)
 - What is a usable LCP identifier on a production build, and when is `renderTime` 0? -> [url+size+tag](./navigation-and-lcp.md#the-useful-lcp-identifier-is-urlsizetag)
 - Why is there no per-soft-step LCP, and what is the clean semantic? -> [finalization](./navigation-and-lcp.md#lcp-finalizes-on-a-trusted-input-and-re-arms-per-document)
 - How is a step classified static/hard/soft without CDP or a browser flag? -> [url+timeOrigin](./navigation-and-lcp.md#the-urltimeorigin-classification)
 - Where does the URL diff break down (hash, query, reverting replaceState)? -> [the ambiguity family](./navigation-and-lcp.md#the-ambiguity-family)
+
+**The measurement field, and evaluated surfaces** — [measurement-ecosystem.md](./measurement-ecosystem.md), [orchestrator-boundary.md](./orchestrator-boundary.md)
+
+- What do the major tools do about headless, throttling, frame cadence, and variance? -> [measurement-ecosystem.md](./measurement-ecosystem.md)
+- Is wpd's simulated-vs-applied throttling stance the field's? -> [Lighthouse's throttling is simulated](./measurement-ecosystem.md#lighthouses-default-throttling-is-simulated)
+- Why does `--cpu-throttle`/`query events`/knip exist, and why no git hooks? -> [the surfaces-evaluated register](./orchestrator-boundary.md#why-each-evaluated-surface-stands-where-it-does)
 
 ## The four things most likely to bite you
 
