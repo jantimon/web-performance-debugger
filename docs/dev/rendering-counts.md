@@ -234,7 +234,10 @@ wpd reads them two ways (`trace/scope.ts`). A `--breakdown` recording stores a p
 `query spans`/`query span` JSON. A `--deep` recording, whose full event log is stored, reads the
 **widest** flush's scope per forced read-site at query time and hangs it on the `query blame --forced`
 rows and the `query span` forced section (`dirtyObjects/totalObjects layout objects`,
-`elementCount styled`, the container root when contained).
+`elementCount styled`, the container root when contained). The split follows the data: the per-read-site
+scope bracket needs each flush's trace `args`, which only `--deep`'s stored event log carries, so a
+`--breakdown` blame row (sampled from the CPU profile, no flush args) shows no bracket and the scope
+lives only in the per-span distribution `query span` prints instead.
 
 **Honesty constants [measured]**, synthetic probes with a known dirty-subtree size N:
 

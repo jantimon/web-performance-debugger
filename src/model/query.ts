@@ -90,6 +90,14 @@ export interface BlameEntry {
    */
   dirtiedBy?: DirtiedByWrite[];
   /**
+   * The representative raw event for the blame -> `query get` drill: the id of the WIDEST
+   * (max-duration) flush at this source line, the same flush `scope` describes. Drill it with
+   * `query get <eventId>` for the raw event (its stack + args); `query events` browses/filters the
+   * rest. Absent on the chrome `--breakdown` sampled rows (their events are synthesized with id 0, not
+   * addressable), so absent means "no addressable raw event", never a fake id.
+   */
+  eventId?: number;
+  /**
    * Per-row confidence of the sampled read line, three-way so a consumer can tell a sampled-confident
    * row from a not-sampled one:
    *   - ABSENT: not a sampled row -- the exact chrome `--deep` (`.stack`) and firefox lanes, which do
@@ -308,6 +316,9 @@ export interface SpanForced {
   at: string;
   count: number;
   durMs: number;
+  /** id of the widest flush at this line for the `query get <eventId>` drill; absent on the chrome
+   * --breakdown sampled rows (synthesized id 0, not addressable). See BlameEntry.eventId. */
+  eventId?: number;
   /** the mutation(s) that dirtied the DOM so this read forced a flush (chrome --deep only) */
   dirtiedBy?: DirtiedByWrite[];
   /** layout/style scope of the widest flush at this read site (chrome --deep only). See FlushScope. */

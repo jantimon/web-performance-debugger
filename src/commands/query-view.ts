@@ -319,8 +319,9 @@ export function printSpanAnatomy(
     const shown = anatomy.forced.slice(0, ANATOMY_FORCED_CAP);
     console.log(
       table(
-        ["count", "ms", "source"],
+        ["id", "count", "ms", "source"],
         shown.map((entry) => [
+          entry.eventId == null ? dim("—") : dim(String(entry.eventId)),
           entry.count,
           num(entry.durMs, 2),
           middleEllipsis(entry.at, SOURCE_COL_MAX) + flushScopeSuffix(entry.scope),
@@ -491,8 +492,9 @@ export function printGroupSpanStitch(stitch: GroupSpanStitch): void {
     const shown = stitch.forced.slice(0, ANATOMY_FORCED_CAP);
     console.log(
       table(
-        ["count", "ms", "source"],
+        ["id", "count", "ms", "source"],
         shown.map((entry) => [
+          entry.eventId == null ? dim("—") : dim(String(entry.eventId)),
           entry.count,
           num(entry.durMs, 2),
           middleEllipsis(entry.at, SOURCE_COL_MAX) + flushScopeSuffix(entry.scope),

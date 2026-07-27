@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { classify, invalidationKind } from "../../dist/trace/classify.js";
 import { computeStats, buildSummary } from "../../dist/metrics/summarize.js";
-import { forcedLayouts, markForced } from "../../dist/trace/analysis.js";
+import { forcedLayouts, markForced, representativeEventId } from "../../dist/trace/analysis.js";
 import { computeSpanBreakdown } from "../../dist/trace/breakdown.js";
 import { userMeasureSpans } from "../../dist/commands/record.js";
 import { NESTED_EVENTS, NESTED_WINDOW, lcg, BREAKDOWN_KINDS, randomNestedEvents } from "./helpers.mjs";
@@ -60,6 +60,40 @@ test("markForced + forcedLayouts group by source", () => {
   assert.equal(groups[0].at, "a.js:1:1");
   assert.equal(groups[0].count, 2);
   assert.equal(groups[0].durMs, 3); // (1000 + 2000) / 1000
+  // The representative event id is the WIDEST (max-dur) flush at the line: id 1 (dur 2000), not id 0.
+  assert.equal(groups[0].eventId, 1, "forcedLayouts carries the widest flush's id per group");
+});
+
+// The blame -> `query get` representative: the widest (max-duration) flush's id wins, so a drill
+// lands on the biggest flush a row aggregates. A synthesized --breakdown sampled event (id 0,
+// sampled:true) is never addressable, so a row of only those carries no id (absent, never a fake 0).
+test("representativeEventId: widest flush wins; synthesized sampled rows carry none", () => {
+  // Real-id flushes: the max-dur one (id 7) is the representative, regardless of order.
+  const real = [
+    { id: 5, ts: 10, dur: 1000, kind: "layout" },
+    { id: 7, ts: 20, dur: 3000, kind: "layout" },
+    { id: 6, ts: 30, dur: 2000, kind: "layout" },
+  ];
+  assert.equal(representativeEventId(real), 7);
+
+  // A real id of 0 (a chrome --deep / firefox ts-order first event) is addressable and kept.
+  assert.equal(representativeEventId([{ id: 0, ts: 1, dur: 500, kind: "layout" }]), 0);
+
+  // Chrome --breakdown sampled rows: every event is synthesized with id 0 + sampled:true -> no id.
+  const sampled = [
+    { id: 0, ts: 10, dur: 1000, kind: "layout", sampled: true },
+    { id: 0, ts: 20, dur: 4000, kind: "layout", sampled: true },
+  ];
+  assert.equal(representativeEventId(sampled), undefined);
+
+  // Firefox sampled read-site events carry REAL (reassigned) ids, so they stay addressable.
+  const firefoxSampled = [
+    { id: 3, ts: 10, dur: 1000, kind: "layout", sampled: true },
+    { id: 8, ts: 20, dur: 2000, kind: "layout", sampled: true },
+  ];
+  assert.equal(representativeEventId(firefoxSampled), 8);
+
+  assert.equal(representativeEventId([]), undefined);
 });
 
 test("computeSpanBreakdown: disjoint self-time over nesting, and the `other` remainder", () => {
