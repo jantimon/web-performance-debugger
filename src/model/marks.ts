@@ -18,7 +18,9 @@ export const RUN_MEASURE = "wpd:run";
 /** Prefix shared by every wpd:* mark/measure, for excluding wpd's own measures from user measures. */
 export const WPD_MARK_PREFIX = "wpd:";
 
-/** The per-step mark base `wpd:step:N`; the driver appends `:start`/`:end` for the step edges. */
+/** The per-step mark base `wpd:step:N`; the driver appends `:start`/`:end` for the step edges.
+ * @testOnly the driver builds `wpd:step:N` inline (page-serialized, so it cannot import this
+ * module); the only importer is the unit test that pins that literal to this constant. */
 export const stepMark = (index: number | string): string => `wpd:step:${index}`;
 
 /** Parse a `wpd:step:N:start|end` edge mark into its step index and edge, or null if it is not one. */

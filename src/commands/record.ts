@@ -58,6 +58,8 @@ import type {
 // record.ts stays the orchestrator: it wires the one pass, mutates `meta` in the one load-bearing
 // order, and drives the writers. These re-exports keep the compiled dist surface stable for the
 // tests and programmatic consumers that import them from this module.
+/** @testOnly reached from the compiled `dist/commands/record.js` barrel by unit tests;
+ * `blameSemanticFor`/`countScopeNote` are also called in-file, `userMeasureSpans` only here. */
 export { blameSemanticFor, countScopeNote, userMeasureSpans };
 
 export interface RecordOptions {
