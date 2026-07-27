@@ -1246,6 +1246,13 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
       "the built-in flow is disclosed in the notes",
     );
     assert.ok(dflt.summary.jsSelfMs != null, "the CPU model still measures JS self-time on the boot");
+    // The built-in load step navigated a fresh document, so it is a HARD navigation and carries boot
+    // LCP (in-page observer, ungated by the no-trace capture mode). The <h1> is the contentful element.
+    assert.equal(loadStep.navigation, "hard", "the built-in load step is a hard navigation");
+    assert.ok(loadStep.lcp, "the load step carries boot LCP");
+    assert.ok(!loadStep.lcp.suppressed, "the shell-headless default reports a sane LCP, not suppressed");
+    assert.equal(loadStep.lcp.tag, "H1", "the LCP element is the <h1>");
+    assert.ok(loadStep.lcp.startTimeMs > 0, "LCP carries a paint timestamp");
 
     // --breakdown: the run span AND the load step carry a reconciling bar (Σ slices + idle == wall),
     // counts are measured, and the navigating load step is priced on the trace clock (spans the nav).
@@ -1283,6 +1290,69 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
       !iter.meta.notes.some((note) => /boots cold, but/.test(note)),
       "the warm/cold note (which promises a median) does NOT fire where there is no wall",
     );
+  } finally {
+    server.close();
+  }
+});
+
+// Per-step navigation facts + boot LCP: a driver flow whose first step performs a HARD page.goto and
+// whose second step changes only the fragment. The goto step must classify "hard" and carry boot LCP
+// with a plausible element; the hash step must classify "soft-hash" and carry NO LCP (a soft
+// navigation freezes LCP, so a per-soft-step LCP would be structurally empty). Default capture mode
+// (no trace) is enough: the observers are in-page and ungated by the capture mode.
+const NAV_HERO_HTML =
+  "<!doctype html><meta charset=utf-8><title>nav-probe</title>" +
+  "<h1 id=hero style='font-size:64px;margin:0'>Largest Contentful Heading For The LCP Probe</h1>" +
+  "<p>secondary text</p>";
+e2e("driver flow: step navigation classification + boot LCP on the hard-nav step only", { timeout: TIMEOUT_MS }, () => {
+  const server = startOnrampServer(NAV_HERO_HTML, "127.0.0.1");
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const flow = path.join(dir, "nav-flow.mjs");
+  // The host starts at server.url (module + --url pre-navigates there). Step "goto" reloads a DIFFERENT
+  // path (a fresh document: url + timeOrigin both change -> hard). Step "hash" changes only the
+  // fragment on the same document (soft-hash). location.hash is set via page.evaluate so it does not
+  // depend on a visible anchor.
+  const target = `${server.url}page-b`;
+  writeFileSync(
+    flow,
+    `export async function run({ page, measureStep }) {
+       await measureStep("goto", () => page.goto(${JSON.stringify(target)}, { waitUntil: "load" }));
+       await measureStep("hash", () => page.evaluate(() => { location.hash = "section"; }));
+     }`,
+  );
+  try {
+    const out = path.join(dir, "nav");
+    runCli(["record", flow, "--url", server.url, "--out", out]);
+    const rec = JSON.parse(readFileSync(out, "utf8"));
+    const goto = rec.spans.find((span) => span.kind === "step" && span.label === "goto");
+    const hash = rec.spans.find((span) => span.kind === "step" && span.label === "hash");
+    assert.ok(goto && hash, "both steps are recorded");
+
+    // The goto step navigated cross-document: hard, with before/after URLs stored self-contained.
+    assert.equal(goto.navigation, "hard", "a page.goto to a fresh document is a hard navigation");
+    assert.equal(goto.afterUrl, target, "the goto step ended on the navigated URL");
+    assert.notEqual(goto.beforeUrl, goto.afterUrl, "before/after differ across a navigation");
+
+    // The hash step changed only the fragment on the same document: soft-hash, no reload.
+    assert.equal(hash.navigation, "soft-hash", "a fragment-only change is soft-hash");
+    assert.match(hash.afterUrl, /#section$/, "the hash step ended on the fragment URL");
+
+    // Boot LCP rides ONLY the hard-nav step (a fresh document), naming a plausible element.
+    assert.ok(goto.lcp, "the hard-nav step carries boot LCP");
+    assert.ok(!goto.lcp.suppressed, "shell-headless reports a sane LCP, not the new-headless anomaly");
+    assert.equal(goto.lcp.tag, "H1", "the LCP element is the hero <h1>");
+    assert.ok(goto.lcp.size > 0, "the LCP entry carries a size");
+    assert.ok(goto.lcp.startTimeMs > 0, "the LCP entry carries a paint timestamp");
+    assert.ok(!hash.lcp, "a soft navigation carries no LCP (frozen, never a fake 0)");
+
+    // The anatomy view surfaces the same navigation + LCP a consumer reads via query span.
+    const anatomy = JSON.parse(runCli(["query", "span", out, "step:goto", "--json"]));
+    assert.equal(anatomy.navigation, "hard", "query span carries the navigation classification");
+    assert.equal(anatomy.lcp.tag, "H1", "query span carries the boot LCP");
+    // The human report prints the before -> after line and the LCP element.
+    const human = runCli(["query", "span", out, "step:goto"]);
+    assert.match(human, /Navigation: hard/, "the human report names the hard navigation");
+    assert.match(human, /LCP \(boot/, "the human report shows boot LCP");
   } finally {
     server.close();
   }

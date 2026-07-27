@@ -119,6 +119,9 @@ function spanCountsEntry(span: Span): SpanCountsEntry {
     ...(span.index != null ? { index: span.index } : {}),
     counts: span.counts,
     ...(span.inpMs != null ? { inpMs: span.inpMs } : {}),
+    ...(span.navigation ? { navigation: span.navigation } : {}),
+    ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
+    ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
   };
 }
 
@@ -147,6 +150,9 @@ function entryFromSpan(span: BarSpan, iterations: number): SpanEntry {
     ...(span.samples != null ? { samples: span.samples } : {}),
     ...(span.wallMinMs != null ? { wallMinMs: span.wallMinMs } : {}),
     ...(span.wallMaxMs != null ? { wallMaxMs: span.wallMaxMs } : {}),
+    ...(span.navigation ? { navigation: span.navigation } : {}),
+    ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
+    ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
   };
 }
 

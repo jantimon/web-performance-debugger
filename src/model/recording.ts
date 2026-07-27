@@ -352,6 +352,66 @@ export interface StepLoaf {
 }
 
 /**
+ * How a driver step's document changed across its window, decided from two CDP-free reads taken at the
+ * step's start and end marks -- `page.url()` and the document's `performance.timeOrigin` (which a full
+ * reload resets). See docs/dev/navigation-and-lcp.md.
+ *
+ *  - "none": the URL did not change and `timeOrigin` held. A same-document step (a click, a render)
+ *    and a static step alike.
+ *  - "hard": `timeOrigin` moved (> HARD_NAV_ORIGIN_DELTA_MS), so the document reloaded -- a fresh
+ *    document, a fresh LCP. The clock outranks URL equality: a reload or a goto to the same URL is
+ *    hard with an unchanged URL.
+ *  - "soft": the URL changed but `timeOrigin` held byte-identical, an SPA same-document route change.
+ *  - "soft-hash": a soft change where the new URL differs ONLY in its fragment (`#...`). Both the
+ *    url+timeOrigin rule and Chrome's experimental heuristic count a hash-route overlay as a
+ *    navigation, so it earns its own label rather than reading as a route change.
+ *
+ * A query-only change (`?q=`) stays plain "soft": a URL diff cannot know an in-page filter from a
+ * route, and the URLs are stored for the reader to judge. A change-then-revert within one step reads
+ * as "none" (a before/after diff cannot see the excursion); a documented blind spot.
+ */
+export type NavigationKind = "none" | "hard" | "soft" | "soft-hash";
+
+/**
+ * One Largest Contentful Paint entry observed during a driver step's boot, serialized in-page from the
+ * live `LargestContentfulPaint` entry (its `element` is a node the observer cannot post across the
+ * boundary, so the identifiers are read at observe time). Stored ONLY on a step that started a fresh
+ * document -- the built-in load step and any HARD-navigation step -- because LCP freezes at the first
+ * trusted interaction and never re-fires on a soft navigation, so a per-soft-step LCP is structurally
+ * empty. Chrome populates url/size/element; Firefox's fidelity is measured in docs/dev/navigation-and-lcp.md.
+ *
+ * Wall-tier directional (a paint timestamp on the page's own clock, same trust tier as INP). The
+ * identifiers to trust across a production build are `url` + `size` + `tag`; `id` is often absent and
+ * `className` is a hashed CSS-module name kept only as a tertiary hint. `renderTimeMs` is populated
+ * only for a same-origin resource or one whose server sends `Timing-Allow-Origin`; absent it reads 0
+ * by spec and `loadTimeMs` is the timing left, so both are surfaced.
+ */
+export interface StepLcp {
+  /**
+   * The entry was dropped as an implausible outlier and carries no timing: new-headless intermittently
+   * reports a grossly inflated `startTime` (~60s on a page that finished in ~40ms). When set, no other
+   * field is present -- a suppressed marker, never a fabricated 60s LCP printed as fact.
+   */
+  suppressed?: boolean;
+  /** the LCP resource url (an image); absent for a text LCP, which has none */
+  url?: string;
+  /** the entry's `size` (intrinsic area, px^2); absent when 0 */
+  size?: number;
+  /** the LCP element's tag name (e.g. "IMG", "H1"); the identifier that survives a production build */
+  tag?: string;
+  /** the element's `id`, when it carried one (often absent on a production build) */
+  id?: string;
+  /** a truncated `className`, a tertiary hint only (often a hashed CSS-module name); absent when empty */
+  className?: string;
+  /** render timestamp, ms; populated only same-origin or with Timing-Allow-Origin, else absent (reads 0) */
+  renderTimeMs?: number;
+  /** resource load timestamp, ms; the timing left when renderTime is unavailable */
+  loadTimeMs?: number;
+  /** the entry's `startTime`, ms on the document's own clock (the paint time) */
+  startTimeMs?: number;
+}
+
+/**
  * What a forced-layout blame line names:
  *
  * - "flush-site": the geometry READ that forced the pending layout to flush synchronously, e.g.
@@ -702,6 +762,25 @@ export interface Span {
    * observer is ungated by any capture cap). See StepLoaf.
    */
   loaf?: StepLoaf;
+  /**
+   * How this driver step's document changed across its window (none/hard/soft/soft-hash), from the
+   * step's own before/after `page.url()` + `timeOrigin` reads (see NavigationKind). Present on a driver
+   * step span; absent on run/measure spans and older recordings. A merged step reports iteration 0's
+   * classification (iterations replay the same flow). Chrome and Firefox alike (both reads are
+   * lane-independent).
+   */
+  navigation?: NavigationKind;
+  /** the URL the step started on (`page.url()` at the start mark); present on a driver step span */
+  beforeUrl?: string;
+  /** the URL the step ended on (`page.url()` at the end mark). Never assume it is the next step's
+   * beforeUrl: a replaceState can fire between steps, so each step's pair is self-contained. */
+  afterUrl?: string;
+  /**
+   * Boot LCP for a step that started a fresh document (the built-in load step, or a HARD-navigation
+   * step); absent on soft/none steps, where LCP is structurally frozen (never a fake 0). Wall-tier
+   * directional. See StepLcp.
+   */
+  lcp?: StepLcp;
   /**
    * Per-iteration wall samples in run order (a driver step under --iterations, or a bench run). Raw,
    * not just the aggregate: a median hides the bimodality that says "the first iteration was cold".

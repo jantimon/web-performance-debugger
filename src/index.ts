@@ -19,6 +19,8 @@ export type {
   LoafScript,
   LoafFrame,
   StepLoaf,
+  NavigationKind,
+  StepLcp,
   StepTiming,
   RecordingSummary,
   RecordingWindow,

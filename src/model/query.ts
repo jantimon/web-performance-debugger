@@ -14,9 +14,11 @@ import type {
   FirefoxDirtiedByReport,
   FrameSideTrack,
   InteractionTiming,
+  NavigationKind,
   SpanAggregation,
   SpanCounts,
   SpanKind,
+  StepLcp,
   StepLoaf,
   ThrashReport,
 } from "./recording.js";
@@ -189,6 +191,12 @@ export interface SpanEntry {
   wallMinMs?: number;
   /** wall (ms) of the longest merged occurrence; disclosed with `samples`. */
   wallMaxMs?: number;
+  /** a driver step's navigation classification (none/hard/soft/soft-hash); absent on run/measure spans */
+  navigation?: NavigationKind;
+  /** the URL the step started on; absent on run/measure spans */
+  beforeUrl?: string;
+  /** the URL the step ended on; absent on run/measure spans */
+  afterUrl?: string;
 }
 
 /**
@@ -209,6 +217,12 @@ export interface SpanCountsEntry {
   counts: SpanCounts;
   /** worst-interaction INP (ms) for a driver step; absent when none crossed the floor */
   inpMs?: number | null;
+  /** a driver step's navigation classification (none/hard/soft/soft-hash); absent on run/measure spans */
+  navigation?: NavigationKind;
+  /** the URL the step started on; absent on run/measure spans */
+  beforeUrl?: string;
+  /** the URL the step ended on; absent on run/measure spans */
+  afterUrl?: string;
 }
 
 /**
@@ -370,6 +384,14 @@ export interface SpanAnatomy {
   /** Long Animation Frames observed in a driver step's window (Chrome only); absent otherwise. Names
    * the scripts that made a frame slow, so a step attributes to source even with no CPU sampler. */
   loaf?: StepLoaf;
+  /** a driver step's navigation classification (none/hard/soft/soft-hash); absent on run/measure spans */
+  navigation?: NavigationKind;
+  /** the URL the step started on; absent on run/measure spans */
+  beforeUrl?: string;
+  /** the URL the step ended on; absent on run/measure spans */
+  afterUrl?: string;
+  /** boot LCP for a step that started a fresh document (a hard-navigation step); absent otherwise */
+  lcp?: StepLcp;
   /** forced read-sites in this span's window; present only in an event-log capture mode (chrome/firefox --deep) */
   forced?: SpanForced[];
   /** the layout-thrashing rollup for the run window (chrome --deep only, run span) */
@@ -426,6 +448,12 @@ export interface GroupSpanStitch {
   inpMs?: number | null;
   interaction?: InteractionTiming | null;
   loaf?: StepLoaf;
+  /** the step's navigation classification (identical across members: one workload); absent on run/measure */
+  navigation?: NavigationKind;
+  beforeUrl?: string;
+  afterUrl?: string;
+  /** boot LCP for a hard-navigation step (identical across members); absent otherwise */
+  lcp?: StepLcp;
   /** forced read-sites (from the deep member) */
   forced?: SpanForced[];
   /** the layout-thrashing rollup (chrome --deep member, run span) */
