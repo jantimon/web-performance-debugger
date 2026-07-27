@@ -235,6 +235,12 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
   const recording = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(recording.meta.blameSemantic, "flush-site", "--breakdown declares the sampled read-site semantic");
   assert.ok(recording.meta.passes.includes("breakdown"), "capture mode is breakdown");
+  // The host-CPU speed scalar is stamped on every lane (measured in node before the capture): a
+  // positive finite number, the fact a cross-host diff/cpu-diff warns on.
+  assert.ok(
+    typeof recording.meta.hostCpuIndex === "number" && recording.meta.hostCpuIndex > 0 && Number.isFinite(recording.meta.hostCpuIndex),
+    `meta.hostCpuIndex is a positive number, got ${recording.meta.hostCpuIndex}`,
+  );
   // The forced COUNT stays not-measured on --breakdown (it needs .stack); only the blame is added.
   assert.equal(recording.summary.forcedLayoutCount, null, "forced COUNT is still not measured (— ), never a fake 0");
 

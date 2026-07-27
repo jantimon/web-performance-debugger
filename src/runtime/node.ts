@@ -23,6 +23,7 @@ import type { RecordOptions } from "../record/options.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 import { stableWorkloadPath } from "../model/compat.js";
+import { measureHostCpuIndex } from "../model/host-cpu.js";
 
 /** Promise wrapper around an inspector Session's callback-style post(). */
 function profilerSession() {
@@ -82,6 +83,10 @@ export async function recordNode(opts: RecordOptions): Promise<{
 
   const intervalUs = opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
   const ctx: Record<string, unknown> = {};
+
+  // Price the host CPU before the profiled loop, so it prices the HOST and never rides the measured
+  // window (model/host-cpu.ts). prepare/warmup below also run outside the window.
+  const hostCpuIndex = measureHostCpuIndex();
 
   // prepare + warmup run BEFORE the profiler starts, so they don't pollute the samples.
   if (prepare) await prepare(ctx);
@@ -173,6 +178,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     warmup: opts.warmup,
     headless: true,
     cpuIntervalUs: intervalUs,
+    hostCpuIndex,
     userDataDir: null,
     lifecycle,
     passes: ["node-cpu"],

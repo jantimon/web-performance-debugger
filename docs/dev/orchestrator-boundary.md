@@ -110,6 +110,14 @@ reopen one needs a new fact, not a re-argument.
   relative to the host, so a throttled number compares only against another run on the same machine,
   and wpd does not normalize for host speed. So it is a lever the caller reaches for knowingly, not a
   default.
+- **`meta.hostCpuIndex` exists** because self-time ms are host-relative, so a `cpu-diff` across two
+  machines is mostly the machine gap. wpd measures a host-speed scalar (a fixed node microbenchmark
+  before the capture, `benchmarkIndex`'s idea implemented independently) and stamps it beside the
+  numbers; `diff`/`cpu-diff` WARN when two indices are more than 25% apart
+  ([cpu-profiling.md](./cpu-profiling.md#the-host-cpu-index)). It is the honest fact + gate, not
+  normalization: the self-time stays raw and same-host-honest, and the axis advises rather than blocks
+  (a host difference is environmental, not a config wpd applied), so a same-machine gate is never
+  refused.
 - **`query events` and `query get` exist** as the forensic escape hatch. When a curated aggregation is
   distrusted, `events` lists the raw flushes with ids, and `get` renders one event's full stack and
   args with resolved source paths. In a drill against the raw JSON, these beat `jq` for semantics (a

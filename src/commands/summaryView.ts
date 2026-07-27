@@ -144,9 +144,12 @@ export function printSummary(rec: Recording): void {
     ? `step ${meta.step.index} "${meta.step.label}"`
     : `${meta.mode}:${meta.target}`;
   const variant = meta.variant ? `   variant: ${meta.variant}` : "";
+  // Host-CPU speed scalar, a fact beside the numbers: self-time ms are host-relative, and this is the
+  // axis a cross-host diff/cpu-diff warns on. Dimmed, absent on an older recording.
+  const hostCpu = meta.hostCpuIndex != null ? `   ${dim(`host-cpu: ${meta.hostCpuIndex}`)}` : "";
   console.log(`\n${meta.tool} — ${title}  (fn: ${meta.fn})`);
   console.log(
-    `browser: ${meta.browser ?? "chrome"}   passes: ${meta.passes.join(" + ")}   driver: ${meta.driver}${variant}   lifecycle: ${meta.lifecycle.join("→") || "run"}`,
+    `browser: ${meta.browser ?? "chrome"}   passes: ${meta.passes.join(" + ")}   driver: ${meta.driver}${variant}   lifecycle: ${meta.lifecycle.join("→") || "run"}${hostCpu}`,
   );
 
   // A Measured count/ms renders as its number, or "—" when the capture mode did not measure it (never 0).

@@ -321,8 +321,11 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
     iterations > 1
       ? `sampled, summed over the whole window across ${iterations} iterations (divide by ${iterations} for a per-iteration figure)`
       : "sampled, summed over the whole window";
+  // Host-CPU speed scalar in the header: self-time ms are host-relative, so this is the fact a reader
+  // needs to know two runs' numbers are on the same speed scale (and the cpu-diff gate axis).
+  const hostCpu = model.meta.hostCpuIndex != null ? ` · host-cpu ${model.meta.hostCpuIndex}` : "";
   console.log(
-    `CPU sampling: ${bold(`${num(model.jsSelfMs, 1)} ms`)} JS self-time ${dim(`(${windowNote}) · of ${num(model.activeMs, 1)} ms non-idle sampled · ${model.sampleCount} samples @ ${model.sampleIntervalUs}us · idle ${num(model.system.idleMs, 1)} ms · gc ${num(model.system.gcMs, 1)} ms`)}`,
+    `CPU sampling: ${bold(`${num(model.jsSelfMs, 1)} ms`)} JS self-time ${dim(`(${windowNote}) · of ${num(model.activeMs, 1)} ms non-idle sampled · ${model.sampleCount} samples @ ${model.sampleIntervalUs}us · idle ${num(model.system.idleMs, 1)} ms · gc ${num(model.system.gcMs, 1)} ms${hostCpu}`)}`,
   );
   if (model.breakdown)
     console.log(

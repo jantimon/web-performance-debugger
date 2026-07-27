@@ -102,9 +102,14 @@ Stated as present positions, each backed above:
 - **A directional wall over exact work is the field's model, not a wpd compromise.** Lantern
   reconstructs the wall from measured task durations; wpd samples a directional wall and leads with the
   exact identity (line, package, count). The reconstructed/sampled wall is directional in both, by design.
-- **Host-CPU calibration has a precedent.** `benchmarkIndex` establishes reading two machines on one
-  CPU-speed scale as legitimate measurement practice. wpd reports raw self-time and does not normalize
-  for host speed; if it ever did, the precedent is the field's, not an invention.
+- **Host-CPU calibration has a precedent, and wpd stamps a scalar of its own.** `benchmarkIndex`
+  establishes reading two machines on one CPU-speed scale as legitimate measurement practice. wpd
+  measures its own host-CPU speed scalar (`meta.hostCpuIndex`, a fixed dependency-free node
+  microbenchmark run before the capture) and stamps it beside the numbers, then WARNS a `diff`/`cpu-diff`
+  whose two indices differ materially (self-time ms are host-relative). It does **not** normalize
+  self-time by it: the number stays raw and same-host-honest, the index only says whether two runs are
+  on the same speed scale (docs/dev/cpu-profiling.md#the-host-cpu-index). The precedent for the scalar
+  is the field's; the choice not to normalize is wpd's.
 - **Applied CPU throttling is a coarse device-gap lever, per the field's own caveat.** wpd's
   `--cpu-throttle` is applied throttling, which the ecosystem calls "not a sufficient model" of a real
   phone. It closes part of the dev-machine-to-phone gap; it is not a device emulator, and how much wpd's
