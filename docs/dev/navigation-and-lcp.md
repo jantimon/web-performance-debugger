@@ -9,6 +9,7 @@
 **In this file:** [LCP fires under headless Chrome and Firefox](#lcp-fires-under-headless-chrome-and-firefox)
 · [the useful LCP identifier is url+size+tag](#the-useful-lcp-identifier-is-urlsizetag)
 · [LCP finalizes on a trusted input and re-arms per document](#lcp-finalizes-on-a-trusted-input-and-re-arms-per-document)
+· [the boot-LCP entry-delivery race](#the-boot-lcp-entry-delivery-race)
 · [the headless startTime anomaly](#the-headless-starttime-anomaly)
 · [soft navigations: standards status](#soft-navigations-standards-status)
 · [why wpd does not flip the heuristic flag](#why-wpd-does-not-flip-the-heuristic-flag)
@@ -63,6 +64,34 @@ hash change. So a per-soft-step LCP is structurally empty: there is nothing to a
 that did not reload the document. The clean semantic is therefore **boot LCP, up to the first
 interaction** — one number for the cold load, not a per-step series. LCP is a paint timestamp on the
 page's own clock, so it sits in the wall tier: directional, not exact.
+
+## The boot-LCP entry-delivery race
+
+**[measured]** A buffered `largest-contentful-paint` entry can be **queued to the observer before its
+callback dispatches**. The entry exists, but the observer's `__cpLcp` array is still empty when a read
+races ahead of the dispatch. Reading that array straight after load, on a slow environment, loses the
+boot entry **40 of 40 times** on a page that genuinely painted — the paint happened, the delivery had
+not.
+
+`PerformanceObserver.takeRecords()` delivers the queued entries **synchronously**, through the same
+shaper the callback uses. Draining it recovers the entry **~60% of the time immediately**, and the
+rest **within one frame**. Under a 20x CPU throttle recovery stays within **two frames** (`<=41ms`), so
+the whole race closes in a small, bounded number of frames.
+
+So the driver's end-of-step flush, on a hard-navigation step whose entry has not arrived yet, drains
+`takeRecords()` and, while the list is still race-empty, waits frame by frame up to a bounded budget
+(`LCP_ENTRY_WAIT_MS`, 500 ms — about 10x the worst recovery observed, and an order of magnitude under
+the stall backstop). Two properties keep this honest:
+
+- **Absence stays absence.** A page with no contentful paint queues nothing, so the wait runs to the
+  budget and ends empty. The budget bounds the wait; it does not invent an entry.
+- **The wait never grows a measured number.** All of it sits **after the step's end mark**, on the
+  window the counts and wall already closed on, so draining and waiting for the entry cannot inflate the
+  step's wall or its counts. It moves only whether a real paint is captured, never how large it reads.
+
+The wait arms only on a **hard** navigation (which includes the built-in load step): LCP re-fires only
+on a fresh document, so there is no boot entry to race for on a soft or static step, and the flush skips
+the wait there.
 
 ## The headless startTime anomaly
 

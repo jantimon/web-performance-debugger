@@ -116,3 +116,25 @@ OOM. That is a raw crash the tool cannot cheaply intercept; keep the buffer size
   `--iterations` means it can no longer join a run group with the other members: the comparability gate
   refuses a differing `--iterations` (counts total across iterations), so a rescoped `--deep` is
   recorded standalone.
+
+## CDP trace capture deadlocks under the Chrome sandbox on the Linux CI runners
+
+**[measured]** On the GitHub-hosted Linux runners, full Chrome's sandbox deadlocks with CDP trace
+capture: a record that starts a trace never returns, while a sandboxed record that captures no trace
+completes normally, and the same trace-mode record completes once the sandbox is off.
+
+| record | sandbox | result |
+| --- | --- | --- |
+| default (no trace) | on | completes |
+| `--breakdown` (light trace) | on | **hangs** |
+| `--deep` (full trace) | on | **hangs** |
+| `--breakdown` / `--deep` (trace) | off | completes |
+
+So the trigger is the pair, not either alone: the sandbox is fine without a trace, and trace capture is
+fine without the sandbox. The fix is the documented CI escape, `--disable-browser-sandbox` (or
+`WPD_DISABLE_BROWSER_SANDBOX=1` reaching every `record` child), which is why `.github/workflows/ci.yml`
+runs the e2e suite with it set. Local macOS runs keep the sandbox on (they do not hit the deadlock), so
+this is a Linux-CI constraint, not a change to wpd's sandboxed-by-default launch
+([orchestrator-boundary.md](./orchestrator-boundary.md#why-each-evaluated-surface-stands-where-it-does)).
+The node lane ignores the flag (it launches no browser). A trace child wedged this way is what the
+e2e harness's OS-level child kill and the job `timeout-minutes` exist to catch.
