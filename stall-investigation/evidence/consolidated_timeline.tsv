@@ -1,0 +1,27 @@
+case	what	epoch	delta_from_bg_start_s	source
+A	bg task (sleep 60) accepted, id bo29259nq	1785146317.13	+0.0	A_hooks.jsonl PostToolUse-Bash
+A	top-level Stop hook (turn finalized)	1785146318.84	+1.7	A_hooks.jsonl
+A	claude -p process exited rc=0	1785146324.42	+7.3	A_timeline.jsonl
+A	task_notification bo29259nq status=stopped	~1785146324	~+7	A_stdout.jsonl (after RESULT)
+A	A_done_marker	NEVER	-	polled 120s
+B	bg task (sleep 60) accepted, id bxp5nxwam	1785146536.07	+0.0	B_hooks.jsonl PostToolUse-Bash
+B	SubagentStop hook (subagent finalized)	1785146537.89	+1.8	B_hooks.jsonl
+B	parent Stop hook	1785146539.92	+3.9	B_hooks.jsonl
+B	claude -p process exited rc=0	1785146545.49	+9.4	B_timeline.jsonl
+B	task_notification bxp5nxwam status=stopped	~1785146545	~+9	B_stdout.jsonl (last line)
+B	B_done_marker	NEVER	-	polled 120s
+B2	bg task (sleep 60) accepted, id botbrelq3	1785146810.99	+0.0	B2_hooks.jsonl PostToolUse-Bash
+B2	SubagentStop hook (subagent finalized)	1785146815.83	+4.8	B2_hooks.jsonl
+B2	task_notification botbrelq3 status=stopped	1785146815.83..1785146815.89	+4.8	B2_stdout.jsonl, between SubagentStop and PostToolUse:Agent
+B2	Agent tool result handed to parent (status completed)	1785146815.89	+4.9	B2_hooks.jsonl PostToolUse-Task
+B2	sleep 60 WOULD have finished here	1785146870.99	+60.0	arithmetic
+B2	parent heartbeat 20/20 (still alive, nothing received)	1785146962.14	+151.1	B2_hooks.jsonl
+B2	parent Stop hook	1785146963.95	+153.0	B2_hooks.jsonl
+B2	claude -p exited; result = NO-NOTIFICATION-AFTER-20-HEARTBEATS	1785146964.25	+153.3	B2_timeline.jsonl / B2_stdout.jsonl
+B2	B2_done_marker	NEVER	-	polled 120s past exit
+C	bg task (sleep 60) accepted, id bee9hficw	1785147129.97	+0.0	C_hooks.jsonl PostToolUse-Bash
+C	subagent heartbeats 1..9 (stays live)	1785147132.6..1785147194.7	+2.6..+64.8	C_hooks.jsonl
+C	C_done_marker WRITTEN (sleep 60 ran to completion)	1785147190.30	+60.3	C_done_marker
+C	task_notification bee9hficw status=completed (exit code 0)	~1785147194.7	~+64.8	C_stdout.jsonl
+C	SubagentStop hook (after reporting notification)	1785147197.68	+67.7	C_hooks.jsonl
+C	claude -p exited; result = NOTIFICATION-RECEIVED: ...	1785147201.08	+71.1	C_timeline.jsonl / C_stdout.jsonl

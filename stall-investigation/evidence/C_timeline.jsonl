@@ -1,0 +1,5 @@
+{"ts":1785147106.854226017,"event":"harness_launch","note":"marker=/tmp/claude-0/-home-user/a6a643e1-5f12-5b31-aff8-15020016a1af/scratchpad/repro/evidence/C_done_marker"}
+{"ts":1785147201.082140553,"event":"harness_claude_exited","note":"rc=0"}
+{"ts":1785147201.104309264,"event":"sleep_gone_after_exit","note":"no sleep 60 process found"}
+{"ts":1785147201.108023246,"event":"marker_present_at_exit","note":"1785147190.298724708"}
+{"ts":1785147201.111390174,"event":"marker_written","note":"1785147190.298724708 after 0s of post-exit polling"}
