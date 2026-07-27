@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { classify, invalidationKind } from "../../dist/trace/classify.js";
 import { computeStats, buildSummary } from "../../dist/metrics/summarize.js";
-import { forcedLayouts, longTasks, markForced } from "../../dist/trace/analysis.js";
+import { forcedLayouts, markForced } from "../../dist/trace/analysis.js";
 import { computeSpanBreakdown } from "../../dist/trace/breakdown.js";
 import { userMeasureSpans } from "../../dist/commands/record.js";
 import { NESTED_EVENTS, NESTED_WINDOW, lcg, BREAKDOWN_KINDS, randomNestedEvents } from "./helpers.mjs";
@@ -60,19 +60,6 @@ test("markForced + forcedLayouts group by source", () => {
   assert.equal(groups[0].at, "a.js:1:1");
   assert.equal(groups[0].count, 2);
   assert.equal(groups[0].durMs, 3); // (1000 + 2000) / 1000
-});
-
-test("longTasks finds >=50ms tasks with dominant kind", () => {
-  const events = [
-    { id: 0, name: "RunTask", ts: 0, dur: 60000, ph: "X", kind: "task" },
-    { id: 1, name: "Layout", ts: 10, dur: 40000, ph: "X", kind: "layout" },
-    { id: 2, name: "Paint", ts: 20, dur: 5000, ph: "X", kind: "paint" },
-    { id: 3, name: "RunTask", ts: 100000, dur: 1000, ph: "X", kind: "task" }, // too short
-  ];
-  const tasks = longTasks(events, null);
-  assert.equal(tasks.length, 1);
-  assert.equal(tasks[0].durMs, 60);
-  assert.equal(tasks[0].dominantKind, "layout");
 });
 
 test("computeSpanBreakdown: disjoint self-time over nesting, and the `other` remainder", () => {
@@ -262,20 +249,4 @@ test("buildSummary: a step measured once has stats null but keeps its sample", (
   // same contract as the bench stats: no statistic below 2 samples, rather than a fake one
   assert.equal(summary.perStep[0].stats, null);
   assert.deepEqual(summary.perStep[0].perIteration, [36.7]);
-});
-
-test("longTasks blames the source by duration, not event count", () => {
-  // cheap.js fires 3 short layouts (high count); hot.js fires 1 long one (high duration).
-  // The blamed `at` must be the expensive site, matching how dominantKind is chosen.
-  const events = [
-    { id: 0, name: "RunTask", ts: 0, dur: 60000, ph: "X", kind: "task" },
-    { id: 1, name: "Layout", ts: 1, dur: 1000, ph: "X", kind: "layout", at: "cheap.js:1" },
-    { id: 2, name: "Layout", ts: 2, dur: 1000, ph: "X", kind: "layout", at: "cheap.js:1" },
-    { id: 3, name: "Layout", ts: 3, dur: 1000, ph: "X", kind: "layout", at: "cheap.js:1" },
-    { id: 4, name: "Layout", ts: 4, dur: 30000, ph: "X", kind: "layout", at: "hot.js:1" },
-  ];
-  const tasks = longTasks(events, null);
-  assert.equal(tasks.length, 1);
-  assert.equal(tasks[0].at, "hot.js:1");
-  assert.equal(tasks[0].dominantKind, "layout");
 });

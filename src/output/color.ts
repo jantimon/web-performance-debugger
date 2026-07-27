@@ -11,10 +11,6 @@ export function setColorEnabled(value: boolean): void {
   enabled = value;
 }
 
-export function colorEnabled(): boolean {
-  return enabled;
-}
-
 const wrap =
   (open: number, close: number) =>
   (text: string | number): string =>
@@ -23,10 +19,8 @@ const wrap =
 export const bold = wrap(1, 22);
 export const dim = wrap(2, 22);
 export const red = wrap(31, 39);
-export const green = wrap(32, 39);
 export const yellow = wrap(33, 39);
 export const cyan = wrap(36, 39);
-export const magenta = wrap(35, 39);
 
 // Matches CSI SGR sequences so visible width can be measured around them.
 // eslint-disable-next-line no-control-regex

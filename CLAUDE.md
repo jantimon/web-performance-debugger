@@ -218,8 +218,8 @@ a per-slice average, so the bar stays a real reconciling sample.
 `classify.ts` (event name/category → `EventKind`:
 layout/style/paint/composite/invalidation/scripting/gc/task/usertiming/other) → `stacks.ts`
 (rewrites trace stack URLs back to local source paths; **async** because it resolves bundle
-frames through sourcemaps via `sourcemap.ts`) → `analysis.ts` (`markForced`, `forcedLayouts`,
-`longTasks`, `extractInvalidations`). Alongside: `taxonomy.ts` (the `EventKind` → work-slice map
+frames through sourcemaps via `sourcemap.ts`) → `analysis.ts` (`markForced`, `forcedLayouts`).
+Alongside: `taxonomy.ts` (the `EventKind` → work-slice map
 and paint classification), `main-thread.ts` (picks the renderer main-thread `pid/tid` the counts and
 the bar share), `steps.ts` (per-step windowing/merge), `frames.ts` (the off-thread frame side track
 parsed from the already-enabled `devtools.timeline.frame` category — display-only,
