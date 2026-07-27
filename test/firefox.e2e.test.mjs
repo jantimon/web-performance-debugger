@@ -143,7 +143,7 @@ e2e(
     // The reporting tier is recorded as its own capture-mode name; the capture is still the one gecko pass.
     assert.deepEqual(recording.meta.passes, ["gecko-deep"], "the --deep reporting tier over the one gecko pass");
     // The run span's anatomy carries the dirtied-by report, first-invalidation-only, with a WRITE line.
-    const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
+    const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--format", "json"]));
     assert.ok(anatomy.firefoxDirtiedBy, "firefox dirtied-by report present");
     assert.equal(anatomy.firefoxDirtiedBy.semantic, "first-invalidation", "scope marked so it is never read as chrome's full set");
     const writes = anatomy.firefoxDirtiedBy.writes;
@@ -158,7 +158,7 @@ e2e(
     assert.equal(anatomy.thrash, undefined, "no thrash rollup on firefox --deep (partial write set)");
 
     // The read-site --forced blame is UNCHANGED by --deep: still the sampled read lines + properties.
-    const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
+    const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
     assert.ok(Array.isArray(blame) && blame.length > 0, "read-site forced blame still present");
     const readLines = new Set(
       blame
@@ -172,7 +172,7 @@ e2e(
     assert.ok([...writeLines].some((line) => !readLines.has(line)), "a write line that is not a read-site row (write != read)");
 
     // `query blame --dirtied` is the write report alone, with the semantic marker for JSON consumers.
-    const dirtied = JSON.parse(runCli(["query", "blame", out, "--dirtied", "--json"]));
+    const dirtied = JSON.parse(runCli(["query", "blame", out, "--dirtied", "--format", "json"]));
     assert.equal(dirtied.semantic, "first-invalidation", "the --dirtied JSON marks its scope");
     assert.ok(dirtied.writes.length > 0, "--dirtied lists the write rows");
   },
@@ -249,7 +249,7 @@ e2e(
     assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
     assert.ok(existsSync(`${out}.geckoprofile.json`), "raw gecko dump written");
 
-    const model = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+    const model = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
     assert.ok(model.jsSelfMs > 0, "non-zero sampled JS self-time");
     assert.ok(model.sampleCount > 0, "gecko profiler collected samples");
     const named = model.hot.find(
@@ -268,7 +268,7 @@ e2e(
     const out = path.join(dir, "blame");
     runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--target", "firefox", "--iterations", "40", "--out", out]);
 
-    const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--json"]));
+    const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
     assert.ok(Array.isArray(blame) && blame.length > 0, "at least one forced layout/style source group");
     const fromExample = blame.filter((row) => row.at?.includes("forces-layout.mjs"));
     assert.ok(fromExample.length > 0, "forced layout/style attributed to forces-layout.mjs");
@@ -305,7 +305,7 @@ e2e(
     const out = path.join(dir, "awaits");
     runCli(["record", path.join(examples, "awaits-only.mjs"), "--bench", "--target", "firefox", "--iterations", "2", "--out", out]);
 
-    const model = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+    const model = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
     const breakdown = model.breakdown;
     assert.ok(breakdown, "firefox CPU breakdown is emitted (idle from threadCPUDelta)");
     assert.ok(breakdown.slices.style && breakdown.slices.layout, "style/layout slices present");
@@ -367,7 +367,7 @@ e2e(
       "--bench", "--target", "firefox", "--iterations", String(iterations), "--out", out,
     ]);
 
-    const heavy = JSON.parse(runCli(["query", "span", out, "measure:heavy", "--json"]));
+    const heavy = JSON.parse(runCli(["query", "span", out, "measure:heavy", "--format", "json"]));
     assert.ok(heavy.hot, "the heavy measure carries a per-span hot list on firefox");
     assert.equal(heavy.hot.scope, "measure-pooled");
     assert.equal(heavy.hot.occurrences, iterations, "every occurrence is pooled");
@@ -378,12 +378,12 @@ e2e(
 
     // Coherence with the run-wide model: the pooled hot list's top id/name is the same function the
     // run-wide `query cpu` ranks (the ids index the one CpuModel), never a diverging join.
-    const cpu = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+    const cpu = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
     const modelTop = cpu.hot.find((fn) => fn.id === topFn.id);
     assert.ok(modelTop, "the pooled ref's id indexes the run-wide model");
     assert.equal(modelTop.fn, topFn.fn, "the pooled hot function is the same function query cpu names");
 
-    const trivial = JSON.parse(runCli(["query", "span", out, "measure:trivial", "--json"]));
+    const trivial = JSON.parse(runCli(["query", "span", out, "measure:trivial", "--format", "json"]));
     assert.equal(trivial.hot.suppressed, true, "the trivial measure is suppressed below the floor");
     assert.equal(trivial.hot.functions, undefined, "no functions when suppressed");
   },
@@ -400,7 +400,7 @@ e2e(
     const out = path.join(dir, "spans");
     runCli(["record", path.join(examples, "measure-span.mjs"), "--bench", "--target", "firefox", "--iterations", "5", "--out", out]);
 
-    const spans = JSON.parse(runCli(["query", "spans", out, "--json"]));
+    const spans = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
     assert.equal(spans.target, "firefox", "spans records the firefox target");
     assert.ok(Array.isArray(spans.spans) && spans.spans.length > 0, "spans present");
     const runSpan = spans.spans.find((span) => span.kind === "run");
@@ -422,8 +422,8 @@ e2e(
     assert.equal(runSpan.iterations, 5, "the run span carries the recording's iteration count");
     assert.equal(measure.iterations, 5, "the measure span carries the recording's iteration count");
 
-    // The convergence hint: `query cpu --json` points firefox consumers at this surface.
-    const cpu = JSON.parse(runCli(["query", "cpu", out, "--json"]));
+    // The convergence hint: `query cpu --format json` points firefox consumers at this surface.
+    const cpu = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
     assert.ok(cpu.hints.some((hint) => /query spans/.test(hint)), "query cpu points at the spans surface");
   },
 );

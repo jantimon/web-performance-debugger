@@ -18,7 +18,7 @@ for (const [removed, replacement] of [
   ["index", "query spans"],
 ]) {
   test(`query ${removed} exits 1 with the removal notice on stderr, not stdout`, () => {
-    const result = runCli(["query", removed, "latest", "--json"]);
+    const result = runCli(["query", removed, "latest", "--format", "json"]);
     assert.equal(result.status, 1, `query ${removed} exits non-zero`);
     // The notice must go to STDERR with an empty STDOUT: a script that captures stdout and pipes it
     // to JSON.parse then gets clean-empty + a real exit code, not a prose line that parses as garbage.

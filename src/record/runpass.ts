@@ -33,7 +33,7 @@ import { attachTeardownFailure } from "../model/teardown.js";
 import type { NormalizedEvent, TimingEntry } from "../model/recording.js";
 import type { GeckoContext } from "../profile/gecko.js";
 import type { CaptureConfig } from "./capture.js";
-import type { RecordOptions } from "../commands/record.js";
+import type { RecordOptions } from "./options.js";
 
 export interface PassResult {
   name: string;
@@ -214,7 +214,7 @@ export async function runPass(
       await applyCpuThrottle(client, opts.cpuThrottle);
 
     // The target the built-in "load" step navigates to (on-ramp only): the live --url as-is, or the
-    // served --html file. Computed before the pre-navigation so the same served-url check applies.
+    // served local HTML file. Computed before the pre-navigation so the same served-url check applies.
     const onrampNavigateUrl = onramp
       ? mode === "url"
         ? opts.url!

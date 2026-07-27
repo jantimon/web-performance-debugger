@@ -64,7 +64,7 @@ async function captureJson(runner) {
   return JSON.parse(out);
 }
 
-/** Capture the human report (no --json) as one string, for asserting presentation notes. */
+/** Capture the human report (no --format) as one string, for asserting presentation notes. */
 async function captureText(runner) {
   const priorLog = console.log;
   let out = "";
@@ -121,7 +121,7 @@ test("query span run: the reconciling bar is present, and hot functions come fro
     "utf8",
   );
 
-  const anatomy = await captureJson(() => querySpan(file, "run", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "run", { format: "json" }));
   assert.equal(anatomy.label, "run");
   assert.equal(anatomy.kind, "run");
   assert.equal(anatomy.aggregation, "sum", "the run window is a total across iterations");
@@ -164,7 +164,7 @@ function divergentStepRec(name) {
 
 test("query span <step>: the JSON headline is the median wall, with the iteration-0 window on breakdownWallMs", async () => {
   const file = divergentStepRec("anatomy-step-median.json");
-  const anatomy = await captureJson(() => querySpan(file, "step:add rows", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "step:add rows", { format: "json" }));
   assert.equal(anatomy.kind, "step");
   assert.equal(anatomy.wallMs, 16.03, "the headline is the median, never the 2023.43 ms iteration-0 window");
   assert.equal(anatomy.breakdownWallMs, 2023.43, "the bar's own window is disclosed separately");
@@ -199,7 +199,7 @@ test("query span: counts preserve the Measured contract (null not-measured, 0 me
       },
     ],
   });
-  const anatomy = await captureJson(() => querySpan(file, "run", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "run", { format: "json" }));
   assert.equal(anatomy.counts.styleCount, 0, "a measured 0 stays 0");
   assert.equal(anatomy.counts.forcedLayoutCount, null, "not-measured stays null, never a fake 0");
   assert.equal(anatomy.counts.layoutCount, 5);
@@ -225,7 +225,7 @@ test("query span run (--deep): no bar (slices null), forced read-sites from the 
       },
     ],
   });
-  const anatomy = await captureJson(() => querySpan(file, "run", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "run", { format: "json" }));
   assert.equal(anatomy.slices, null, "a --deep run built no reconciling bar: capture-mode-honest null, never a fabricated bar");
   assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length === 1, "forced read-sites come from the deep event log");
   assert.equal(anatomy.forced[0].at, "src/app.js:10");
@@ -258,7 +258,7 @@ test("query span <step>: hot is null on a step span with no stored refs (e.g. a 
     }),
     "utf8",
   );
-  const anatomy = await captureJson(() => querySpan(file, "step:open", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "step:open", { format: "json" }));
   assert.equal(anatomy.kind, "step");
   assert.ok(anatomy.slices, "the step still has its stored bar");
   assert.equal(anatomy.hot, null, "no stored refs => hot is not-available for the step span");
@@ -309,7 +309,7 @@ test("query span <measure>: stored hot refs resolve to span-local shares via the
     }),
     "utf8",
   );
-  const anatomy = await captureJson(() => querySpan(file, "measure:work", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "measure:work", { format: "json" }));
   assert.equal(anatomy.hot.scope, "measure-pooled");
   assert.equal(anatomy.hot.pooledSamples, 40);
   assert.equal(anatomy.hot.occurrences, 4, "the pooled occurrence count is disclosed");
@@ -354,7 +354,7 @@ test("query span <measure>: a suppressed hot tally reports the floor honestly, n
     }),
     "utf8",
   );
-  const anatomy = await captureJson(() => querySpan(file, "measure:trivial", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "measure:trivial", { format: "json" }));
   assert.equal(anatomy.hot.suppressed, true, "below the pooled floor: suppressed, never a top-N from noise");
   assert.equal(anatomy.hot.functions, undefined, "no functions when suppressed");
   assert.equal(anatomy.hot.pooledSamples, 4, "the floor's evidence is disclosed for the raise-iterations hint");
@@ -403,7 +403,7 @@ test("query span <step>: a zero-pool tally over a JS-bearing window reports not-
     }),
     "utf8",
   );
-  const anatomy = await captureJson(() => querySpan(file, "step:search", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "step:search", { format: "json" }));
   assert.equal(anatomy.hot.suppressed, true);
   assert.equal(anatomy.hot.pooledSamples, 0);
   assert.equal(
@@ -453,7 +453,7 @@ test("query span <measure>: a zero-pool tally over an idle window reports no-js"
     }),
     "utf8",
   );
-  const anatomy = await captureJson(() => querySpan(file, "measure:wait", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "measure:wait", { format: "json" }));
   assert.equal(anatomy.hot.suppressionReason, "no-js", "an idle window ran nothing to rank");
 });
 
@@ -470,12 +470,12 @@ test("query span: a bare label colliding across kinds lists the matches and asks
     ],
   });
   await assert.rejects(
-    () => querySpan(file, "dup", { json: true }),
+    () => querySpan(file, "dup", { format: "json" }),
     /matches 2 spans of different kinds.*run:dup.*measure:dup/s,
     "a bare collision names both qualified forms",
   );
   // The qualified form resolves to exactly one span.
-  const anatomy = await captureJson(() => querySpan(file, "run:dup", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "run:dup", { format: "json" }));
   assert.equal(anatomy.kind, "run");
   assert.equal(anatomy.label, "dup");
 });
@@ -487,7 +487,7 @@ test("query span: an unknown label errors, listing the available spans", async (
     events: [],
     spans: [{ label: "run", kind: "run", aggregation: "sum", wallMs: 1, counts: nullCounts, breakdown: breakdown(1) }],
   });
-  await assert.rejects(() => querySpan(file, "nope", { json: true }), /No span 'nope'.*run:run/s);
+  await assert.rejects(() => querySpan(file, "nope", { format: "json" }), /No span 'nope'.*run:run/s);
 });
 
 // --- presentation: the one-frame floor surfaces the sub-frame spread (frame-floor.md) ---
@@ -704,9 +704,9 @@ test("query span --frames: lists each dropped/smoothness-affecting frame", async
   assert.doesNotMatch(text, /frame\(s\) dropped or affecting smoothness/, "no summary line when expanded");
 });
 
-test("query span --json: the frame track keeps every per-frame record regardless of --frames", async () => {
+test("query span --format json: the frame track keeps every per-frame record regardless of --frames", async () => {
   const file = writeRec("anatomy-frames-json.json", frameRec());
-  const anatomy = await captureJson(() => querySpan(file, "scroll", { json: true }));
+  const anatomy = await captureJson(() => querySpan(file, "scroll", { format: "json" }));
   assert.equal(anatomy.frames.frames.length, 6, "JSON carries the full per-frame data");
   assert.equal(anatomy.frames.dropped, 2);
 });
