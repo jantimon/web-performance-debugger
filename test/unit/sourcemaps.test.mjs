@@ -469,7 +469,7 @@ test("cpu-diff sums self-time on a join-key collision instead of dropping one (F
   const priorLog = console.log;
   console.log = (...args) => logs.push(args.join(" "));
   try {
-    await cpuDiffCmd(baseFile, curFile, { json: true });
+    await cpuDiffCmd(baseFile, curFile, { format: "json" });
   } finally {
     console.log = priorLog;
   }

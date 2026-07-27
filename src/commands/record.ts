@@ -62,7 +62,7 @@ import type {
 export { blameSemanticFor, countScopeNote, userMeasureSpans };
 
 export interface RecordOptions {
-  /** the user's driver/bench/node module; omitted for the built-in on-ramp flow (--url/--html only) */
+  /** the user's driver/bench/node module; omitted for the built-in on-ramp flow (--url only) */
   module?: string;
   fn: string;
   /** browser backend: "chrome" (default, full CDP) or "firefox" (BiDi + Gecko profiler) */
@@ -253,7 +253,7 @@ export async function record(opts: RecordOptions): Promise<{
   groupManifestPath?: string;
 }> {
   const root = process.cwd();
-  // No module = the built-in on-ramp: a driver flow that loads --url/--html and settles, so a first
+  // No module = the built-in on-ramp: a driver flow that loads --url and settles, so a first
   // run needs zero authoring. runPass/runDriver synthesize the single "load" step from the target.
   const isOnramp = !opts.module;
   // The CLI guards this, but record() is also a programmatic API: without a module there is

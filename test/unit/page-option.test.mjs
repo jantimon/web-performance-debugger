@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolvePageOption } from "../../dist/record/page-option.js";
 
-// The host-page option (--url, with --html as its hidden alias) accepts a live URL OR a local HTML
+// The host-page option (--url) accepts a live URL OR a local HTML
 // file. resolvePageOption is the pure detection order: (1) a `://` scheme -> URL, (2) an existing
 // path -> local HTML, (3) a host-ish shape -> URL with http:// assumed, (4) neither -> a dual
 // file/URL error. `fileExists` is injected so the order is tested without touching disk. These are

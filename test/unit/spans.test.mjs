@@ -417,7 +417,7 @@ test("query spans on a default-capture driver flow shows the run bar + every ste
     JSON.stringify({ meta: { schemaVersion: "4" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
-  const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
+  const parsed = JSON.parse(await captureJson(() => querySpans(file, { format: "json" })));
   assert.equal(parsed.source, "cpu-model");
   assert.equal(parsed.spans.length, 1, "the run bar");
   assert.equal(parsed.spans[0].kind, "run");
@@ -440,7 +440,7 @@ test("query spans --label can target a bar-less step in a mixed recording (item 
     "utf8",
   );
   const parsed = JSON.parse(
-    await captureJson(() => querySpans(file, { json: true, label: "first increment" })),
+    await captureJson(() => querySpans(file, { format: "json", label: "first increment" })),
   );
   assert.equal(parsed.spans.length, 0, "the run bar is filtered out by the step label");
   assert.equal(parsed.barlessSpans.length, 1, "the targeted step is the only row");
@@ -534,14 +534,14 @@ test("query spans --label keeps the exact match; a miss is an empty array, not a
     spans: chromeBreakdowns,
   });
 
-  const hit = JSON.parse(await captureJson(() => querySpans(file, { json: true, label: "inp" })));
+  const hit = JSON.parse(await captureJson(() => querySpans(file, { format: "json", label: "inp" })));
   assert.equal(hit.spans.length, 1);
   assert.equal(hit.spans[0].label, "inp");
   // meta.iterations reaches the entry, and a measure span declares itself the first occurrence.
   assert.equal(hit.spans[0].iterations, 4, "iterations comes from the recording meta");
   assert.equal(hit.spans[0].aggregation, "first", "a measure span is the first in-window occurrence");
 
-  const miss = JSON.parse(await captureJson(() => querySpans(file, { json: true, label: "nope" })));
+  const miss = JSON.parse(await captureJson(() => querySpans(file, { format: "json", label: "nope" })));
   assert.equal(miss.spans.length, 0, "a label miss is an empty array (consumer decides), not a throw");
 });
 
@@ -556,7 +556,7 @@ test("query spans synthesizes the run span from a sibling cpu model (never empty
     JSON.stringify({ meta: { schemaVersion: "4" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
-  const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
+  const parsed = JSON.parse(await captureJson(() => querySpans(file, { format: "json" })));
   assert.equal(parsed.source, "cpu-model");
   assert.ok(parsed.spans.length >= 1);
   assert.equal(parsed.spans[0].label, "run");
@@ -618,7 +618,7 @@ test("query spans on a --deep recording renders the counts overview instead of e
     meta: { schemaVersion: "4", target: "chrome", passes: ["deep"], iterations: 1 },
     spans: deepSpans,
   });
-  const parsed = JSON.parse(await captureJson(() => querySpans(file, { json: true })));
+  const parsed = JSON.parse(await captureJson(() => querySpans(file, { format: "json" })));
   assert.equal(parsed.source, "counts");
   assert.equal(parsed.spans.length, 2);
   assert.equal(parsed.spans[0].counts.layoutCount, 22);
@@ -635,7 +635,7 @@ test("query spans errors (non-zero) only on a recording that holds no spans at a
     meta: { schemaVersion: "4", target: "chrome" },
     spans: [],
   });
-  await assert.rejects(() => querySpans(file, { json: true }), /carries no spans/);
+  await assert.rejects(() => querySpans(file, { format: "json" }), /carries no spans/);
 });
 
 // F35: a CORRUPT sibling CPU model must surface, not be swallowed into "no per-span breakdown" (which
@@ -647,7 +647,7 @@ test("query spans surfaces a corrupt sibling cpu model instead of reporting 'no 
   });
   writeFileSync(path.join(tmpDir, "spans-corrupt-sibling.cpu.json"), "{ this is not valid json", "utf8");
   await assert.rejects(
-    () => querySpans(file, { json: true }),
+    () => querySpans(file, { format: "json" }),
     (error) => {
       assert.doesNotMatch(error.message, /no per-span breakdown/, "corrupt must not read as 'no breakdown'");
       return true;
