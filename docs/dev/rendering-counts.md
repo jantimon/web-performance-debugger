@@ -216,6 +216,58 @@ probe **4**, forces-layout probe **8**) and runs 1-9 fire **0 times**, because r
 not restructure the layer tree. So a layer count is a CDP-bracket *snapshot* value, not a gate-able
 per-interaction count — a steady-state interaction emits no event to window.
 
+## Per-flush layout/style scope: measured, but a distribution, never a sum
+
+Each flush carries **how many objects it touched**, and it rides the light `--breakdown` trace, not
+just `--deep`. A `Layout` event's `beginData` carries `dirtyObjects` / `totalObjects` /
+`partialLayout` and its `endData` carries `layoutRoots[{nodeId,nodeName,depth,quads}]`; an
+`UpdateLayoutTree` carries `args.elementCount`. Only `beginData.stackTrace` needs the `.stack`
+category, so every scope field is present on the light trace. DevTools' trace engine types them as
+required fields, so they are stable **[source]**
+([`TraceEvents.ts`](https://raw.githubusercontent.com/ChromeDevTools/devtools-frontend/main/front_end/models/trace/types/TraceEvents.ts);
+Blink emits them in `inspector_trace_events.cc` BeginData/EndData and `document.cc`'s
+`UpdateLayoutTree` END). wpd reads none of them into the summary today.
+
+**Honesty constants [measured]**, synthetic probes with a known dirty-subtree size N:
+
+- **`elementCount` is exact.** It equals N at N=3/50/800, forced and rAF-batched alike, and a
+  style-only change counts too.
+- **`dirtyObjects` is N+1, and its unit is not DOM nodes.** The +1 is the layout root. The number
+  counts render-tree `LayoutObject`s, **not** DOM nodes: a restore of 800 boxes read `elementCount`
+  801 but `dirtyObjects` **1604** — about 2 `LayoutObject`s per box, because anonymous boxes split
+  one element into several. So `dirtyObjects` and `elementCount` answer different questions and do
+  not have to agree.
+- **Style scope and layout scope have different denominators.** A color-only change bumps
+  `elementCount` and emits **no** `Layout` event at all, so the two numbers must never be merged into
+  one "nodes affected" figure — one flush recalculated style on a set, the other laid out a different
+  (possibly empty) set.
+
+**Partial layouts report the subtree.** With `contain:strict`, `totalObjects` scopes to the
+sub-tree (**201** against the document's **2006**), `partialLayout` is `true`, and `layoutRoots`
+names the container element. `partialLayout: false` with a `#document` root is the
+whole-document-reflow signal.
+
+**Real-world distribution [measured]**, one traced four-step journey on **a production Next.js SPA**
+(65.9 MB light trace, 114 `Layout` / 906 `UpdateLayoutTree` events, 100% field coverage):
+`dirtyObjects` spans 4 to 3350 (p50 14, p90 170); `elementCount` p50 35, max 2645; and per-**step**
+medians separate the interactions (a fullscreen toggle p50 4, a product open p50 42, boot p50 23).
+Two limits surfaced on that app:
+
+- **The `partialLayout` boolean is near-constant on a hydrating framework app.** 112 of 114 flushes
+  were whole-document (`partialLayout: false`), so the flag carries almost no per-span signal there.
+  The only sub-tree-scoped flushes were a top-layer `<dialog>` lightbox, whose `layoutRoots.nodeName`
+  reads `DIALOG class='…'` with hashed CSS-module classes; `nodeId` is a backend id, not resolvable
+  to an element without an extra CDP round trip.
+- **Scope is not cost.** Per-object cost ranged 3.7 to 122 µs, about 30x; the widest flush (3350
+  objects) cost **17.1 ms** while a 322-object flush cost **22.9 ms**. So the object count does not
+  rank the flushes by time.
+
+Any surfacing therefore has to obey three rules, or it lies: present scope **beside** the ms, never
+as a proxy for it; aggregate per span as a **max or a distribution, never a sum** (a thrash loop
+re-dirties the same nodes every flush, so summing double-counts them); and window it to the main
+thread like the existing counts. Cross-engine, layout scope is Chrome-only and style scope compares
+within an engine only — [engine-mapping.md](./engine-mapping.md#per-element-counts-both-engines-have-them-wpd-reports-neither).
+
 ## Firefox: paint stays unmeasured, on purpose
 
 A real Gecko dump has paint-ish markers -- `DisplayList`, `WrDisplayList`, `Image Paint`,
