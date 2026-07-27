@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import type { Page } from "puppeteer";
-import { SETTLE_SOURCE } from "./settle.js";
+import { SETTLE_SOURCE, PAINT_FLUSH_SOURCE, STALL_CEILING_MS } from "./settle.js";
+import { frameStallError } from "./launch.js";
 import { waitForStable } from "./until.js";
 import { duplicateLabelError } from "../trace/steps.js";
 import type {
@@ -432,14 +433,18 @@ export async function runDriver(
       performance.mark(name);
       return { now: performance.now(), origin: performance.timeOrigin };
     }, markName) as Promise<{ now: number; origin: number }>;
-  const settle = () => page.evaluate(SETTLE_SOURCE);
-  const paintFlush = () =>
-    page.evaluate(
-      () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        ),
-    );
+  // Both waits are bounded in-page: if the compositor's BeginFrame source has stalled (rAF never
+  // fires, a browser-wide headless failure), the evaluate resolves { stalled: true } at the ceiling
+  // and we throw a frameStallError, which record.ts's retryTransientNav relaunches on a fresh browser.
+  // Without the ceiling an rAF-based settle would hang to the 180s protocol timeout.
+  const settle = async () => {
+    const outcome = await page.evaluate(SETTLE_SOURCE, STALL_CEILING_MS);
+    if (outcome.stalled) throw frameStallError(STALL_CEILING_MS);
+  };
+  const paintFlush = async () => {
+    const outcome = await page.evaluate(PAINT_FLUSH_SOURCE, STALL_CEILING_MS);
+    if (outcome.stalled) throw frameStallError(STALL_CEILING_MS);
+  };
 
   // Observe interaction event-timing so we can attribute INP per step. Installed via
   // evaluateOnNewDocument so it re-arms on every navigation (a step that navigates would
@@ -625,22 +630,27 @@ export async function runDriver(
     // LoAF entries land on a later task too, so read them in the same frame+macrotask flush as the
     // Event-Timing entries: one round trip, both signals settled.
     const flushed = (await page.evaluate(
-      () =>
+      (ceilingMs) =>
         new Promise<{ inp: RawEventTiming[]; loaf: RawLoafFrame[]; lcp: RawLcpEntry[] }>(
           (resolve) => {
-            requestAnimationFrame(() =>
-              setTimeout(
-                () =>
-                  resolve({
-                    inp: ((window as any).__cpInp as RawEventTiming[]) ?? [],
-                    loaf: ((window as any).__cpLoaf as RawLoafFrame[]) ?? [],
-                    lcp: ((window as any).__cpLcp as RawLcpEntry[]) ?? [],
-                  }),
-                0,
-              ),
-            );
+            const read = () => ({
+              inp: ((window as any).__cpInp as RawEventTiming[]) ?? [],
+              loaf: ((window as any).__cpLoaf as RawLoafFrame[]) ?? [],
+              lcp: ((window as any).__cpLcp as RawLcpEntry[]) ?? [],
+            });
+            let done = false;
+            const finish = () => {
+              if (done) return;
+              done = true;
+              resolve(read());
+            };
+            // The settle already threw on a stalled compositor, so rAF normally fires here; the
+            // ceiling is a backstop that reads whatever landed rather than hanging if it does not.
+            setTimeout(finish, ceilingMs);
+            requestAnimationFrame(() => setTimeout(finish, 0));
           },
         ),
+      STALL_CEILING_MS,
     )) as { inp: RawEventTiming[]; loaf: RawLoafFrame[]; lcp: RawLcpEntry[] };
     const observed = flushed.inp;
     const loaf = summarizeLoaf(flushed.loaf);

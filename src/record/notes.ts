@@ -168,6 +168,14 @@ export function navRetried(retries: number): string {
   return `NOTE: the navigation failed with a transient cross-process error (e.g. net::ERR_INVALID_HANDLE, common on a heavy cross-origin --url boot) and was retried on a fresh browser (succeeded after ${attempts}). The recorded numbers are from the successful attempt. If this recurs, the target may be rate-limiting or blocking automated loads.`;
 }
 
+/** Chrome's built-in headless lost frame production mid-record (the compositor's BeginFrame source
+ * stalled, so the driver's settle rAF never fired) and the record was retried on a fresh browser;
+ * disclose it so a reader knows the numbers are from a later attempt. */
+export function frameStallRetried(retries: number): string {
+  const attempts = retries === 1 ? "1 retry" : `${retries} retries`;
+  return `NOTE: Chrome's built-in headless stopped producing animation frames mid-record (its compositor's BeginFrame source stalled, an intermittent headless failure) and the record was retried on a fresh browser (succeeded after ${attempts}). The recorded numbers are from the successful attempt.`;
+}
+
 /** --url named a host with no scheme (localhost:5173); http:// was assumed to reach it. */
 export function pageSchemeAssumed(url: string): string {
   return `--url named a host with no scheme, so http:// was assumed: the target is ${url}. Pass an explicit https:// URL if the server is TLS.`;

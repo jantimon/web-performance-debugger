@@ -320,13 +320,16 @@ export async function record(opts: RecordOptions): Promise<{
   // disclose it in a note when it fired -- never a silent infinite retry, never a swallowed permanent
   // failure (a bad host still fails immediately). See browser/launch.ts isTransientNavError.
   let navRetries = 0;
+  let frameStallRetries = 0;
   try {
     const outcome = await retryTransientNav(
       () => runPass(server, root, capture, opts, mode, absModule, maps),
       NAV_RETRY_LIMIT,
     );
     pass = outcome.value;
-    navRetries = outcome.retries;
+    // retries counts both shapes; the frame-stall subset earns its own note (a different cause).
+    frameStallRetries = outcome.frameStallRetries;
+    navRetries = outcome.retries - outcome.frameStallRetries;
   } finally {
     await server.close();
   }
@@ -461,6 +464,8 @@ export async function record(opts: RecordOptions): Promise<{
   }
   // The navigation hit a transient cross-process error and a fresh-browser retry recovered it.
   if (navRetries > 0) notes.push(notesCatalog.navRetried(navRetries));
+  // Headless frame production stalled mid-record and a fresh-browser retry recovered it.
+  if (frameStallRetries > 0) notes.push(notesCatalog.frameStallRetried(frameStallRetries));
   // A trace ran but its run-window markers are absent (truncated/overflowed trace buffer, or the
   // user_timing category got dropped). Without a window, inWindow() would count the ENTIRE trace
   // (page load, nav, prepare, teardown) as the measured region, silently inflating every

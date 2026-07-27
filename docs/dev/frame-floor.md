@@ -11,7 +11,9 @@ frame), **~8.3 ms** on Firefox headless (~120 Hz).
 wpd launches Chrome's **built-in headless** — full Chrome, windowless (Puppeteer's `headless: true`)
 — as its only headless mode, plus headed via `--no-headless`. It does not launch
 **chrome-headless-shell**. wpd measures how real Chrome performs; it is not a scraper or a PDF
-renderer, so it runs real Chrome.
+renderer, so it runs real Chrome. Headless adds `--disable-gpu` (software compositing) to dodge an
+intermittent GPU-process frame-production stall without moving the floor; see [Frame production
+stalls intermittently](#frame-production-stalls-intermittently-so-headless-software-composites).
 
 Probes below are **[measured]** on a 120 Hz ProMotion Mac, Puppeteer 25.2.1 (Chrome-for-Testing
 150), and wpd's Firefox lane over BiDi. Each is a driver module timing in-page via `page.evaluate`,
@@ -88,6 +90,40 @@ clean higher frame rate. That is a meaningless number for a latency floor, so wp
 **[measured]** Passing a configured stock Chrome via `PUPPETEER_EXECUTABLE_PATH` does not change the
 floor: it also runs the synthetic 60 Hz interval headless. The 60 Hz cap is the headless compositor's
 synthetic default, not a Chrome-for-Testing build property.
+
+## Frame production stalls intermittently, so headless software-composites
+
+**[measured]** Chrome's built-in headless intermittently loses frame production: the compositor's
+BeginFrame source stops producing frames, so every `requestAnimationFrame` callback stalls (timers
+still fire). On the default GPU path it hits **~6% of records** [measured, 6/100 realistic
+3-step x 3-iteration records], and the state is **permanent and browser-wide** -- once a browser
+stalls, a fresh rAF, a re-`goto`, and a brand-new page in the same browser all stay frameless
+[measured, 0/8 and 0/5 recovered], so only a fresh browser process recovers. An rAF-based settle in
+that state waits to the 180s protocol timeout.
+
+It is a **GPU-process frame-sink race**, not a focus / occlusion / visibility one:
+`document.visibilityState` reads `visible` throughout, and the levers that would clear an
+inactive-page stall do not help or make it worse -- CDP `Emulation.setFocusEmulationEnabled` **17.5%**,
+`page.bringToFront()` **10%**, `Page.setWebLifecycleState('active')` **10%**, a live CSS animation
+**8.3%**, `--disable-features=CalculateNativeWinOcclusion` **7.5%** (each vs the ~6% base). Forcing
+the GPU in-process (`--in-process-gpu`) makes it **100%**, which pins the cause to the GPU-process
+frame-sink startup. `HeadlessExperimental.beginFrame`, the old manual frame drive, does not exist on
+built-in headless (https://chromedevtools.github.io/devtools-protocol/tot/HeadlessExperimental/).
+
+So headless launches with **`--disable-gpu`** (software compositing via SwiftShader, a different
+frame-sink path): it cuts the stall to **~0.5%** [measured, 1/200] with **no measurement distortion**
+-- rAF cadence stays **16.7 ms**, the one-frame floor table is identical (`max(work, 16.6)`), and the
+forced-layout probe is unchanged (43 forced flushes, 42 thrash) -- because the synthetic 60 Hz
+BeginFrame default is set by the display compositor, not the GPU. Headless CI has no GPU regardless,
+so this also aligns a developer machine's headless with CI. Headed (`--no-headless`) keeps the GPU: it
+drives a real window off a real display, where the stall does not occur.
+
+The residual ~0.5% is caught by a belt to that brace: the driver's settle bounds each rAF at
+`STALL_CEILING_MS` (3 s, far above the ~24 ms worst legit frame gap, far below the protocol timeout).
+A rAF past it is a stall, so the settle throws a retryable frame-stall error and `record`'s
+`retryTransientNav` relaunches the whole pass on a fresh browser (`meta.notes` discloses it, via
+`frameStallRetried`); exhausting the retries fails loudly rather than emitting a frameless recording.
+The same stall degrades LCP timing on the losing browser (docs/dev/navigation-and-lcp.md).
 
 ## The two headless implementations
 

@@ -44,20 +44,52 @@ export function isTransientNavError(error: Error): boolean {
 }
 
 /**
- * Run `attempt` and, on a transient navigation failure (isTransientNavError), retry up to `limit`
- * times, returning how many retries it took. A permanent error, or a non-Error throw, or exhausting
- * the limit re-throws immediately -- never an infinite loop, never a swallowed permanent failure.
- * `attempt` is expected to be self-contained (a fresh browser per call), so a retry starts clean.
+ * Marker in the message of the error the driver throws when a settle's `requestAnimationFrame` never
+ * fires within the stall ceiling. Chrome's built-in headless intermittently (~6% of records) loses
+ * its compositor's BeginFrame source browser-wide and permanently: rAF callbacks stop firing (timers
+ * still run), so an rAF-based settle would hang to the protocol timeout. The state is unrecoverable
+ * from the page (a fresh rAF, a re-goto, or a new page in the same browser all stay frameless
+ * [measured]); only a fresh browser recovers, which is why the error is retryable. Launching headless
+ * with `--disable-gpu` (software compositing, a different frame-sink path) cuts the rate ~12x but does
+ * not eliminate it, so the retry is the belt to the flag's braces. See docs/dev/frame-floor.md. */
+export const FRAME_STALL_MARKER = "wpd:frame-stall";
+
+/** The error the driver throws when a settle rAF exceeds the stall ceiling (frame production stalled).
+ * Carries the marker so `isFrameStallError`/`retryTransientNav` recognize it and relaunch. */
+export function frameStallError(waitedMs: number): Error {
+  return new Error(
+    `${FRAME_STALL_MARKER}: Chrome's built-in headless produced no animation frame within ${Math.round(waitedMs)}ms ` +
+      `(the compositor's BeginFrame source stalled). Retrying on a fresh browser.`,
+  );
+}
+
+/** Whether an error is a frame-production stall (the driver's settle rAF exceeded the ceiling). */
+export function isFrameStallError(error: Error): boolean {
+  return error.message.includes(FRAME_STALL_MARKER);
+}
+
+/**
+ * Run `attempt` and, on a transient failure, retry up to `limit` times on a fresh browser, returning
+ * how many retries it took and how many of those were frame-production stalls (vs transient
+ * navigation failures) so the caller notes the right cause. Two failure shapes retry, both because a
+ * fresh browser recovers them: a transient cross-process navigation error (isTransientNavError) and a
+ * headless frame-production stall (isFrameStallError). A permanent error, a non-Error throw, or
+ * exhausting the limit re-throws immediately -- never an infinite loop, never a swallowed permanent
+ * failure. `attempt` is expected to be self-contained (a fresh browser per call), so a retry starts clean.
  */
 export async function retryTransientNav<T>(
   attempt: () => Promise<T>,
   limit: number,
-): Promise<{ value: T; retries: number }> {
+): Promise<{ value: T; retries: number; frameStallRetries: number }> {
+  let frameStallRetries = 0;
   for (let tries = 0; ; tries++) {
     try {
-      return { value: await attempt(), retries: tries };
+      return { value: await attempt(), retries: tries, frameStallRetries };
     } catch (error) {
-      if (tries >= limit || !(error instanceof Error) || !isTransientNavError(error)) throw error;
+      const retryable =
+        error instanceof Error && (isTransientNavError(error) || isFrameStallError(error));
+      if (tries >= limit || !retryable) throw error;
+      if (error instanceof Error && isFrameStallError(error)) frameStallRetries++;
     }
   }
 }
@@ -206,11 +238,23 @@ async function launchOrThrow(opts: {
  * Chrome launch args. The renderer runs in its OS sandbox by DEFAULT (neither --no-sandbox nor
  * --disable-setuid-sandbox is present); `disableSandbox` opts back into both for environments that
  * cannot start the sandbox (containers, restricted CI), trading process containment for a run.
+ *
+ * `--disable-gpu` is set on HEADLESS launches only: Chrome's built-in headless intermittently loses
+ * its GPU-process compositor's BeginFrame source (rAF stops firing browser-wide and permanently,
+ * ~6% of records), which hangs the driver's rAF-based settle. Routing compositing through software
+ * (SwiftShader) uses a different frame-sink path that cuts the rate ~12x (to ~0.5% [measured]); the
+ * frame cadence stays the synthetic 60Hz BeginFrame default (~16.7ms) and the wall/INP one-frame
+ * floor is unchanged, because that default is set by the display compositor, not the GPU
+ * (docs/dev/frame-floor.md). Headless CI has no GPU regardless, so this also aligns a dev machine's
+ * headless with CI. Headed (--no-headless) keeps the GPU: it drives a real window off a real display,
+ * where the stall does not occur.
  */
-export function chromeArgs(disableSandbox: boolean): string[] {
+export function chromeArgs(disableSandbox: boolean, headless: boolean): string[] {
   const sandboxArgs = disableSandbox ? ["--no-sandbox", "--disable-setuid-sandbox"] : [];
+  const headlessArgs = headless ? ["--disable-gpu"] : [];
   return [
     ...sandboxArgs,
+    ...headlessArgs,
     "--enable-precise-memory-info",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
@@ -230,7 +274,7 @@ async function launchChrome(
       userDataDir: opts.userDataDir,
       // puppeteer ignores undefined and falls back to its 180000ms default.
       protocolTimeout: opts.protocolTimeoutMs,
-      args: chromeArgs(!!opts.disableSandbox),
+      args: chromeArgs(!!opts.disableSandbox, headless),
     });
   } catch (error) {
     // A sandbox that cannot start is a distinct, actionable failure: name the opt-out rather than

@@ -15,3 +15,7 @@ Consequences:
   frame-cadence axis differs), rather than comparing two different floors as one.
 - chrome-headless-shell is no longer used; skip its Puppeteer download with
   `PUPPETEER_SKIP_CHROME_HEADLESS_SHELL_DOWNLOAD=true` (see README).
+- Headless launches Chrome with `--disable-gpu` (software compositing) to avoid an intermittent
+  GPU-process frame-production stall that hung driver records; the frame cadence and wall/INP floor
+  are unchanged. Headed (`--no-headless`) keeps the GPU. A rare residual stall is caught by a bounded
+  settle and retried on a fresh browser (disclosed in `meta.notes`).

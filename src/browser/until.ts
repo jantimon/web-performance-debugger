@@ -1,4 +1,5 @@
 import type { Page } from "puppeteer";
+import { STALL_CEILING_MS } from "./settle.js";
 
 /**
  * The in-page "the DOM stopped changing" detector, serialized into the page. Resolves `true` once no
@@ -8,14 +9,28 @@ import type { Page } from "puppeteer";
  * the step's end mark. Descriptive names throughout: this is serialized, but the house rule on
  * identifiers holds in page context too.
  */
-const QUIET_SOURCE = (quietMs: number, maxMs: number) =>
+const QUIET_SOURCE = (quietMs: number, maxMs: number, stallCeilingMs: number) =>
   new Promise<boolean>((resolve) => {
     let quietTimer: ReturnType<typeof setTimeout>;
     const finish = (wentQuiet: boolean) => {
       clearTimeout(quietTimer);
       clearTimeout(hardCap);
       observer.disconnect();
-      requestAnimationFrame(() => resolve(wentQuiet));
+      // Let the last mutation paint, but bound the frame wait: if the headless compositor has stalled
+      // (rAF never fires), resolve at the ceiling anyway. The caller's next paintFlush detects a truly
+      // dead compositor and throws the retryable frame-stall error, so this must not hang here.
+      let resolved = false;
+      const ceiling = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        resolve(wentQuiet);
+      }, stallCeilingMs);
+      requestAnimationFrame(() => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(ceiling);
+        resolve(wentQuiet);
+      });
     };
     const observer = new MutationObserver(() => {
       clearTimeout(quietTimer);
@@ -109,7 +124,7 @@ export function waitForStable(page: Page, options: WaitForStableOptions = {}): (
       if (remainingMs === 0) break;
       let wentQuiet: boolean;
       try {
-        wentQuiet = await page.evaluate(QUIET_SOURCE, quietMs, remainingMs);
+        wentQuiet = await page.evaluate(QUIET_SOURCE, quietMs, remainingMs, STALL_CEILING_MS);
       } catch (error) {
         if (!isDestroyedContextError(error) || Date.now() >= deadlineMs) throw error;
         // The document navigated out from under the quiet check. If a content selector gates the

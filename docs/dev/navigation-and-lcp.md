@@ -73,6 +73,14 @@ end-of-window page clock is the anomaly, not a real paint, so the entry is store
 timing rather than printed as a 60 s LCP. A sane `startTime` passes through; the guard's slack is
 generous, so real variance is never suppressed.
 
+**Same root as the rAF frame-production stall** (docs/dev/frame-floor.md): a headless browser that
+loses its GPU-process BeginFrame source produces no frames, so LCP has no paint to time. **[measured]**
+On the default GPU path, **7 of 60** launches produced no LCP entry at all (the frame-starved branch),
+matching the ~6% rAF-stall rate; with `--disable-gpu` (the headless default), **60 of 60** produced a
+normal ~80 ms entry. The inflated-`startTime` branch is the same stall surfacing as a broken paint
+clock instead of a missing entry. `--disable-gpu` addresses the root, so both branches are rare;
+`shapeLcp`'s guard stays as the backstop for the residual.
+
 ## Soft navigations: standards status
 
 A **soft navigation** is a same-document route change an SPA drives with `history.pushState` plus a
