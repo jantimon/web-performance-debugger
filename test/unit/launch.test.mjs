@@ -5,16 +5,16 @@ import {
   isSandboxLaunchError,
   sandboxLaunchError,
   isTransientNavError,
+  isFrameStallError,
+  frameStallError,
   retryTransientNav,
-  isHttp2ProtocolError,
-  http2GuidanceFor,
 } from "../../dist/browser/launch.js";
-import { browserSandboxDisabled, navRetried } from "../../dist/record/notes.js";
+import { browserSandboxDisabled, navRetried, frameStallRetried } from "../../dist/record/notes.js";
 
 // S11: Chrome must launch sandboxed by DEFAULT. Neither sandbox-disabling flag may appear unless
 // --disable-browser-sandbox was explicitly requested.
 test("chromeArgs: the default launch carries neither sandbox-disabling flag", () => {
-  const args = chromeArgs(false);
+  const args = chromeArgs(false, true);
   assert.ok(!args.includes("--no-sandbox"), "no --no-sandbox by default");
   assert.ok(!args.includes("--disable-setuid-sandbox"), "no --disable-setuid-sandbox by default");
   // The unrelated perf/backgrounding flags stay.
@@ -22,9 +22,16 @@ test("chromeArgs: the default launch carries neither sandbox-disabling flag", ()
 });
 
 test("chromeArgs: --disable-browser-sandbox adds both sandbox-disabling flags", () => {
-  const args = chromeArgs(true);
+  const args = chromeArgs(true, true);
   assert.ok(args.includes("--no-sandbox"), "opt-in adds --no-sandbox");
   assert.ok(args.includes("--disable-setuid-sandbox"), "opt-in adds --disable-setuid-sandbox");
+});
+
+// Headless launches software-composite (--disable-gpu) to dodge the intermittent GPU-process
+// BeginFrame stall; headed keeps the GPU (it drives a real window off a real display).
+test("chromeArgs: --disable-gpu is set headless, absent headed", () => {
+  assert.ok(chromeArgs(false, true).includes("--disable-gpu"), "headless software-composites");
+  assert.ok(!chromeArgs(false, false).includes("--disable-gpu"), "headed keeps the GPU");
 });
 
 // A sandbox launch failure is detected by its known message shapes and re-thrown as guidance that
@@ -110,31 +117,12 @@ test("retryTransientNav: a permanent error is re-thrown immediately, not retried
   assert.equal(calls, 1, "a permanent failure surfaces on the first attempt");
 });
 
-// An HTTP/2 rejection is NOT a transient error (retrying the same shell flavour fails identically); it
-// drives a headless-mode hint instead.
-test("isHttp2ProtocolError matches the HTTP/2 rejection, isTransientNavError does not", () => {
+// ERR_HTTP2_PROTOCOL_ERROR is a permanent navigation failure (a retry fails identically), so it is
+// not in isTransientNavError; with chrome-headless-shell gone there is no mode remedy and it surfaces
+// as itself.
+test("ERR_HTTP2_PROTOCOL_ERROR is not treated as a transient (retriable) navigation error", () => {
   const error = new Error("net::ERR_HTTP2_PROTOCOL_ERROR at https://cdn.example.com");
-  assert.ok(isHttp2ProtocolError(error));
-  assert.ok(!isTransientNavError(error), "must not be retried: the same shell stack fails identically");
-  assert.ok(!isHttp2ProtocolError(new Error("net::ERR_ABORTED at https://x")));
-});
-
-// The guidance fires ONLY under shell-headless: under new-headless/headed the shell network stack is
-// not in play, so pointing at --headless-mode new would be wrong.
-test("http2GuidanceFor returns the headless-mode hint only under shell, only for the HTTP/2 error", () => {
-  const http2 = new Error("net::ERR_HTTP2_PROTOCOL_ERROR at https://cdn.example.com");
-  const shellHint = http2GuidanceFor(http2, "shell");
-  assert.ok(shellHint, "shell-headless earns the hint");
-  assert.match(shellHint.message, /--headless-mode new/, "names the remedy");
-  assert.match(shellHint.message, /network stack/, "names the likely cause");
-  assert.match(shellHint.message, /frame-floor\.md/, "names the frame-cadence trade");
-  assert.match(shellHint.message, /net::ERR_HTTP2_PROTOCOL_ERROR/, "preserves the original cause");
-  // new-headless (true) and headed (false) are not shell: no hint, the original error surfaces.
-  assert.equal(http2GuidanceFor(http2, true), null, "new-headless: no shell hint");
-  assert.equal(http2GuidanceFor(http2, false), null, "headed: no shell hint");
-  // A non-HTTP/2 error never earns the hint, even under shell.
-  assert.equal(http2GuidanceFor(new Error("net::ERR_ABORTED"), "shell"), null);
-  assert.equal(http2GuidanceFor("not even an error", "shell"), null);
+  assert.ok(!isTransientNavError(error), "must not be retried: it fails identically on a retry");
 });
 
 test("navRetried note names the transient error and that a fresh browser recovered it", () => {
@@ -143,4 +131,44 @@ test("navRetried note names the transient error and that a fresh browser recover
   assert.match(note, /fresh browser/);
   assert.match(note, /1 retry/);
   assert.match(navRetried(2), /2 retries/);
+});
+
+// A headless frame-production stall is retryable (a fresh browser recovers it), and distinguished
+// from a transient nav error so the caller notes the right cause.
+test("isFrameStallError recognizes the driver's frame-stall error, not a nav error", () => {
+  assert.ok(isFrameStallError(frameStallError(3000)), "recognizes its own error");
+  assert.ok(!isFrameStallError(new Error("net::ERR_INVALID_HANDLE at https://x")), "not a nav error");
+  assert.ok(!isTransientNavError(frameStallError(3000)), "a frame stall is not a nav error");
+});
+
+test("retryTransientNav retries a frame stall and counts it separately", async () => {
+  let calls = 0;
+  const { value, retries, frameStallRetries } = await retryTransientNav(async () => {
+    calls++;
+    if (calls < 2) throw frameStallError(3000);
+    return "ok";
+  }, 2);
+  assert.equal(value, "ok");
+  assert.equal(retries, 1);
+  assert.equal(frameStallRetries, 1, "the retry was a frame stall");
+});
+
+test("retryTransientNav: exhausting the limit on frame stalls re-throws the stall error", async () => {
+  let calls = 0;
+  await assert.rejects(
+    retryTransientNav(async () => {
+      calls++;
+      throw frameStallError(3000);
+    }, 2),
+    /wpd:frame-stall/,
+  );
+  assert.equal(calls, 3, "one attempt + two retries, then it gives up");
+});
+
+test("frameStallRetried note names the headless stall and the fresh-browser recovery", () => {
+  const note = frameStallRetried(1);
+  assert.match(note, /headless/i);
+  assert.match(note, /fresh browser/);
+  assert.match(note, /1 retry/);
+  assert.match(frameStallRetried(2), /2 retries/);
 });

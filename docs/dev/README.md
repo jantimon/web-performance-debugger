@@ -78,7 +78,7 @@ permalink).
 - How is INP split into input/processing/presentation, and why group by `interactionId`? -> [the CWV split](./driver-timing.md#the-cwv-split-and-why-it-needs-interactionid)
 - Settle heuristics, `waitForStable`, LoAF, measure merging — the sharp edges -> [limits](./driver-timing.md#limits-worth-knowing-before-you-rely-on-it)
 - Why do different-cost libraries report the same wall? -> [the one-frame floor](./frame-floor.md#it-is-a-floor-not-quantization)
-- Why shell-headless (120 Hz) by default? -> [the mode decision](./frame-floor.md#the-mode-decision)
+- Why is the ~16.6 ms floor deterministic, and why real Chrome? -> [why deterministic](./frame-floor.md#why-the-floor-is-deterministic-and-cross-machine-consistent)
 
 **Counts and the trace** — [rendering-counts.md](./rendering-counts.md), [trace-buffer.md](./trace-buffer.md)
 
@@ -92,7 +92,7 @@ permalink).
 
 **Navigation and LCP** — [navigation-and-lcp.md](./navigation-and-lcp.md)
 
-- Does LCP fire headless, and is it comparable across engines? -> [LCP fires under both modes](./navigation-and-lcp.md#lcp-fires-under-both-headless-modes-and-firefox)
+- Does LCP fire headless, and is it comparable across engines? -> [LCP fires headless](./navigation-and-lcp.md#lcp-fires-under-headless-chrome-and-firefox)
 - What is a usable LCP identifier on a production build, and when is `renderTime` 0? -> [url+size+tag](./navigation-and-lcp.md#the-useful-lcp-identifier-is-urlsizetag)
 - Why is there no per-soft-step LCP, and what is the clean semantic? -> [finalization](./navigation-and-lcp.md#lcp-finalizes-on-a-trusted-input-and-re-arms-per-document)
 - How is a step classified static/hard/soft without CDP or a browser flag? -> [url+timeOrigin](./navigation-and-lcp.md#the-urltimeorigin-classification)
@@ -122,7 +122,7 @@ permalink).
    page's `performance.now` delta), not a node-side bound. That bound would read 40.5 ms via
    `page.click`, 31.9 ms via `page.evaluate`, 1.1 ms in `--bench`, because it carries the tool's
    dispatch in no renderer timeline. Even on the page clock the window includes the deliberate settle
-   (floor ~31 ms under new-headless `--headless-mode new`, ~half on the default shell mode), so use
+   (floor ~31 ms on Chrome's built-in headless, ~half on Firefox), so use
    `interaction.processingMs` or the per-step counts for what the page did.
    [Details](./driver-timing.md#a-driver-steps-wallms-is-the-pages-own-clock-not-a-node-side-bound).
 

@@ -51,7 +51,7 @@ test("the hard-vs-soft threshold is HARD_NAV_ORIGIN_DELTA_MS (0.5ms), boundary i
 });
 
 // shapeLcp keeps only the fields that carry signal, leads with the identifiers that survive a
-// production build (url/size/tag), and suppresses the new-headless startTime anomaly.
+// production build (url/size/tag), and suppresses the built-in-headless startTime anomaly.
 
 const rawLcp = (extra = {}) => ({
   url: "https://cdn/hero.avif",
@@ -95,7 +95,7 @@ test("shapeLcp drops empty/zero fields rather than storing them", () => {
   assert.equal(lcp.startTimeMs, 30);
 });
 
-test("shapeLcp suppresses an implausible startTime (new-headless anomaly) with no timing", () => {
+test("shapeLcp suppresses an implausible startTime (built-in-headless anomaly) with no timing", () => {
   // ~60s startTime on a step whose window ended at ~40ms: beyond the bound + slack, so suppressed.
   const lcp = shapeLcp(rawLcp({ startTimeMs: 60000 }), 40);
   assert.deepEqual(lcp, { suppressed: true }, "suppressed carries no fabricated timing");

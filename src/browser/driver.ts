@@ -1,6 +1,13 @@
 import { pathToFileURL } from "node:url";
 import type { Page } from "puppeteer";
-import { SETTLE_SOURCE } from "./settle.js";
+import {
+  SETTLE_SOURCE,
+  PAINT_FLUSH_SOURCE,
+  FRAME_PROBE_SOURCE,
+  FRAME_PROBE_FRAMES,
+  STALL_CEILING_MS,
+} from "./settle.js";
+import { frameStallError } from "./launch.js";
 import { waitForStable } from "./until.js";
 import { duplicateLabelError } from "../trace/steps.js";
 import type {
@@ -133,8 +140,8 @@ export interface RawLcpEntry {
   startTimeMs: number;
 }
 
-/** A `startTime` this far (ms) beyond the step's own window is the new-headless anomaly (~60s on a
- * ~40ms page), not real; suppress it rather than print it as fact. Generous, so real variance passes. */
+/** A `startTime` this far (ms) beyond the step's own window is the built-in-headless anomaly (~60s on
+ * a ~40ms page), not real; suppress it rather than print it as fact. Generous, so real variance passes. */
 export const LCP_STARTTIME_SLACK_MS = 1000;
 
 /**
@@ -144,7 +151,7 @@ export const LCP_STARTTIME_SLACK_MS = 1000;
  *
  * `boundMs` is the step's own end-of-window page clock (`performance.now()` on the step's final
  * document); when the entry's `startTime` sits implausibly beyond it, the paint clock is the
- * new-headless anomaly and the entry is stored `suppressed` with no timing, never a 60s LCP as fact.
+ * built-in-headless anomaly and the entry is stored `suppressed` with no timing, never a 60s LCP as fact.
  */
 export function shapeLcp(raw: RawLcpEntry | undefined, boundMs: number | null): StepLcp | null {
   if (!raw) return null;
@@ -432,14 +439,18 @@ export async function runDriver(
       performance.mark(name);
       return { now: performance.now(), origin: performance.timeOrigin };
     }, markName) as Promise<{ now: number; origin: number }>;
-  const settle = () => page.evaluate(SETTLE_SOURCE);
-  const paintFlush = () =>
-    page.evaluate(
-      () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        ),
-    );
+  // Both waits are bounded in-page: if the compositor's BeginFrame source has stalled (rAF never
+  // fires, a browser-wide headless failure), the evaluate resolves { stalled: true } at the ceiling
+  // and we throw a frameStallError, which record.ts's retryTransientNav relaunches on a fresh browser.
+  // Without the ceiling an rAF-based settle would hang to the 180s protocol timeout.
+  const settle = async () => {
+    const outcome = await page.evaluate(SETTLE_SOURCE, STALL_CEILING_MS);
+    if (outcome.stalled) throw frameStallError(STALL_CEILING_MS);
+  };
+  const paintFlush = async () => {
+    const outcome = await page.evaluate(PAINT_FLUSH_SOURCE, STALL_CEILING_MS);
+    if (outcome.stalled) throw frameStallError(STALL_CEILING_MS);
+  };
 
   // Observe interaction event-timing so we can attribute INP per step. Installed via
   // evaluateOnNewDocument so it re-arms on every navigation (a step that navigates would
@@ -545,6 +556,16 @@ export async function runDriver(
   await page.evaluateOnNewDocument(installLcpObserver);
   await page.evaluate(installLcpObserver);
 
+  // Frame-health gate, before any user action. Chrome's built-in headless can come up with a dead
+  // compositor BeginFrame source (permanent, browser-wide), which would hang ANY rAF-based wait in
+  // the flow -- a settle, or a user `page.waitForFunction` whose default polling is rAF -- to the
+  // 180s protocol timeout, an error the retry cannot classify. The stall shows by the second frame
+  // after a load [measured], so probing a few frames here converts a born-dead browser into a
+  // retryable frame-stall error that record relaunches on a fresh browser, before the flow can hang
+  // on it. Mid-run deaths (e.g. a later navigation) are caught by each step's bounded settle.
+  const frameHealth = await page.evaluate(FRAME_PROBE_SOURCE, STALL_CEILING_MS, FRAME_PROBE_FRAMES);
+  if (frameHealth.stalled) throw frameStallError(STALL_CEILING_MS);
+
   async function waitDone(until: Until): Promise<void> {
     if (until == null) return void (await settle());
     if (typeof until === "string") await page.waitForSelector(until);
@@ -625,22 +646,27 @@ export async function runDriver(
     // LoAF entries land on a later task too, so read them in the same frame+macrotask flush as the
     // Event-Timing entries: one round trip, both signals settled.
     const flushed = (await page.evaluate(
-      () =>
+      (ceilingMs) =>
         new Promise<{ inp: RawEventTiming[]; loaf: RawLoafFrame[]; lcp: RawLcpEntry[] }>(
           (resolve) => {
-            requestAnimationFrame(() =>
-              setTimeout(
-                () =>
-                  resolve({
-                    inp: ((window as any).__cpInp as RawEventTiming[]) ?? [],
-                    loaf: ((window as any).__cpLoaf as RawLoafFrame[]) ?? [],
-                    lcp: ((window as any).__cpLcp as RawLcpEntry[]) ?? [],
-                  }),
-                0,
-              ),
-            );
+            const read = () => ({
+              inp: ((window as any).__cpInp as RawEventTiming[]) ?? [],
+              loaf: ((window as any).__cpLoaf as RawLoafFrame[]) ?? [],
+              lcp: ((window as any).__cpLcp as RawLcpEntry[]) ?? [],
+            });
+            let done = false;
+            const finish = () => {
+              if (done) return;
+              done = true;
+              resolve(read());
+            };
+            // The settle already threw on a stalled compositor, so rAF normally fires here; the
+            // ceiling is a backstop that reads whatever landed rather than hanging if it does not.
+            setTimeout(finish, ceilingMs);
+            requestAnimationFrame(() => setTimeout(finish, 0));
           },
         ),
+      STALL_CEILING_MS,
     )) as { inp: RawEventTiming[]; loaf: RawLoafFrame[]; lcp: RawLcpEntry[] };
     const observed = flushed.inp;
     const loaf = summarizeLoaf(flushed.loaf);

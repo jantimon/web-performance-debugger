@@ -1280,9 +1280,15 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
     // LCP (in-page observer, ungated by the no-trace capture mode). The <h1> is the contentful element.
     assert.equal(loadStep.navigation, "hard", "the built-in load step is a hard navigation");
     assert.ok(loadStep.lcp, "the load step carries boot LCP");
-    assert.ok(!loadStep.lcp.suppressed, "the shell-headless default reports a sane LCP, not suppressed");
-    assert.equal(loadStep.lcp.tag, "H1", "the LCP element is the <h1>");
-    assert.ok(loadStep.lcp.startTimeMs > 0, "LCP carries a paint timestamp");
+    // Built-in headless occasionally reports the inflated-startTime anomaly, which shapeLcp suppresses
+    // (navigation-and-lcp.md). A sane entry names the element and carries a paint timestamp; a
+    // suppressed one is the guard doing its job. Both are honest; a fabricated 60s LCP is not.
+    if (loadStep.lcp.suppressed) {
+      assert.equal(Object.keys(loadStep.lcp).length, 1, "a suppressed LCP carries no timing, only the flag");
+    } else {
+      assert.equal(loadStep.lcp.tag, "H1", "the LCP element is the <h1>");
+      assert.ok(loadStep.lcp.startTimeMs > 0, "LCP carries a paint timestamp");
+    }
 
     // --breakdown: the run span AND the load step carry a reconciling bar (Σ slices + idle == wall),
     // counts are measured, and the navigating load step is priced on the trace clock (spans the nav).
@@ -1367,22 +1373,27 @@ e2e("driver flow: step navigation classification + boot LCP on the hard-nav step
     assert.equal(hash.navigation, "soft-hash", "a fragment-only change is soft-hash");
     assert.match(hash.afterUrl, /#section$/, "the hash step ended on the fragment URL");
 
-    // Boot LCP rides ONLY the hard-nav step (a fresh document), naming a plausible element.
+    // Boot LCP rides ONLY the hard-nav step (a fresh document). Built-in headless occasionally reports
+    // the inflated-startTime anomaly, which shapeLcp suppresses (navigation-and-lcp.md); a sane entry
+    // names the hero element. Both outcomes are honest, so branch rather than assert a shell-only sane
+    // value.
     assert.ok(goto.lcp, "the hard-nav step carries boot LCP");
-    assert.ok(!goto.lcp.suppressed, "shell-headless reports a sane LCP, not the new-headless anomaly");
-    assert.equal(goto.lcp.tag, "H1", "the LCP element is the hero <h1>");
-    assert.ok(goto.lcp.size > 0, "the LCP entry carries a size");
-    assert.ok(goto.lcp.startTimeMs > 0, "the LCP entry carries a paint timestamp");
+    const lcpSane = !goto.lcp.suppressed;
+    if (lcpSane) {
+      assert.equal(goto.lcp.tag, "H1", "the LCP element is the hero <h1>");
+      assert.ok(goto.lcp.size > 0, "the LCP entry carries a size");
+      assert.ok(goto.lcp.startTimeMs > 0, "the LCP entry carries a paint timestamp");
+    }
     assert.ok(!hash.lcp, "a soft navigation carries no LCP (frozen, never a fake 0)");
 
     // The anatomy view surfaces the same navigation + LCP a consumer reads via query span.
     const anatomy = JSON.parse(runCli(["query", "span", out, "step:goto", "--json"]));
     assert.equal(anatomy.navigation, "hard", "query span carries the navigation classification");
-    assert.equal(anatomy.lcp.tag, "H1", "query span carries the boot LCP");
-    // The human report prints the before -> after line and the LCP element.
+    if (lcpSane) assert.equal(anatomy.lcp.tag, "H1", "query span carries the boot LCP");
+    // The human report prints the before -> after line, and the LCP element when it is not suppressed.
     const human = runCli(["query", "span", out, "step:goto"]);
     assert.match(human, /Navigation: hard/, "the human report names the hard navigation");
-    assert.match(human, /LCP \(boot/, "the human report shows boot LCP");
+    if (lcpSane) assert.match(human, /LCP \(boot/, "the human report shows boot LCP");
   } finally {
     server.close();
   }
@@ -1425,27 +1436,18 @@ e2e("record --url boot: counts/bar follow a cross-process navigation, not the bl
   }
 });
 
-// The flag guards reject before any browser launches, so this runs everywhere (not gated on Chrome).
-test("record --headless-mode shell errors when combined with --no-headless", () => {
+// --headless-mode is removed: wpd always runs Chrome's built-in headless (or --no-headless). An
+// explicit flag fails with a clear removal message, not commander's generic unknown-option. The guard
+// rejects before any browser launches, so this runs everywhere (not gated on Chrome).
+test("record --headless-mode errors with a clear removal message", () => {
   const result = spawnSync(
     process.execPath,
-    [cli, "record", path.join(examples, "forces-layout.mjs"), "--headless-mode", "shell", "--no-headless"],
+    [cli, "record", path.join(examples, "forces-layout.mjs"), "--headless-mode", "new"],
     { cwd: repoRoot, encoding: "utf8" },
   );
-  assert.notEqual(result.status, 0, "the bad flag combo exits non-zero");
-  assert.match(result.stderr, /--headless-mode shell requires headless \(drop --no-headless\)/);
-});
-
-// --headless-mode is a Chrome-only launch flavour, so ANY explicit value is rejected on firefox/node
-// (not just shell). Guards reject before any browser launches, so this runs everywhere.
-test("record --headless-mode new errors on a firefox target (chrome-only flag)", () => {
-  const result = spawnSync(
-    process.execPath,
-    [cli, "record", path.join(examples, "forces-layout.mjs"), "--target", "firefox", "--headless-mode", "new"],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  assert.notEqual(result.status, 0, "the chrome-only flag on firefox exits non-zero");
-  assert.match(result.stderr, /--headless-mode is chrome-only \(target is firefox\)/);
+  assert.notEqual(result.status, 0, "the removed flag exits non-zero");
+  assert.match(result.stderr, /--headless-mode was removed in this version/);
+  assert.match(result.stderr, /--no-headless/, "points at the surviving headed opt-out");
 });
 
 // The capture modes are mutually exclusive: two capture modes are two captures / two questions, so wpd

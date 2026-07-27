@@ -6,9 +6,9 @@ Everything below is **[measured]** against `test/fixtures/driver-probe.html` (40
 an `offsetWidth` read between each, so every row forces a synchronous layout) and
 `test/fixtures/slow-handler.html` (a click handler that busy-waits a known 45 ms), headless Chrome.
 
-Every wall/settle number below is measured under **new-headless** (`--headless-mode new`, full
-Chrome, ~60 Hz cadence). On the default shell mode (chrome-headless-shell, ~120 Hz) the settle floor
-is ~half of these figures; the drive-independent counts and self-time are unchanged.
+Every wall/settle number below is measured under Chrome's built-in headless (full Chrome, ~60 Hz
+cadence — the only headless mode wpd launches). On Firefox headless (~120 Hz) the settle floor is
+~half of these figures; the drive-independent counts and self-time are unchanged.
 
 ## A driver step's `wallMs` is the page's own clock, not a node-side bound
 

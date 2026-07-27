@@ -390,9 +390,9 @@ export type NavigationKind = "none" | "hard" | "soft" | "soft-hash";
  */
 export interface StepLcp {
   /**
-   * The entry was dropped as an implausible outlier and carries no timing: new-headless intermittently
-   * reports a grossly inflated `startTime` (~60s on a page that finished in ~40ms). When set, no other
-   * field is present -- a suppressed marker, never a fabricated 60s LCP printed as fact.
+   * The entry was dropped as an implausible outlier and carries no timing: Chrome's built-in headless
+   * intermittently reports a grossly inflated `startTime` (~60s on a page that finished in ~40ms). When
+   * set, no other field is present -- a suppressed marker, never a fabricated 60s LCP printed as fact.
    */
   suppressed?: boolean;
   /** the LCP resource url (an image); absent for a text LCP, which has none */
@@ -479,9 +479,10 @@ export interface RecordingMeta {
   iterations: number;
   warmup: number;
   headless: boolean;
-  /** chrome headless flavour when headless: "shell" (~120Hz) or "new" (~60Hz). Absent => headed, or
-   * an older recording / a lane where it does not apply. Frame cadence sets the wall/INP floor, so a
-   * diff across flavours is not comparable (docs/dev/frame-floor.md). */
+  /** Headless frame-cadence axis, stamped when a chrome run is headless. Current runs always stamp
+   * "new" (Chrome's built-in headless, ~60Hz); "shell" only appears on an older recording (~120Hz).
+   * Absent => headed, or firefox/node. Frame cadence sets the wall/INP floor, so a diff across it is
+   * not comparable (docs/dev/frame-floor.md), which is why the axis is retained. */
   headlessMode?: "shell" | "new";
   /** CPU sampler interval (microseconds) this run requested. Absent on older recordings. */
   cpuIntervalUs?: number;
