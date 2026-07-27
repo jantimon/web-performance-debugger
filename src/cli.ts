@@ -418,7 +418,9 @@ program
       out: cmdOpts.out,
       headless: cmdOpts.headless,
       userDataDir: cmdOpts.userDataDir ? path.resolve(cmdOpts.userDataDir) : undefined,
-      disableSandbox: !!cmdOpts.disableBrowserSandbox,
+      // WPD_DISABLE_BROWSER_SANDBOX=1 is the env equivalent of --disable-browser-sandbox, for a CI
+      // whose runner cannot run Chrome's sandbox with trace capture; chrome-only, ignored by node/firefox.
+      disableSandbox: !!cmdOpts.disableBrowserSandbox || process.env.WPD_DISABLE_BROWSER_SANDBOX === "1",
       // Internal default (no user flag): async paints flush before tracing stops.
       settleMs: 200,
       format: cmdOpts.format,

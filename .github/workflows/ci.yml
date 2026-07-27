@@ -55,10 +55,10 @@ jobs:
           cache: npm
       # No PUPPETEER_SKIP_DOWNLOAD here, so `npm ci` downloads the Chrome the test drives.
       - run: npm ci
-      # Full Chrome's sandbox deadlocks with CDP trace capture (--deep/--breakdown) on this runner:
-      # every trace-mode record hangs. Run the suite with the sandbox off (WPD_E2E_NO_SANDBOX makes
-      # the harness pass --disable-browser-sandbox to every record), the documented CI escape.
-      - run: WPD_E2E_NO_SANDBOX=1 npm run test:e2e
+      # Full Chrome's sandbox deadlocks with CDP trace capture (--deep/--breakdown) on this runner,
+      # hanging every trace-mode record. Run the suite with the sandbox off (the documented CI escape);
+      # WPD_DISABLE_BROWSER_SANDBOX reaches every record child, including the node lane, which ignores it.
+      - run: WPD_DISABLE_BROWSER_SANDBOX=1 npm run test:e2e
 
   release:
     # Publishing waits for the whole suite to pass on THIS commit: `needs` blocks on the other jobs

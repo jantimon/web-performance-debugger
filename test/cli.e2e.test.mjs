@@ -45,11 +45,7 @@ const e2e = ready ? test : (name, _opts, fn) => test(name, { skip: "Chrome not i
 const TIMEOUT_MS = 180_000;
 
 function runCli(args) {
-  // Full Chrome's sandbox deadlocks with CDP trace capture on some CI runners: every --deep/
-  // --breakdown record hangs. WPD_E2E_NO_SANDBOX passes the documented CI escape to record.
-  const noSandbox =
-    process.env.WPD_E2E_NO_SANDBOX && args[0] === "record" ? ["--disable-browser-sandbox"] : [];
-  const result = spawnSync(process.execPath, [cli, args[0], ...noSandbox, ...args.slice(1)], {
+  const result = spawnSync(process.execPath, [cli, ...args], {
     cwd: repoRoot,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
