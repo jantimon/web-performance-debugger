@@ -4,7 +4,27 @@
 
 Confirmed on **2.1.220** with an instrumented repro (hook-timestamped lifecycle events,
 `--output-format stream-json`, marker files), plus a code-level root cause read out of the
-shipped bundle. Cross-linking the same cluster: #78782, #77578, #77554, #76681, #68749.
+shipped bundle.
+
+## This has been reported repeatedly — prior issues, for consolidation
+
+Same mechanism (subagent finalized on turn-end, background Bash task lost):
+
+- #78782 — background Bash completion never resumes in-process subagents (open, `bug`)
+- #77578 — background subagent never re-woken when its tracked background Bash child
+  exits (open, `bug` `has repro`)
+- #77554 — tasks started by a sub-agent become permanently orphaned once its turn ends;
+  untrackable from root (open, `bug` `has repro`)
+- #76681 — completion notification enqueued but never delivered when the owning subagent
+  already completed (open, `bug` `has repro`; the queue-side view: JSONL shows `enqueue`
+  with no `dequeue`)
+- #68749 — subagent not woken by its *last* pending background task (open; wake works
+  only while another task is still pending)
+
+Adjacent lifecycle/notification bugs, same family: #75043, #77300, #81438, #80684, #81476.
+
+Closed as not planned after going stale, same symptom: #17764, #50572, #47936, #23154.
+Given that history, consolidating on this issue seems more useful than another filing.
 
 ## Repro result (headless, `claude -p`, Linux)
 
