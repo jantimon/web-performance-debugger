@@ -144,6 +144,44 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
   // The human table renders it beside the source as `N/M layout objects`.
   const human = runCli(["query", "blame", out, "--forced"]);
   assert.match(human, /\d+\/\d+ layout objects/, "human blame rows carry the layout-object scope");
+
+  // Each --deep blame row carries a representative eventId (the widest flush at the line), so the
+  // reader hops straight to the raw event -- no manual re-filter through `query events`. The human
+  // table shows a dim `id` column and teaches the drill.
+  assert.ok(top.eventId != null && Number.isInteger(top.eventId), "a --deep blame row carries an eventId");
+  assert.match(human, /^id\b/m, "the human blame table has an id column");
+  assert.match(human, /query get <id>/, "the blame footer teaches the raw-flush drill");
+
+  // The drill: the blame row's eventId -> `query get` returns THAT raw flush, and its source is the
+  // blame row's own line (the widest flush at it). A --deep Layout flush carries its forcing stack
+  // under args.beginData.stackTrace.
+  const drillRow = fromExample.find((row) => row.eventId != null);
+  assert.ok(drillRow, "a forces-layout.mjs blame row has an eventId to drill");
+  const raw = JSON.parse(runCli(["query", "get", out, String(drillRow.eventId)]));
+  assert.equal(raw.id, drillRow.eventId, "query get returns the addressed event");
+  assert.equal(raw.at, drillRow.at, "the raw event's source is the blame row's line");
+  assert.ok(
+    Array.isArray(raw.args?.beginData?.stackTrace) && raw.args.beginData.stackTrace.length > 0,
+    "the raw flush carries its forcing stack (args.beginData.stackTrace)",
+  );
+
+  // An unknown id fails loudly rather than returning an empty/undefined event.
+  assert.throws(
+    () => runCli(["query", "get", out, "99999999"]),
+    /No event with id 99999999/,
+    "query get on an unknown id errors",
+  );
+
+  // `query events` browses the raw classified log: id/kind/ms/source columns, a --kind filter, and a
+  // --top bound. The eventId above indexes into it, so this is the log the drill reads from.
+  const eventsHuman = runCli(["query", "events", out]);
+  for (const column of ["id", "kind", "ms", "source"])
+    assert.match(eventsHuman, new RegExp(`\\b${column}\\b`), `events table has a ${column} column`);
+  const layoutEvents = JSON.parse(runCli(["query", "events", out, "--kind", "layout", "--format", "json"]));
+  assert.ok(Array.isArray(layoutEvents) && layoutEvents.length > 0, "--kind layout returns events");
+  assert.ok(layoutEvents.every((event) => event.kind === "layout"), "--kind layout keeps only layout events");
+  const topThree = JSON.parse(runCli(["query", "events", out, "--top", "3", "--format", "json"]));
+  assert.ok(topThree.length <= 3, "--top bounds the row count");
 });
 
 // --breakdown drops .stack, so it has no exact forced-layout stack -- but the fused v8.cpu_profiler

@@ -40,7 +40,7 @@ import { dim } from "../output/color.js";
 import { num, table, middleEllipsis, SOURCE_COL_MAX } from "../output/ascii.js";
 import { analyzeThrash } from "../trace/thrash.js";
 import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
-import { forcedLayouts } from "../trace/analysis.js";
+import { forcedLayouts, representativeEventId } from "../trace/analysis.js";
 import { scopeByReadSite } from "../trace/scope.js";
 import { findSteps } from "../trace/parse.js";
 import { deserialize, emit, structuredFormat, type StructuredOutOpts } from "../output/format.js";
@@ -302,6 +302,7 @@ function buildSpanAnatomy(
         at: group.at,
         count: group.count,
         durMs: group.durMs,
+        ...(group.eventId != null ? { eventId: group.eventId } : {}),
         ...(dirtiedBy?.length ? { dirtiedBy } : {}),
         ...(scope ? { scope } : {}),
       };
@@ -930,6 +931,8 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       durMs: number;
       kinds: Set<string>;
       properties: Set<string>;
+      /** every flush at this line, so the widest (max-dur) one names the row's representative event id */
+      events: NormalizedEvent[];
       /** sampled flushes at this line wider than one interval (confident) vs narrower (low-confidence) */
       confident: number;
       lowConfidence: number;
@@ -943,6 +946,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       durMs: 0,
       kinds: new Set<string>(),
       properties: new Set<string>(),
+      events: [],
       confident: 0,
       lowConfidence: 0,
     };
@@ -950,6 +954,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     if (event.forced) group.forced++;
     group.durMs += usToMs(event.dur);
     group.kinds.add(event.kind);
+    group.events.push(event);
     const data = (
       event.args as { data?: { property?: string; lowConfidence?: boolean } } | undefined
     )?.data;
@@ -990,6 +995,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       durMs: row.durMs,
       kinds: [...row.kinds] as EventKind[],
       properties: row.properties.size ? [...row.properties] : undefined,
+      eventId: representativeEventId(row.events),
       dirtiedBy: dirtiedByReadSite[row.at]?.length ? dirtiedByReadSite[row.at] : undefined,
       lowConfidence: blameRowLowConfidence(sampledBlameLane, row.confident, row.lowConfidence),
       scope: blameScope.get(row.at),
@@ -1049,12 +1055,19 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       ? `${withScope} ${dim("~low-confidence (sub-interval)")}`
       : withScope;
   };
+  // The widest flush's raw event id per row (dim), so the reader can drill it with `query get <id>`.
+  // "—" where the row carries no addressable id (the chrome --breakdown sampled rows, id 0).
+  const idCell = (row: { events: NormalizedEvent[] }): string => {
+    const id = representativeEventId(row.events);
+    return id == null ? dim("—") : dim(String(id));
+  };
   // `--all` shows the forced column so "ran but forced 0" lines are first-class.
   console.log(
     query.all
       ? table(
-          ["events", "forced", "ms", "kinds", "source"],
+          ["id", "events", "forced", "ms", "kinds", "source"],
           rows.map((row) => [
+            idCell(row),
             row.count,
             row.forced,
             num(row.durMs, 3),
@@ -1063,8 +1076,9 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
           ]),
         )
       : table(
-          ["count", "ms", "kinds", "source"],
+          ["id", "count", "ms", "kinds", "source"],
           rows.map((row) => [
+            idCell(row),
             row.count,
             num(row.durMs, 3),
             [...row.kinds].join(","),
@@ -1072,6 +1086,10 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
           ]),
         ),
   );
+  // Teach the drill where any row carries an addressable id: `query get <id>` returns the raw flush
+  // (its stack + args); `query events` browses/filters the rest of the log.
+  if (rows.some((row) => representativeEventId(row.events) != null))
+    console.log(dim("  drill the raw flush: query get <id> (query events to browse the log)"));
   // dual annotation: under each forced read-site, the WRITE that dirtied it (Chrome --deep). The
   // read stays the headline (the table above); dirtied-by is the second line, so a reader sees both
   // "who paid" (the read) and "who caused" (the write). Only rows with a resolved write print.

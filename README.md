@@ -322,9 +322,10 @@ wpd query blame latest --forced
 ```
 
 ```
-count  ms    kinds         source
-─────  ────  ────────────  ──────────────────────
-1000   8.11  style,layout  examples/probe.mjs:5:13
+id   count  ms    kinds         source
+───  ─────  ────  ────────────  ──────────────────────
+842  1000   8.11  style,layout  examples/probe.mjs:5:13
+  drill the raw flush: query get <id> (query events to browse the log)
 
 dirtied-by (the write that forced each read):
   examples/probe.mjs:5:13
@@ -333,7 +334,10 @@ dirtied-by (the write that forced each read):
 ```
 
 Line 5 is `void el.offsetWidth`: 100 loop reads forcing style + layout, times 5 iterations, with the
-writes that dirtied it named underneath (chrome `--deep` names both ends).
+writes that dirtied it named underneath (chrome `--deep` names both ends). Each row's `id` is the
+widest flush at that line: `query get <id>` returns its raw event (stack + args), and `query events`
+browses or filters the whole classified log (`--kind layout`, `--top`). Sampled `--breakdown` blame
+rows carry no id (their events are synthesized), so the column reads `—` there.
 `blame --all` lists every attributed line with a `forced` column, so "ran but never forced" is a real
 answer too. `record --deep` also prints the layout-thrashing interleave when it finds one — the
 write→read→write→read signature where each read re-flushes a layout the prior write dirtied:
