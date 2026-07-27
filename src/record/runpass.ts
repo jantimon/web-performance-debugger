@@ -70,8 +70,6 @@ export interface PassResult {
   sampledBlame?: NormalizedEvent[];
   /** Firefox: user `performance.measure` windows (profiler µs clock) for the mark-bridge spans */
   geckoMeasures?: GeckoMeasureWindow[];
-  /** WARNING when chrome-headless-shell was missing and the launch fell back to new-headless */
-  headlessFallback?: string;
   /** Chrome reported the trace buffer dropped events (overflow). Drives a loud not-silent note. */
   traceDataLoss?: boolean;
 }
@@ -199,10 +197,9 @@ export async function runPass(
         `wpd-gecko-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
       )
     : undefined;
-  const { browser, page, client, headlessFallback } = await launchBrowser({
+  const { browser, page, client } = await launchBrowser({
     browser: browserName,
     headless: opts.headless,
-    headlessMode: opts.headlessMode,
     userDataDir: opts.userDataDir,
     protocolTimeoutMs: opts.protocolTimeoutMs,
     disableSandbox: opts.disableSandbox,
@@ -456,7 +453,6 @@ export async function runPass(
       cpuProfile,
       cpuSampleIntervalUs,
       sampledBlame,
-      headlessFallback,
       traceDataLoss,
     };
   } catch (runError) {

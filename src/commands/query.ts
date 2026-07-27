@@ -483,7 +483,7 @@ function printStepNavigation(
 function printStepLcp(lcp: StepLcp): void {
   if (lcp.suppressed) {
     console.log(
-      `\nLCP (boot): ${dim("suppressed -- implausible startTime (the new-headless clock anomaly; navigation-and-lcp.md)")}`,
+      `\nLCP (boot): ${dim("suppressed -- implausible startTime (the headless clock anomaly; navigation-and-lcp.md)")}`,
     );
     return;
   }

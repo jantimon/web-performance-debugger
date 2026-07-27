@@ -6,10 +6,10 @@
 > a driven page, trusted input), and how a step's navigation kind is decided without a CDP call. Read
 > it before wiring an LCP number into a span, or before deriving a static/hard/soft label for a step.
 
-**In this file:** [LCP fires under both headless modes and Firefox](#lcp-fires-under-both-headless-modes-and-firefox)
+**In this file:** [LCP fires under headless Chrome and Firefox](#lcp-fires-under-headless-chrome-and-firefox)
 · [the useful LCP identifier is url+size+tag](#the-useful-lcp-identifier-is-urlsizetag)
 · [LCP finalizes on a trusted input and re-arms per document](#lcp-finalizes-on-a-trusted-input-and-re-arms-per-document)
-· [the new-headless startTime anomaly](#the-new-headless-starttime-anomaly)
+· [the headless startTime anomaly](#the-headless-starttime-anomaly)
 · [soft navigations: standards status](#soft-navigations-standards-status)
 · [why wpd does not flip the heuristic flag](#why-wpd-does-not-flip-the-heuristic-flag)
 · [the url+timeOrigin classification](#the-urltimeorigin-classification)
@@ -21,11 +21,10 @@ against synthetic probes or against one traced four-step journey on **a producti
 (a heavy, hydrating framework page, named here only as such). External standards status is
 **[source]** with a dated link. Nothing is read off vendor docs alone where a probe was possible.
 
-## LCP fires under both headless modes and Firefox
+## LCP fires under headless Chrome and Firefox
 
-**[measured]** `largest-contentful-paint` entries fire under both headless flavours wpd launches —
-chrome-headless-shell (the default) and new-headless (`--headless-mode new`) — so the signal does not
-depend on the mode. Firefox 152 supports the entry type as well; the API is Baseline cross-browser
+**[measured]** `largest-contentful-paint` entries fire under Chrome's built-in headless (the browser
+wpd launches) and Firefox 152; the API is Baseline cross-browser
 (https://developer.mozilla.org/en-US/docs/Web/API/LargestContentfulPaint ,
 https://caniuse.com/mdn-api_largestcontentfulpaint).
 
@@ -65,13 +64,14 @@ that did not reload the document. The clean semantic is therefore **boot LCP, up
 interaction** — one number for the cold load, not a per-step series. LCP is a paint timestamp on the
 page's own clock, so it sits in the wall tier: directional, not exact.
 
-## The new-headless startTime anomaly
+## The headless startTime anomaly
 
-**[measured, reproduced twice]** New-headless intermittently reports a grossly inflated LCP
-`startTime` — ~60 s on a page that finished in ~40 ms — while chrome-headless-shell reports a sane
-value on the same page. This is a concrete timing reason the shell default stands beyond the frame
-cadence in [frame-floor.md](./frame-floor.md): the shell's LCP clock is trustworthy where
-new-headless's occasionally is not.
+**[measured, reproduced twice]** Chrome's built-in headless intermittently reports a grossly inflated
+LCP `startTime` — ~60 s on a page that finished in ~40 ms. `shapeLcp` (`browser/driver.ts`) guards
+it: an LCP `startTime` more than `LCP_STARTTIME_SLACK_MS` (1000 ms) beyond the step's own
+end-of-window page clock is the anomaly, not a real paint, so the entry is stored `suppressed` with no
+timing rather than printed as a 60 s LCP. A sane `startTime` passes through; the guard's slack is
+generous, so real variance is never suppressed.
 
 ## Soft navigations: standards status
 

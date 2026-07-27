@@ -12,7 +12,6 @@ import { assertCmd } from "../../dist/commands/assert.js";
 import { countProvenance } from "../../dist/commands/summaryView.js";
 import * as notesCatalog from "../../dist/record/notes.js";
 import { assertSchemaVersion } from "../../dist/model/artifact.js";
-import { resolveHeadless } from "../../dist/browser/launch.js";
 import { SCHEMA_VERSION } from "../../dist/index.js";
 import { writeRecording, writeSchemaArtifact, captureExitCode, tmpDir } from "./helpers.mjs";
 
@@ -619,18 +618,6 @@ test("facts.md ledger: every cited file still agrees with the ledger value", asy
       );
     }
   }
-});
-
-test("resolveHeadless: defaults to chrome-headless-shell, new-headless is opt-in, headed wins", () => {
-  // No flavour passed => shell (the ~120Hz default); explicit "shell" too.
-  assert.equal(resolveHeadless(true, undefined), "shell", "default headless flavour is shell");
-  assert.equal(resolveHeadless(true, "shell"), "shell");
-  // "new" opts back into full-Chrome new-headless (puppeteer's `headless: true`).
-  assert.equal(resolveHeadless(true, "new"), true);
-  // Headed (--no-headless) wins regardless of the flavour.
-  assert.equal(resolveHeadless(false, undefined), false);
-  assert.equal(resolveHeadless(false, "shell"), false);
-  assert.equal(resolveHeadless(false, "new"), false);
 });
 
 test("stableWorkloadPath: spelling and cwd variants of one module join as one workload", () => {

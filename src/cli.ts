@@ -187,10 +187,10 @@ program
     "--precise-wall",
     "the default capture mode minus the CPU sampler: a pristine benchmark wall that buys back the sampler's overhead (~4-7% on mixed work, ~1% on a long JS-heavy window). No CPU model and no rendering counts",
   )
-  .option(
-    "--headless-mode <mode>",
-    "chrome headless flavour: shell (default, chrome-headless-shell, ~120Hz frames) | new (full Chrome, ~60Hz frames). See docs/dev/frame-floor.md",
-  )
+  // Removed: wpd always runs Chrome's built-in headless (full Chrome, windowless) or --no-headless.
+  // Kept as a hidden option so an explicit --headless-mode gets a clear removal message from the
+  // action, not commander's generic unknown-option error.
+  .addOption(new Option("--headless-mode <mode>").hideHelp())
   .option(
     "--variant <label>",
     "label this recording's technique (e.g. when one module runs several, switched by an env var), so a diff/cpu-diff --fail-on-regression gate refuses to compare two different variants",
@@ -258,19 +258,13 @@ program
           "record --precise-wall needs a module: the built-in load flow's only step is a navigation, whose wall the page clock cannot price in a no-trace capture mode (nothing would be measured). Drop --precise-wall, or pass a module.",
         );
     }
-    // undefined = flag not passed; the flavour then defaults to shell in launchBrowser. The two
-    // guards below fire only on an EXPLICIT --headless-mode, so plain --no-headless stays headed
-    // and a firefox/node run is not rejected for a default it never asked for.
-    if (cmdOpts.headlessMode !== undefined && !["new", "shell"].includes(cmdOpts.headlessMode))
-      program.error("--headless-mode must be new or shell");
-    // --headless-mode is a Chrome CDP-launch flavour; Firefox and node have no equivalent, so any
-    // explicit value (shell or new) is rejected there.
-    if (cmdOpts.headlessMode !== undefined && (firefox || node))
-      program.error(`--headless-mode is chrome-only (target is ${cmdOpts.target})`);
-    // chrome-headless-shell is a headless binary; there is no headed shell to launch. Only an
-    // explicit --headless-mode shell conflicts with --no-headless; the shell default does not.
-    if (cmdOpts.headlessMode === "shell" && cmdOpts.headless === false)
-      program.error("--headless-mode shell requires headless (drop --no-headless)");
+    // --headless-mode is removed: wpd measures how real Chrome performs, so it always runs Chrome's
+    // built-in headless (full Chrome, windowless), and chrome-headless-shell is gone. Fail an explicit
+    // flag with a clear message rather than silently ignoring it.
+    if (cmdOpts.headlessMode !== undefined)
+      program.error(
+        "--headless-mode was removed in this version. wpd always runs Chrome's built-in headless; use --no-headless for a visible window.",
+      );
     // The capture modes are mutually exclusive: each answers a different question with a different
     // capture, and every invocation is exactly one pass. Two capture modes means two invocations.
     if (cmdOpts.breakdown && cmdOpts.deep)
@@ -423,7 +417,6 @@ program
       warmup: cmdOpts.warmup,
       out: cmdOpts.out,
       headless: cmdOpts.headless,
-      headlessMode: cmdOpts.headlessMode,
       userDataDir: cmdOpts.userDataDir ? path.resolve(cmdOpts.userDataDir) : undefined,
       disableSandbox: !!cmdOpts.disableBrowserSandbox,
       // Internal default (no user flag): async paints flush before tracing stops.

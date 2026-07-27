@@ -1,7 +1,6 @@
 import puppeteer from "puppeteer";
 import type { Browser, CDPSession, Page } from "puppeteer";
 import type { BrowserName } from "./backend.js";
-import { shellFallback } from "../record/notes.js";
 import { attachTeardownFailure } from "../model/teardown.js";
 
 export interface BrowserHandle {
@@ -9,9 +8,6 @@ export interface BrowserHandle {
   page: Page;
   /** null on Firefox: WebDriver BiDi has no CDP session (guard every CDP call with the caps). */
   client: CDPSession | null;
-  /** Set when the requested chrome-headless-shell binary was missing and the launch fell back to
-   * new-headless. A WARNING for meta.notes naming the cadence cost and the install command. */
-  headlessFallback?: string;
 }
 
 /** Gecko's sampling floor: asking for less just yields this. Also the default when the caller
@@ -79,40 +75,6 @@ export function sandboxLaunchError(error: Error): Error {
   );
 }
 
-/** Whether a navigation failed with Chromium's HTTP/2 protocol rejection. chrome-headless-shell is a
- * separate browser build with its own network stack, and some servers deterministically reject its
- * HTTP/2 while new-headless (which shares Chrome's stack) loads the same URL. Retrying the same flavour
- * fails identically, so this is NOT in isTransientNavError; it drives a headless-mode hint instead. */
-export function isHttp2ProtocolError(error: Error): boolean {
-  return /net::ERR_HTTP2_PROTOCOL_ERROR/i.test(error.message);
-}
-
-/** An HTTP/2 navigation failure under chrome-headless-shell, re-thrown as guidance: name the shell
- * build's distinct network stack as the likely cause and --headless-mode new as the remedy, with the
- * frame-cadence trade so the switch is an informed one. */
-export function http2ShellGuidanceError(error: Error): Error {
-  return new Error(
-    `The navigation failed with net::ERR_HTTP2_PROTOCOL_ERROR under chrome-headless-shell:\n\n  ${error.message}\n\n` +
-      `chrome-headless-shell is a separate browser build with its own network stack; some servers reject ` +
-      `its HTTP/2 while new-headless (which shares Chrome's network stack) loads the same URL. Re-record ` +
-      `with --headless-mode new to use that stack.\n\n` +
-      `Trade: new-headless runs frames at ~60Hz instead of shell's ~120Hz, so wall/INP carry a ~16.6ms ` +
-      `one-frame floor instead of ~8.3ms (docs/dev/frame-floor.md).`,
-  );
-}
-
-/**
- * The HTTP/2 headless-mode guidance for a navigation failure, or null when it does not apply. Only a
- * shell-headless launch earns the hint: under new-headless or headed the shell network stack is not in
- * play, so pointing at --headless-mode new would be wrong. Pure (error + resolved headless value ->
- * guidance) so the call site stays a one-liner and the decision is unit-testable.
- */
-export function http2GuidanceFor(error: unknown, headless: boolean | "shell"): Error | null {
-  if (!(error instanceof Error) || !isHttp2ProtocolError(error)) return null;
-  if (headless !== "shell") return null;
-  return http2ShellGuidanceError(error);
-}
-
 /** Gecko profiler options for the Firefox CPU pass (dumped to `dumpPath` on browser exit). */
 export interface GeckoLaunch {
   dumpPath: string;
@@ -160,29 +122,11 @@ function missingBrowserMessage(error: Error, browser: BrowserName): Error {
   );
 }
 
-/**
- * Chrome headless flavour. "shell" (the default) launches chrome-headless-shell
- * (`headless: 'shell'`), which runs BeginFrame at ~120Hz, halving the one-frame floor on wall/INP
- * (16.6 -> 8.3ms). "new" is Puppeteer's full-Chrome new-headless, which caps BeginFrame at ~60Hz.
- * See docs/dev/frame-floor.md. Ignored when the browser is headed (--no-headless) or Firefox.
- */
-export type HeadlessMode = "new" | "shell";
-
-/**
- * Resolve puppeteer's `headless` launch value from wpd's two knobs. Headed (`--no-headless`) wins
- * and returns false; otherwise the flavour defaults to shell (chrome-headless-shell, ~120Hz), and
- * only "new" opts back into full-Chrome new-headless (~60Hz). See docs/dev/frame-floor.md.
- */
-export function resolveHeadless(headless: boolean, headlessMode?: HeadlessMode): boolean | "shell" {
-  if (!headless) return false;
-  return headlessMode === "new" ? true : "shell";
-}
-
 export async function launchBrowser(opts: {
   browser: BrowserName;
+  /** chrome: false is headed (--no-headless); true is Chrome's built-in headless (full Chrome,
+   * windowless, ~60Hz frames). See docs/dev/frame-floor.md. */
   headless: boolean;
-  /** chrome only: "shell" (default, chrome-headless-shell, ~120Hz frames) or "new" (full Chrome) */
-  headlessMode?: HeadlessMode;
   userDataDir?: string;
   /**
    * Timeout (ms) for a single protocol call, on both browsers. Raise it when a traced interaction
@@ -231,7 +175,6 @@ export async function finishLaunchOrClose<T>(
 async function launchOrThrow(opts: {
   browser: BrowserName;
   headless: boolean;
-  headlessMode?: HeadlessMode;
   userDataDir?: string;
   protocolTimeoutMs?: number;
   disableSandbox?: boolean;
@@ -253,21 +196,10 @@ async function launchOrThrow(opts: {
     });
   }
 
-  // Headed (--no-headless) => false; otherwise shell (default, ~120Hz) or new-headless.
-  const headless = resolveHeadless(opts.headless, opts.headlessMode);
-  if (headless !== "shell") return launchChrome(headless, opts);
-  // chrome-headless-shell is a separate download. If the environment skipped it, it is missing at
-  // launch: never fail a run over the frame-cadence flavour, fall back to new-headless and warn.
-  try {
-    return await launchChrome("shell", opts);
-  } catch (error) {
-    if (!/could not find chrome/i.test((error as Error).message)) throw error;
-    const handle = await launchChrome(true, opts);
-    // chrome-headless-shell is a separate Puppeteer download; the default install fetches it, but
-    // PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD or a chrome-only browser install omits it.
-    handle.headlessFallback = shellFallback();
-    return handle;
-  }
+  // headless: true is Chrome's built-in headless (full Chrome, windowless); false is --no-headless.
+  // wpd measures how real Chrome performs, so it launches real Chrome, never the chrome-headless-shell
+  // scraping/PDF build.
+  return launchChrome(opts.headless, opts);
 }
 
 /**
@@ -286,7 +218,7 @@ export function chromeArgs(disableSandbox: boolean): string[] {
 }
 
 async function launchChrome(
-  headless: boolean | "shell",
+  headless: boolean,
   opts: { userDataDir?: string; protocolTimeoutMs?: number; disableSandbox?: boolean },
 ): Promise<BrowserHandle> {
   let browser;

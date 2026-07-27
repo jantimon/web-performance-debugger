@@ -1,11 +1,10 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { HeadlessMode } from "../browser/launch.js";
 import type { BrowserName } from "../browser/backend.js";
 import { startStaticServer } from "../browser/server.js";
 import { mergeSteps, type MergedStep } from "../trace/steps.js";
 import { mainThread } from "../trace/main-thread.js";
-import { retryTransientNav, resolveHeadless, http2GuidanceFor } from "../browser/launch.js";
+import { retryTransientNav } from "../browser/launch.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
 import { buildSummary } from "../metrics/summarize.js";
 import {
@@ -74,8 +73,6 @@ export interface RecordOptions {
   warmup: number;
   out?: string;
   headless: boolean;
-  /** chrome headless flavour: "shell" (default, ~120Hz frames) or "new"; ignored when headed/firefox */
-  headlessMode?: HeadlessMode;
   /** persistent Chrome profile dir (resolved absolute); reuse one login across passes/runs */
   userDataDir?: string;
   /** chrome only: launch with --no-sandbox (reduced containment). Off by default; opt in only in a
@@ -330,16 +327,6 @@ export async function record(opts: RecordOptions): Promise<{
     );
     pass = outcome.value;
     navRetries = outcome.retries;
-  } catch (error) {
-    // A server that rejects chrome-headless-shell's HTTP/2 (its network stack differs from
-    // new-headless') fails the same way on every retry, so retryTransientNav rethrows it here. Under
-    // the default shell mode, turn it into a hint naming --headless-mode new; under new/headed the
-    // shell stack is not in play, so the original error surfaces unchanged.
-    if (browserName === "chrome") {
-      const guidance = http2GuidanceFor(error, resolveHeadless(opts.headless, opts.headlessMode));
-      if (guidance) throw guidance;
-    }
-    throw error;
   } finally {
     await server.close();
   }
@@ -474,8 +461,6 @@ export async function record(opts: RecordOptions): Promise<{
   }
   // The navigation hit a transient cross-process error and a fresh-browser retry recovered it.
   if (navRetries > 0) notes.push(notesCatalog.navRetried(navRetries));
-  // chrome-headless-shell was missing, so the launch fell back to new-headless.
-  if (pass.headlessFallback) notes.push(pass.headlessFallback);
   // A trace ran but its run-window markers are absent (truncated/overflowed trace buffer, or the
   // user_timing category got dropped). Without a window, inWindow() would count the ENTIRE trace
   // (page load, nav, prepare, teardown) as the measured region, silently inflating every
@@ -596,9 +581,11 @@ export async function record(opts: RecordOptions): Promise<{
     iterations: pass.partial ? pass.partial.completed : opts.iterations,
     warmup: opts.warmup,
     headless: opts.headless,
-    // Flavour only when headless and on chrome (firefox/headed have no shell/new distinction).
-    headlessMode:
-      opts.headless && browserName === "chrome" ? (opts.headlessMode ?? "shell") : undefined,
+    // wpd runs Chrome's built-in headless (full Chrome, ~60Hz frames). Stamp "new" on a headless
+    // chrome recording so the comparability gate still refuses a diff against an old "shell"
+    // recording (a different frame cadence, so a different wall/INP floor). Absent when headed or
+    // firefox/node, which have no shell/new distinction.
+    headlessMode: opts.headless && browserName === "chrome" ? "new" : undefined,
     cpuIntervalUs: opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
     userDataDir: shorterPath(root, opts.userDataDir),
     lifecycle: detail.lifecycle,

@@ -133,8 +133,8 @@ export interface RawLcpEntry {
   startTimeMs: number;
 }
 
-/** A `startTime` this far (ms) beyond the step's own window is the new-headless anomaly (~60s on a
- * ~40ms page), not real; suppress it rather than print it as fact. Generous, so real variance passes. */
+/** A `startTime` this far (ms) beyond the step's own window is the built-in-headless anomaly (~60s on
+ * a ~40ms page), not real; suppress it rather than print it as fact. Generous, so real variance passes. */
 export const LCP_STARTTIME_SLACK_MS = 1000;
 
 /**
@@ -144,7 +144,7 @@ export const LCP_STARTTIME_SLACK_MS = 1000;
  *
  * `boundMs` is the step's own end-of-window page clock (`performance.now()` on the step's final
  * document); when the entry's `startTime` sits implausibly beyond it, the paint clock is the
- * new-headless anomaly and the entry is stored `suppressed` with no timing, never a 60s LCP as fact.
+ * built-in-headless anomaly and the entry is stored `suppressed` with no timing, never a 60s LCP as fact.
  */
 export function shapeLcp(raw: RawLcpEntry | undefined, boundMs: number | null): StepLcp | null {
   if (!raw) return null;

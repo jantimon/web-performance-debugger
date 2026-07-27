@@ -32,8 +32,10 @@ function captureModeOf(meta: RecordingMeta): string {
   return [...(meta.passes ?? [])].sort().join("+");
 }
 
-/** Headless frame cadence, which sets the wall/INP floor: "headed" | "shell" (~120Hz) | "new"
- * (~60Hz). See docs/dev/frame-floor.md. */
+/** Headless frame cadence, which sets the wall/INP floor: "headed" | "new" (chrome built-in headless,
+ * ~60Hz) | "shell" (an older ~120Hz recording). Differing values refuse a gate, so an old shell
+ * recording never diffs against a new-headless one as if the floor were the same. See
+ * docs/dev/frame-floor.md. */
 function headlessFlavour(meta: RecordingMeta): string {
   if (meta.headless === false) return "headed";
   return meta.headlessMode ?? "shell";

@@ -247,8 +247,3 @@ export function nodeRuntime(): string {
 export function browserSandboxDisabled(): string {
   return "WARNING: --disable-browser-sandbox launched Chrome with --no-sandbox: the renderer runs without OS-level process containment. Only safe in a trusted, isolated environment; do not combine it with --user-data-dir or a non-loopback --url.";
 }
-
-/** chrome-headless-shell missing => fell back to new-headless (browser/launch.ts). */
-export function shellFallback(): string {
-  return "WARNING: chrome-headless-shell is not installed, so this run fell back to new-headless (~60Hz frames): wall/INP carry the ~16.6ms one-frame floor instead of ~8.3ms. Install it with `npx puppeteer browsers install chrome-headless-shell`, or pass --headless-mode new to select new-headless deliberately.";
-}
