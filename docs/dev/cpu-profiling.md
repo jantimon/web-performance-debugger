@@ -12,6 +12,7 @@
 · [per-mode wall overhead](#per-capture-mode-wall-overhead-the-readme-speed-column)
 · [the interval: why 200us](#the-sampler-interval-why-200us)
 · [sub-frame resolution](#sub-frame-cpu-work-is-measurable-on-both-engines-off-the-frame-floor-axis)
+· [what `--cpu-throttle` does to each tier](#what---cpu-throttle-does-to-each-trust-tier)
 
 Split out: [firefox-cpu.md](./firefox-cpu.md) (the Gecko sampler lane: shared pass, honest idle,
 the 1 ms floor), [cpu-attribution.md](./cpu-attribution.md) (which spans get samples, hot
@@ -389,3 +390,87 @@ Firefox is pinned to Gecko's ~1ms floor
 (`GECKO_MIN_INTERVAL_MS`), so a near-zero window reads a fixed ~5ms of a handful of samples and needs
 higher `--iterations` before the number is trustworthy. Both prove the point: the work axis reports
 what the one-frame `wall`/`INP` floor hides.
+
+## What `--cpu-throttle` does to each trust tier
+
+**[measured]** `--cpu-throttle <n>` sends CDP `Emulation.setCPUThrottlingRate`, which stalls the
+renderer main thread so CPU work runs `n` times slower. It stays in wpd for Android-class device
+simulation: a dev machine runs 4-10x faster than the mid-range phones where INP problems live, and
+this is wpd's one lever on that gap. It is applied throttling, a coarse model of a real phone, not a
+device emulator ([measurement-ecosystem.md](./measurement-ecosystem.md#lighthouses-default-throttling-is-simulated)).
+This section prices what a 4x arm does to each tier, so a throttled number is read for what it is.
+
+Chrome only (the throttle is CDP, absent on firefox/node). Probes, 1x/4x arms interleaved after a
+warmup: `examples/throttle-mix.mjs --bench` (a pure-JS loop and a forced-layout thrash competing for
+one CPU 100%, 6 reps x 10 iterations), `examples/forces-layout.mjs --deep`/`--breakdown` (counts, 5/3
+reps x 1 iteration), `examples/fixed-js-work.mjs --bench` (pure-JS wall, 4 reps x 50 iterations).
+
+### Counts are invariant (exact tier)
+
+A forced read forces a layout at any clock speed, and a slower clock flips no branch. Every exact
+count is **byte-identical** at 1x and 4x on `forces-layout.mjs`:
+
+| count | 1x | 4x |
+| --- | --- | --- |
+| layout | 22 | 22 |
+| style | 23 | 23 |
+| forced layout | 43 | 43 |
+| layout invalidations | 58 | 58 |
+| style invalidations | 46 | 46 |
+| paint (`--breakdown`) | 2 | 2 |
+
+So `assert --max-layouts`/`--max-forced` gate the same under throttle: the count tier is throttle-blind.
+
+### Attribution holds within noise (self-time shares)
+
+The per-function CPU self-time SHARES hold across the 4x change. On `throttle-mix.mjs` a pure-JS loop
+and a forced-layout thrash split the sampled 100%:
+
+| function | 1x share | 4x share | drift |
+| --- | --- | --- | --- |
+| `jsLoop` (pure JS) | 62.6% | 62.1% | -0.6pp |
+| `layoutThrash` (JS + forced reflow) | 36.9% | 37.5% | +0.7pp |
+| setup + native | 0.6% | 0.3% | -0.3pp |
+
+Max share drift is **0.65pp**, and the js:reflow share ratio moves 1.70 -> 1.65 (**-3%**, inside the
+per-rep spread of 1.68-1.74 vs 1.61-1.72). The ranking a throttled `query cpu` reports is the ranking
+of the unthrottled run: throttle scales JS and the synchronous engine work it triggers (forced reflow)
+alike, so attribution stays trustworthy under throttle. The only shares that move are the sub-percent
+native/setup slivers, which carry no CPU to slow and so shrink as a share while the throttleable
+functions grow to fill -- that is why the reflow share nudges up 0.7pp, not a differential slowdown of
+reflow.
+
+### The multiplier lands on CPU self-time (scale)
+
+4x throttle produces ~4x on this machine's CPU-bound work: self-time (profiler clock) scales **4.06x**
+on the pure-JS probe and **4.09x** on the mixed probe, and the per-iteration page wall scales
+**4.06x** / **4.04x** in step. The multiplier is honest on the CPU axis.
+
+It is not a wall multiplier for a window that carries fixed non-CPU time. The throttle slows CPU
+execution, not the fixed frame and settle floors (a timer/vsync wait is not CPU work: the ~16.6ms
+one-frame floor and the ~31ms driver settle, [frame-floor.md](./frame-floor.md)), so a wall or INP
+that bundles those floors scales by less than the multiplier. Read CPU self-time, or the processing
+slice of INP, for the clean multiple; a raw step wall under throttle mixes a 4x-scaled CPU part with an
+unscaled floor.
+
+### The calibration boundary: a multiplier is relative to the host
+
+4x is 4x slower than THIS machine, not a fixed device target. The absolute base already varies by host:
+`fixed-js-work.mjs`'s 1.5M-iteration loop reads ~2.2ms on the reference machine
+([above](#sub-frame-cpu-work-is-measurable-on-both-engines-off-the-frame-floor-axis)) and several
+times that on a slower one, for the same code -- so one host's 4x arm can outrun another host's 1x. A
+throttled number therefore compares only against another run on the same host: "4x on an M-series" is
+not "4x on CI". The field's answer is `benchmarkIndex` -- Lighthouse benchmarks the host CPU and reads
+every machine on one speed scale
+([measurement-ecosystem.md](./measurement-ecosystem.md#what-lighthouse-names-as-its-variance-sources)).
+wpd reports raw self-time and does not normalize for host speed, so the caller owns the calibration:
+pin the host, or pick the multiplier that reproduces the target device's `benchmarkIndex` and re-pick
+it per machine.
+
+### The device-simulation workflow this supports
+
+Pick the multiplier for the device class (4x for a mid-tier phone against a typical dev box), record
+the interaction under it, and read: INP/wall for the felt latency at that speed, `query cpu` for which
+package/function owns it (the ranking holds), and the exact counts for what to cut (invariant). Every
+tier survives the throttle except the absolute wall calibration, which is host-relative and the
+caller's to pin.
