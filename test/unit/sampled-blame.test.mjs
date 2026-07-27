@@ -113,6 +113,26 @@ test("sampledForcedBlameEvents: a sample line <= 0 (no position) is skipped", ()
   assert.deepEqual(sampledForcedBlameEvents(events, stream, null, null), []);
 });
 
+// The boundary of the "no position" guard is line <= 0, so line 0 is NOT a position and yields no
+// blame -- 0 is the CDP no-line sentinel, not the first line. Pins the `<= 0` boundary (a `< 0`
+// off-by-one would blame a definition-less sample on line 0).
+test("sampledForcedBlameEvents: a sample line of exactly 0 is skipped, never blamed as line 0", () => {
+  const events = [flush("layout", 1000, 500)];
+  const stream = streamOf([{ node: 1, ts: 1100, line: 0 }], 150, { 1: APP });
+  assert.deepEqual(sampledForcedBlameEvents(events, stream, null, null), [], "line 0 is no position, not the first line");
+});
+
+// The low-confidence flag is for a flush NARROWER than one sampler interval (docs/dev/blame-semantics.md):
+// `dur < intervalUs`. A flush EXACTLY one interval wide is not narrower, so it is confident. Pins the
+// strict `<` boundary (a `<=` would wrongly flag an interval-wide flush low-confidence).
+test("sampledForcedBlameEvents: a flush exactly one interval wide is confident (not low-confidence)", () => {
+  const events = [flush("layout", 1000, 150)]; // dur == intervalUs 150, not narrower
+  const stream = streamOf([{ node: 1, ts: 1100, line: 42 }], 150, { 1: APP });
+  const out = sampledForcedBlameEvents(events, stream, null, null);
+  assert.equal(out.length, 1, "an interval-wide flush is still blamed");
+  assert.ok(!("lowConfidence" in out[0].args.data), "dur == interval is not narrower than the interval, so it is confident");
+});
+
 test("sampledForcedBlameEvents: windows to the run start and the main thread", () => {
   const events = [
     { ...flush("layout", 500, 200), pid: 1, tid: 1 }, // before windowStart 1000 -> excluded
