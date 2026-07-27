@@ -59,9 +59,25 @@ jobs:
       # sandbox. Lift the restriction so the suite runs SANDBOXED (the default wpd ships); the
       # --disable-browser-sandbox escape stays untested here on purpose.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # Built-in headless loses its compositor BeginFrame source on this runner and hangs the settle.
-      # Drive record HEADED under a virtual display (a real window has a live BeginFrame source).
-      - run: WPD_E2E_HEADED=1 xvfb-run -a npm run test:e2e
+      # DIAGNOSTIC (not the suite): run ONE driver record bounded by coreutils timeout so the job
+      # completes and prints wpd's/Chrome's own output + exit code, instead of hanging silently.
+      - name: which chrome
+        run: node -e "console.log('exe:', require('puppeteer').executablePath())" && npx puppeteer browsers list || true
+      - name: headless driver record (240s cap)
+        run: |
+          set +e -x
+          timeout --signal=SIGTERM 240 node dist/cli.js record --url test/fixtures/driver-probe.html --keep-partial 2>&1
+          echo "HEADLESS_EXIT=$?"
+      - name: headless bench record (240s cap)
+        run: |
+          set +e -x
+          timeout --signal=SIGTERM 240 node dist/cli.js record examples/forces-layout.mjs --bench --iterations 1 2>&1
+          echo "BENCH_EXIT=$?"
+      - name: headed record under xvfb (240s cap)
+        run: |
+          set +e -x
+          timeout --signal=SIGTERM 240 xvfb-run -a node dist/cli.js record --url test/fixtures/driver-probe.html --no-headless --keep-partial 2>&1
+          echo "HEADED_EXIT=$?"
 
   release:
     # Publishing waits for the whole suite to pass on THIS commit: `needs` blocks on the other jobs
