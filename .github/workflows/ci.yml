@@ -55,6 +55,7 @@ jobs:
           cache: npm
       # No PUPPETEER_SKIP_DOWNLOAD here, so `npm ci` downloads the Chrome the test drives.
       - run: npm ci
+      - run: npm run build
       # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor, which blocks Chrome's
       # sandbox. Lift the restriction so the suite runs SANDBOXED (the default wpd ships); the
       # --disable-browser-sandbox escape stays untested here on purpose.
