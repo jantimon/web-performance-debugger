@@ -59,7 +59,9 @@ jobs:
       # sandbox. Lift the restriction so the suite runs SANDBOXED (the default wpd ships); the
       # --disable-browser-sandbox escape stays untested here on purpose.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: npm run test:e2e
+      # Run headless Chrome under a virtual display so the compositor keeps a live BeginFrame source;
+      # without one, built-in headless loses rAF and the driver settle hangs on this runner image.
+      - run: xvfb-run -a npm run test:e2e
 
   release:
     # Publishing waits for the whole suite to pass on THIS commit: `needs` blocks on the other jobs
