@@ -55,30 +55,10 @@ jobs:
           cache: npm
       # No PUPPETEER_SKIP_DOWNLOAD here, so `npm ci` downloads the Chrome the test drives.
       - run: npm ci
-      - run: npm run build
-      # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor, which blocks Chrome's
-      # sandbox. Lift the restriction so the suite runs SANDBOXED (the default wpd ships); the
-      # --disable-browser-sandbox escape stays untested here on purpose.
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # DIAGNOSTIC (not the suite): run ONE driver record bounded by coreutils timeout so the job
-      # completes and prints wpd's/Chrome's own output + exit code, instead of hanging silently.
-      - name: which chrome
-        run: node -e "console.log('exe:', require('puppeteer').executablePath())" && npx puppeteer browsers list || true
-      - name: deep headless baseline (repro, 120s)
-        run: |
-          set +e -x
-          timeout -k 15 -s TERM 120 node dist/cli.js record examples/forces-layout.mjs --bench --deep --iterations 3 --out /tmp/d1 > /tmp/d1.log 2>&1
-          echo "DEEP_HEADLESS_EXIT=$?"; tail -30 /tmp/d1.log; pkill -9 -f chrome-linux64/chrome || true
-      - name: deep headed under xvfb (candidate fix, 120s)
-        run: |
-          set +e -x
-          timeout -k 15 -s TERM 120 xvfb-run -a node dist/cli.js record examples/forces-layout.mjs --bench --deep --no-headless --iterations 3 --out /tmp/d2 > /tmp/d2.log 2>&1
-          echo "DEEP_HEADED_EXIT=$?"; tail -30 /tmp/d2.log; pkill -9 -f chrome-linux64/chrome || true
-      - name: deep headless no-sandbox (candidate fix, 120s)
-        run: |
-          set +e -x
-          timeout -k 15 -s TERM 120 node dist/cli.js record examples/forces-layout.mjs --bench --deep --disable-browser-sandbox --iterations 3 --out /tmp/d3 > /tmp/d3.log 2>&1
-          echo "DEEP_NOSANDBOX_EXIT=$?"; tail -30 /tmp/d3.log; pkill -9 -f chrome-linux64/chrome || true
+      # Full Chrome's sandbox deadlocks with CDP trace capture (--deep/--breakdown) on this runner:
+      # every trace-mode record hangs. Run the suite with the sandbox off (WPD_E2E_NO_SANDBOX makes
+      # the harness pass --disable-browser-sandbox to every record), the documented CI escape.
+      - run: WPD_E2E_NO_SANDBOX=1 npm run test:e2e
 
   release:
     # Publishing waits for the whole suite to pass on THIS commit: `needs` blocks on the other jobs

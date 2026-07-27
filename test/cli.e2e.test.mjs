@@ -45,10 +45,11 @@ const e2e = ready ? test : (name, _opts, fn) => test(name, { skip: "Chrome not i
 const TIMEOUT_MS = 180_000;
 
 function runCli(args) {
-  // Probe: WPD_E2E_HEADED drives record headed (needs a real/virtual display) instead of built-in
-  // headless, whose compositor loses its BeginFrame source on the CI runner and hangs the settle.
-  const headed = process.env.WPD_E2E_HEADED && args[0] === "record" ? ["--no-headless"] : [];
-  const result = spawnSync(process.execPath, [cli, args[0], ...headed, ...args.slice(1)], {
+  // Full Chrome's sandbox deadlocks with CDP trace capture on some CI runners: every --deep/
+  // --breakdown record hangs. WPD_E2E_NO_SANDBOX passes the documented CI escape to record.
+  const noSandbox =
+    process.env.WPD_E2E_NO_SANDBOX && args[0] === "record" ? ["--disable-browser-sandbox"] : [];
+  const result = spawnSync(process.execPath, [cli, args[0], ...noSandbox, ...args.slice(1)], {
     cwd: repoRoot,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
