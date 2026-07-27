@@ -33,7 +33,8 @@ import { MIN_POOLED_HOT_SAMPLES } from "../profile/span-hot.js";
 import { hintTarget } from "./resolve.js";
 // Format selection lives with the verb routing in query.ts; the bar-less overview printer needs it
 // to honor --json/--format, so it is imported back (query.ts imports the printers from here).
-import { emit, structuredFormat, type SpansQuery } from "./query.js";
+import type { SpansQuery } from "./query.js";
+import { emit, structuredFormat } from "../output/format.js";
 
 /** How many forced read-sites / thrash writes the human anatomy prints before eliding the rest. */
 const ANATOMY_FORCED_CAP = 12;

@@ -43,7 +43,7 @@ import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
 import { forcedLayouts } from "../trace/analysis.js";
 import { scopeByReadSite } from "../trace/scope.js";
 import { findSteps } from "../trace/parse.js";
-import { deserialize, serialize, isFormat, type Format } from "../output/format.js";
+import { deserialize, emit, structuredFormat, type StructuredOutOpts } from "../output/format.js";
 import { assertRecordingArtifact } from "../model/artifact.js";
 import { printSpanBreakdowns, printCpuBreakdown } from "./cpu.js";
 import {
@@ -69,10 +69,7 @@ import { pickMember, type GroupMember, type RunGroup } from "../model/group.js";
 import { usToMs } from "../model/time.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
 
-interface OutOpts {
-  json?: boolean;
-  format?: string;
-}
+type OutOpts = StructuredOutOpts;
 
 async function load(file: string): Promise<Recording> {
   const abs = await resolveTarget(file, "recording");
@@ -80,14 +77,6 @@ async function load(file: string): Promise<Recording> {
   const rec = deserialize(raw, path.extname(abs).toLowerCase()) as Recording;
   assertRecordingArtifact(rec, abs);
   return rec;
-}
-
-export function structuredFormat(opts: OutOpts): Format | null {
-  if (opts.format) {
-    if (!isFormat(opts.format)) throw new Error("--format must be json or toon");
-    return opts.format;
-  }
-  return opts.json ? "json" : null;
 }
 
 /**
@@ -106,10 +95,6 @@ async function loadEventLogTarget(file: string, opts: OutOpts): Promise<Recordin
   const routeLine = routingNote(routed, "the event log");
   if (routeLine && !structuredFormat(opts)) console.log(dim(routeLine));
   return rec;
-}
-
-export function emit(value: unknown, fmt: Format): void {
-  console.log(serialize(value, fmt));
 }
 
 function eventsInWindow(rec: Recording): NormalizedEvent[] {

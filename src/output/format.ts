@@ -50,3 +50,24 @@ export function deserialize(body: string, hintExt?: string): unknown {
 export function extFor(format: Format): string {
   return format === "toon" ? ".toon" : ".json";
 }
+
+/** The `--json`/`--format` surface a query verb reads to decide structured-vs-human output. */
+export interface StructuredOutOpts {
+  json?: boolean;
+  format?: string;
+}
+
+/** The structured format a verb should emit, or null for the human report. `--format` wins over
+ * the legacy `--json` boolean; an unknown format name fails loudly. */
+export function structuredFormat(opts: StructuredOutOpts): Format | null {
+  if (opts.format) {
+    if (!isFormat(opts.format)) throw new Error("--format must be json or toon");
+    return opts.format;
+  }
+  return opts.json ? "json" : null;
+}
+
+/** Serialize one structured value to stdout in the chosen format. */
+export function emit(value: unknown, fmt: Format): void {
+  console.log(serialize(value, fmt));
+}
