@@ -6,6 +6,7 @@ import {
 import { computeSpanBreakdown, type BreakdownSample } from "../trace/breakdown.js";
 import { tallySpanHot, type SpanHotSample, type SpanHotWindow } from "../profile/span-hot.js";
 import { parseFrames, windowFrames, summarizeFrames } from "../trace/frames.js";
+import { spanScope } from "../trace/scope.js";
 import type { MergedStep } from "../trace/steps.js";
 import type { SourceMapResolver } from "../trace/sourcemap.js";
 import { WPD_MARK_PREFIX } from "../model/marks.js";
@@ -139,6 +140,18 @@ export async function buildBreakdowns(
     const frames = summarizeFrames(
       windowFrames(allFrames, span.startTs, span.endTs, span.kind === "run"),
     );
+    // Layout/style scope distribution across this window's main-thread flushes (a count-tier fact,
+    // beside the bar's ms). Read from every main-thread flush that STARTED in the window, not the
+    // dur>0 `mainEvents` the bar tiles: scope belongs with the counts, so it admits a zero-duration
+    // flush the same way the count loop does. p50/max, never a sum (spanScope).
+    const scopeEvents = events.filter(
+      (event) =>
+        event.pid === main.pid &&
+        event.tid === main.tid &&
+        event.ts >= span.startTs &&
+        event.ts < span.endTs,
+    );
+    const scope = spanScope(scopeEvents);
     breakdowns.push({
       label: span.label,
       kind: span.kind,
@@ -147,6 +160,7 @@ export async function buildBreakdowns(
         endTs: span.endTs,
       }),
       ...(frames ? { frames } : {}),
+      ...(scope ? { scope } : {}),
     });
   }
   // Per-span hot functions on the CPU-sampler scripting axis (a SEPARATE panel from the bar's js

@@ -159,6 +159,28 @@ test("geckoToRenderingEvents -> attachStacks/markForced yields windowed + forced
   );
 });
 
+// Firefox style scope: the Gecko `Styles` markers carry `elementsStyled`, which the converter puts on
+// the style event's args.data so spanScope reads it (the analog of Chrome's elementCount). Reflow
+// markers carry no scope, so the firefox distribution has a style side only -- never a fake layout zero.
+test("geckoToRenderingEvents carries elementsStyled; spanScope yields style scope, no layout scope", async () => {
+  const { spanScope } = await import("../../dist/trace/scope.js");
+  const context = parseGecko(geckoFixture);
+  const events = geckoToRenderingEvents(context);
+  const styleWithScope = events.filter(
+    (event) => event.kind === "style" && typeof event.args?.data?.elementsStyled === "number",
+  );
+  assert.ok(styleWithScope.length > 0, "at least one Styles event carries elementsStyled");
+
+  const scope = spanScope(events);
+  assert.ok(scope?.elementsStyled, "firefox spans carry style scope (elementsStyled)");
+  assert.ok(
+    scope.elementsStyled.max >= scope.elementsStyled.p50 && scope.elementsStyled.flushes > 0,
+    "a plausible distribution: max >= p50 over N flushes",
+  );
+  assert.equal(scope.layoutObjects, undefined, "no layout scope on firefox (Reflow markers carry none)");
+  assert.equal(scope.contained, undefined, "no contained note on firefox (no partialLayout signal)");
+});
+
 // --- Firefox reconciling-bar style/layout label split (layoutSlice) ---
 
 test("layoutSlice: style-wrapper labels bucket to style; the font trap and ` Layout` sibling stay layout", () => {
