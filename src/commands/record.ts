@@ -57,6 +57,8 @@ import type {
 // record.ts stays the orchestrator: it wires the one pass, mutates `meta` in the one load-bearing
 // order, and drives the writers. These re-exports keep the compiled dist surface stable for the
 // tests and programmatic consumers that import them from this module.
+/** @testOnly reached from the compiled `dist/commands/record.js` barrel by unit tests;
+ * `blameSemanticFor`/`countScopeNote` are also called in-file, `userMeasureSpans` only here. */
 export { blameSemanticFor, countScopeNote, userMeasureSpans };
 
 export interface RecordOptions {
@@ -805,6 +807,8 @@ export async function record(opts: RecordOptions): Promise<{
       cpuPass.geckoMeasures,
       { startTs: detail.windowStart, endTs: detail.windowEnd },
       sampleIntervalUs,
+      // The Reflow/Styles marker events, for the firefox style-scope distribution (elementsStyled).
+      detail.events,
     );
   }
 
@@ -930,7 +934,7 @@ function printNodeReport(result: {
 /**
  * One line qualifying the package table above it: can that table be believed?
  *
- * Silent when a missing map cost nothing — plain unbundled source needs none, and claiming
+ * Silent when a missing map cost nothing: plain unbundled source needs none, and claiming
  * "packages below are minified bundles" about a hand-written `.mjs` whose frames resolved to their
  * own source file is simply false. Same trigger as sourcemapNote(); see the reasoning there.
  */

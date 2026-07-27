@@ -190,17 +190,17 @@ before promoting this claim to the README. The `processingMs` row is also one pr
 deliberately synthetic one (a busy-wait, no async work, no framework); a handler that yields would
 split its cost across processing and presentation differently in each engine.
 
-## Per-element counts: both engines have them, wpd reports neither
+## Per-element counts: both engines have them, both engines surface them (style within an engine)
 
 **[measured]** The premise worth stating first, because it is easy to assume otherwise: **CDP has no
 per-element style-recalc counter.** `Performance.getMetrics` -> `RecalcStyleCount` counts recalc
 *operations*. The per-element number is in the **trace**.
 
-| | source | present today |
+| | source | surfaced as |
 | --- | --- | --- |
-| chrome elements styled | `UpdateLayoutTree` END arg `elementCount` | in `event.args` (23/23 events); never rolled up |
-| chrome dirty objects | `Layout` `beginData.dirtyObjects` | in `event.args` (22/22 events); never rolled up |
-| firefox elements styled | `Styles` marker `elementsStyled` | **dropped** — `geckoToRenderingEvents` reads only `data.stack` |
+| chrome elements styled | `UpdateLayoutTree` END arg `elementCount` | `Span.scope.elementsStyled` (`--breakdown`); blame/forced row scope (`--deep`) |
+| chrome dirty objects | `Layout` `beginData.dirtyObjects` | `Span.scope.layoutObjects` (`--breakdown`); blame/forced row scope (`--deep`) |
+| firefox elements styled | `Styles` marker `elementsStyled` | `Span.scope.elementsStyled` (`geckoToRenderingEvents` reads it onto the style event's `args.data.elementsStyled`) |
 
 The Gecko `Styles` marker payload is richer than Chrome's, verified in our own fixture:
 

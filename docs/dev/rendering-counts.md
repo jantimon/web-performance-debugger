@@ -226,7 +226,15 @@ category, so every scope field is present on the light trace. DevTools' trace en
 required fields, so they are stable **[source]**
 ([`TraceEvents.ts`](https://raw.githubusercontent.com/ChromeDevTools/devtools-frontend/main/front_end/models/trace/types/TraceEvents.ts);
 Blink emits them in `inspector_trace_events.cc` BeginData/EndData and `document.cc`'s
-`UpdateLayoutTree` END). wpd reads none of them into the summary today.
+`UpdateLayoutTree` END).
+
+wpd reads them two ways (`trace/scope.ts`). A `--breakdown` recording stores a per-span **distribution**
+(`dirtyObjects` p50/max, `elementCount` p50/max, a contained-flush count) on each `Span.scope`
+(`record/breakdown-spans.ts`), surfaced by `query span` beside the counts and carried in the
+`query spans`/`query span` JSON. A `--deep` recording, whose full event log is stored, reads the
+**widest** flush's scope per forced read-site at query time and hangs it on the `query blame --forced`
+rows and the `query span` forced section (`dirtyObjects/totalObjects layout objects`,
+`elementCount styled`, the container root when contained).
 
 **Honesty constants [measured]**, synthetic probes with a known dirty-subtree size N:
 

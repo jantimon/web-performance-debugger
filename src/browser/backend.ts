@@ -33,6 +33,3 @@ export function capsFor(browser: BrowserName): BrowserCaps {
     geckoProfiler: false,
   };
 }
-
-export const isBrowserName = (value: string): value is BrowserName =>
-  value === "chrome" || value === "firefox";

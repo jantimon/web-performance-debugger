@@ -32,12 +32,13 @@ npm test                # unit only (pretest builds first); pure functions, no b
 npm run test:e2e        # e2e: drives the real CLI against headless Chrome (record -> query)
 npm run lint            # oxlint src   (lint:fix to autofix)
 npm run format          # oxfmt --write (format:check to verify; config in .oxfmtrc.json, ~prettier)
+npm run knip            # dead exports/files/deps (config knip.json); a fresh dead export fails it
 node dist/cli.js <...>  # run the CLI (installed bins: web-performance-debugger, wpd)
 npm run changeset       # add a changeset; CI Release workflow versions+publishes on merge to main
 ```
 
-CI (`.github/workflows/ci.yml`) runs on Node 24: `ci` (lint → format:check → build → unit `test`,
-browser-free, `PUPPETEER_SKIP_DOWNLOAD`), `pack-smoke` (packs the tarball, installs it into a temp
+CI (`.github/workflows/ci.yml`) runs on Node 24: `ci` (lint → format:check → build → `knip` → unit
+`test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`), `pack-smoke` (packs the tarball, installs it into a temp
 project, runs the bin + a `--target node` record + a root-type compile via `scripts/pack-smoke.mjs`,
 browser-free), and `e2e` (downloads Chrome, runs `test:e2e`). A final `release` job (changesets +
 OIDC publish) `needs: [ci, pack-smoke, e2e]` and runs only on a push to main, so a broken main can
@@ -218,8 +219,8 @@ a per-slice average, so the bar stays a real reconciling sample.
 `classify.ts` (event name/category → `EventKind`:
 layout/style/paint/composite/invalidation/scripting/gc/task/usertiming/other) → `stacks.ts`
 (rewrites trace stack URLs back to local source paths; **async** because it resolves bundle
-frames through sourcemaps via `sourcemap.ts`) → `analysis.ts` (`markForced`, `forcedLayouts`,
-`longTasks`, `extractInvalidations`). Alongside: `taxonomy.ts` (the `EventKind` → work-slice map
+frames through sourcemaps via `sourcemap.ts`) → `analysis.ts` (`markForced`, `forcedLayouts`).
+Alongside: `taxonomy.ts` (the `EventKind` → work-slice map
 and paint classification), `main-thread.ts` (picks the renderer main-thread `pid/tid` the counts and
 the bar share), `steps.ts` (per-step windowing/merge), `frames.ts` (the off-thread frame side track
 parsed from the already-enabled `devtools.timeline.frame` category — display-only,
@@ -457,6 +458,12 @@ all live there with the probes that establish them.
   which is where history lives. This applies to `docs/dev/` too: state the finding, not its
   discovery story.
 - Per the user's global rule: use `trash`, never `rm -rf`.
+- **`npm run knip` gates dead exports/files/deps** (`knip.json`). It reads `src` from `cli.ts` +
+  `index.ts`; `index.ts` is the public surface (knip credits it as an entry). `ignoreExportsUsedInFile`
+  keeps it to genuinely-dead symbols, not over-exports. Unit tests import compiled `dist/`, which knip
+  cannot map back to `src`, so a pure function exported ONLY for a unit test reads as dead: mark such
+  an export `@testOnly` (the `tags: ["-testOnly"]` filter clears it, and the tag says why it exists).
+  A truly dead export still fails knip.
 - **Commit messages carry no tooling attribution.** Do NOT append a `Co-Authored-By:` trailer, a
   `🤖 Generated with Claude Code` line, a `claude.ai/code/...` session link, or any similar
   advertisement to commit messages or PR bodies. Write the message as the change itself, nothing

@@ -153,6 +153,7 @@ function entryFromSpan(span: BarSpan, iterations: number): SpanEntry {
     ...(span.navigation ? { navigation: span.navigation } : {}),
     ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
     ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
+    ...(span.scope ? { scope: span.scope } : {}),
   };
 }
 

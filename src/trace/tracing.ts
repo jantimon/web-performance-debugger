@@ -11,8 +11,8 @@ import type { CDPSession } from "puppeteer";
  * before it drops; a heavy --deep journey (`.stack` + `invalidationTracking`) outgrows that in a few
  * steps. 4 GB captures ~2.1M events (~1.2GB) with ZERO loss [measured], enough for a multi-step
  * production journey, and does not preallocate (the buffer fills only to what the trace produces, so a
- * light page pays nothing). `scanTraceEvents` parses the streamed bytes one event at a time, so the
- * former ~512MB single-string parse ceiling no longer bounds this value. See docs/dev/trace-buffer.md.
+ * light page pays nothing). `scanTraceEvents` parses the streamed bytes one event at a time, so no
+ * single-string parse ceiling bounds this value. See docs/dev/trace-buffer.md.
  */
 const TRACE_BUFFER_SIZE_KB = 4_000_000;
 

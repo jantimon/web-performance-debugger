@@ -126,6 +126,26 @@ test("toRawTraceEvents: bytes, string, envelope, bare array, and generator all n
   assert.deepEqual(asArray(toRawTraceEvents(scanTraceEvents(encode(JSON.stringify(events))))), events, "generator");
 });
 
+// scanString drives TWO paths not covered by the inline-object walker above: an ENVELOPE KEY, and a
+// bare-string top-level ARRAY ELEMENT. Both must skip the byte after a backslash (a `\"` is one
+// escaped quote, not a string terminator); a scanner that steps one byte instead of two would end
+// the string on the escaped quote and mis-slice, so these die if the backslash skip regresses.
+test("scanTraceEvents: an escaped quote/backslash inside an envelope KEY is scanned, not truncated", () => {
+  const events = [{ name: "A", ph: "X", ts: 1 }];
+  // A metadata key BEFORE traceEvents carrying `\"` and `\\`: scanString must run the key to its
+  // real closing quote before the `:`/`,` walk, or the envelope parse derails.
+  const text = JSON.stringify({ 'we\\ird"key': 1, traceEvents: events });
+  assert.deepEqual(scanText(text), events);
+});
+
+test("scanTraceEvents: a bare-string top-level element with escapes is yielded whole", () => {
+  // A top-level array whose first element is a STRING (not an object): scanValue routes it to
+  // scanString directly, exercising the escape skip outside the object walker.
+  const element = 'prefix "quoted" and a \\ backslash, then a } brace';
+  const events = [element, { name: "A", ph: "X", ts: 2 }];
+  assert.deepEqual(scanText(JSON.stringify(events)), events);
+});
+
 test("scanTraceEvents: a malformed array throws loudly rather than silently truncating", () => {
   assert.throws(() => scanText('{"traceEvents":[{"name":"A"} {"name":"B"}]}'), /malformed traceEvents array/);
 });

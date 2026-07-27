@@ -571,6 +571,8 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
     const data = markerRow[schema.data] as {
       name?: string;
       stack?: { samples?: { data?: number[][] } };
+      /** Styles marker only: elements recalculated (the Gecko analog of Chrome's elementCount). */
+      elementsStyled?: number;
     } | null;
 
     const label = userTimingName(thread, markerRow);
@@ -621,6 +623,17 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
 
     const durationMs = Math.max(0, effectiveEndMs - effectiveStartMs);
     const causeFrames = effectiveCause != null ? causeStackFrames(context, effectiveCause) : [];
+    // The Styles marker names how many elements it recalculated (elementsStyled), the Gecko analog of
+    // Chrome's elementCount; carry it so the style-scope distribution reads it (trace/scope.ts) the
+    // same way it reads chrome's `args.elementCount`. Reflow markers carry no scope, matching the
+    // never-fake-parity rule: firefox has no layout scope. Stashed under `args.data` beside any cause.
+    const styleElements =
+      rendering.kind === "style" && typeof data?.elementsStyled === "number"
+        ? data.elementsStyled
+        : undefined;
+    const argsData: { invalidationStack?: unknown; elementsStyled?: number } = {};
+    if (causeFrames.length) argsData.invalidationStack = causeFrames;
+    if (styleElements != null) argsData.elementsStyled = styleElements;
     events.push({
       id: 0,
       name: rendering.name,
@@ -634,7 +647,7 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
       // where the sampled read-site events below carry the read line instead. The write cause stays
       // reachable via `query get`/`query events` under args.data.invalidationStack.
       forced: causeFrames.length > 0,
-      args: causeFrames.length ? { data: { invalidationStack: causeFrames } } : undefined,
+      args: Object.keys(argsData).length ? { data: argsData } : undefined,
     });
   }
 

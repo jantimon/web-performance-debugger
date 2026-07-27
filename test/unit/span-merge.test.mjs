@@ -76,6 +76,35 @@ test("mergeSpanOccurrences: run and step spans pass through unchanged, order pre
   assert.equal(merged[2].samples, 2, "the repeated measure merged");
 });
 
+// Only `measure` collapses to a median occurrence: the guard is `group[0].kind !== "measure"`. Two
+// same-kind, same-label STEP spans (a shape run/step labels never actually take, but the guard is
+// what enforces it) must NOT be re-sampled to a median with a `samples` disclosure. Different walls
+// make the median pick differ from group[0], so a guard that let steps merge would swap the kept bar
+// AND stamp `samples`.
+const stepBar = (label, wallMs, mark) => ({ label, kind: "step", breakdown: bar(wallMs, mark) });
+const runBar = (label, wallMs, mark) => ({ label, kind: "run", breakdown: bar(wallMs, mark) });
+
+test("mergeSpanOccurrences: two same-label STEP spans do NOT merge (first kept verbatim, no median, no samples)", () => {
+  const first = stepBar("open", 5, "s0");
+  const merged = mergeSpanOccurrences([first, stepBar("open", 1, "s1")]);
+  assert.equal(merged.length, 1, "the same-kind group collapses to its first occurrence");
+  assert.equal(merged[0], first, "the FIRST step passes through verbatim (not the lower-median-wall one)");
+  assert.equal(merged[0].breakdown.wallMs, 5, "group[0]'s wall, never the median pick's 1");
+  assert.equal(merged[0].breakdown.mark, "s0", "group[0]'s own bar, untouched");
+  assert.equal(merged[0].samples, undefined, "no samples disclosure: a step is not a merged measure");
+  assert.equal(merged[0].wallMinMs, undefined);
+  assert.equal(merged[0].wallMaxMs, undefined);
+});
+
+test("mergeSpanOccurrences: two same-label RUN spans do NOT merge (first kept verbatim)", () => {
+  const first = runBar("run", 9, "r0");
+  const merged = mergeSpanOccurrences([first, runBar("run", 3, "r1")]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0], first, "the first run passes through verbatim");
+  assert.equal(merged[0].breakdown.wallMs, 9, "group[0]'s wall, never the median pick's 3");
+  assert.equal(merged[0].samples, undefined, "no samples disclosure on a run group");
+});
+
 test("mergeSpanOccurrences: distinct labels are merged independently, frames of the pick survive", () => {
   const withFrames = (label, wall, mark) => ({
     ...measure(label, wall, mark),

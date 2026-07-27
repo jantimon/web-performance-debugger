@@ -24,6 +24,9 @@ function aggregationSuffix(kind: SpanKind, iterations?: number, samples?: number
 const heat = (pct: number, text: string): string =>
   pct >= 25 ? red(text) : pct >= 10 ? yellow(text) : text;
 
+// A slice's share of the bar wall, as a "12.3%" label. Callers guard wallMs > 0.
+const slicePct = (ms: number, wallMs: number): string => `${num((ms / wallMs) * 100, 1)}%`;
+
 /**
  * The "what the js slice includes" footer, engine-conditioned. Chrome folds synchronous engine work
  * (a forced layout) into the forcing JS frame, so js is not pure JS. Firefox does NOT: its bar is
@@ -92,8 +95,6 @@ export function printCpuBreakdown(model: CpuModel, iterations?: number): void {
   const isNode = model.meta.runtime === "node";
   // On the node lane the non-JS engine slice is V8 runtime/native, not a browser; label it honestly.
   const browserLabel = isNode ? "native" : "browser";
-  // wallMs > 0 is guaranteed by the early return above.
-  const pct = (ms: number): string => `${num((ms / wallMs) * 100, 1)}%`;
 
   // Top packages of the js slice, as a compact "react-dom 401.2 · app 190.3" annotation.
   const topPackages = Object.entries(slices.js.byPackage)
@@ -120,7 +121,7 @@ export function printCpuBreakdown(model: CpuModel, iterations?: number): void {
       rows.map(([label, ms, note]) => [
         label,
         num(ms, 1),
-        heat((ms / wallMs) * 100, pct(ms)),
+        heat((ms / wallMs) * 100, slicePct(ms, wallMs)),
         note,
       ]),
     ),
@@ -168,7 +169,6 @@ export function printSpanBreakdowns(
           `  wall spread ${num(span.wallMinMs, 1)}..${num(span.wallMaxMs, 1)} ms across ${span.samples} samples`,
         ),
       );
-    const pct = (ms: number): string => `${num((ms / wallMs) * 100, 1)}%`;
     const topPackages = Object.entries(slices.js.byPackage)
       .sort((left, right) => right[1] - left[1])
       .slice(0, BREAKDOWN_TOP_PACKAGES)
@@ -195,7 +195,7 @@ export function printSpanBreakdowns(
         rows.map(([name, ms, note]) => [
           name,
           ms == null ? "—" : num(ms, 1),
-          ms == null ? "—" : heat((ms / wallMs) * 100, pct(ms)),
+          ms == null ? "—" : heat((ms / wallMs) * 100, slicePct(ms, wallMs)),
           note,
         ]),
       ),

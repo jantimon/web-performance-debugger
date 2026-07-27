@@ -483,6 +483,12 @@ transition is just slow, or gate on a `selector` instead. `waitForStable` is als
 `import { waitForStable } from "@jantimon/web-performance-debugger"` for a module you install, but the
 injected form needs no dependency.
 
+**Hard navigations.** A step that reloads or navigates to a new document (a cold boot, a `page.goto`)
+reports `wall: —` in the sampler-only capture modes (default / `--precise-wall`): the step spans two
+documents, and one `performance.now` clock cannot measure across them. Record with `--breakdown` or
+`--deep` to price it — those windows sit on the trace clock, which does span the swap. The counts, bar,
+and boot LCP are unaffected.
+
 **Clicking a page that never stops re-rendering.** Prefer a stable selector and `page.click('#id')`. A
 raw element handle throws `Node is detached from document` when the app re-renders between grabbing the
 node and clicking it, and `page.locator(sel).click()` can hang on its actionability wait when the page

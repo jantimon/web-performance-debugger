@@ -120,6 +120,19 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
   const top = fromExample[0];
   assert.ok(top.forced > 0, "forced count is positive");
   assert.ok(top.kinds.includes("layout"), "kinds include layout");
+
+  // Surface 1: a --deep forced-blame row carries the flush's layout scope (`N/M layout objects`),
+  // read from the stored event log's trace args. At least one layout row names how much it relaid out.
+  const withLayoutScope = fromExample.filter((row) => row.scope?.layoutObjects);
+  assert.ok(withLayoutScope.length > 0, "a forced layout row carries layout-object scope");
+  const scope = withLayoutScope[0].scope.layoutObjects;
+  assert.ok(
+    Number.isInteger(scope.dirty) && scope.dirty > 0 && scope.total >= scope.dirty,
+    `dirty/total is a plausible N/M (got ${scope.dirty}/${scope.total})`,
+  );
+  // The human table renders it beside the source as `N/M layout objects`.
+  const human = runCli(["query", "blame", out, "--forced"]);
+  assert.match(human, /\d+\/\d+ layout objects/, "human blame rows carry the layout-object scope");
 });
 
 // --breakdown drops .stack, so it has no exact forced-layout stack -- but the fused v8.cpu_profiler
@@ -402,6 +415,23 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
 
   // Forced-layout count is NOT measured in breakdown mode (no `.stack`): null, never a fake 0.
   assert.equal(rec.summary.forcedLayoutCount, null, "forced is reported as not-measured, not 0");
+
+  // Surface 2: the run span carries a layout/style scope DISTRIBUTION (p50/max), computed at record
+  // time from the light trace. It is a distribution, never a sum, so max >= p50; and layout scope and
+  // style scope are separate (this workload dirties both).
+  assert.ok(runSpan.scope, "the run span carries a scope distribution on --breakdown");
+  const layoutScope = runSpan.scope.layoutObjects;
+  assert.ok(layoutScope, "layout-object scope is present (chrome layout scope)");
+  assert.ok(
+    layoutScope.max >= layoutScope.p50 && layoutScope.flushes > 0,
+    `distribution is plausible: max ${layoutScope.max} >= p50 ${layoutScope.p50} over ${layoutScope.flushes} flushes`,
+  );
+  assert.ok(runSpan.scope.elementsStyled, "style scope (elementCount) is present, a separate denominator");
+  // The `query span` JSON carries the same scope, and the human report prints the Scope block.
+  const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--json"]));
+  assert.deepEqual(anatomy.scope, runSpan.scope, "query span JSON carries the span scope");
+  const spanHuman = runCli(["query", "span", out, "run"]);
+  assert.match(spanHuman, /layout objects\s+p50/, "the human anatomy prints the scope distribution");
 });
 
 // Per-driver-step CPU attribution: a measureStep that runs real in-page JS must carry a non-empty

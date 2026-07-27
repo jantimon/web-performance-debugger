@@ -91,6 +91,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
     ...(summary.perIteration.length ? { perIteration: summary.perIteration } : {}),
     ...(summary.stats ? { stats: summary.stats } : {}),
     ...(runBar?.frames ? { frames: runBar.frames } : {}),
+    ...(runBar?.scope ? { scope: runBar.scope } : {}),
   });
 
   // Step spans: each step's counts come from buildSummary over its own trace window (the same
@@ -147,6 +148,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       stats: stepSummary.stats,
       ...(stepBar?.frames ? { frames: stepBar.frames } : {}),
       ...(stepBar?.hot ? { hot: stepBar.hot } : {}),
+      ...(stepBar?.scope ? { scope: stepBar.scope } : {}),
     });
   }
 
@@ -166,6 +168,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       ...(bar.wallMaxMs != null ? { wallMaxMs: bar.wallMaxMs } : {}),
       ...(bar.frames ? { frames: bar.frames } : {}),
       ...(bar.hot ? { hot: bar.hot } : {}),
+      ...(bar.scope ? { scope: bar.scope } : {}),
     });
   }
 
