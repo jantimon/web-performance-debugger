@@ -25,11 +25,16 @@ const FRAME_FLOOR_TOLERANCE_MS = 1.2;
  */
 export const MAX_FRAME_FLOOR_MULTIPLE = 4;
 
-/** The share of a value that must be waiting (idle for a wall, presentation delay for an INP) before a
- * multi-frame value (n>=2) is read as frame-dominated rather than real work near n frames. Reuses the
- * idle-dominant threshold the wall report already leans on, so a busy 33ms wall (real work, ~9% idle)
- * is never mislabeled a two-frame floor. */
-export const FRAME_FLOOR_WAIT_SHARE = 0.8;
+/**
+ * The share of a window that must be idle/waiting for it to read as wait-dominated. Two surfaces share
+ * it: `frameFloorDominates` labels a multi-frame value (n>=2) a frame floor only above this (idle for a
+ * wall, presentation delay for an INP), so a busy 33ms wall (real work, ~9% idle) is never mislabeled a
+ * two-frame floor; `idleShareSuffix` (output/ascii.ts) tags a span wall `~N% idle` at the same cutoff.
+ * [measured, docs/dev/frame-floor.md] on a 33ms two-frame wall 0.8 is 6.6ms of real work: a span with
+ * 1.2ms of work (idle 0.96) is labeled a floor, one with 8.6ms (idle 0.74) keeps its real-work reading,
+ * so the cutoff errs toward NOT claiming a floor and there is no realistic mislabel band.
+ */
+export const IDLE_DOMINANT_SHARE = 0.8;
 
 /** A wall/INP value that pins to a whole number of frames: the one-frame floor it sits on and which
  * multiple. `multiple` 1 = one frame, 2 = two frames, up to MAX_FRAME_FLOOR_MULTIPLE. */
@@ -75,11 +80,11 @@ export function matchedFrameFloor(
  * Whether a value that matched n frames is frame-DOMINATED (worth annotating as a floor) given the
  * share of it spent waiting. n=1 needs no evidence: a latency cannot beat one frame, so a one-frame
  * value IS the floor whatever it did. n>=2 fires only when the window is wait-dominated
- * (`waitShare >= FRAME_FLOOR_WAIT_SHARE`), so a genuinely busy two-frame wall (real work near 33ms) is
+ * (`waitShare >= IDLE_DOMINANT_SHARE`), so a genuinely busy two-frame wall (real work near 33ms) is
  * not mislabeled. `waitShare` null (no breakdown/interaction split to judge) declines an elevated
  * multiple rather than claim one it cannot justify.
  */
 export function frameFloorDominates(match: FrameFloorMatch, waitShare: number | null): boolean {
   if (match.multiple === 1) return true;
-  return waitShare != null && waitShare >= FRAME_FLOOR_WAIT_SHARE;
+  return waitShare != null && waitShare >= IDLE_DOMINANT_SHARE;
 }

@@ -233,6 +233,27 @@ wait share (idle for a wall, presentation delay for an INP): a busy 33 ms wall (
 frames) is not mislabeled a floor, while a wait-dominated one is. `query span` surfaces the faster
 sample and the js slice beside a floored median so it does not read as "no difference".
 
+### Why the wait-share cutoff is 0.8
+
+`frameFloorDominates` fires the `n >= 2` label only when the wait share reaches
+`IDLE_DOMINANT_SHARE` (0.8). **[measured]** probe: a driver step spins the page's main thread for a
+set number of ms (real work, layout touched so it is not pure JS), then settles into the next frame,
+sweeping the busy time so the idle share of a two-frame wall moves across the band.
+
+| step busy | wall (ms) | matched multiple | idle share | real work in the wall | labeled floor? |
+| --- | --- | --- | --- | --- | --- |
+| ~0 ms | 32.0 | n=2 | **0.96** | 1.2 ms | **yes** |
+| ~8 ms | 33.1 | n=2 | **0.74** | 8.6 ms | no |
+
+On a 33 ms two-frame wall the 0.8 cutoff is 6.6 ms of real work: below it the label reads "the work is
+sub-frame, the second frame is pure wait" (the 1.2 ms span); above it the span keeps its real-work
+reading (the 8.6 ms span, half a frame of work, is not hidden behind a floor). The cutoff sits well
+clear of both measured spans, so there is no realistic mislabel band, and it errs toward *not* claiming
+a floor — the safe direction, since the frame-floor doc's whole point is to price a library's re-render
+on the work axis rather than let a floor label swallow it. The same 0.8 is the `idleShareSuffix`
+threshold (`output/ascii.ts`) that tags a span wall `~N% idle`: both answer "is this window
+wait-dominated," so they share one exported constant.
+
 The comparability gate (`model/compat.ts`) keys on `meta.headlessMode`: a current headless chrome
 recording stamps `"new"`, an older one may carry `"shell"`, and a headed one carries nothing. A diff
 across differing values refuses, so a recording taken at the ~8.3 ms shell floor never diffs against a
