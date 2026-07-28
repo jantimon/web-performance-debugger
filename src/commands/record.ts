@@ -68,7 +68,14 @@ export { blameSemanticFor, countScopeNote, userMeasureSpans };
 // orchestrator. Re-exported here to keep the compiled dist surface stable for cli.ts and callers.
 export type { RecordOptions };
 
-/** Bounded retries for a transient cross-process navigation failure (fresh browser each attempt). */
+/**
+ * Bounded retries for a transient cross-process navigation failure (fresh browser each attempt). A
+ * heavy `--url` boot occasionally dies mid-swap (`net::ERR_INVALID_HANDLE`, "detached Frame"); a fresh
+ * browser clears it, so a couple of retries turn a flaky boot green. The bound is a policy choice, not
+ * a measured constant: too high just relaunches a permanently-broken target (a real 404, a crashing
+ * page) several times over before surfacing the same failure, trading a fast honest error for a slow
+ * one. Two extra attempts cover the transient case without hiding a persistent one.
+ */
 const NAV_RETRY_LIMIT = 2;
 
 /** Persistent-profile path for meta: shorter of relative-to-root vs absolute, or null if unused. */

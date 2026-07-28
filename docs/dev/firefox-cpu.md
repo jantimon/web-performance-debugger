@@ -85,6 +85,18 @@ idle signal, so no bar is emitted rather than a fabricated one. `cpuallthreads` 
 (`js,cpu` reproduces the idle result, sampling only registered threads) and `stackwalk` adds zero
 signal. Paint stays off the bar: it is off-main-thread compositor work (a side track), never summed.
 
+### The idle cutoff (`IDLE_CPU_DELTA_EPSILON_US` = 50 µs)
+
+A sample counts as idle when its `threadCPUDelta` is below 50 µs of CPU: the thread consumed
+~no CPU since the previous sample while wall-time advanced, i.e. it was descheduled. **[measured,
+Firefox 152, macOS, the `awaits-only` 470 ms pure-wait probe]** the cutoff sits between two endpoints:
+eps 0 reads **94.5-95.7% idle**, eps 100 µs reads **99.1% idle**. 50 µs is the conservative middle,
+high enough to tolerate the small mutex/IO CPU a sleeping thread can still show (Firefox Bug 1689325)
+without fabricating idle, low enough that it never swallows a busy sample: real work reads ~one full
+interval (~1000 µs) of CPU, about **20x** the cutoff, so the busy/idle split is not sensitive to the
+exact value. A "variable CPU cycles" unit (no time) is compared to the same number directly, where
+only ~0 cycles reads idle -- the sound direction.
+
 ## The Firefox sampler config: `js,cpu`, 1 ms, and what not to chase
 
 **[measured]** `examples/cpu-busywork.mjs --bench --target firefox`, interleaved arms, RAW dumps.

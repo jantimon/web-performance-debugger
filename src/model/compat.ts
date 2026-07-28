@@ -46,13 +46,17 @@ function throttleOf(meta: RecordingMeta): string {
 }
 
 /**
- * Widest common OS ephemeral-port range (the same floor cpuprofile.ts uses for its unmapped-origin
- * bucket, and for the same reason): Linux `listen(0)` starts at 32768, macOS/BSD/Windows at 49152.
- * A dev/test server on a loopback host picks one of these fresh every run, so it carries no cross-run
- * identity and must not read as a different workload.
+ * Widest common OS ephemeral-port range. Linux `listen(0)` starts at 32768 (default 32768-60999),
+ * macOS/BSD/Windows at 49152. Anchoring at 32768 (not the 49152 dynamic/private start) covers Linux's
+ * default too; anchoring higher would keep the port for the low ~58% of Linux-assigned ports. A
+ * loopback host on such a port picks one fresh every run (a `listen(0)` bench/test server), so it
+ * carries no cross-run identity. Shared by `stableWorkloadHost` here and `unmappedOriginBucket`
+ * (cpuprofile.ts) for the same reason: an ephemeral port must not split a cross-run identity or a
+ * cpu-diff join. Trade: a deliberate service on a 32768-49151 port loses its port; accepted for the
+ * same reason the range exists.
  */
-const EPHEMERAL_PORT_MIN = 32768;
-const EPHEMERAL_PORT_MAX = 65535;
+export const EPHEMERAL_PORT_MIN = 32768;
+export const EPHEMERAL_PORT_MAX = 65535;
 
 /** A loopback host literal (127.0.0.0/8, ::1, localhost), by hostname or IP. The narrow set the
  * ephemeral-port fold applies to: a real service on :8080 vs :9090 can be a genuinely different

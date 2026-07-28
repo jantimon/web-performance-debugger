@@ -152,6 +152,14 @@ to round the parts to whole ms where Chrome does not.
   affected by it** (measured identical
   at settle 0/50/200): the per-step settle above finalizes the interaction before the step's marks close,
   so the trailing settle only governs run-window paint counts.
+- **A frame-production stall is caught in ~3 s, not a 180 s protocol hang (`STALL_CEILING_MS` = 3000).**
+  Each settle `requestAnimationFrame` is raced against this ceiling. Chrome's built-in headless
+  intermittently stalls its BeginFrame source (frame-floor.md), and a stall where rAF never fires would
+  otherwise hang until the 180 s protocol timeout. 3 s clears any real frame gap by a wide margin -- the
+  worst legitimate gap is **~24ms** even under load [measured] -- so a rAF that has not fired by the
+  ceiling is a genuine stall, resolved as `{ stalled: true }` and turned into a retryable relaunch on a
+  fresh browser (`frameStallError`, `browser/launch.ts`), not a wall-clock hang. Being well under the
+  protocol timeout is what lets the retry happen instead of the process dying.
 - **Untrusted events produce nothing.** `page.evaluate(() => el.click())` fires a synthetic click,
   which Event Timing does not observe: measured **0 entries**. A programmatic step therefore has no
   INP and no breakdown, and that is not a bug to fix. Time programmatic work with `--bench --url`

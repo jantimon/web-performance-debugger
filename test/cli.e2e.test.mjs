@@ -235,6 +235,14 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
   const recording = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(recording.meta.blameSemantic, "flush-site", "--breakdown declares the sampled read-site semantic");
   assert.ok(recording.meta.passes.includes("breakdown"), "capture mode is breakdown");
+  // Invariant: a counting-mode recording ALWAYS carries meta.mainThread, so countIntegrityRefusal can
+  // read .split. countIntegrityRefusal returns "no refusal" when the field is absent, which is only
+  // safe because a counting mode never omits it; a new counting mode that forgot to stamp it would
+  // silently pass an undercount (docs/dev/rendering-counts.md, the gate-field invariant).
+  assert.ok(
+    recording.meta.mainThread && typeof recording.meta.mainThread.split === "boolean",
+    "a counting-mode recording carries meta.mainThread with a boolean split",
+  );
   // The host-CPU speed scalar is stamped on every lane (measured in node before the capture): a
   // positive finite number, the fact a cross-host diff/cpu-diff warns on.
   assert.ok(

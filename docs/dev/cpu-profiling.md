@@ -112,7 +112,12 @@ a false regression from where the samples landed, not from a code change.
 
 So the JS-self gate carries a resolving floor: when BOTH sides' `jsSelfMs` sit below
 `RESOLVING_FLOOR_SAMPLES` samples (10, ~2ms at 200us, derived from the interval so it scales), a net
-delta is quantization, not signal, and the gate does not fire whatever the delta. The human output and
+delta is quantization, not signal, and the gate does not fire whatever the delta. 10 is the smallest
+whole-sample floor that clears the measured jitter: ~2ms at the default interval sits above the
+**0.16-1.21ms** worst run-to-run swing, whereas the 0.5ms `--fail-on-regression` noise floor is only
+~2.5 samples and sits *inside* that swing (which is why the floor is a sample count, not the same
+0.5ms). Fewer samples would re-admit the false regression; more would blind the gate to a real
+small-workload change it could still resolve. The human output and
 JSON carry a disclosure note ("both sides below the sampler's resolving floor (~Xms at the recorded
 interval); the JS-self net gate is not evaluable at this scale"), and the exit stays 0 unless another
 gated axis fires. The floor is per-model from the RECORDED `sampleIntervalUs` (they can differ: chrome

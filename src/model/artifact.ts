@@ -7,12 +7,16 @@
 import { SCHEMA_VERSION } from "../schema.js";
 
 /**
- * Throw unless `schemaVersion` is exactly this build's `SCHEMA_VERSION`. `file` names the offending
- * artifact in the message. The guidance branches on which side is behind: an OLDER artifact re-records
- * under this build; a NEWER one (its epoch parses above this build's) means the reader is behind, so
- * upgrade wpd rather than re-record (re-recording would throw away the newer evidence). An absent or
- * non-numeric version cannot be ordered against this build's epoch, so it falls to a neutral
- * re-record refusal, never a best-effort parse.
+ * Throw unless `schemaVersion` is exactly this build's `SCHEMA_VERSION`. This guards the schema EPOCH,
+ * not field presence: passing means the artifact's stored SHAPE is this build's shape, so positional
+ * reads are safe. It does NOT mean every optional meta field is set -- many meta fields legitimately
+ * vary WITHIN an epoch (a capture mode that did not measure something omits its field, and the reader
+ * degrades with a warning). The gate only stops a shape from a different epoch, which would read as
+ * silent nulls and zeros. `file` names the offending artifact in the message. The guidance branches on
+ * which side is behind: an OLDER artifact re-records under this build; a NEWER one (its epoch parses
+ * above this build's) means the reader is behind, so upgrade wpd rather than re-record (re-recording
+ * would throw away the newer evidence). An absent or non-numeric version cannot be ordered against this
+ * build's epoch, so it falls to a neutral re-record refusal, never a best-effort parse.
  */
 export function assertSchemaVersion(schemaVersion: string | undefined, file: string): void {
   if (schemaVersion === SCHEMA_VERSION) return;
