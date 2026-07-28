@@ -132,9 +132,10 @@ export function modeIsDeep(mode: string): boolean {
 }
 
 /** A member's mode ran a CPU sampler, so it carries a CpuModel and (breakdown/gecko/node) a bar.
- * The retired "precise-wall" arm stays so an old recording carrying it reports no CPU, never a crash. */
+ * The retired "precise-wall" arm stays so an old recording carrying it reports no CPU, never a crash.
+ * "node-alloc" ran the HEAP sampler with the CPU sampler off, so it carries no CpuModel either. */
 export function modeHasCpu(mode: string): boolean {
-  return mode !== "deep" && mode !== "precise-wall";
+  return mode !== "deep" && mode !== "precise-wall" && mode !== "node-alloc";
 }
 
 /** A member's mode carries exact rendering counts (layout/style/paint, plus forced on the deep tiers). */

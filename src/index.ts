@@ -48,10 +48,16 @@ export type {
   CpuEdge,
   CpuSystem,
   CpuModel,
+  AllocFunction,
+  AllocGroupStat,
+  AllocSamplingConfig,
+  AllocModel,
 } from "./model/recording.js";
 
 // Derived shapes emitted by the query / cpu-diff verbs under --format json|toon.
 export type {
+  AllocDropped,
+  AllocOverview,
   CpuDropped,
   CpuOverview,
   CpuEdgeRef,

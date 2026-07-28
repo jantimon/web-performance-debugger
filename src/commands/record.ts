@@ -38,6 +38,7 @@ import { writeFileAtomic, copyFileAtomic } from "../model/atomic-write.js";
 import * as notesCatalog from "../record/notes.js";
 import { RUN_START_MARK, RUN_END_MARK, RUN_MEASURE } from "../model/marks.js";
 import { printCpuHeadline, printCpuBreakdown, printSpanBreakdowns } from "./cpu.js";
+import { printAllocHeadline } from "./alloc.js";
 import { printSummary } from "./summaryView.js";
 import { kv, num, sparkline } from "../output/ascii.js";
 import { bold, cyan, dim } from "../output/color.js";
@@ -48,6 +49,7 @@ import { SCHEMA_VERSION } from "../schema.js";
 import { stableWorkloadPath } from "../model/compat.js";
 import { measureHostCpuIndex } from "../model/host-cpu.js";
 import type {
+  AllocModel,
   CpuModel,
   Recording,
   RecordingMeta,
@@ -1086,6 +1088,49 @@ function printNodeReport(result: {
   );
 }
 
+/** Terminal report for a `--target node --alloc` run: the allocation headline + per-iteration timing. */
+function printAllocNodeReport(result: {
+  recording: Recording;
+  outPath: string;
+  allocProfilePath: string;
+  allocModelPath: string;
+  allocModel: AllocModel;
+}): void {
+  const meta = result.recording.meta;
+  const variant = meta.variant ? ` ${dim(`· variant ${meta.variant}`)}` : "";
+  const hostCpu = meta.hostCpuIndex != null ? ` ${dim(`· host-cpu ${meta.hostCpuIndex}`)}` : "";
+  console.log(
+    `\n${bold(meta.tool)} — node:${meta.target} alloc  ${dim(`(fn: ${meta.fn})`)}${variant}${hostCpu}`,
+  );
+  printAllocHeadline(result.allocModel);
+
+  const stats = result.recording.summary.stats;
+  const perIteration = result.recording.summary.perIteration;
+  if (stats && perIteration.length > 1) {
+    console.log("\nPer-iteration wall time (under allocation sampling)\n");
+    console.log(
+      kv([
+        ["samples", stats.samples],
+        ["min ms", num(stats.minMs, 3)],
+        ["median ms", num(stats.medianMs, 3)],
+        ["mean ms", num(stats.meanMs, 3)],
+        ["max ms", num(stats.maxMs, 3)],
+      ]),
+    );
+    console.log(`trend  ${cyan(sparkline(perIteration))}`);
+  }
+
+  console.log(
+    `\nRecording:  ${dim(`${displayPath(result.outPath)}  ← allocation-only run; CPU self-time and rendering metrics are not collected`)}`,
+  );
+  console.log(
+    `Alloc model:${dim(`${displayPath(result.allocModelPath)}  ← 'query alloc latest' for the by-package overview`)}`,
+  );
+  console.log(
+    `Alloc raw:  ${dim(`${displayPath(result.allocProfilePath)}  ← opens in Chrome DevTools > Memory`)}`,
+  );
+}
+
 /**
  * One line qualifying the package table above it: can that table be believed?
  *
@@ -1110,6 +1155,14 @@ function printSourcemapLine(
 
 export async function recordAndReport(opts: RecordOptions): Promise<void> {
   if (opts.runtime === "node") {
+    // --alloc is a dedicated node capture mode: the heap sampler instead of the CPU profiler, so it
+    // has its own runtime and report. --group is rejected upstream (the CLI), so there is no group
+    // path here.
+    if (opts.alloc) {
+      const { recordAllocNode } = await import("../runtime/node-alloc.js");
+      printAllocNodeReport(await recordAllocNode(opts));
+      return;
+    }
     const { recordNode } = await import("../runtime/node.js");
     // --group preflight before the profiling run writes anything (D1/D2). The node lane is a single
     // capture mode ("node-cpu"), so that is the member this run adds.

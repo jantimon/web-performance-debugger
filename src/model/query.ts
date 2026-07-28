@@ -26,6 +26,33 @@ import type {
 } from "./recording.js";
 import type { Measured } from "./measured.js";
 import type { FrameFloorMatch } from "./frame-floor.js";
+import type { AllocFunction, AllocGroupStat, AllocSamplingConfig } from "./alloc.js";
+
+/** Functions below the `--top` cutoff in an allocation overview, rolled up. */
+export interface AllocDropped {
+  frames: number;
+  selfBytes: number;
+}
+
+/**
+ * `query alloc` output: the total sampled bytes headline, the by-package/by-file rollups, and the hot
+ * (top-allocating) functions. The allocation analog of `CpuOverview`. `totalBytes` is directional
+ * (~10-20%); the byPackage/byFile SHARES denominate on it and are the trustworthy signal (~5%).
+ */
+export interface AllocOverview {
+  /** path to the raw .heapprofile (absolute back-pointer) */
+  profile: string;
+  /** total sampled bytes attributed to rankable user frames (the share denominator) */
+  totalBytes: number;
+  sampleCount: number;
+  sampling: AllocSamplingConfig;
+  byPackage: AllocGroupStat[];
+  byFile: AllocGroupStat[];
+  /** top functions by self bytes (length bounded by `--top`) */
+  hot: AllocFunction[];
+  dropped: AllocDropped;
+  hints: string[];
+}
 
 /** Functions below the `--top` cutoff in a CPU overview, rolled up. */
 export interface CpuDropped {

@@ -343,7 +343,7 @@ async function attributeServedOrigin(
   return { package: await packageForFile(localPath, cache), file: localPath };
 }
 
-interface ResolvedFrame {
+export interface ResolvedFrame {
   fn: string;
   /** the minified V8 name, when `fn` is the sourcemap-resolved original */
   minified?: string;
@@ -367,7 +367,7 @@ interface ResolvedFrame {
  * line/column are 0-based; convert to 1-based so the existing trace resolvers (which
  * expect the 1-based trace-stack convention) apply unchanged.
  */
-async function resolveCallFrame(
+export async function resolveCallFrame(
   callFrame: RawCallFrame,
   rewriteToLocal: (frame: StackFrame) => StackFrame,
   maps: SourceMapResolver,
@@ -994,6 +994,17 @@ export async function loadCpuModel(file: string): Promise<CpuModel> {
     // A missing sibling is the expected "no CPU model" case, reported below; a corrupt or
     // unreadable sibling surfaces as its own error rather than masquerading as absence.
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+  }
+  // An `--alloc` recording carries a sibling `.alloc.json`, not a `.cpu.json`: it sampled allocation,
+  // not CPU, so there is no CpuModel to load and no cpu-diff to run against it. Point at `query alloc`
+  // rather than the generic "record with a CPU-sampling mode" message, which would send the reader to
+  // re-record work they already have.
+  if (existsSync(`${base}.alloc.json`) || existsSync(`${base}.alloc.toon`)) {
+    const noCpu = new Error(
+      `${file} is an --alloc (allocation-sampling) recording, so it has no CPU model. Use \`query alloc\` for its allocation attribution. wpd has no alloc-diff yet, so there is nothing to cpu-diff here.`,
+    );
+    (noCpu as NodeJS.ErrnoException).code = "ENOCPUMODEL";
+    throw noCpu;
   }
   const noModel = new Error(
     `${file} is not a CPU model. Pass the .cpu.json, or use 'latest' after a record run in a capture mode that samples CPU (the default or --breakdown, not --deep).`,

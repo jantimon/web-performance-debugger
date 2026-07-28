@@ -76,7 +76,16 @@ Discoverability risk: "cost of a dependency" as a search phrase is owned by bund
 with a programmatic surface still don't emit this rollup: Pyroscope's HTTP API
 (`SelectMergeProfile`, `/ingest`, `/render`) returns pprof and flamegraph shapes, not a per-package
 milliseconds table. The `.cpuprofile` handoff to speedscope/DevTools is the mitigation and should be
-loud. Memory profiling and continuous/prod profiling are out of scope; state the boundary.
+loud.
+
+**The memory boundary (narrowed, probe-earned).** Node-lane ALLOCATION attribution is IN scope:
+`--target node --alloc` samples V8's heap allocator around the same `run()` loop and rolls allocated
+bytes up per package/file/function, the same "which dependency owns this" answer on the allocation axis
+instead of CPU (docs/dev/allocation-profiling.md). It is the same shape as feature 2 -- a per-package
+table, local, CI-shaped -- for bytes rather than milliseconds. What stays OUT: browser-lane heap
+profiling (chrome/firefox), retained-object and leak analysis (what is still referenced, not what was
+allocated -- a snapshot-diff question this sampling lane does not answer), and continuous/prod
+profiling. State that boundary: `--alloc` prices allocation VOLUME by owner, not retention or leaks.
 
 ## 3. The reconciling breakdown bar: best in class (narrow, precise claim)
 

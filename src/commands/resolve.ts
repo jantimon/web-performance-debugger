@@ -31,6 +31,10 @@ export interface LastPointer {
   cpuProfile?: string;
   /** resolved CPU model (.cpu.json/.cpu.toon), when CPU profiling ran */
   cpuModel?: string;
+  /** raw .heapprofile, when the latest record was `--alloc` (allocation sampling) */
+  allocProfile?: string;
+  /** resolved allocation model (.alloc.json/.alloc.toon), when the latest record was `--alloc` */
+  allocModel?: string;
   /** the run-group manifest, when the latest record formed or extended a group (absolute, like the
    * others). `recording` still points at the last member as a fallback; a subsequent NON-group record
    * writes a pointer without this field, which CLEARS it, so `latest` stops resolving to the group. */
@@ -132,16 +136,35 @@ export async function resolveConsumption(file: string): Promise<Consumption> {
  */
 export async function resolveTarget(
   file: string,
-  kind: "recording" | "auto" | "cpu-model" | "cpu-profile",
+  kind: "recording" | "auto" | "cpu-model" | "cpu-profile" | "alloc-model" | "alloc-profile",
 ): Promise<string> {
   if (file !== "latest") return path.resolve(file);
   const pointer = await readPointer();
+  if (kind === "alloc-model" || kind === "alloc-profile") {
+    const target = kind === "alloc-model" ? pointer.allocModel : pointer.allocProfile;
+    if (!target) {
+      // The latest run sampled CPU, not allocation: point at `query cpu` rather than a bare "no
+      // allocation profile", so the reader is not sent to re-record work they already have.
+      const hint = pointer.cpuModel
+        ? " The latest run sampled CPU; use `query cpu` for its self-time attribution."
+        : "";
+      throw new Error(
+        `Latest run has no allocation profile. Re-run \`record <module> --target node --alloc\`.${hint}`,
+      );
+    }
+    return path.resolve(target);
+  }
   if (kind === "cpu-model" || kind === "cpu-profile") {
     const target = kind === "cpu-model" ? pointer.cpuModel : pointer.cpuProfile;
-    if (!target)
+    if (!target) {
+      // The latest run sampled allocation, not CPU: point at `query alloc` rather than re-recording.
+      const hint = pointer.allocModel
+        ? " The latest run was --alloc; use `query alloc` for its allocation attribution."
+        : "";
       throw new Error(
-        "Latest run has no CPU profile. Re-run `record` in a capture mode that samples CPU (the default or --breakdown, not --deep).",
+        `Latest run has no CPU profile. Re-run \`record\` in a capture mode that samples CPU (the default or --breakdown, not --deep).${hint}`,
       );
+    }
     return path.resolve(target);
   }
   // One artifact kind: the recording carries the spans, so the `recording` and `auto` targets both

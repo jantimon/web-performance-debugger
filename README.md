@@ -412,6 +412,42 @@ lane also writes a raw `.cpuprofile` that opens in Chrome DevTools (Performance 
 Speedscope. See [when per-package attribution can't work](#when-per-package-attribution-cant-work) for
 when a map cannot be fetched.
 
+### Allocation attribution (`--alloc`): which dependency allocates
+
+`--target node --alloc` answers a different question than CPU: **which dependency allocates** during
+`run()`. It runs V8's heap sampler (instead of the CPU sampler) around the same timed loop and rolls
+allocated bytes up per package/file/function, read with `query alloc`:
+
+```bash
+NODE_ENV=production wpd record examples/ssr-demo/demo.mjs --target node --alloc --iterations 250
+wpd query alloc latest
+```
+
+```
+Allocation sampling: 616.3 MB allocated (sampled, summed over the whole window across 250 iterations
+  (divide by 250 for a per-iteration figure)) · 16889 samples @ 32.0 KB interval · GC-inclusive
+
+By package (allocated bytes):
+package         bytes     share  fns
+──────────────  ────────  ─────  ───
+react-dom       340.9 MB  55.3%  22
+wpd-ssr-demo    238.4 MB  38.7%  6
+tailwind-merge  3.1 MB    0.5%   19
+```
+
+Allocation **inverts the CPU story** on this workload: `tailwind-merge` is a quarter of the CPU (its
+LRU-cache lookup is the hottest function above) but half a percent of the allocation, while your own
+component (`wpd-ssr-demo`) is a tenth of the CPU and over a third of the allocation, because every
+`createElement` returns a fresh object tree. A CPU profile alone would point you at the wrong thing.
+
+`--alloc` is a dedicated capture mode: the CPU sampler runs OFF (a co-riding heap sampler inflates CPU
+self-time, and wpd reports no perturbed numbers), so an `--alloc` recording has no CPU model — record a
+plain `--target node` run for that. **Allocated bytes are sampled (GC-inclusive) on V8's allocation
+clock: trustworthy in aggregate as per-package shares and ratios (~5% ratio fidelity); the absolute
+byte total is directional (~10-20%), not exact.** The raw `.heapprofile` opens in Chrome DevTools >
+Memory. Chrome/firefox heap and retained-object/leak analysis are out of scope: `--alloc` prices
+allocation volume by owner, not retention.
+
 ### Driving a real interaction
 
 By default `record` drives the page through Puppeteer, and each `measureStep` becomes one **step
@@ -717,6 +753,7 @@ when the newest run formed or extended a group, `latest` resolves to the group m
 | `span <file> <label>` | one span's full anatomy: bar, counts, INP, LoAF scripts, forced/dirtied-by, thrash, hot functions. `<label>` is bare or `kind:label` |
 | `blame <file>` | events grouped by source line (`--forced`, `--all`, `--kind`, `--dirtied` on firefox `--deep`, `--top`) |
 | `cpu <file>` | hot functions + rollup (`--by package\|file\|function`, `--top`) |
+| `alloc <file>` | top allocating functions + by-package bytes, from a `--target node --alloc` recording (`--by package\|file\|function`, `--top`) |
 | `frame <file> <id>` | one CPU function: its callers and callees |
 | `get <file> <id>` | one raw event, full stack and args; needs `--deep`/firefox |
 | `events <file>` | the classified event log (a niche raw-log view; `--kind`, `--name`, `--forced`); needs `--deep`/firefox |
@@ -738,6 +775,7 @@ overlapping regions distinct labels). When a tag manager floods the overview, cu
 | Slice ms on a `--breakdown` bar (`style` / `layout` / `paint`) | trace `base::TimeTicks`, light trace only | wall-tier (~1%, directional); reconciles to `wall` exactly |
 | Wall and INP times | `performance.now()`, browser-clamped | directional: good for "~2x worse?", not "1.3 ms". Carry the one-frame floor |
 | CPU self-time | the sampler's own clock (V8 microsecond; Gecko ~1 ms floor on Firefox) | real: trustworthy in aggregate (a few % noise) |
+| Allocated bytes (`--alloc`, node) | V8 heap sampler, GC-inclusive | per-package shares/ratios trustworthy (~5%); the absolute byte total is directional (~10-20%) |
 
 - **Counts are exact, windowed to one main thread.** A cross-origin out-of-process iframe's layout is
   a separate off-thread count, never summed into the top span's wall.

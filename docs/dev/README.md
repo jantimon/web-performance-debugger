@@ -18,6 +18,7 @@ permalink).
 | --- | --- |
 | [cpu-profiling.md](./cpu-profiling.md) | changing the capture modes, the sampler interval, or how `selfMs` is described |
 | [cpu-attribution.md](./cpu-attribution.md) | changing which spans carry CPU samples, the per-span hot list, or the sourcemap warning |
+| [allocation-profiling.md](./allocation-profiling.md) | changing the `--alloc` heap sampler config, the GC-inclusion flags, or any allocation-attribution claim |
 | [firefox-cpu.md](./firefox-cpu.md) | changing the `MOZ_PROFILER_*` config, the Gecko interval, or the firefox idle/bar computation |
 | [blame-semantics.md](./blame-semantics.md) | touching `markForced`, the thrash detector, a dirtied-by report, or any blame claim |
 | [engine-mapping.md](./engine-mapping.md) | touching `trace/classify.ts` or `profile/gecko.ts`, or claiming any number is comparable across engines |
@@ -51,6 +52,13 @@ permalink).
 - Why does a navigating flow lose samples in the default capture mode but not `--breakdown`? -> [navigation reset vs continuity](./cpu-attribution.md#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-capture-mode---breakdown-does-not)
 - How does `query span` rank a span's hot functions honestly? -> [per-span hot functions](./cpu-attribution.md#per-span-hot-functions)
 - When can the package rollup be believed, and when must it warn? -> [sourcemap note gating](./cpu-attribution.md#sourcemap-note-gating)
+
+**Allocation attribution (`--alloc`)** — [allocation-profiling.md](./allocation-profiling.md)
+
+- Why is `--alloc` a dedicated mode with the CPU sampler off? -> [why the CPU sampler runs OFF](./allocation-profiling.md#why-the-cpu-sampler-runs-off-the-dedicated-mode)
+- Why are both GC-inclusion flags mandatory (0 MB vs 58 MB)? -> [the flags are mandatory](./allocation-profiling.md#the-gc-inclusion-flags-are-mandatory)
+- Can the byte totals be believed, and at what tier? -> [trust tiers](./allocation-profiling.md#trust-tiers)
+- Why does allocation name a different owner than CPU? -> [allocation inverts the CPU story](./allocation-profiling.md#allocation-inverts-the-cpu-story)
 
 **The Firefox lane** — [firefox-cpu.md](./firefox-cpu.md), [gecko-profile-format.md](./gecko-profile-format.md)
 
