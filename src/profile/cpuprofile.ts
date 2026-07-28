@@ -34,6 +34,7 @@ import { usToMs, msToUs } from "../model/time.js";
 import { reconcileResidual } from "../model/reconcile.js";
 import { deserialize } from "../output/format.js";
 import { assertSchemaVersion } from "../model/artifact.js";
+import { EPHEMERAL_PORT_MIN, EPHEMERAL_PORT_MAX } from "../model/compat.js";
 import { resolveTarget } from "../commands/resolve.js";
 
 /** Edges below this carry no signal; dropped to keep the model bounded. */
@@ -183,23 +184,6 @@ function singleRootedNodes(nodes: RawProfileNode[]): RawProfileNode[] {
   };
   return [superRoot, ...nodes];
 }
-
-/**
- * Ephemeral-port range: a `listen(0)` server (a dev or test server, e.g. the host page a
- * `--bench --url` run points at) is assigned a port the OS re-picks every run, so it carries no
- * cross-run identity. An unmapped frame served from `http://127.0.0.1:54927/...` must bucket by host
- * alone or the same code splits across a new `(127.0.0.1:PORT)` bucket per run. A registered port
- * (`:3000`, `:8080`, `:443`) names a service the user runs on purpose and stays in the bucket.
- *
- * OS ephemeral ranges vary and the floor is deliberately the widest common one, not the IANA
- * dynamic/private start (49152): Linux `listen(0)` defaults to 32768-60999, so anchoring at 49152
- * would keep the port for the low ~58% of Linux-assigned ports and leak exactly the bench frames
- * this bucketing exists to stabilize. 32768 covers Linux's default as well as the 49152-65535 range
- * macOS/BSD/Windows use. Trade: a deliberate service on a 32768-49151 port loses its port from an
- * unmapped bucket, accepted for the same reason the range exists.
- */
-const EPHEMERAL_PORT_MIN = 32768;
-const EPHEMERAL_PORT_MAX = 65535;
 
 /**
  * Bucket for a remote script whose sourcemap did not resolve: we know its origin and nothing

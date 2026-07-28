@@ -160,6 +160,26 @@ floor set higher than the husk share (e.g. a quarter) leaves a realistic light s
 app boot followed by a small confirmation page — silently uncounted while `assert --max-layouts`
 gates green on the first page's total alone.
 
+## The gate-field invariant: a gate branches on a field the schema epoch guarantees
+
+`countIntegrityRefusal` (`model/count-integrity.ts`) branches on `meta.mainThread.split` and
+`meta.dataLoss.trace` to REFUSE a count gate. `assertSchemaVersion` guards only the schema EPOCH (the
+stored shape), not that any given optional meta field is present, so a gate that reads a meta field
+carries its own presence contract:
+
+**A meta field that a GATE branches on either bumps the schema epoch when it is added, or its
+absent-branch defaults to REFUSE — never to a silent pass. A display-only field stays optional and
+epoch-stable.**
+
+Within schema epoch 4 this holds: `meta.mainThread` is stamped on every counting-mode recording
+(`--breakdown`/`--deep` chrome, gecko), so `countIntegrityRefusal` can always read `.split` there; a
+non-counting recording (default chrome) carries no counts to gate, so its missing `mainThread` refuses
+nothing that could undercount (a count gate n/a-FAILs on the not-measured count first). `meta.dataLoss`
+is present only when the trace overran, and its absence IS the safe default (no loss, no refusal). The
+one silent-pass risk is a NEW counting mode that forgets to stamp `mainThread`: its recording would
+read `split` as absent and gate green on an undercount. The chrome e2e pins the invariant (a
+`--breakdown` recording must carry `meta.mainThread`) so that regression fails loudly.
+
 ## `Paint` is exact, and it is per-chunk
 
 | dirtied regions | 0 | 1 | 2 | 5 | 10 | 20 | 40 |

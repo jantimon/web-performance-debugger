@@ -156,3 +156,29 @@ one that misses a toy bundle.
 Four unit tests pin all of it — remote unmapped bundle counts, node builtin does not, minified local
 bundle counts, plain local source does not. Keep both directions genuinely covered: **when you
 remove a false positive, the test that matters is the one proving the true positive still fires.**
+
+## Remote sourcemap fetch caps (the `--url` amplification bounds)
+
+Resolving a production `--url` site fetches each script and its `.map` over the network, so one
+recording can turn into a large amount of fetching (a heavy site names hundreds of scripts). The caps
+in `trace/sourcemap.ts` bound that amplification so a hostile, misbehaving, or merely huge site cannot
+stall a run for minutes or exhaust memory. They are policy bounds (headroom over the realistic case),
+not measured constants:
+
+| cap | value | what it bounds |
+| --- | --- | --- |
+| `FETCH_TIMEOUT_MS` | 5 s | a single hung script/`.map` fetch (a stuck CDN) |
+| `REMOTE_BUDGET_MS` | 30 s | ALL remote sourcemap work in one run (hundreds of scripts x the per-fetch timeout is otherwise minutes) |
+| `MAX_SCRIPT_BYTES` | 20 MB | one script response (content-length AND streamed, so a lying content-length still aborts) |
+| `MAX_MAP_BYTES` | 50 MB | one `.map` response (a map is bigger than its script) |
+| `MAX_CONCURRENT_FETCHES` | 4 | parallel remote fetches (strictly serial is minutes on a heavy site; the per-script cache/in-flight dedup keeps it one fetch each) |
+| `MAX_REDIRECTS` | 5 | redirect hops, each re-checked against the fetch policy |
+
+When a lookup hits any cap it records a `SourceMapDiagnostics` failure reason
+(`fetch-budget-exhausted`, `script-fetch-failed`, `map-fetch-failed`, `map-too-large`, ...) and the
+frame keeps its **minified** name, degrading to origin-bucketing rather than blocking the run — the
+same honest degrade the [note gating](#sourcemap-note-gating) above surfaces. Those reasons drive the
+user-facing remedy table in the [README](../../README.md#when-per-package-attribution-cant-work): a cap-hit
+reads there as "serve the map / profile a preview deploy", never as "your app has no cost". Once a map
+resolves, minification is irrelevant, so the caps only ever cost identity on the scripts they actually
+stop.
