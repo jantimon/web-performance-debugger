@@ -1,4 +1,5 @@
 import { visibleLength } from "./color.js";
+import { IDLE_DOMINANT_SHARE } from "../model/frame-floor.js";
 
 const BARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 
@@ -65,11 +66,6 @@ export function middleEllipsis(text: string, max: number): string {
  * only a real-site URL-shaped cell is bounded (middle-ellipsis) so it cannot size the whole column. */
 export const LABEL_COL_MAX = 60;
 export const SOURCE_COL_MAX = 80;
-
-/** At or above this idle share a span's wall is settle/idle-dominated, so the window width reads as
- * workload cost unless the idle share rides alongside it. Below it (a tight bench or interaction
- * wall) nothing is said. */
-export const IDLE_DOMINANT_SHARE = 0.8;
 
 /** The idle-share tag for a span wall whose own reconciling window is idle-dominated, else "". Only a
  * span whose wall IS the tiled window (Σ slices + idle = wall) may pass this idleMs/wallMs, so the

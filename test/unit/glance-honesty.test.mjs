@@ -4,10 +4,10 @@ import {
   middleEllipsis,
   idleShareSuffix,
   spanWallProvenance,
-  IDLE_DOMINANT_SHARE,
   LABEL_COL_MAX,
   SOURCE_COL_MAX,
 } from "../../dist/output/ascii.js";
+import { IDLE_DOMINANT_SHARE } from "../../dist/model/frame-floor.js";
 import { visibleLength } from "../../dist/output/color.js";
 
 // middleEllipsis bounds a wide label/URL cell so it cannot size the whole table column. A short cell
