@@ -60,6 +60,14 @@ export interface RecordingMeta {
   headlessMode?: "shell" | "new";
   /** CPU sampler interval (microseconds) this run requested. Absent on older recordings. */
   cpuIntervalUs?: number;
+  /**
+   * Host-CPU speed scalar (higher = faster host), measured in the node process before the capture by
+   * a fixed dependency-free microbenchmark (model/host-cpu.ts). CPU self-time ms are host-relative:
+   * across machines they embed the hardware gap, so a `diff`/`cpu-diff` between two recordings whose
+   * indices differ materially is warned as host-scaled, not a code delta. Stamped on all lanes; absent
+   * on older recordings. wpd does NOT normalize self-time by it -- it is a fact beside the numbers and
+   * a comparability gate axis, nothing more (docs/dev/cpu-profiling.md). */
+  hostCpuIndex?: number;
   /** persistent Chrome profile reused across passes/runs (shorter of relative|absolute), or null */
   userDataDir: string | null;
   /** lifecycle hooks found and called */

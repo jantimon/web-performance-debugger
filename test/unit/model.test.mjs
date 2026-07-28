@@ -387,6 +387,39 @@ test("diff: a sampler-interval mismatch WARNS but still compares (R05)", async (
   assert.equal(interval.code, undefined, "the sampler interval alone does not refuse the gate");
 });
 
+// Host-CPU: self-time ms are host-relative, so two recordings whose host-CPU indices differ beyond the
+// ~25% threshold warn (self-time is host-scaled) but do NOT refuse the gate -- it is an environmental
+// observation, not a config wpd applied. Within threshold (and absent-one-side) follow suit below.
+test("diff: a materially different host-CPU index WARNS but still compares", async () => {
+  const base = writeRecMeta("hc-diff-base.json", { hostCpuIndex: 1800 }, { layoutCount: 1 });
+  const current = writeRecMeta("hc-diff-cur.json", { hostCpuIndex: 650 }, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /host-cpu: 1800 → 650/.test(line)), "both indices are named");
+  assert.equal(code, undefined, "a host difference does not refuse a diff gate");
+});
+
+test("diff: host-CPU indices within threshold are silent", async () => {
+  const base = writeRecMeta("hc-close-base.json", { hostCpuIndex: 1800 }, { layoutCount: 1 });
+  const current = writeRecMeta("hc-close-cur.json", { hostCpuIndex: 1750 }, { layoutCount: 1 });
+  const { logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(!logs.some((line) => /host-cpu/.test(line)), "a ~3% host drift is below the different-class threshold");
+});
+
+test("diff: a host-CPU index present on one side only WARNS (unverifiable)", async () => {
+  const base = writeRecMeta("hc-abs-base.json", { hostCpuIndex: 1800 }, { layoutCount: 1 });
+  const current = writeRecMeta("hc-abs-cur.json", {}, { layoutCount: 1 });
+  const { code, logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(logs.some((line) => /host-cpu: 1800 → unmeasured/.test(line)), "the unmeasured side is disclosed");
+  assert.equal(code, undefined, "an older recording without the index is not blocked");
+});
+
+test("diff: two recordings both lacking a host-CPU index are silent", async () => {
+  const base = writeRecMeta("hc-none-base.json", {}, { layoutCount: 1 });
+  const current = writeRecMeta("hc-none-cur.json", {}, { layoutCount: 1 });
+  const { logs } = await runDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(!logs.some((line) => /host-cpu/.test(line)), "both-absent never appears");
+});
+
 test("diff: --fail-on-regression REFUSES across a mismatched capture-mode/browser (F31)", async () => {
   const base = writeRecMeta("f31-refuse-base.json", { passes: ["deep"], browser: undefined }, { layoutCount: 1 });
   const current = writeRecMeta("f31-refuse-cur.json", { passes: ["gecko"], browser: "firefox" }, { layoutCount: 1 });
@@ -481,6 +514,25 @@ test("cpu-diff: differing --variant labels REFUSE the gate", async () => {
   const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
   assert.ok(errs.some((line) => /variant: fast → slow/.test(line)));
   assert.equal(code, 1, "two techniques behind one module path are not a like-for-like cpu-diff");
+});
+
+// Host-CPU on cpu-diff: this is the command the axis matters most for (self-time joined across two
+// hosts is host-scaled). It NAMES both indices and warns, but does not block -- host difference is
+// environmental, not a config wpd applied, so a same-machine gate that thermally drifted is not refused.
+test("cpu-diff: a materially different host-CPU index names both values and WARNS, does not block", async () => {
+  const base = writeCpuModel("cpudiff-hc-base.cpu.json", { hostCpuIndex: 1800 }, 10);
+  const current = writeCpuModel("cpudiff-hc-cur.cpu.json", { hostCpuIndex: 620 }, 10);
+  const { code, errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(errs.some((line) => /host-cpu: 1800 → 620/.test(line)), "cpu-diff names both host indices");
+  assert.ok(!errs.some((line) => /Refusing to gate/.test(line)), "a host difference is advisory, not a cpu-diff blocker");
+  assert.equal(code, undefined, "no self-time regression, and the host axis does not force a failure");
+});
+
+test("cpu-diff: host-CPU indices within threshold are silent", async () => {
+  const base = writeCpuModel("cpudiff-hc-close-base.cpu.json", { hostCpuIndex: 1800 }, 10);
+  const current = writeCpuModel("cpudiff-hc-close-cur.cpu.json", { hostCpuIndex: 1720 }, 10);
+  const { errs } = await runCpuDiffCapture(base, current, { failOnRegression: true });
+  assert.ok(!errs.some((line) => /host-cpu/.test(line)), "a within-threshold host drift is not disclosed");
 });
 
 test("cpu-diff: a capture-mode mismatch WARNS but still compares (not a cpu-diff blocker) (R05)", async () => {

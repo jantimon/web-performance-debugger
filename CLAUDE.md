@@ -74,7 +74,7 @@ re-exports the domain files so `../model/recording.js` stays the one import path
 (`FrameSideTrack`), `attribution.ts` (`ThrashReport`/`DirtiedBy*`/`BlameSemantic`), `meta.ts`
 (`RecordingMeta`/`WorkloadIdentity`), `sourcemap-meta.ts` (`SourceMapDiagnostics`)), `driver-step.ts`
 (`DriverStep`, the driver→steps contract), `marks.ts` (the `wpd:*`
-mark namespace), `time.ts` (clock/us↔ms helpers), `measured.ts` (the `Measured<T>` not-measured-vs-0
+mark namespace), `time.ts` (clock/us↔ms helpers), `host-cpu.ts` (the host-CPU index microbenchmark stamped as `meta.hostCpuIndex`, a comparability fact, never a normalizer), `measured.ts` (the `Measured<T>` not-measured-vs-0
 honesty wrapper), `reconcile.ts` (slice-sum-vs-wall residual), `span-merge.ts`
 (`mergeSpanOccurrences`: collapse a repeated `measure` label to its lower-median-by-wall occurrence,
 verbatim), `span.ts`/`spans.ts` (the stored `Span` count projection + the `query spans` adapter),

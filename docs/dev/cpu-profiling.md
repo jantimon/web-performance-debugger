@@ -13,6 +13,7 @@
 · [the interval: why 200us](#the-sampler-interval-why-200us)
 · [sub-frame resolution](#sub-frame-cpu-work-is-measurable-on-both-engines-off-the-frame-floor-axis)
 · [what `--cpu-throttle` does to each tier](#what---cpu-throttle-does-to-each-trust-tier)
+· [the host-CPU index](#the-host-cpu-index)
 
 Split out: [firefox-cpu.md](./firefox-cpu.md) (the Gecko sampler lane: shared pass, honest idle,
 the 1 ms floor), [cpu-attribution.md](./cpu-attribution.md) (which spans get samples, hot
@@ -465,7 +466,8 @@ every machine on one speed scale
 ([measurement-ecosystem.md](./measurement-ecosystem.md#what-lighthouse-names-as-its-variance-sources)).
 wpd reports raw self-time and does not normalize for host speed, so the caller owns the calibration:
 pin the host, or pick the multiplier that reproduces the target device's `benchmarkIndex` and re-pick
-it per machine.
+it per machine. wpd stamps its own host-speed scalar (`meta.hostCpuIndex`,
+[below](#the-host-cpu-index)) so a cross-host comparison is at least flagged, but the number stays raw.
 
 ### The device-simulation workflow this supports
 
@@ -474,3 +476,41 @@ the interaction under it, and read: INP/wall for the felt latency at that speed,
 package/function owns it (the ranking holds), and the exact counts for what to cut (invariant). Every
 tier survives the throttle except the absolute wall calibration, which is host-relative and the
 caller's to pin.
+
+## The host-CPU index
+
+Self-time ms are host-relative: the same code runs in fewer ms on a faster CPU, so a self-time delta
+between two machines is mostly the machines (an M-series laptop and a shared CI runner differ
+several-fold on identical work). `meta.hostCpuIndex` stamps a host-speed scalar so a cross-host
+comparison is at least flagged. It is `benchmarkIndex`'s idea (Lighthouse benchmarks the host CPU to
+read every machine on one speed scale,
+[measurement-ecosystem.md](./measurement-ecosystem.md#what-lighthouse-names-as-its-variance-sources)),
+implemented independently and simply.
+
+**What it is.** A fixed dependency-free microbenchmark (`model/host-cpu.ts`): a straight-line loop of
+a KNOWN operation count doing mixed integer/float arithmetic on a bounded accumulator (no
+data-dependent branch, no allocation), timed with `hrtime` over `HOST_CPU_SAMPLES` blocks, reported as
+the MEDIAN block's throughput (work per ms) scaled to a benchmarkIndex-like magnitude. It runs in the
+NODE process (present on every lane -- chrome, firefox, node), BEFORE the capture, never inside the
+measured window and never in the browser: it prices the HOST, not the run. The work is deterministic,
+so only the duration varies with the machine, and the index is monotonic with CPU speed (higher =
+faster).
+
+**[measured]** On a reference M-series the index reads **~1800** at a **~120 ms** budget (11 blocks,
+1M iterations each). Repeated within one process it holds to **~2-3%**; the cross-process median moves
+under ~0.5%. Cross-machine monotonicity cannot be verified from one host here -- the claim rests on the
+mechanism (fixed work, wall-timed) and the field's `benchmarkIndex` precedent, not a local probe.
+
+**What it is NOT.** It does not normalize self-time. `query cpu`/`cpu-diff` numbers stay raw and
+same-host-honest; the index is a fact printed beside them and a comparability axis, nothing more. A
+comparison is trustworthy on one host; across hosts the index says whether the two runs are on the
+same speed scale.
+
+**The gate.** `comparabilityMismatches` (`model/compat.ts`) adds a `host-cpu` axis: when two
+recordings' indices are more than **25% apart** (a ratio of the larger to the smaller; the threshold
+clears the ~2-3% noise and normal thermal drift by a wide margin), `diff`/`cpu-diff --fail-on-regression`
+WARN and name both values. It WARNS, it does not block -- unlike `cpu-throttle`, which blocks because
+it is an artificial slowdown wpd applied. A host difference is environmental, an observation with its
+own noise, so blocking on it would refuse a legitimate same-machine gate whenever a laptop thermally
+drifted between two runs. It sits at the same advisory tier as `sampler-interval`. An index present on
+one side only (an older recording) warns as unverifiable rather than blocking; both-absent is silent.

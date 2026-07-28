@@ -46,6 +46,7 @@ import { extFor } from "../output/format.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 import { stableWorkloadPath } from "../model/compat.js";
+import { measureHostCpuIndex } from "../model/host-cpu.js";
 import type {
   CpuModel,
   Recording,
@@ -199,6 +200,8 @@ interface RecordSetup {
   capture: CaptureConfig;
   capabilities: CaptureCapabilities;
   wantTrace: boolean;
+  /** Host-CPU speed scalar, measured in node before the browser launches (never inside the window). */
+  hostCpuIndex: number;
 }
 
 /** The one capture pass's products: the pass result, the (closed) server whose url string stays valid
@@ -262,6 +265,10 @@ async function resolveSetup(opts: RecordOptions): Promise<RecordSetup> {
   const capabilities = capabilitiesFor(capture, browserName);
   const wantTrace = capture.categories != null;
 
+  // Price the host CPU here, in node, BEFORE the browser launches and the flow runs: it prices the
+  // HOST, so it must never overlap the measured window. ~120 ms of fixed work (model/host-cpu.ts).
+  const hostCpuIndex = measureHostCpuIndex();
+
   // --group preflight: validate this member against any existing manifest BEFORE the browser launches
   // or a byte is written, so a duplicate/name-collision refuses without overwriting a member artifact
   // or downgrading the `latest` pointer (D1/D2). captureFor is pure, so capture.mode is known here.
@@ -292,6 +299,7 @@ async function resolveSetup(opts: RecordOptions): Promise<RecordSetup> {
     capture,
     capabilities,
     wantTrace,
+    hostCpuIndex,
   };
 }
 
@@ -576,7 +584,7 @@ function buildMeta(
   captured: CapturedPass,
   derived: DerivedNotes,
 ): RecordingMeta {
-  const { opts, root, browserName, mode, capture } = setup;
+  const { opts, root, browserName, mode, capture, hostCpuIndex } = setup;
   const { pass } = captured;
   const { notes, threadSelection } = derived;
   const detail = pass;
@@ -616,6 +624,9 @@ function buildMeta(
     // firefox/node, which have no shell/new distinction.
     headlessMode: opts.headless && browserName === "chrome" ? "new" : undefined,
     cpuIntervalUs: opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
+    // Host-CPU speed scalar, measured in node before the launch (a fact beside the numbers, and the
+    // comparability gate axis that warns a cross-host self-time comparison).
+    hostCpuIndex,
     userDataDir: shorterPath(root, opts.userDataDir),
     lifecycle: detail.lifecycle,
     // The one capture that ran, by capture-mode name (there is no multi-pass plan).
@@ -1034,7 +1045,10 @@ function printNodeReport(result: {
 }): void {
   const meta = result.recording.meta;
   const variant = meta.variant ? ` ${dim(`· variant ${meta.variant}`)}` : "";
-  console.log(`\n${bold(meta.tool)} — node:${meta.target}  ${dim(`(fn: ${meta.fn})`)}${variant}`);
+  const hostCpu = meta.hostCpuIndex != null ? ` ${dim(`· host-cpu ${meta.hostCpuIndex}`)}` : "";
+  console.log(
+    `\n${bold(meta.tool)} — node:${meta.target}  ${dim(`(fn: ${meta.fn})`)}${variant}${hostCpu}`,
+  );
   printCpuHeadline(result.cpuModel);
   printCpuBreakdown(result.cpuModel);
 

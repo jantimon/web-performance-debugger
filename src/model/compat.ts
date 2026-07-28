@@ -148,6 +148,54 @@ function workloadMismatch(base: RecordingMeta, current: RecordingMeta): CompatMi
 }
 
 /**
+ * Two host-CPU indices more than 25% apart (a ratio of the larger to the smaller) read as
+ * different-class hosts. The within-host measurement noise is ~2-3% [measured, docs/dev/cpu-profiling.md];
+ * 25% clears that and normal thermal drift by a wide margin while a genuinely faster/slower machine
+ * (M-series vs a shared CI runner differ several-fold) trips it.
+ */
+const HOST_CPU_RATIO_THRESHOLD = 0.25;
+
+/**
+ * The host-CPU axis: were the two recordings measured on materially different hardware?
+ *
+ * CPU self-time ms are host-relative (a faster CPU runs the same code in fewer ms), so a self-time
+ * delta between two hosts is mostly the hosts. When both sides carry a `hostCpuIndex` and they differ
+ * beyond HOST_CPU_RATIO_THRESHOLD, surface a WARNING axis naming both indices. When one side lacks it
+ * (an older recording, or one written before this field), the sameness cannot be verified, so warn
+ * too, under the same axis. Both-absent, or both present and within threshold, returns null (silent).
+ *
+ * Non-blocking, unlike `cpu-throttle`. The blocking axes are things wpd DID to the capture (an
+ * artificial slowdown, an iteration count, a warmup boundary) -- provably config, deterministic, and
+ * fully wpd's doing. The host index is an ENVIRONMENTAL observation with its own few-% noise: blocking
+ * on it would refuse a legitimate same-machine gate whenever a laptop thermally drifts between two
+ * runs. So it advises loudly (self-time is host-scaled here), the same tier as `sampler-interval`,
+ * and leaves the gate to the caller.
+ */
+function hostCpuMismatch(base: RecordingMeta, current: RecordingMeta): CompatMismatch | null {
+  const baseIndex = base.hostCpuIndex;
+  const currentIndex = current.hostCpuIndex;
+  if (baseIndex == null && currentIndex == null) return null;
+  const label = (index: number | undefined): string =>
+    index == null ? "unmeasured" : String(index);
+  if (baseIndex == null || currentIndex == null)
+    return {
+      axis: "host-cpu",
+      base: label(baseIndex),
+      current: label(currentIndex),
+      blocksGating: false,
+    };
+  const larger = Math.max(baseIndex, currentIndex);
+  const smaller = Math.min(baseIndex, currentIndex);
+  if (smaller <= 0 || larger / smaller - 1 <= HOST_CPU_RATIO_THRESHOLD) return null;
+  return {
+    axis: "host-cpu",
+    base: String(baseIndex),
+    current: String(currentIndex),
+    blocksGating: false,
+  };
+}
+
+/**
  * Which capture axes differ between two recordings, and whether each blocks a regression gate.
  *
  * A diff subtracts fields as if the two captures measured the same thing; they do not when the axis
@@ -174,13 +222,16 @@ function workloadMismatch(base: RecordingMeta, current: RecordingMeta): CompatMi
  *     to be the same technique, so it refuses rather than fabricating a pass. Both-absent (the
  *     default, nobody uses variants) matches and never appears here.
  *
- * The sampler interval only WARNS: it moves sampling density and steady-state, not the gated exact
- * counts.
+ * Two axes only WARN. The sampler interval moves sampling density and steady-state, not the gated
+ * exact counts. The host-CPU index (hostCpuMismatch) flags that the two ran on materially different
+ * hardware, so a self-time delta is host-scaled -- advisory, since it is an environmental observation
+ * with its own noise, not a config wpd applied.
  */
 export function comparabilityMismatches(
   base: RecordingMeta,
   current: RecordingMeta,
 ): CompatMismatch[] {
+  const hostCpu = hostCpuMismatch(base, current);
   const axes: CompatMismatch[] = [
     {
       axis: "browser",
@@ -237,6 +288,9 @@ export function comparabilityMismatches(
       current: current.cpuIntervalUs != null ? `${current.cpuIntervalUs}us` : "?",
       blocksGating: false,
     },
+    // Beyond-threshold or one-side-unmeasured only; within-threshold (and both-absent) is silent, so
+    // it is a maybe-entry rather than a fixed axis the final base!==current filter would keep.
+    ...(hostCpu ? [hostCpu] : []),
   ];
   return axes.filter((entry) => entry.base !== entry.current);
 }
