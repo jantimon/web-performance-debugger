@@ -1,5 +1,36 @@
 # @jantimon/web-performance-debugger
 
+## 0.21.0
+
+### Minor Changes
+
+- e5efafa: Recordings now stamp `meta.hostCpuIndex`, a host-CPU speed scalar measured by a short
+  dependency-free microbenchmark in node before each capture (all lanes). `record` and `query cpu`
+  print it beside the numbers. `diff`/`cpu-diff --fail-on-regression` WARN, naming both values, when
+  two recordings' indices are more than 25% apart, since CPU self-time ms are host-relative. It is a
+  fact and a comparability warning only: self-time is NOT normalized, and the axis advises rather than
+  blocks (a host difference is environmental, so a same-machine gate is never refused).
+- 2ab4ecb: **Breaking:** `record --precise-wall` is removed.
+
+  The CPU sampler now rides every chrome sampling capture. Its wall cost (~4-7% on mixed work, ~1% on
+  JS-heavy work) is systematic, so it cancels in `diff`/`cpu-diff` — both sides carry it. A sampler-free
+  wall only serves absolute-wall benchmarking, which wpd does not measure: the wall is directional and
+  the attribution (line, package, count) is the product.
+
+  Migration: record in the default capture mode and compare runs with `diff`. An explicit
+  `--precise-wall` now exits with a message naming the change. Recordings written by the old mode still
+  open and report their metrics not-measured.
+
+### Patch Changes
+
+- a957997: `query blame` rows now carry a representative event id for the `query get` drill. Each row (human
+  table and JSON `eventId`, plus the `query span` forced section) names the widest flush at that source
+  line, so `query get <id>` opens the raw event without a manual re-filter through `query events`.
+  Sampled `--breakdown` rows carry no id (their events are synthesized), shown as `—`, never a fake id.
+- ec5673f: Boot-LCP capture now waits boundedly for a racing `largest-contentful-paint` entry on a hard-navigation
+  step, so a slow environment that queues the entry after the read no longer drops a real paint. Absence
+  stays honest, and the wait sits after the step's end mark so it never grows the measured window.
+
 ## 0.20.0
 
 ### Minor Changes
