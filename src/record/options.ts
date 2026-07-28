@@ -50,6 +50,13 @@ export interface RecordOptions {
    * counts -- with slice durations suppressed (the `.stack` trace distorts them). No CPU model, no bar.
    */
   deep?: boolean;
+  /**
+   * The --alloc capture mode (`--target node` only): a dedicated allocation-attribution pass. V8's
+   * heap SAMPLING profiler runs instead of the CPU profiler (the CPU sampler is OFF), attributing
+   * allocated bytes to source/package. CPU self-time / a CpuModel are NOT measured here. Rejected on
+   * chrome/firefox and alongside --breakdown/--deep (those are chrome capture modes).
+   */
+  alloc?: boolean;
   /** Opt-in variant label stamped on meta, so a diff/cpu-diff gate refuses across two techniques
    * that run through one module path (env-switched). Absent by default. */
   variant?: string;

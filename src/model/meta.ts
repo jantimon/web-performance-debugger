@@ -74,9 +74,10 @@ export interface RecordingMeta {
   lifecycle: string[];
   /**
    * The one capture that ran, by capture-mode name: "default" (sampler only) | "breakdown" | "deep" |
-   * "gecko" (firefox) | "node-cpu" (plus "precise-wall" on retired recordings). Every invocation is
-   * exactly one pass (one browser launch, one run of the flow), so this is a single-element array
-   * naming the capture mode, not a multi-pass plan.
+   * "gecko" (firefox) | "node-cpu" | "node-alloc" (the --alloc heap-sampling lane; CPU not measured)
+   * (plus "precise-wall" on retired recordings). Every invocation is exactly one pass (one browser
+   * launch, one run of the flow), so this is a single-element array naming the capture mode, not a
+   * multi-pass plan.
    */
   passes: string[];
   notes: string[];

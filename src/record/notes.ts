@@ -246,6 +246,11 @@ export function nodeRuntime(): string {
   return "Node runtime (--target node): in-process V8 sampling profile of run(). CPU only; no DOM, layout, paint, or invalidation is measured. Self-time ms come from the profiler's own clock.";
 }
 
+/** --alloc node lane (runtime/node-alloc.ts): allocation attribution, CPU sampler OFF. */
+export function nodeAllocRuntime(): string {
+  return "Allocation mode (--target node --alloc): in-process V8 heap SAMPLING profile of run(), attributing allocated bytes to source/package. The CPU sampler is OFF here (the heap sampler inflates co-riding CPU self-time +11.3%), so CPU self-time and a CpuModel are NOT measured on this recording (use a plain --target node run for those). Allocated bytes are sampled (GC-inclusive) on V8's allocation clock: trustworthy in aggregate as per-package shares and ratios (~5% ratio fidelity); the absolute byte total is directional (~10-20%), not exact.";
+}
+
 /** --disable-browser-sandbox in effect: Chrome ran with --no-sandbox (record.ts). */
 export function browserSandboxDisabled(): string {
   return "WARNING: --disable-browser-sandbox launched Chrome with --no-sandbox: the renderer runs without OS-level process containment. Only safe in a trusted, isolated environment; do not combine it with --user-data-dir or a non-loopback --url.";

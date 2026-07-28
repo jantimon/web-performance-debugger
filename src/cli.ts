@@ -7,6 +7,7 @@ import { resolvePageOption } from "./record/page-option.js";
 import { isPrivateHostname } from "./trace/sourcemap.js";
 import { queryBlame, queryEvents, queryGet, querySpan, querySpans } from "./commands/query.js";
 import { queryCpu, queryFrame } from "./commands/cpu.js";
+import { queryAlloc } from "./commands/alloc.js";
 import { assertCmd, type Thresholds } from "./commands/assert.js";
 import { diffCmd } from "./commands/diff.js";
 import { parseSliceBudgets, SLICE_NAMES, type SliceBudgets } from "./model/spans.js";
@@ -138,6 +139,10 @@ program
     "--deep",
     "attribution-report capture mode. Chrome: ONE full-trace pass (.stack + invalidationTracking), sampler OFF -- exact forced-layout blame, dirtied-by writes, invalidation rollup, exact counts, long tasks; slice durations suppressed (the trace distorts them), no CPU model. Firefox: the SAME gecko pass, adding a dirtied-by (first-invalidation-only) write report from Gecko's cause stacks (no exact-count parity, no forced-by, no thrash detector)",
   )
+  .option(
+    "--alloc",
+    "allocation-attribution capture mode (--target node only): which dependency ALLOCATES during run(). Runs V8's heap sampler instead of the CPU sampler (CPU self-time not measured on this recording). Read it with `query alloc`",
+  )
   // Removed: wpd always runs Chrome's built-in headless (full Chrome, windowless) or --no-headless.
   // Kept as a hidden option so an explicit --headless-mode gets a clear removal message from the
   // action, not commander's generic unknown-option error.
@@ -168,6 +173,19 @@ program
     const bench = !!cmdOpts.bench;
     const node = cmdOpts.target === "node";
     const firefox = cmdOpts.target === "firefox";
+    const alloc = !!cmdOpts.alloc;
+    // --alloc is a dedicated node capture mode (V8 heap sampling in-process): it needs --target node,
+    // and it is mutually exclusive with the chrome capture modes (--breakdown/--deep) -- three
+    // different questions, one capture each. Fired before the lane guards below so an --alloc on the
+    // wrong lane gets this message, not a generic browser-flag complaint.
+    if (alloc && !node)
+      program.error(
+        "--alloc needs --target node: it is an in-process heap-sampling capture mode (which dependency allocates during run()), not available on chrome or firefox.",
+      );
+    if (alloc && (cmdOpts.breakdown || cmdOpts.deep))
+      program.error(
+        "--alloc, --breakdown and --deep are different capture modes (allocation vs the reconciling bar vs the attribution report): pick one. --alloc runs the heap sampler with the CPU sampler off.",
+      );
     // --html is removed: --url names the host page and accepts a local HTML file or a live URL.
     // Intercept an explicit --html here (before resolution reuses cmdOpts.html for the resolved
     // local-file case) so it gets a migration message, not a silently ignored flag.
@@ -324,6 +342,12 @@ program
     // flags. --group alone stays allowed on every target.
     const groupName = cmdOpts.group?.trim() || undefined;
     if (cmdOpts.group != null && !groupName) program.error("--group needs a non-empty name.");
+    // --alloc has no group-aware consumer verb yet (query alloc reads a single recording), so a group
+    // holding an alloc member has nothing to stitch. Refuse rather than write a member no verb reaches.
+    if (alloc && groupName)
+      program.error(
+        "--alloc does not support --group in this version: there is no group-aware allocation verb. Record it as a standalone `record <module> --target node --alloc` run.",
+      );
     let memberModes: GroupMemberMode[] | undefined;
     if (cmdOpts.members != null) {
       if (!groupName)
@@ -388,6 +412,7 @@ program
       protocolTimeoutMs: cmdOpts.protocolTimeout,
       breakdown: !!cmdOpts.breakdown,
       deep: !!cmdOpts.deep,
+      alloc,
       // Trim to a non-empty label or drop it: an empty/whitespace --variant would otherwise persist
       // into meta and block a comparability gate while every truthiness-guarded output omitted it,
       // so gating and disclosure would disagree.
@@ -518,6 +543,15 @@ fmtOpts(
     .option("--by <grouping>", "rollup grouping: package | file | function", "package")
     .option("--top <n>", "hot functions to show", toPositiveInt),
 ).action((file, opts) => run(queryCpu(file, opts)));
+fmtOpts(
+  query
+    .command("alloc <file>")
+    .description(
+      "allocation profile overview (--target node --alloc): top allocating functions + by-package bytes",
+    )
+    .option("--by <grouping>", "rollup grouping: package | file | function", "package")
+    .option("--top <n>", "functions to show", toPositiveInt),
+).action((file, opts) => run(queryAlloc(file, opts)));
 fmtOpts(
   query
     .command("frame <file> <id>")

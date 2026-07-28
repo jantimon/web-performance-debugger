@@ -142,8 +142,10 @@ export function isToolFrameUrl(url: string | undefined): boolean {
     // Firefox/BiDi attributes page.evaluate code to the served host page url, so the
     // bench harness loop lands on the blank host page; drop it (not user code).
     url.includes("/__wpd_blank__") ||
-    // the in-process node-runtime driver loop (not user code)
-    url.includes("/runtime/node.")
+    // the in-process node-runtime driver loop (not user code); node.js is the CPU lane,
+    // node-alloc.js the allocation lane
+    url.includes("/runtime/node.") ||
+    url.includes("/runtime/node-alloc.")
   )
     return true;
   if (url.startsWith("pptr:")) {
