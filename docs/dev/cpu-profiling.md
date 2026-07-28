@@ -514,3 +514,13 @@ it is an artificial slowdown wpd applied. A host difference is environmental, an
 own noise, so blocking on it would refuse a legitimate same-machine gate whenever a laptop thermally
 drifted between two runs. It sits at the same advisory tier as `sampler-interval`. An index present on
 one side only (an older recording) warns as unverifiable rather than blocking; both-absent is silent.
+
+**Cross-machine validation.** The two claims the axis rests on -- the index is monotonic with real CPU
+speed across machines, and the 25% threshold separates host classes without a cross-arch loop skew
+tripping a similar-speed pair -- are checked on GitHub's five distinct hosted runner classes by the
+`host-cpu-matrix` workflow (`.github/workflows/host-cpu-matrix.yml`). It is `workflow_dispatch` only, so
+it runs on demand and costs nothing until dispatched: `gh workflow run host-cpu-matrix.yml`. Each job
+runs the shipped `measureHostCpuIndex` ten times via `scripts/host-cpu-probe.mjs` (browser-free, node
+only) and uploads a per-host JSON summary; `scripts/host-cpu-analyze.mjs` folds those summaries into the
+cross-host ratio matrix, the pairwise separation verdict against the 25% threshold, and the ARM-vs-x64
+skew read.
