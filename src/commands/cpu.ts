@@ -28,16 +28,30 @@ const heat = (pct: number, text: string): string =>
 const slicePct = (ms: number, wallMs: number): string => `${num((ms / wallMs) * 100, 1)}%`;
 
 /**
- * The "what the js slice includes" footer, engine-conditioned. Chrome folds synchronous engine work
- * (a forced layout) into the forcing JS frame, so js is not pure JS. Firefox does NOT: its bar is
- * sampled from Layout-category frames, so a forced layout bills to the style/layout slices and js can
- * read near 0 on a JS-driven flush (docs/dev/engine-mapping.md). Node has no DOM, so its js really is
- * pure JS, and it prints no footer.
+ * The "what the js slice includes" footer, engine-conditioned AND bar-conditioned, because the two
+ * chrome bars measure js differently:
+ *
+ *   - The CPU-model bar (printCpuBreakdown) is sampler self-time. The V8 sampler walks the JS stack,
+ *     so the synchronous engine work JS triggered (a forced layout) is billed to the forcing JS
+ *     frame: js is NOT pure JS. That is the `bars: "cpu-model"` footer.
+ *   - The reconciling tiled bar (printSpanBreakdowns) is disjoint trace self-time. A Layout/
+ *     UpdateLayoutTree event tiles into the style/layout slices, so the js slice is trace scripting
+ *     self-time WITHOUT the nested flush: a forced layout bills to style/layout, not js. That is the
+ *     `bars: "reconciling"` footer, structurally the firefox note but for chrome.
+ *
+ * Firefox has only the reconciling-shaped bar (sampled from Layout-category frames), so it reads the
+ * same on both call sites: a forced layout bills to style/layout and js can read near 0 on a JS-driven
+ * flush (docs/dev/engine-mapping.md). Node has no DOM, so its js really is pure JS: no footer.
  */
-function jsSliceFooter(engine: "chrome" | "firefox" | "node"): string | null {
+function jsSliceFooter(
+  engine: "chrome" | "firefox" | "node",
+  bars: "cpu-model" | "reconciling",
+): string | null {
   if (engine === "node") return null;
   if (engine === "firefox")
     return "on firefox the js slice is sampled JS only; synchronous engine work JS triggered (e.g. a forced layout) bills to the style/layout slices, not js, so a JS-driven forced layout can read js near 0.";
+  if (bars === "reconciling")
+    return "on this reconciling bar the js slice is trace scripting self-time; synchronous engine work JS triggered (e.g. a forced layout) tiles into the style/layout slices, not js.";
   return "js includes synchronous engine work JS triggered (e.g. forced layout bills to the forcing frame); it is not pure JS.";
 }
 
@@ -129,7 +143,7 @@ export function printCpuBreakdown(model: CpuModel, iterations?: number): void {
   // The js-slice footer is engine-conditioned: on firefox the forced-layout cost lands in
   // style/layout, not js (see jsSliceFooter), and the gecko bar quantizes to the ~1ms sampler.
   const engine = isNode ? "node" : model.meta.browser === "firefox" ? "firefox" : "chrome";
-  const footer = jsSliceFooter(engine);
+  const footer = jsSliceFooter(engine, "cpu-model");
   if (footer) console.log(dim(footer));
   if (engine === "firefox") console.log(dim(FIREFOX_QUANTIZATION_NOTE));
 }
@@ -204,10 +218,12 @@ export function printSpanBreakdowns(
       console.log(dim(`  residual ${num(residualMs, 3)} ms (tiling did not fully close)`));
     if (span.frames) printFrameSideTrack(span.frames, showFrames);
   }
-  // Engine-conditioned footer: firefox bills forced layout to style/layout (js can read ~0) and its
-  // slices quantize to the ~1ms Gecko sampler; chrome folds the forced layout into the js frame.
+  // Engine-conditioned footer for the RECONCILING tiled bar: on both engines a forced layout bills to
+  // the style/layout slices, not js (the tiling bills each Layout/UpdateLayoutTree event there), so
+  // this is the "reconciling" footer, never the CPU-model bar's forcing-frame fold. Firefox slices
+  // also quantize to the ~1ms Gecko sampler.
   const engine = browser === "firefox" ? "firefox" : "chrome";
-  console.log(dim(`\n${jsSliceFooter(engine)}`));
+  console.log(dim(`\n${jsSliceFooter(engine, "reconciling")}`));
   if (engine === "firefox") console.log(dim(FIREFOX_QUANTIZATION_NOTE));
 }
 

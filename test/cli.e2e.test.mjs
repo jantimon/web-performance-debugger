@@ -581,6 +581,50 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
   assert.match(spanHuman, /layout objects\s+p50/, "the human anatomy prints the scope distribution");
 });
 
+// The js-slice footer's provenance is bar-conditioned, the chrome mirror of firefox.e2e.test.mjs's
+// guard. The four-slice CPU-model bar (default capture mode) is sampler self-time, so a forced layout
+// DOES bill to the forcing JS frame -- that sentence must be PRESENT. The reconciling tiled bar
+// (--breakdown) splits the flush into style/layout, so its js is trace scripting self-time and the
+// "forcing frame" sentence must be ABSENT; the report instead carries the reconciling footer and the
+// one bridging line that reconciles the sampler headline's js with the tiled bar's smaller js.
+e2e("record: the forcing-frame footer rides the CPU bar, not the reconciling --breakdown bar", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+
+  // Four-slice CPU-model bar (default capture mode): the sampler folds the forced layout into the
+  // forcing frame, so the sentence is true and present.
+  const defaultReport = runCli([
+    "record", path.join(examples, "forces-layout.mjs"),
+    "--bench", "--iterations", "5", "--out", path.join(dir, "default"),
+  ]);
+  assert.match(
+    defaultReport,
+    /forced layout bills to the forcing frame/,
+    "the CPU-model bar folds the forced layout into the forcing frame",
+  );
+
+  // Reconciling seven-slice bar (--breakdown): the flush tiles into style/layout, so the fold sentence
+  // is false here and must be absent; the reconciling footer + the bridging line take its place.
+  const breakdownReport = runCli([
+    "record", path.join(examples, "forces-layout.mjs"),
+    "--bench", "--breakdown", "--iterations", "5", "--out", path.join(dir, "bd"),
+  ]);
+  assert.doesNotMatch(
+    breakdownReport,
+    /bills to the forcing frame/,
+    "the reconciling bar must NOT repeat the CPU-model fold sentence",
+  );
+  assert.match(
+    breakdownReport,
+    /the js slice is trace scripting self-time/,
+    "the reconciling footer describes the tiled bar",
+  );
+  assert.match(
+    breakdownReport,
+    /the two js figures measure different things and are both right/,
+    "one bridging line reconciles the sampler headline's js with the tiled bar's js",
+  );
+});
+
 // Per-driver-step CPU attribution: a measureStep that runs real in-page JS must carry a non-empty
 // js-by-package split AND an unsuppressed hot-function list on the CPU-sampler scripting axis, with
 // real sample counts. The regression: without the sampler covering the step's iteration-0 window,

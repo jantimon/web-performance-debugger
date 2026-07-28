@@ -1161,9 +1161,21 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
     printSourcemapLine(recording.meta.sourcemaps, cpuModel.unmappedFrames ?? 0);
     // In --breakdown mode the seven-slice per-span bars replace the single profile-only bar.
     const barSpans = recording.spans.filter((span) => span.breakdown);
-    if (barSpans.length)
+    if (barSpans.length) {
       printSpanBreakdowns(barSpans, recording.meta.iterations, recording.meta.browser);
-    else printCpuBreakdown(cpuModel);
+      // Bridge the two js figures a chrome report shows: the CPU-profile headline above prints JS
+      // self-time from the sampler, which FOLDS the synchronous engine work JS triggered into the
+      // forcing frame; the reconciling bar TILES that same work out into style/layout, so its js is
+      // trace scripting self-time without the flush. The two js numbers measure different things and
+      // are both right. Chrome only: firefox's headline and bar are both sampled-JS-only, so they do
+      // not diverge this way.
+      if (recording.meta.browser !== "firefox")
+        console.log(
+          dim(
+            "the CPU-profile headline's JS self-time folds the engine work JS triggered into the forcing frame; the bar's js tiles that same work into style/layout instead, so the two js figures measure different things and are both right.",
+          ),
+        );
+    } else printCpuBreakdown(cpuModel);
   }
   if (recording.meta.throttle?.cpuRate) {
     console.log(`\nslowdown: cpu ${recording.meta.throttle.cpuRate}x`);

@@ -154,6 +154,37 @@ test("computeSpanBreakdown: zero samples in the js regions leaves byPackage empt
   assert.equal(breakdown.slices.js.ms, 20, "the js ms is still the trace-measured value");
 });
 
+// At an EQUAL start ts the sort tiebreaker (`|| right.end - left.end`) must put the longer
+// (container) interval first, or the disjoint sweep pushes the child onto the stack as if it were
+// the parent and the inner slice vanishes. Input order is deliberately child-first so only the
+// comparator decides; inverting the tiebreaker (`left.end - right.end`) sorts the child first and
+// zeroes the inner layout, which this pins.
+test("computeSpanBreakdown: at an equal start the container sorts before the child (the tiebreaker)", () => {
+  const events = [
+    { id: 0, name: "Layout", ts: 0, dur: 40000, ph: "X", kind: "layout" }, // inner child (shorter)
+    { id: 1, name: "RunTask", ts: 0, dur: 100000, ph: "X", kind: "task" }, // outer container (longer)
+  ];
+  const breakdown = computeSpanBreakdown(events, [], { startTs: 0, endTs: 100000 });
+  assert.equal(breakdown.slices.layout.ms, 40, "the nested layout keeps its 40ms self-time");
+  assert.equal(breakdown.slices.other.ms, 60, "the container's remainder is the other slice");
+  assert.equal(breakdown.slices.idle.ms, 0, "the window is fully covered");
+});
+
+// The js segments are half-open [start, end): a sample AT a segment's `end` belongs to the next
+// segment, never this one (the `ts >= segment.end` boundary in inAnySegment). NESTED_EVENTS' first js
+// region is [10000,20000); 20000 is the start of the Layout region, so a sample there must NOT count
+// toward js. Relaxing the boundary to `ts > segment.end` would wrongly fold it into js, splitting the
+// share; a distinct package on the boundary sample makes that split visible.
+test("computeSpanBreakdown: a sample exactly at a js-segment end lands in the next segment, not js", () => {
+  const samples = [
+    { traceTs: 15000, package: "react" }, // strictly inside the first js region
+    { traceTs: 20000, package: "app" }, // AT the js-region end == Layout-region start -> not a js sample
+  ];
+  const breakdown = computeSpanBreakdown(NESTED_EVENTS, samples, NESTED_WINDOW);
+  // Only react is counted, so it owns the whole 20ms js slice; app never enters the split.
+  assert.deepEqual(breakdown.slices.js.byPackage, { react: 20 });
+});
+
 test("computeSpanBreakdown: 50 random nested flame charts each tile the window with no residual", () => {
   const rand = lcg(0x9e3779b9);
   for (let iteration = 0; iteration < 50; iteration++) {
