@@ -98,6 +98,25 @@ slice, never a ranked function or a package row, so it cannot become a hot funct
 per-function/package `cpu-diff` row. Its only reach was the non-idle total, which `jsSelfMs` gating
 now excludes.
 
+### The cpu-diff resolving floor
+
+**[measured]** Even with the prefix windowed out, a near-zero workload lands only a handful of samples,
+and where they fall is quantization. On the `examples/near-zero.mjs` probe (a `console.log`, `--target
+node`), `jsSelfMs` jitters **0.16-1.21ms** run to run on identical code. The `cpu-diff
+--fail-on-regression` noise floor is 0.5ms (~2.5 samples at the 200us interval), narrower than that
+jitter, so two identical runs could net a delta above the floor and trip the gate ~3% of the time --
+a false regression from where the samples landed, not from a code change.
+
+So the JS-self gate carries a resolving floor: when BOTH sides' `jsSelfMs` sit below
+`RESOLVING_FLOOR_SAMPLES` samples (10, ~2ms at 200us, derived from the interval so it scales), a net
+delta is quantization, not signal, and the gate does not fire whatever the delta. The human output and
+JSON carry a disclosure note ("both sides below the sampler's resolving floor (~Xms at the recorded
+interval); the JS-self net gate is not evaluable at this scale"), and the exit stays 0 unless another
+gated axis fires. The floor is per-model from the RECORDED `sampleIntervalUs` (they can differ: chrome
+default 200us, the ~150us breakdown stream, firefox ~1ms), and the larger implied floor wins. Below
+resolving power a net delta is noise; "two identical runs must gate green" is the promise. Per-function
+and per-package rows and every other axis are unchanged.
+
 ## The capture modes
 
 Every invocation is exactly ONE capture pass: one browser launch, one run of the flow, one recording.

@@ -182,3 +182,84 @@ test("cpu-diff: two identical no-op profiles produce no regression (B-01)", asyn
   const code = await captureExitCode(() => cpuDiffCmd(base, current, { failOnRegression: true }));
   assert.equal(code, undefined, "identical no-op runs are not a regression");
 });
+
+/** Write a CpuModel with a chosen sampler interval, so the resolving floor (10 samples) can be varied. */
+function writeModelAt(name, jsSelfMs, sampleIntervalUs) {
+  const model = {
+    profile: `${name}.cpuprofile`,
+    meta: { tool: "wpd", version: "0", schemaVersion: SCHEMA_VERSION, passes: ["node-cpu"], iterations: 1, target: "a.mjs", runtime: "node" },
+    sampleCount: 1,
+    sampleIntervalUs,
+    totalMs: jsSelfMs,
+    jsSelfMs,
+    activeMs: jsSelfMs,
+    system: { idleMs: 0, gcMs: 0, programMs: 0 },
+    functions: runFn(jsSelfMs),
+    edges: [],
+  };
+  const file = path.join(tmpDir, name);
+  writeFileSync(file, JSON.stringify(model), "utf8");
+  return file;
+}
+
+/** Run cpu-diff --format json, returning { code, result } with console.log captured. */
+async function runDiff(base, current, opts = {}) {
+  const priorLog = console.log;
+  const priorExit = process.exitCode;
+  const lines = [];
+  console.log = (line) => lines.push(line);
+  process.exitCode = undefined;
+  try {
+    await cpuDiffCmd(base, current, { failOnRegression: true, format: "json", ...opts });
+    return { code: process.exitCode, result: JSON.parse(lines.join("\n")) };
+  } finally {
+    console.log = priorLog;
+    process.exitCode = priorExit;
+  }
+}
+
+// Resolving floor: below 10 samples of JS self-time on BOTH sides, a net delta is quantization, not
+// signal, so the JS-self gate does not fire and the output discloses it. At 200us that floor is 2ms.
+test("cpu-diff resolving floor: both sides below the floor do not gate, with a disclosure note", async () => {
+  // 0.4 -> 1.6ms is a +1.2ms net (> the 0.5ms noise floor), but both sit under the 2ms resolving floor.
+  const base = writeModelAt("cpudiff-floor-below-base.cpu.json", 0.4, 200);
+  const current = writeModelAt("cpudiff-floor-below-cur.cpu.json", 1.6, 200);
+  const { code, result } = await runDiff(base, current);
+  assert.equal(code, undefined, "below resolving power, the net delta is not a regression");
+  assert.ok(result.netJsSelfMs > 0.5, "the raw net delta still clears the 0.5ms noise floor");
+  assert.equal(result.notes.length, 1, "a single disclosure note is carried");
+  assert.match(result.notes[0], /resolving floor/, "the note names the resolving floor");
+  assert.match(result.notes[0], /not evaluable at this scale/, "the note says the gate is not evaluable");
+  assert.match(result.notes[0], /~2ms at the recorded interval/, "the note states the floor ms at the recorded interval");
+});
+
+test("cpu-diff resolving floor: one side above the floor gates normally, no note", async () => {
+  // current is 5ms (above the 2ms floor), so the delta is real signal and the gate fires.
+  const base = writeModelAt("cpudiff-floor-above-base.cpu.json", 0.4, 200);
+  const current = writeModelAt("cpudiff-floor-above-cur.cpu.json", 5, 200);
+  const { code, result } = await runDiff(base, current);
+  assert.equal(code, 1, "with one side above resolving power, a regression gates");
+  assert.equal(result.notes.length, 0, "no resolving-floor note when the gate is evaluable");
+});
+
+test("cpu-diff resolving floor: a side sitting exactly at the floor counts as resolvable (gates)", async () => {
+  // base == 2.0ms == the floor: the below-floor test is strict `<`, so exactly-at-the-floor is NOT
+  // below, the gate is evaluable, and a real +1ms regression fires.
+  const base = writeModelAt("cpudiff-floor-boundary-base.cpu.json", 2.0, 200);
+  const current = writeModelAt("cpudiff-floor-boundary-cur.cpu.json", 3.0, 200);
+  const { code, result } = await runDiff(base, current);
+  assert.equal(code, 1, "a side at exactly the floor is resolvable, so the regression gates");
+  assert.equal(result.notes.length, 0, "no note when a side sits at (not below) the floor");
+});
+
+test("cpu-diff resolving floor: differing intervals use the LARGER implied floor", async () => {
+  // base at a 1000us interval (~firefox) implies a 10ms floor; current at 200us implies 2ms. Both
+  // sides (3ms, 8ms) sit under the LARGER 10ms floor, so the +5ms net does not gate. Had the smaller
+  // 2ms floor won, both would read above it and the gate would fire on quantization.
+  const base = writeModelAt("cpudiff-floor-interval-base.cpu.json", 3, 1000);
+  const current = writeModelAt("cpudiff-floor-interval-cur.cpu.json", 8, 200);
+  const { code, result } = await runDiff(base, current);
+  assert.equal(code, undefined, "the larger implied floor (10ms) covers both sides, so no gate");
+  assert.equal(result.notes.length, 1, "the disclosure note is carried");
+  assert.match(result.notes[0], /~10ms at the recorded interval/, "the note reports the larger implied floor");
+});

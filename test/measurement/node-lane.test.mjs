@@ -68,13 +68,17 @@ test("node lane: a near-no-op --target node run gates stable under cpu-diff (B-0
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-node-e2e-"));
   const probe = path.join(examples, "near-zero.mjs");
   const base = path.join(dir, "base.json");
-  const current = path.join(dir, "current.json");
+  // Record ONCE and self-diff. Recording twice made this flaky: two near-zero captures each land a
+  // handful of samples, and sampler quantization jitters jsSelfMs 0.16-1.21ms between them against a
+  // 0.5ms gate floor (~2.5 samples), so identical code tripped --fail-on-regression ~3% of runs.
+  // Self-diffing pins netJsSelfMs=0 by construction, so the gate's exit-0 path stays covered without
+  // depending on where two independent runs' samples fell.
   runCli(["record", probe, "--target", "node", "--iterations", "20", "--out", base]);
-  runCli(["record", probe, "--target", "node", "--iterations", "20", "--out", current]);
 
   const baseModel = JSON.parse(readFileSync(`${base.replace(/\.json$/, "")}.cpu.json`, "utf8"));
   assert.ok(baseModel.jsSelfMs < 5, `a near-no-op reports ~0 JS self-time, got ${baseModel.jsSelfMs}`);
-  // No `post (node:inspector)` prefix frame should top the list; the windowing removed it.
+  // No `post (node:inspector)` prefix frame should top the list; the windowing removed it. The probe's
+  // console.log is load-bearing here: a bare-return probe lands `post` as functions[0].
   const topFn = baseModel.functions[0];
   assert.ok(
     !topFn || !(topFn.fn === "post" && (topFn.file ?? "").includes("inspector")),
@@ -82,6 +86,6 @@ test("node lane: a near-no-op --target node run gates stable under cpu-diff (B-0
   );
 
   // --fail-on-regression must exit 0: runCli throws on a non-zero exit, so no throw is the assertion.
-  const diff = JSON.parse(runCli(["cpu-diff", base, current, "--fail-on-regression", "--format", "json"]));
-  assert.ok(Math.abs(diff.netJsSelfMs) < 5, `two identical no-op runs net ~0, got ${diff.netJsSelfMs}`);
+  const diff = JSON.parse(runCli(["cpu-diff", base, base, "--fail-on-regression", "--format", "json"]));
+  assert.equal(diff.netJsSelfMs, 0, `a self-diff nets exactly 0, got ${diff.netJsSelfMs}`);
 });
