@@ -537,4 +537,10 @@ export interface CpuDiffResult {
   netJsSelfPct: number;
   byPackage: CpuPackageDelta[];
   functions: CpuFunctionDelta[];
+  /**
+   * Disclosures that qualify the gate verdict; empty in the normal case. Carries the resolving-floor
+   * note when BOTH sides' jsSelfMs sit below the sampler's resolving power, where the JS-self net gate
+   * is quantization-bound and does not fire.
+   */
+  notes: string[];
 }

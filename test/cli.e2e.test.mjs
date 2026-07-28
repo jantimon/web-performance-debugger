@@ -1597,8 +1597,12 @@ e2e("record --url boot: counts/bar follow a cross-process navigation, not the bl
     const runSpan = bd.spans.find((span) => span.kind === "run");
     const bdLoad = bd.spans.find((span) => span.kind === "step" && span.label === "load");
     assert.ok(runSpan?.breakdown, "the run span carries a reconciling bar");
-    const idleFraction = runSpan.breakdown.slices.idle.ms / runSpan.breakdown.wallMs;
-    assert.ok(idleFraction < 0.95, `the run bar is not almost-all idle (idle was ${(idleFraction * 100).toFixed(1)}%)`);
+    // Assert the layout slice directly, not the idle RATIO. The boot window is idle-dominated (the
+    // page loads, then sits), so idle sits ~94-95% even when the bar is correct -- an idle-fraction
+    // threshold rides that natural band and reds on ordinary runs. The bug this guards (the bar tiling
+    // the pre-nav blank thread) drives the layout slice to ~0; a real laying-out boot puts real ms
+    // there. So gate on the layout slice being present, which the F1 wrong-thread regression zeroes.
+    assert.ok(runSpan.breakdown.slices.layout.ms > 0, `the run bar attributes real layout time to the navigated process (layout ms was ${runSpan.breakdown.slices.layout.ms})`);
     assert.ok(bdLoad.counts.layoutCount > 0, "the load step's counts also follow the navigated process");
 
     // --deep: exact counts on the same cross-process boot must be > 0 (the F2 consequence: a real
