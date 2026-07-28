@@ -195,12 +195,18 @@ measure is the same failure as faking a zero, in the opposite direction.
 A fake zero announces itself; these do not.
 
 - `forcedLayoutMs` **under-reports badly** on Firefox: 1.08ms vs chrome's 7.17ms for identical work
-  on `examples/forces-layout.mjs`. The markers miss short flushes. It is invisible in the output:
-  not a zero, so it never trips the "unmeasured" guard, and `meta.notes` covers what is missing, not
-  what is subtly off.
+  on `examples/forces-layout.mjs` at iteration 1. The markers miss short flushes. It is invisible in
+  the output: not a zero, so it never trips the "unmeasured" guard, and `meta.notes` covers what is
+  missing, not what is subtly off. The magnitude IS recoverable from the samples: the gecko bar's
+  `layout` slice (7.66ms) reaches chrome's clean forced-layout duration, where the `forced` marker sum
+  (1.17ms) does not — see
+  [blame-semantics.md](./blame-semantics.md#forced-layout-blame-differs-by-engine).
 - `query blame --forced` names the **read** on both engines, but Firefox's is a **sampled** estimate
   (it can lag one statement or miss a cheap read) where Chrome's comes exact from the `.stack`. The
   blame output discloses the sampled caveat, so this one is not silent.
-- The signal that *does* survive cross-engine is CPU self-time (8.41ms chrome / 8.79ms firefox,
-  ~5%), which is the inverse of how the README ranks trust. See
+- CPU self-time survives cross-engine **only on pure JS** (firefox 0.83x chrome, an engine-speed
+  offset); on reflow-heavy work firefox `selfMs` runs 1.5-3x chrome's because the `js` feature bills a
+  per-reflow stack capture to the forcing frame. So `selfMs` is comparable on the `--target node` /
+  pure-JS end, not the reflow end. See
+  [firefox-cpu.md](./firefox-cpu.md#the-sampler-contaminates-self-time-on-reflow-heavy-work) and
   [engine-mapping.md](./engine-mapping.md#what-is-actually-comparable-across-engines).

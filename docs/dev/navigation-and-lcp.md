@@ -29,9 +29,20 @@ wpd launches) and Firefox 152; the API is Baseline cross-browser
 (https://developer.mozilla.org/en-US/docs/Web/API/LargestContentfulPaint ,
 https://caniuse.com/mdn-api_largestcontentfulpaint).
 
-Firefox's `element`/`url`/`size` fidelity is **unprobed**. Chrome populates all three; whether
-Firefox names the same element and reports a matching size is not established, so do not claim
-cross-engine LCP parity without running the probe in both engines first.
+**[measured]** Firefox's `element`/`url`/`size` fidelity is **partial parity**, Firefox 152 / Chrome
+150, boot LCP via the built-in load flow, 3 reps each. On a page with a raster (PNG) hero and a text
+block, both engines pick the same element and agree on its identity: tag `IMG`, the same `url`, and
+the same `size` (480000 px^2 both). renderTime is populated in both same-origin, but its absolute
+value is wall-tier and differs (chrome 20ms / firefox 72ms) — a paint timestamp on each engine's own
+clock, not a comparable number.
+
+The parity **breaks on an SVG-image hero**: Chrome does not treat `<img src="*.svg">` as an LCP
+candidate and falls back to the next-largest element (the H1 text, size 69440, no url), while Firefox
+picks the SVG image (tag `IMG`, url, size 700000). So on the identical page the two engines report a
+different element, size, and url. So a boot LCP is comparable across engines for **raster-image and
+text** heroes (element + url + size), never for **SVG-image** heroes, and its renderTime is
+directional (wall tier) either way. Do not claim blanket cross-engine LCP parity; scope it to the
+raster/text case.
 
 ## The useful LCP identifier is url+size+tag
 

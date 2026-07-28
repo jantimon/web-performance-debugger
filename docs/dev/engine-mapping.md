@@ -144,12 +144,14 @@ on searchfox.
 
 ## What is actually comparable across engines
 
-**[measured]**, same probe, and it inverts the hierarchy the README currently implies:
+**[measured]** across a workload sweep (pure JS, forces-layout, a 50/50 JS+layout mix, and a
+read-after-write thrash), Firefox 152 / Chrome 150, 5 reps each:
 
 | Signal | chrome | firefox | comparable? |
 | --- | --- | --- | --- |
-| CPU self-time of the forcing fn | 8.41 ms | 8.79 ms | **yes, ~5%** |
-| `interaction.processingMs` | 45.1 ms | 45.0 ms | **yes, ~0.2%** |
+| CPU self-time, **pure JS** (no reflow) | 35.1 ms | 29.2 ms | **yes** (FF 0.83x; engine-speed only) |
+| CPU self-time of the **forcing fn** | 7.96 ms | 11.94 ms | **no, FF 1.5-3x** (scales with reflow; see below) |
+| `interaction.processingMs` | 45.1 ms | 45.0 ms | **yes, ~0.2%** (holds on a yielding handler too) |
 | forced-blame read line | exact (`.stack`) | sampled (~1 ms) | **yes, line granularity** (12/21 exact) |
 | `inpMs` | 56 ms | 48 ms | no, and see below |
 | forced layout ms | 7.17 ms | 1.08 ms | no, 7x |
@@ -173,22 +175,40 @@ Consistent with the independent measurement in
 [gecko-profile-format.md](./gecko-profile-format.md) (chrome processing 112.2 + presentation 47.4 vs
 firefox 111.0 + presentation 16.0 on a 100 ms handler): same conclusion, different probe.
 
-Counts and marker-ms are genuinely not comparable across engines — Gecko batches layout differently
-and its markers miss short flushes. But **CPU self-time is**, because both samplers attribute the
-synchronous engine work to the JS frame that triggered it, and both measure it on their own clock.
-That is the opposite of how the README ranks these, and it is a strong argument for the CPU lane
-being on by default.
+Counts and marker-ms are genuinely not comparable across engines. **CPU self-time crosses only when
+JS did not force layout.** On pure JS both samplers attribute the same work to the same frame on their
+own microsecond clock, and firefox reads **0.83x** chrome (a SpiderMonkey-vs-V8 speed offset, not
+noise). The moment JS forces layout, firefox's self-time runs **1.5-3x** chrome's, and the excess
+scales with the number of forced flushes:
 
-The pattern in what crosses: **the signals that cross are the ones each engine times on its own
-clock (self-time, processing); the ones that do not are the ones each engine counts or batches by
-its own rules** (layout batches, marker-ms), plus presentation delay, where the engines genuinely
-differ. That is a better predictor than the tier list, and worth applying before assuming a new
-signal is comparable.
+| workload | forced flushes | firefox / chrome self-time |
+| --- | --- | --- |
+| pure JS | 0 | 0.83x |
+| forces-layout, cold (iter 1) | ~40 | 1.50x |
+| forces-layout, warm (iter 15) | ~40 / iter | 2.56x |
+| 50/50 JS+layout, few large flushes | ~18 / iter | 2.54x |
+| read-after-write thrash | ~3000 / iter | 3.08x |
 
-Caveat: the self-time row is one probe, ~85% reflow by cost. Reproduce on a mixed JS+layout workload
-before promoting this claim to the README. The `processingMs` row is also one probe, and a
-deliberately synthetic one (a busy-wait, no async work, no framework); a handler that yields would
-split its cost across processing and presentation differently in each engine.
+The cause is the same per-marker capture that costs the gecko pass ~150% wall
+([firefox-cpu.md](./firefox-cpu.md#the-sampler-contaminates-self-time-on-reflow-heavy-work)): the
+`js` feature fires `profiler_capture_backtrace()` on every reflow, that capture is real main-thread
+CPU (threadCPUDelta tracks wall within 4%, so it is not descheduling), and it lands on the JS frame
+that forced the reflow — the `selfMs` analog of chrome's `.stack` +21%. So a firefox `selfMs` on
+reflow-heavy work is JS + real reflow + this marker tax; it is comparable to chrome's only on the
+pure-JS / `--target node` end, or when a single large cold reflow swamps the per-flush tax.
+
+`interaction.processingMs` **does** cross, and it survives a yielding handler: a click handler that
+runs 30 ms synchronously, `await`s a microtask + a macrotask, then does more work reads
+`processingMs` **30.15 ms chrome / 30.00 ms firefox** — both bill the synchronous dispatch and neither
+leaks the post-yield continuation into the interaction. With a heavy synchronous DOM mutation driving
+a real paint the split shifts a little (processing 17.0 chrome / 18.5 firefox, presentation 6.9 / 5.5)
+but INP is identical (24 ms), and the shift lives in presentation delay, which is engine-specific.
+
+The pattern in what crosses: **the signals that cross are the ones each engine times on its own clock
+with no engine work billed in (pure-JS self-time, processing); the ones that do not are the ones each
+engine counts or batches by its own rules** (layout batches, marker-ms), plus presentation delay and
+any self-time that carries forced-layout work. That is a better predictor than the tier list, and
+worth applying before assuming a new signal is comparable.
 
 ## Per-element counts: both engines have them, both engines surface them (style within an engine)
 

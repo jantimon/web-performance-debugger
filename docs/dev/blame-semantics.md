@@ -82,14 +82,29 @@ Two caveats remain, both honest and documented in the blame output:
 
 - The read line is a **sampled estimate** at Gecko's ~1ms interval, so cheap reads can be missed and
   a line can lag one statement. (Chrome's `.stack` is exact.)
-- Firefox's marker-derived `forcedLayoutMs` still under-reports the flush duration: **1.08ms vs
-  Chrome's 7.17ms** (**7x**) for identical work on this probe at low iterations. That number comes
-  from the Reflow/Styles markers, which also drive `forcedLayoutCount`; the read-site blame events
-  are `sampled` and never enter those counts.
+- Firefox's marker-derived `forcedLayoutMs` under-reports the flush duration: **1.08ms vs Chrome's
+  7.17ms** (**7x**) for identical work on this probe at iteration 1, where the cold full-document
+  layout dominates (reproduced 1.17ms vs 7.13ms). It comes from the Reflow/Styles markers, which also
+  drive `forcedLayoutCount`; the read-site blame events are `sampled` and never enter those counts.
+  Two [measured] refinements keep this honest:
+  - **The magnitude is recoverable from the samples, not the markers.** The `forced` flag lands on
+    only the first-invalidation marker per flush, and those markers carry a short duration, so the sum
+    drops most of the layout time. But the gecko bar's `layout` slice — sampled Layout-category frame
+    time, already computed — reads **7.66ms** on the same iter-1 probe, landing on chrome's clean
+    forced-layout duration (6.79ms `--breakdown` / 7.13ms `--deep` raw, the latter +5% from `.stack`).
+    The marker-summed `layoutMs` over ALL flushes (7.49ms) lands there too. So the sampler catches the
+    reflow time the `forced` marker sum misses. The recovered signal is TOTAL layout time, which equals
+    forced layout only on a forced-dominated workload like this one; the samples cannot single out the
+    forced subset the way chrome's `.stack` count does.
+  - **The 7x is an iteration-1 (cold-layout) effect.** Over 15 warm iterations the cold layout
+    amortizes and the marker `forcedLayoutMs` (1.06ms / iter) tracks chrome's `--deep` forced duration
+    (1.03ms / iter). The gap is the first cold reflow the markers under-time, not a standing 7x.
 
 The CPU lane corroborates the read-site direction: the sampled CPU model attributes forced-layout
-cost to the **forcing** frame on both engines (`run()` at **8.41ms** chrome / **8.79ms** firefox,
-agreeing within 5%). See
+cost to the **forcing** frame on both engines. The magnitudes do not agree cross-engine on
+reflow-heavy work — firefox bills a per-reflow marker capture on top (1.5-3x chrome,
+[firefox-cpu.md](./firefox-cpu.md#the-sampler-contaminates-self-time-on-reflow-heavy-work)) — but the
+direction, cost on the forcing frame rather than the write, is the same. See
 [cpu-profiling.md](./cpu-profiling.md#what-self-time-actually-includes).
 
 ## Chrome `--breakdown`: the same read site, sampled from the CPU profile

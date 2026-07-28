@@ -5,8 +5,12 @@ before explaining why two libraries with different re-render cost report the sam
 
 `wall` and `INP` cannot report less than one display frame, because the measured interval ends at a
 paint and a paint happens on a frame boundary. That floor is real and correct for a latency number.
-Its height is the frame cadence: **~16.6 ms** on Chrome's built-in headless (one synthetic 60 Hz
-frame), **~8.3 ms** on Firefox headless (~120 Hz).
+Its height is the frame cadence. Chrome's built-in headless pins a synthetic 60 Hz (**~16.6 ms**)
+regardless of the host. Firefox's cadence is **not** a fixed property: it tracks the host display, so
+on a driven 120 Hz panel it reads ~8.3 ms but on an idle-panel or display-less host (CI, most dev
+machines) it reads the same **~16.6 ms** as Chrome — see [The Firefox floor is
+display-contingent](#the-firefox-floor-is-display-contingent), which is why the stamped
+`FIREFOX_FRAME_FLOOR_MS = 8.3` is unsafe for the environments wpd runs in.
 
 wpd launches Chrome's **built-in headless** — full Chrome, windowless (Puppeteer's `headless: true`)
 — as its only headless mode, plus headed via `--no-headless`. It does not launch
@@ -41,8 +45,10 @@ floor, not frame-quantization. All sub-frame work collapses onto the floor: a us
 libraries whose real re-render is each under one frame sees all three report the frame time, and
 reads "about the same" for work that differs several fold.
 
-Firefox reports whole-ms values (its `performance.now()` is coarser), but the mechanism is
-identical: a lower floor (~8 ms) through which the 8-16 ms band separates.
+Firefox reports whole-ms values (its `performance.now()` is coarser), but the mechanism is identical.
+The Firefox column here is the panel-at-120-Hz reading (~8 ms floor); on an idle panel or CI the
+Firefox floor tracks the host to ~16.6 ms ([The Firefox floor is
+display-contingent](#the-firefox-floor-is-display-contingent)).
 
 ## The cadence, by lane
 
@@ -50,10 +56,10 @@ Median of 60 consecutive `requestAnimationFrame` deltas:
 
 | lane | cadence | rate |
 | --- | --- | --- |
-| Chrome **built-in headless** (`headless: true`) | **16.7 ms** | ~60 Hz |
+| Chrome **built-in headless** (`headless: true`) | **16.7 ms** | ~60 Hz (synthetic, fixed) |
 | Chrome **headed** | **8.4 ms or 16.7 ms**, run to run | 120 / 60 Hz, variable |
-| Firefox headless | **8.3 ms** | ~120 Hz |
-| Firefox headed | **8.3 ms** | ~120 Hz |
+| Firefox headless | **16.7 ms (idle panel) / 8.3 ms (driven 120 Hz)** | tracks host |
+| Firefox headed | **16.7 ms (idle panel) / 8.3 ms (driven 120 Hz)** | tracks host |
 
 Two things here are load-bearing:
 
@@ -67,6 +73,28 @@ Two things here are load-bearing:
   the compositor runs `BeginFrame` at Chromium's synthetic default interval,
   `viz::BeginFrameArgs::DefaultInterval()` = 1/60 s
   (https://source.chromium.org/chromium/chromium/src/+/main:components/viz/common/frame_sinks/begin_frame_args.h).
+
+## The Firefox floor is display-contingent
+
+**[measured]** Firefox 152 over wpd's own launch path (raw puppeteer, `headless: true`, same args),
+median of 120 consecutive `requestAnimationFrame` deltas, 4 launches: firefox headless reads
+**16.66 ms (60 Hz)** and headed reads **16.66 ms** too — every launch identical (16.66, p90 16.68),
+on this 120 Hz ProMotion Mac with the panel idle. Chrome headless on the same run reads 16.70 ms. So
+the 8.3 ms / 120 Hz Firefox floor **does not reproduce** here.
+
+Headless and headed move together (both ~8.3 ms when the panel is driven at 120 Hz, both 16.66 ms when
+it is idle), which is the tell: unlike Chrome's built-in headless — which pins Chromium's synthetic 60
+Hz `BeginFrame` regardless of the host — **Firefox tracks the host display refresh in both modes.**
+The 8.3 ms figure is the panel-at-120-Hz reading, not a Firefox property. In the environments wpd
+actually runs — CI (no display) and a dev machine whose panel is not being actively driven by the
+automated window — Firefox sits on the same ~60 Hz / 16.6 ms floor as Chrome.
+
+So the stamped `FIREFOX_FRAME_FLOOR_MS = 8.3` (`model/frame-floor.ts`) is the single-environment shape
+this file warns against: it is right only when a 120 Hz panel is live, and too low by 2x on CI and on
+an idle-panel dev machine — exactly where `matchedFrameFloorMs` decides whether a firefox wall/INP
+median sits on its floor. The honest floor for wpd's environments is **16.6 ms**, the same as Chrome.
+Changing the constant (or declaring the firefox floor indeterminate, the way headed Chrome declares
+none) is a code change left as a proposal.
 
 ## Why the floor is deterministic and cross-machine consistent
 
@@ -169,7 +197,8 @@ cadence as a measurement input — the same position wpd takes.
 `browser/driver.ts`). On Chrome's built-in headless (16.6 ms frame) an empty-action step measures
 **~31 ms** wall, ~= 2 x 16.6 (slightly under 2 x 16.7 because the first rAF lands partway into the
 current frame): the "~31 ms settle floor" [driver-timing.md](./driver-timing.md) records. On Firefox
-(8.3 ms frame) the same 2-rAF settle floor is ~16 ms.
+the same 2-rAF settle floor is ~2x the host cadence — ~16 ms on a driven 120 Hz panel, ~33 ms on the
+idle-panel / CI 60 Hz case (above).
 
 ## What this means for reading the numbers
 
@@ -193,8 +222,9 @@ debugging tool, not a field-RUM predictor, and its own trust tier calls `wall`/`
 ## How the code reads it
 
 `model/frame-floor.ts` maps a recording's lane to its floor: headless Chrome ->
-`CHROME_HEADLESS_FRAME_FLOOR_MS` (16.6), Firefox headless -> `FIREFOX_FRAME_FLOOR_MS` (8.3), headed ->
-none (it flaps, so no floor can be claimed). `matchedFrameFloorMs` decides when a wall/INP median sits
+`CHROME_HEADLESS_FRAME_FLOOR_MS` (16.6), Firefox headless -> `FIREFOX_FRAME_FLOOR_MS` (8.3 — a
+proposal-pending value that reads 2x too low on CI / an idle panel, [display-contingent](#the-firefox-floor-is-display-contingent)),
+headed -> none (it flaps, so no floor can be claimed). `matchedFrameFloorMs` decides when a wall/INP median sits
 on its floor (within ~1.2 ms), so `query span` can surface the sample spread beside a floored median
 rather than let it read as "no difference".
 
