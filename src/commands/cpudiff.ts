@@ -1,5 +1,6 @@
 import type { CpuDiffResult, CpuFunctionDelta, CpuPackageDelta } from "../model/query.js";
-import type { CpuFunction } from "../model/recording.js";
+import type { CpuFunction, CpuModel } from "../model/recording.js";
+import { usToMs } from "../model/time.js";
 import { num, table } from "../output/ascii.js";
 import { serialize, structuredFormat, type StructuredOutOpts } from "../output/format.js";
 import {
@@ -7,6 +8,7 @@ import {
   functionJoinKey,
   loadCpuModel,
   shortSource,
+  DEFAULT_CPU_INTERVAL_US,
 } from "../profile/cpuprofile.js";
 import { comparabilityMismatches, CPU_DIFF_BLOCKING_AXES } from "../model/compat.js";
 import { resolveVerbTarget } from "./group.js";
@@ -14,6 +16,23 @@ import { resolveVerbTarget } from "./group.js";
 /** Self-time deltas below this are treated as sampling noise. */
 const NOISE_MS = 0.5;
 const TOP_FUNCTIONS = 25;
+
+/**
+ * The sampler's resolving power, in samples. Below this many samples of JS self-time on BOTH sides, a
+ * net delta is quantization, not signal, so the JS-self gate does not fire. At the 200us default
+ * interval that is ~2ms, while the 0.5ms noise floor is ~2.5 samples: two identical near-zero runs can
+ * jitter their net delta wider than that floor purely from where the samples landed (measured jitter
+ * 0.16-1.21ms on a near-zero probe). "Two identical runs must gate green" is the promise, so below
+ * resolving power the gate reports the delta as not evaluable rather than fabricating a regression.
+ * Derived from the interval so it scales if the interval changes. See docs/dev/cpu-profiling.md.
+ */
+const RESOLVING_FLOOR_SAMPLES = 10;
+
+/** ms of JS self-time below which a model's sampler cannot resolve signal from quantization. */
+function resolvingFloorMs(model: CpuModel): number {
+  const intervalUs = model.sampleIntervalUs > 0 ? model.sampleIntervalUs : DEFAULT_CPU_INTERVAL_US;
+  return usToMs(RESOLVING_FLOOR_SAMPLES * intervalUs);
+}
 
 /**
  * Index a model's functions by their cross-run join key, SUMMING self/total time on a collision. Two
@@ -128,6 +147,19 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
   const jsSelfDelta = currentModel.jsSelfMs - baseModel.jsSelfMs;
   const jsSelfPct = baseModel.jsSelfMs > 0 ? (jsSelfDelta / baseModel.jsSelfMs) * 100 : 0;
 
+  // Below the sampler's resolving power a net delta is quantization, not signal: when BOTH sides'
+  // jsSelfMs sit under RESOLVING_FLOOR_SAMPLES samples, the JS-self gate is not evaluable and does not
+  // fire whatever the net delta, and the output discloses it. The two recordings can carry different
+  // intervals (chrome default 200us vs the ~150us breakdown stream vs firefox ~1ms), so the larger
+  // implied floor wins. Other gated axes are unaffected.
+  const floorMs = Math.max(resolvingFloorMs(baseModel), resolvingFloorMs(currentModel));
+  const belowResolvingFloor = baseModel.jsSelfMs < floorMs && currentModel.jsSelfMs < floorMs;
+  const resolvingFloorNote = belowResolvingFloor
+    ? `both sides below the sampler's resolving floor (~${num(floorMs, 1)}ms at the recorded interval); ` +
+      `the JS-self net gate is not evaluable at this scale`
+    : undefined;
+  const jsSelfGateFires = jsSelfDelta > NOISE_MS && !belowResolvingFloor;
+
   const fmt = structuredFormat(opts);
   if (fmt) {
     const result: CpuDiffResult = {
@@ -138,9 +170,10 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
       netJsSelfPct: jsSelfPct,
       byPackage: packageRows,
       functions: functionRows,
+      notes: resolvingFloorNote ? [resolvingFloorNote] : [],
     };
     console.log(serialize(result, fmt));
-    if (opts.failOnRegression && jsSelfDelta > NOISE_MS) process.exitCode = 1;
+    if (opts.failOnRegression && jsSelfGateFires) process.exitCode = 1;
     return;
   }
 
@@ -179,5 +212,6 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
   );
 
   console.log(`\nnet JS self-time: ${signed(jsSelfDelta)} ms (${signed(jsSelfPct)}%)`);
-  if (opts.failOnRegression && jsSelfDelta > NOISE_MS) process.exitCode = 1;
+  if (resolvingFloorNote) console.log(`note: ${resolvingFloorNote}`);
+  if (opts.failOnRegression && jsSelfGateFires) process.exitCode = 1;
 }
