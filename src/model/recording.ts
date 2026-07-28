@@ -642,7 +642,7 @@ export interface SpanBreakdown {
 }
 
 /**
- * The one small default artifact a run writes (schema 3): the run summary, the collapsed `Span[]`
+ * The one small default artifact a run writes (schema 4): the run summary, the collapsed `Span[]`
  * (run + steps + user measures), and meta. The raw `.cpuprofile` and the resolved `.cpu.json` model
  * are separate siblings; the `events[]` DEEP EVENT LOG is written into this file ONLY under --deep
  * (chrome) and firefox, where blame/`query get`/`query events` read it -- every other capture mode leaves it

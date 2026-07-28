@@ -425,6 +425,11 @@ attributes bench harness frames to the served host page). Fixture:
   makes sense as "here is what we changed", it belongs in the changeset and the PR description,
   which is where history lives. This applies to `docs/dev/` too: state the finding, not its
   discovery story.
+- **Retirement stubs sunset by policy, not by mood.** A removed flag/verb keeps a hidden stub that
+  fires a named migration error. The stub lives until TWO further breaking releases have shipped AND
+  3 months have passed since its introduction (the commit adding its `program.error`), whichever is
+  later; then it becomes a plain unknown-option error. Stated once here so no stub's lifetime gets
+  re-argued.
 - Per the user's global rule: use `trash`, never `rm -rf`.
 - **`npm run knip` gates dead exports/files/deps** (`knip.json`). It reads `src` from `cli.ts` +
   `index.ts`; `index.ts` is the public surface (knip credits it as an entry). `ignoreExportsUsedInFile`
