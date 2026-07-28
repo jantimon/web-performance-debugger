@@ -22,4 +22,3 @@ scratch*/
 
 # host-cpu-matrix probe output (scripts/host-cpu-probe.mjs writes it to cwd; ephemeral, uploaded as a
 # CI artifact, never committed)
-host-cpu-*.json

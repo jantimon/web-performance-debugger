@@ -534,12 +534,13 @@ own noise, so blocking on it would refuse a legitimate same-machine gate wheneve
 drifted between two runs. It sits at the same advisory tier as `sampler-interval`. An index present on
 one side only (an older recording) warns as unverifiable rather than blocking; both-absent is silent.
 
-**Cross-machine validation.** The two claims the axis rests on -- the index is monotonic with real CPU
-speed across machines, and the 25% threshold separates host classes without a cross-arch loop skew
-tripping a similar-speed pair -- are checked on GitHub's five distinct hosted runner classes by the
-`host-cpu-matrix` workflow (`.github/workflows/host-cpu-matrix.yml`). It is `workflow_dispatch` only, so
-it runs on demand and costs nothing until dispatched: `gh workflow run host-cpu-matrix.yml`. Each job
-runs the shipped `measureHostCpuIndex` ten times via `scripts/host-cpu-probe.mjs` (browser-free, node
-only) and uploads a per-host JSON summary; `scripts/host-cpu-analyze.mjs` folds those summaries into the
-cross-host ratio matrix, the pairwise separation verdict against the 25% threshold, and the ARM-vs-x64
-skew read.
+**[measured] Cross-machine validation (four GitHub-hosted runner classes, 10 runs each):** the
+index is hardware-keyed and OS-independent: two runners on identical silicon (AMD EPYC 7763) under
+Windows and Linux read 1110.5 vs 1111.5 (ratio 1.00, gate silent), while every genuinely
+different host class separates (virtualized M1 1616, ARM pool 2558; ratios 1.45-2.30, all beyond
+the 25% threshold). Ordering is monotonic with known runner speed. Within-host spread is ~0.2-0.7%
+on bare-metal-class runners but reaches **12.75% on virtualized macOS** -- the real lower bound the
+25% threshold must clear, which it does with ~2x margin. Still open, stated plainly: a same-speed
+cross-architecture pair (the false-trip case) does not exist in the runner pool, so the
+arch-skew check narrows to plausible-but-unclosed; revisit if a matched cross-arch pair becomes
+available.
