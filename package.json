@@ -34,6 +34,8 @@
     "knip": "knip --no-config-hints --no-tag-hints",
     "pretest": "npm run build",
     "test": "node --test test/unit/*.test.mjs",
+    "pretest:measurement": "npm run build",
+    "test:measurement": "node --test --test-concurrency=1 test/measurement/*.test.mjs",
     "pretest:e2e": "npm run build",
     "test:e2e": "WPD_E2E_REQUIRED=1 node --test test/cli.e2e.test.mjs",
     "pretest:e2e:firefox": "npm run build",

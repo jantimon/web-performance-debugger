@@ -38,14 +38,18 @@ npm run changeset       # add a changeset; CI Release workflow versions+publishe
 ```
 
 CI (`.github/workflows/ci.yml`) runs on Node 24: `ci` (lint → format:check → build → `knip` → unit
-`test`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`), `pack-smoke` (packs the tarball, installs it into a temp
+`test` → serial `test:measurement`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`), `pack-smoke` (packs the tarball, installs it into a temp
 project, runs the bin + a `--target node` record + a root-type compile via `scripts/pack-smoke.mjs`,
 browser-free), and `e2e` (downloads Chrome, runs `test:e2e`). A final `release` job (changesets +
 OIDC publish) `needs: [ci, pack-smoke, e2e]` and runs only on a push to main, so a broken main can
 never publish. The gecko `test:e2e:firefox` suite runs nightly in `.github/workflows/firefox-e2e.yml`
 (installs Firefox, `WPD_E2E_FIREFOX_REQUIRED=1` so a missing browser is a hard failure), not on every
-PR. Three test lanes: **unit** (`test/unit/*.test.mjs`) exercises pure functions against compiled
-`dist/`, launching no browser; **chrome e2e** (`test/cli.e2e.test.mjs`) spawns the built CLI against
+PR. Four test lanes: **unit** (`test/unit/*.test.mjs`) exercises pure functions against compiled
+`dist/`, launching no browser; **measurement** (`test/measurement/`, `npm run test:measurement`, run
+serially with `--test-concurrency=1`) is the browser-free `--target node` lane that RECORDS a real CPU
+profile, so it must run alone -- a parallel unit worker competing for the CPU can inflate a near-no-op
+recording past a gate floor (docs/dev/measurement-ecosystem.md: never measure concurrently on one
+host); **chrome e2e** (`test/cli.e2e.test.mjs`) spawns the built CLI against
 real headless Chrome; **firefox e2e** (`test/firefox.e2e.test.mjs`) drives the gecko lane. Each e2e
 suite **self-skips when its browser is absent** so `npm test` and `ci` stay green without one;
 `WPD_E2E_REQUIRED=1` (chrome, set by `test:e2e`) and `WPD_E2E_FIREFOX_REQUIRED=1` (the nightly firefox

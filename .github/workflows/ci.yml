@@ -29,6 +29,10 @@ jobs:
       - run: npm run build
       - run: npm run knip
       - run: npm test
+      # The serial measurement lane runs AFTER the parallel unit step, alone on the runner, so its
+      # --target node recordings measure with nothing competing for the CPU. Browser-free (in-process
+      # node profiler), so it inherits PUPPETEER_SKIP_DOWNLOAD and stays inside the 10-minute cap.
+      - run: npm run test:measurement
 
   pack-smoke:
     # Builds the tarball as `npm publish` would, installs it into a throwaway project, and proves the
