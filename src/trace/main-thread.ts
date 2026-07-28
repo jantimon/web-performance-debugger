@@ -103,7 +103,16 @@ export function mainThread(events: NormalizedEvent[]): MainThreadSelection | nul
   // (its window follows or precedes the selected thread's) from a same-page OOPIF (concurrent, its
   // window overlaps), so the selected thread genuinely cannot represent the whole run -- record()
   // turns this into a loud note rather than silently tiling the other process's window as idle.
-  const heavyThreshold = busiest ? Math.max(3, busiest.count * 0.25) : 0;
+  // A second disjoint renderer thread is a real successive navigation, not noise, once it carries at
+  // least the husk share (REANCHOR_MAX_MARKER_SHARE) of the busiest thread's rendering -- the same
+  // vanishing-vs-substantial boundary the re-anchor uses to tell a blank-host husk from a live page. A
+  // thread under it is a husk or stray flush (the pre-nav husk re-anchors away and lands below this
+  // floor; a husk large enough to clear the floor mis-selects and trips split=true, a loud refusal,
+  // never a silent wrong count). The Math.max(3, ...) noise floor keeps a near-empty busiest thread
+  // (a few flushes) from calling any 1-2-flush neighbour a split. [measured] a second navigation
+  // rendering 41 flushes against a 201-flush first page (20%) must trip split; a floor above the husk
+  // share would leave those 41 flushes silently uncounted (docs/dev/rendering-counts.md).
+  const heavyThreshold = busiest ? Math.max(3, busiest.count * REANCHOR_MAX_MARKER_SHARE) : 0;
   const busiestRange = busiest;
   const split =
     busiestRange != null &&

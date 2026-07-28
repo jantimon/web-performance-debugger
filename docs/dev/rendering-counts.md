@@ -140,6 +140,26 @@ time from the selected thread's, which is what separates a second navigation (it
 precedes the selected thread's) from a same-page OOPIF that renders CONCURRENTLY (its window overlaps):
 a `--url` boot of a page with a heavy third-party iframe re-anchors but does not warn.
 
+**How heavy is "heavy": the split floor is the husk share (5%).** A disjoint second thread is a real
+successive navigation once it carries at least `REANCHOR_MAX_MARKER_SHARE` (5%) of the busiest thread's
+layout/paint — the same vanishing-vs-substantial boundary the re-anchor uses to tell a blank-host husk
+from a live page (with a `Math.max(3, …)` absolute floor so a near-empty busiest thread does not call a
+1-2-flush neighbour a split). **[measured]** probe: a driver `page.goto`s a busy first site (201
+layout/paint flushes on its thread), then a second, cross-site page tuned to a chosen count, and reads
+`meta.mainThread.split`.
+
+| second page's flushes | share of the 201-flush first page | `split` |
+| --- | --- | --- |
+| 41 | 20% | **true** — a real second navigation, counts refused |
+| 8 (probe: a chatty blank-host husk, 10 → re-anchored, sits below the floor) | ~4-5% | false |
+
+So a second navigation rendering as little as 5% of the first page's work trips the refusal; only a
+sub-5% husk-scale render is folded silently, and a husk large enough to clear the floor mis-selects
+onto its own thread and trips `split: true` anyway (a loud refusal, never a silent wrong count). A
+floor set higher than the husk share (e.g. a quarter) leaves a realistic light second page — a heavy
+app boot followed by a small confirmation page — silently uncounted while `assert --max-layouts`
+gates green on the first page's total alone.
+
 ## `Paint` is exact, and it is per-chunk
 
 | dirtied regions | 0 | 1 | 2 | 5 | 10 | 20 | 40 |
