@@ -6,7 +6,7 @@
 > `browser/launch.ts`'s `MOZ_PROFILER_*` env vars, `profile/gecko-breakdown.ts`, or the Firefox
 > sampler interval.
 
-**In this file:** [samples and markers share one pass](#samples-and-markers-share-a-pass-unavoidably)
+**In this file:** [the sampler contaminates self-time on reflow-heavy work](#the-sampler-contaminates-self-time-on-reflow-heavy-work)
 · [idle lives on the CPU axis](#firefox-idle-is-on-the-cpu-axis-not-the-category-axis)
 · [the `js,cpu` / 1 ms config](#the-firefox-sampler-config-jscpu-1-ms-and-what-not-to-chase)
 · [where the ~150% overhead comes from](#where-the-150-gecko-overhead-comes-from)
@@ -18,19 +18,44 @@ raw dump schemas these facts are read out of), [engine-mapping.md](./engine-mapp
 Gecko names mean against Blink's), [cpu-profiling.md](./cpu-profiling.md) (the Chrome sampler
 physics this lane is measured against).
 
-## Samples and markers share a pass, unavoidably
+## The sampler contaminates self-time on reflow-heavy work
 
 The gecko pass collects markers *and* samples together — structurally the thing
 [cpu-profiling.md](./cpu-profiling.md#why-the-sampler-never-rides-a-stack-trace) warns against,
-since `profiler_capture_backtrace()` fires on every invalidation. It cannot be separated:
-the Gecko profiler is started via `MOZ_PROFILER_STARTUP*` env vars for the whole browser lifetime,
-and the `js` feature that yields JS stacks for cause chains is the same feature that yields
-samples. So Firefox's CPU model may carry contamination of the same shape as Chrome's `.stack`.
+since `profiler_capture_backtrace()` fires on every invalidation. It cannot be separated: the Gecko
+profiler is started via `MOZ_PROFILER_STARTUP*` env vars for the whole browser lifetime, and the `js`
+feature that yields JS stacks for cause chains is the same feature that yields samples.
 
-**This has not been measured.** It should be, before Firefox CPU numbers are described as clean.
-The one data point that argues against a large effect: firefox `run()` = 8.79ms vs chrome's
-uncontaminated 8.41ms, a 5% gap — but that is one probe and the two engines differ for other
-reasons too.
+**[measured]** and it does contaminate, the same shape as Chrome's `.stack` +21%. A workload sweep,
+Firefox 152 / Chrome 150, 5 reps each bench, comparing `run()` self-time (chrome's default no-trace
+sampler is the clean reference):
+
+| workload | forced flushes | firefox `selfMs` | chrome `selfMs` | FF / CR |
+| --- | --- | --- | --- | --- |
+| pure JS (no reflow) | 0 | 29.2 | 35.1 | **0.83x** |
+| forces-layout, cold (iter 1) | ~40 | 11.94 | 7.96 | 1.50x |
+| forces-layout, warm (iter 15) | ~40 / iter | 31.5 | 12.3 | 2.56x |
+| read-after-write thrash | ~3000 / iter | 602.9 | 195.5 | **3.08x** |
+
+Read it as: **pure JS crosses clean** (firefox 0.83x chrome, a SpiderMonkey-vs-V8 speed offset), so
+the sampler is not broadly inflating. The moment JS forces layout, firefox self-time runs 1.5-3x
+chrome's and the excess **scales with forced-flush count** — the signature of a per-marker cost, not a
+per-sample one, exactly like the ~150% wall tax below. It is billed to the forcing JS frame, so it
+raises `run()`'s self-time directly.
+
+**The excess is real main-thread CPU, not descheduling.** Per-sample `threadCPUDelta` (the `cpu`
+feature) tracks the sample's wall-delta within **4%** on the active (non-idle) samples of the
+reflow-heavy dumps, so the samples the converter bills to `selfMs` are cycles the content thread
+actually burned — the stack captures — not a stalled clock inflated by a loaded host.
+
+So Firefox `selfMs` on browser lanes is JS + real synchronous reflow (the honest "delete this line"
+signal, same as chrome) **plus** this per-reflow capture tax, and it cannot be described as clean on
+reflow-heavy work. It is comparable to chrome's only at the pure-JS / `--target node` end, or when one
+large cold reflow swamps the per-flush tax (the iter-1 forces-layout row, 1.5x). Firefox has no
+sampler-free counterpart to subtract it (the `js` feature is the sole source of samples AND cause
+stacks AND the marker captures), so the contamination is structural, not a config to turn off. The
+cross-engine trust boundary this sets is in
+[engine-mapping.md](./engine-mapping.md#what-is-actually-comparable-across-engines).
 
 ## Firefox idle is on the CPU axis, not the category axis
 

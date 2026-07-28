@@ -44,7 +44,10 @@ independently measures **7.17ms of forced layout**, and `run()`'s wall is 8.3ms.
 "JS self-time" **is the reflow**, attributed to the JS frame that forced it. The V8 sampler walks
 the JS stack; time spent in Blink C++ under a DOM accessor lands on the calling JS frame.
 
-Firefox does the same thing, and lands in the same place (`run()` at **8.79ms**).
+Firefox does the same thing — reflow lands on the forcing frame — but **not at the same magnitude**:
+its `js` feature bills a per-reflow stack capture to that frame on top, so firefox `selfMs` runs
+1.5-3x chrome's on reflow-heavy work
+([firefox-cpu.md](./firefox-cpu.md#the-sampler-contaminates-self-time-on-reflow-heavy-work)).
 
 This is **correct and useful**, not a bug: "delete this line and the page gets ~8ms faster" is
 exactly the actionable answer. It also means `query cpu` already gives forced-layout attribution to
