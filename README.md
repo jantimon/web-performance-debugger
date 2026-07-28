@@ -462,9 +462,11 @@ pattern. Pass `until` when your step ends on something specific: a selector, or 
 awaits. A function `until` is awaited **exactly once** after the action, not polled, so the step ends
 the moment it resolves — compose your waits inside the function (or wait on landed content), because an
 `until` that resolves early ends the step early. The settle floor is two frames — ~31 ms on Chrome's
-built-in headless (full Chrome, ~60 Hz), ~16 ms on Firefox (~120 Hz). `wall`/`INP` carry this
-one-frame ~16.6 ms floor, so a sub-frame re-render reads as the frame time; read the counts, the bar, or
-`interaction.processingMs` for the work itself ([docs/dev/frame-floor.md](docs/dev/frame-floor.md)).
+built-in headless (full Chrome, ~60 Hz), and about the same on Firefox on a CI or idle-panel host,
+whose cadence tracks the display refresh (~60 Hz there, not the 120 Hz a live ProMotion panel shows).
+`wall`/`INP` carry the one-frame ~16.6 ms floor, so a sub-frame re-render reads as the frame time; read
+the counts, the bar, or `interaction.processingMs` for the work itself
+([docs/dev/frame-floor.md](docs/dev/frame-floor.md)).
 
 **Streamed / soft navigations.** The default settle resolves the moment the page goes briefly idle,
 which on a streamed SPA route change can be *before* the content lands. Wait on the landed content, or
@@ -744,9 +746,13 @@ overlapping regions distinct labels). When a tag manager floods the overview, cu
   `--breakdown`.
 - **`inpMs` is the max duration over every Event Timing entry** in the window, rounded to 8 ms by the
   spec — a directional worst-interaction latency, not a sum.
-- **`forcedLayoutCount` / `forcedLayoutMs` are a subset, never an addend.** A forced flush is already
-  inside `styleMs` / `layoutMs` and the layout/style counts, so **never sum forced onto style +
-  layout**. The field covers forced *style* recalc as well as forced *layout*, despite the name.
+- **`forcedLayoutCount` is a subset, never an addend.** A forced flush is already inside the
+  layout/style counts (and `styleMs` / `layoutMs`), so **never sum forced onto style + layout**. It
+  covers forced *style* recalc as well as forced *layout*, despite the name. The forced *milliseconds*
+  are **not reported** on any lane: no engine can honestly price just the forced subset's duration
+  (Chrome reads it only from `.stack`, which suppresses durations; Firefox's markers under-report it
+  ~7x), so read the bar's `layout` slice for total layout ms and trust the forced *line*, not a
+  forced-ms.
 - **`Measured` is null-vs-0, everywhere.** Any count or slice a capture mode could not observe is an
   explicit `null` (not-measured), never a `0` (which reads as "measured clean"). A gate treats `null`
   as a loud failure, and a `diff` refuses to invent a delta from it. When you normalize across
@@ -785,11 +791,18 @@ Reflow/Styles markers, and Gecko batches layout differently than Blink. Those co
 **against another Firefox run**; comparing them to Chrome's compares two different definitions. The
 same holds across engines generally: **forced-layout blame names the same read line on both engines**
 (12 of Chrome's 21 forced read lines matched on the thrashing probe), but Firefox samples it at
-Gecko's ~1 ms granularity (a cheap read can be missed, the line can lag one statement), and Firefox's
-forced-layout *milliseconds* under-report ~7x — so trust the forced *line*, not its ms. **INP** comes
-from an in-page Event Timing observer, so both engines measure it, but for identical work Firefox
-reports a systematically lower number (presentation delay is engine-specific): compare a browser
-against itself across your change, not one engine against the other.
+Gecko's ~1 ms granularity (a cheap read can be missed, the line can lag one statement); the
+forced-layout *milliseconds* are not reported on either engine (Firefox's markers under-report the
+forced subset ~7x, Chrome's `.stack` suppresses durations) — so trust the forced *line*, and read the
+bar's `layout` slice for total layout ms. **CPU self-time** crosses engines **only for pure-JS work**
+(`--target node`, or a browser lane that forces no layout): there both samplers time the same frame on
+their own microsecond clock and Firefox reads ~0.83x Chrome (engine speed). The moment JS forces
+layout, Firefox self-time runs **1.5–3x** Chrome's — the `js` feature captures a stack on every
+reflow, billed to the forcing frame — so a reflow-heavy self-time is not a cross-engine number; compare
+it within one engine. **INP** comes from an in-page Event Timing observer, so both engines measure it,
+but for identical work Firefox reports a systematically lower number (presentation delay is
+engine-specific): compare a browser against itself across your change, not one engine against the
+other.
 
 ### When per-package attribution can't work
 

@@ -9,8 +9,9 @@ Its height is the frame cadence. Chrome's built-in headless pins a synthetic 60 
 regardless of the host. Firefox's cadence is **not** a fixed property: it tracks the host display, so
 on a driven 120 Hz panel it reads ~8.3 ms but on an idle-panel or display-less host (CI, most dev
 machines) it reads the same **~16.6 ms** as Chrome — see [The Firefox floor is
-display-contingent](#the-firefox-floor-is-display-contingent), which is why the stamped
-`FIREFOX_FRAME_FLOOR_MS = 8.3` is unsafe for the environments wpd runs in.
+display-contingent](#the-firefox-floor-is-display-contingent). So `FIREFOX_FRAME_FLOOR_MS` is stamped
+at **16.6 ms**, the reading the environments wpd runs in produce; the 8.3 ms / 120 Hz figure is
+display-contingent, not a Firefox property to stamp.
 
 wpd launches Chrome's **built-in headless** — full Chrome, windowless (Puppeteer's `headless: true`)
 — as its only headless mode, plus headed via `--no-headless`. It does not launch
@@ -89,12 +90,11 @@ The 8.3 ms figure is the panel-at-120-Hz reading, not a Firefox property. In the
 actually runs — CI (no display) and a dev machine whose panel is not being actively driven by the
 automated window — Firefox sits on the same ~60 Hz / 16.6 ms floor as Chrome.
 
-So the stamped `FIREFOX_FRAME_FLOOR_MS = 8.3` (`model/frame-floor.ts`) is the single-environment shape
-this file warns against: it is right only when a 120 Hz panel is live, and too low by 2x on CI and on
-an idle-panel dev machine — exactly where `matchedFrameFloorMs` decides whether a firefox wall/INP
-median sits on its floor. The honest floor for wpd's environments is **16.6 ms**, the same as Chrome.
-Changing the constant (or declaring the firefox floor indeterminate, the way headed Chrome declares
-none) is a code change left as a proposal.
+So `FIREFOX_FRAME_FLOOR_MS` (`model/frame-floor.ts`) is stamped at **16.6 ms**, the same as Chrome:
+that is the reading CI and an idle-panel dev machine produce, and it is exactly where
+`matchedFrameFloor` decides whether a firefox wall/INP median sits on its floor. The 8.3 ms / 120 Hz
+value is the driven-panel reading only, not a firefox property; stamping it would read 2x too low on
+every host wpd actually runs on.
 
 ## Why the floor is deterministic and cross-machine consistent
 
@@ -222,11 +222,16 @@ debugging tool, not a field-RUM predictor, and its own trust tier calls `wall`/`
 ## How the code reads it
 
 `model/frame-floor.ts` maps a recording's lane to its floor: headless Chrome ->
-`CHROME_HEADLESS_FRAME_FLOOR_MS` (16.6), Firefox headless -> `FIREFOX_FRAME_FLOOR_MS` (8.3 — a
-proposal-pending value that reads 2x too low on CI / an idle panel, [display-contingent](#the-firefox-floor-is-display-contingent)),
-headed -> none (it flaps, so no floor can be claimed). `matchedFrameFloorMs` decides when a wall/INP median sits
-on its floor (within ~1.2 ms), so `query span` can surface the sample spread beside a floored median
-rather than let it read as "no difference".
+`CHROME_HEADLESS_FRAME_FLOOR_MS` (16.6), Firefox headless -> `FIREFOX_FRAME_FLOOR_MS` (16.6, the same
+value — the display-tracked reading on CI / an idle panel, [display-contingent](#the-firefox-floor-is-display-contingent)),
+headed -> none (it flaps, so no floor can be claimed). `matchedFrameFloor` decides when a wall/INP
+median sits on a WHOLE MULTIPLE of its floor (within ~1.2 ms, `n` up to 4): `n = 1` is a sub-frame
+measure/INP, `n >= 2` a value that waited a whole number of extra frames (a 33.2 ms two-frame wall).
+It returns `{ floorMs, multiple }`, exposed on the `query span` JSON view as `frameFloor` so a consumer
+can detect flooring programmatically. `frameFloorDominates` gates an elevated multiple on the window's
+wait share (idle for a wall, presentation delay for an INP): a busy 33 ms wall (real work near two
+frames) is not mislabeled a floor, while a wait-dominated one is. `query span` surfaces the faster
+sample and the js slice beside a floored median so it does not read as "no difference".
 
 The comparability gate (`model/compat.ts`) keys on `meta.headlessMode`: a current headless chrome
 recording stamps `"new"`, an older one may carry `"shell"`, and a headed one carries nothing. A diff

@@ -160,7 +160,10 @@ read-after-write thrash), Firefox 152 / Chrome 150, 5 reps each:
 | elements styled | 30 | 56 | same *definition*, still ~2x |
 
 (The blame rows' semantics — why the read line crosses and the marker-ms does not — are
-[blame-semantics.md](./blame-semantics.md#forced-layout-blame-differs-by-engine).)
+[blame-semantics.md](./blame-semantics.md#forced-layout-blame-differs-by-engine). The 7x forced-ms
+under-report is why wpd does not report `forcedLayoutMs` at all: the markers carry only the first,
+short invalidation per flush, so their duration under-reports the forced subset; the honest total-layout
+duration is the reconciling bar's `layout` slice.)
 
 The `processingMs` row is **[measured]** on a click handler that busy-waits a known 45 ms
 (`test/fixtures/slow-handler.html`), and it is the second signal that survives the crossing. Both

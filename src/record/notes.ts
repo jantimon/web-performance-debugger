@@ -99,7 +99,7 @@ export function firefoxInp(): string {
 }
 
 export function firefoxForcedCountSemantics(): string {
-  return "Firefox forcedLayoutCount comes from Gecko Reflow/Styles marker cause stacks (the write-site JS cause), not Chrome's read-site rule, so it counts mount-driven reflows Chrome reports 0 for. Never compare forced counts across engines: read a Firefox run against another Firefox run. The forced-layout MILLISECONDS from these markers also under-report the flush duration ~7x vs Chrome for identical work, so read forced ms as directional and against another Firefox run, never against Chrome's.";
+  return "Firefox forcedLayoutCount comes from Gecko Reflow/Styles marker cause stacks (the write-site JS cause), not Chrome's read-site rule, so it counts mount-driven reflows Chrome reports 0 for. Never compare forced counts across engines: read a Firefox run against another Firefox run. forcedLayoutMs is NOT reported (not-measured, never 0): the markers carry only the first, short invalidation per flush, so their duration under-reports the forced subset ~7x vs Chrome and a distorted number is worse than none. For the honest total-layout duration read the reconciling bar's layout slice (query span).";
 }
 
 export function firefoxDeepReport(): string {

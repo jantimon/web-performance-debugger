@@ -16,7 +16,6 @@ import type {
 import type { SpanCountsOverview } from "../model/spans.js";
 import { isGeckoCaptureMode } from "../model/capture-mode.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
-import { matchedFrameFloorMs } from "../model/frame-floor.js";
 import { bold, cyan, dim } from "../output/color.js";
 import {
   idleShareSuffix,
@@ -170,21 +169,23 @@ export function printSpanAnatomy(
   const wallTail = wallTags.length ? dim(` · ${wallTags.join(" · ")}`) : "";
   console.log(`wall: ${bold(wall)}${spread}${wallTail}`);
   // A wall pinned to a frame-cadence floor hides sub-frame work: libraries whose real re-render is
-  // each under the floor all report the floor (a measure floors at one frame, a driver step at the
-  // 2-rAF settle, docs/dev/frame-floor.md). Surface the faster sample and the js slice beside it so
-  // the floored number is not read as "no difference". "frame floor", not "one-frame", since the
-  // step case is two frames.
-  const wallFloor = matchedFrameFloorMs(anatomy.wallMs, meta);
-  if (wallFloor != null) {
+  // each under the floor all report the floor (a measure floors at one frame, a wait-dominated span at
+  // a whole multiple of it, docs/dev/frame-floor.md). Surface the faster sample and the js slice
+  // beside it so the floored number is not read as "no difference". The n>= gate lives in
+  // buildSpanAnatomy (frameFloor is set only when the window is frame-dominated).
+  if (anatomy.frameFloor) {
+    const { floorMs, multiple } = anatomy.frameFloor;
     const minMs = span.stats?.minMs ?? span.wallMinMs;
     const belowFloor: string[] = [];
-    if (minMs != null && minMs < anatomy.wallMs! - 0.5)
+    if (minMs != null && anatomy.wallMs != null && minMs < anatomy.wallMs - 0.5)
       belowFloor.push(`min sample ${num(minMs, 1)} ms`);
     if (anatomy.slices?.js) belowFloor.push(`js ${num(anatomy.slices.js.ms, 1)} ms`);
     const detail = belowFloor.length ? `; sub-frame work reads on ${belowFloor.join(" / ")}` : "";
-    console.log(
-      dim(`  wall sits on the ~${num(wallFloor, 1)} ms frame floor${detail} (frame-floor.md)`),
-    );
+    const where =
+      multiple === 1
+        ? `the ~${num(floorMs, 1)} ms frame floor`
+        : `~${multiple}x the ${num(floorMs, 1)} ms frame floor (${num(floorMs * multiple, 1)} ms)`;
+    console.log(dim(`  wall sits on ${where}${detail} (frame-floor.md)`));
   }
 
   // A driver step's navigation (what its document did) and, on a hard navigation, its boot LCP.
@@ -277,15 +278,19 @@ export function printSpanAnatomy(
     }
     // A floored INP is the frame boundary, not the interaction's own cost; point at the sub-frame
     // signal (the processing split above, the js slice) so it is not read as "every tech is equal".
-    const inpFloor = matchedFrameFloorMs(anatomy.inpMs, meta);
-    if (inpFloor != null) {
+    if (anatomy.inpFrameFloor) {
+      const { floorMs, multiple } = anatomy.inpFrameFloor;
       const signal = anatomy.interaction
         ? "the processing split above"
         : anatomy.slices?.js
           ? `js ${num(anatomy.slices.js.ms, 1)} ms`
           : null;
       const detail = signal ? `; the sub-frame cost is ${signal}` : "";
-      console.log(dim(`  INP sits on the ~${num(inpFloor, 1)} ms one-frame floor${detail}`));
+      const where =
+        multiple === 1
+          ? `the ~${num(floorMs, 1)} ms one-frame floor`
+          : `~${multiple}x the ${num(floorMs, 1)} ms frame floor (${num(floorMs * multiple, 1)} ms)`;
+      console.log(dim(`  INP sits on ${where}${detail}`));
     }
   }
 

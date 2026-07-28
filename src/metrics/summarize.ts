@@ -107,6 +107,15 @@ export interface CaptureCapabilities {
   durations: boolean;
   /** forced-layout detection ran (.stack, or Firefox marker cause) */
   forced: boolean;
+  /**
+   * the forced-SUBSET flush DURATION (`forcedLayoutMs`) is honestly measurable. False on every lane:
+   * chrome reads the forced subset only from the `.stack` trace, which suppresses all durations
+   * (+38%), and Firefox's Reflow/Styles markers under-report the forced subset ~7x (they carry only
+   * the first, short-duration invalidation per flush). So `forcedLayoutMs` is structurally
+   * not-measured; the honest total-layout signal is the reconciling bar's `layout` slice, and forced
+   * COUNTS stay (marker/`.stack` counts are honest counts). See docs/dev/blame-semantics.md.
+   */
+  forcedDurations: boolean;
 }
 
 /** Everything not-measured: the default capture mode and node, which capture no rendering work. */
@@ -117,6 +126,7 @@ export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
   invalidations: false,
   durations: false,
   forced: false,
+  forcedDurations: false,
 };
 
 export interface SummaryInputs {
@@ -246,12 +256,13 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     styleInvalidations: measuredIf(capabilities.invalidations, styleInval),
     // null (not 0) when detection did not run: the default/--breakdown capture modes drop the `.stack`
     // category forced detection needs, so a 0 here would read as "no thrashing" instead of "not
-    // measured". forcedLayoutMs is additionally a duration, so it is null wherever durations are.
+    // measured".
     forcedLayoutCount: measuredIf(capabilities.forced, forcedLayoutCount),
-    forcedLayoutMs: measuredIf(
-      capabilities.forced && capabilities.durations,
-      usToMs(forcedLayoutUs),
-    ),
+    // forcedLayoutMs is structurally not-measured on every lane (forcedDurations is false everywhere):
+    // no lane can honestly price the forced SUBSET's duration. Chrome measures the subset only from
+    // `.stack`, which suppresses durations; Firefox's markers under-report it ~7x. Forced COUNTS
+    // stay; the honest total-layout duration is the reconciling bar's `layout` slice.
+    forcedLayoutMs: measuredIf(capabilities.forcedDurations, usToMs(forcedLayoutUs)),
     longTaskCount: measuredIf(capabilities.longTasks, longTaskCount),
     longestTaskMs: measuredIf(
       capabilities.longTasks && capabilities.durations,

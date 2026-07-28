@@ -555,6 +555,70 @@ test("query span: real sub-frame-or-above work prints no floor note", async () =
   assert.doesNotMatch(text, /one-frame floor/, "25ms is real work above the frame, not floored");
 });
 
+// A busy bar: ~30ms of JS work, so idle is a small share of the wall. Used to prove a multi-frame wall
+// with real work is NOT mislabeled a floor.
+const busyBar = (wallMs) => ({
+  wallMs,
+  slices: {
+    js: jsSlice(30, { app: 30 }),
+    style: slice(0.5),
+    layout: slice(0.5),
+    paint: slice(0.5),
+    gc: slice(0.2),
+    other: slice(0.3),
+    idle: slice(wallMs - 32),
+  },
+});
+
+function floorRec(name, wallMs, bar) {
+  return writeRec(name, {
+    meta: { schemaVersion: "4", target: "chrome", iterations: 5, passes: ["breakdown"], headless: true, headlessMode: "new" },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      {
+        label: "wait",
+        kind: "measure",
+        aggregation: "median",
+        wallMs,
+        counts: nullCounts,
+        breakdown: bar(wallMs),
+        stats: { samples: 5, minMs: 1.2, medianMs: wallMs, meanMs: wallMs, maxMs: wallMs + 0.1 },
+      },
+    ],
+  });
+}
+
+test("query span: a wait-dominated wall at 2x the floor (33.2ms) is annotated and exposed on frameFloor", async () => {
+  const file = floorRec("anatomy-floor-2x.json", 33.2, breakdown);
+  const anatomy = await captureJson(() => querySpan(file, "measure:wait", { format: "json" }));
+  assert.deepEqual(
+    anatomy.frameFloor,
+    { floorMs: 16.6, multiple: 2 },
+    "the JSON exposes {floorMs, multiple} so a consumer can detect flooring at 2x",
+  );
+  const text = await captureText(() => querySpan(file, "measure:wait", {}));
+  assert.match(text, /wall sits on ~2x the 16\.6 ms frame floor \(33\.2 ms\)/, "the human note names 2x");
+});
+
+test("query span: a busy wall near 2x the floor (real work, low idle) is NOT floored", async () => {
+  const file = floorRec("anatomy-floor-busy.json", 33.2, busyBar);
+  const anatomy = await captureJson(() => querySpan(file, "measure:wait", { format: "json" }));
+  assert.equal(anatomy.frameFloor, undefined, "a busy 33ms wall is real work near two frames, not a floor");
+  const text = await captureText(() => querySpan(file, "measure:wait", {}));
+  assert.doesNotMatch(text, /frame floor/, "no floor note on a genuinely busy multi-frame wall");
+});
+
+test("query span --format json: frameFloor is {floorMs, multiple} at 1x, absent for real work", async () => {
+  const floored = floorRec("anatomy-floor-json-1x.json", 16.6, breakdown);
+  const flooredAnatomy = await captureJson(() => querySpan(floored, "measure:wait", { format: "json" }));
+  assert.deepEqual(flooredAnatomy.frameFloor, { floorMs: 16.6, multiple: 1 }, "one-frame floor exposed structurally");
+
+  const real = floorRec("anatomy-floor-json-work.json", 25, breakdown);
+  const realAnatomy = await captureJson(() => querySpan(real, "measure:wait", { format: "json" }));
+  assert.equal(realAnatomy.frameFloor, undefined, "25ms is real work: no frameFloor field");
+});
+
 // --- presentation: firefox forced count carries the marker-derived / sampled-site caveat ---
 
 test("query span: firefox forced count discloses it is marker-derived with a sampled read site", async () => {

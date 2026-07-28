@@ -379,7 +379,9 @@ serializes to 16MB+ even for a trivial probe. `sampleIntervalUs` is read back fr
 
 `profile/gecko.ts` converts the raw dump (v34) to a `RawCpuProfile` (fed to `buildCpuModel` unchanged)
 plus `NormalizedEvent[]`: Reflow/Styles markers (kind layout/style, `forced` from a JS cause, driving
-flush COUNTS — though `forcedLayoutMs` under-reports **~7x** vs Chrome from these markers) and
+flush COUNTS — but NOT `forcedLayoutMs`, which is not-measured on every lane: the markers under-report
+the forced subset **~7x** vs Chrome, `capabilitiesFor`'s `forcedDurations` is false, and the honest
+total-layout duration is the reconciling bar's `layout` slice) and
 **sampled read-site blame events** (`sampled:true`, the read line + property, driving `blame --forced`;
 `summarize` skips them so they never double-count a flush; a sampled estimate that can lag one
 statement). Launched `MOZ_PROFILER_STARTUP_FEATURES=js,cpu`: the `cpu` feature populates the per-sample

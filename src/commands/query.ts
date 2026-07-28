@@ -66,6 +66,7 @@ import {
   routingNote,
 } from "./group.js";
 import { pickMember, type GroupMember, type RunGroup } from "../model/group.js";
+import { matchedFrameFloor, frameFloorDominates } from "../model/frame-floor.js";
 import { usToMs } from "../model/time.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
 
@@ -339,6 +340,27 @@ function buildSpanAnatomy(
   if (spansResult) hints.push(`All spans at a glance: wpd query spans ${hintPath}`);
 
   const residualMs = entry?.residualMs ?? span.breakdown?.residualMs;
+
+  // Frame-cadence floor: a wall/INP pinned to n whole frames hides sub-frame work (frame-floor.md).
+  // Surface it structurally so a --format json consumer can detect flooring, and gate an elevated
+  // multiple (n>=2) on the window's wait share so a busy multi-frame wall is not mislabeled a floor.
+  const wallMs = entry?.wallMs ?? span.wallMs;
+  const wallMatch = matchedFrameFloor(wallMs, rec.meta);
+  const idleShare =
+    span.breakdown && span.breakdown.wallMs > 0
+      ? span.breakdown.slices.idle.ms / span.breakdown.wallMs
+      : null;
+  const frameFloor = wallMatch && frameFloorDominates(wallMatch, idleShare) ? wallMatch : undefined;
+  const inpMatch = matchedFrameFloor(span.inpMs, rec.meta);
+  // An INP's "wait" is its presentation delay (handler end -> next paint), the frame-boundary cost;
+  // its work is input delay + processing. A floored INP is presentation-dominated.
+  const inpWaitShare =
+    span.interaction && span.inpMs != null && span.inpMs > 0
+      ? span.interaction.presentationDelayMs / span.inpMs
+      : null;
+  const inpFrameFloor =
+    inpMatch && frameFloorDominates(inpMatch, inpWaitShare) ? inpMatch : undefined;
+
   return {
     recording: recordingPath,
     target,
@@ -349,7 +371,9 @@ function buildSpanAnatomy(
     // A step's headline is the MEDIAN wall (entry.wallMs), never its iteration-0 bar window; the bar
     // window rides `breakdownWallMs` so the two are not conflated. entry.wallMs already carries the
     // median for a step (model/spans.ts entryFromSpan); the fallback covers a capture mode with no bar.
-    wallMs: entry?.wallMs ?? span.wallMs,
+    wallMs,
+    ...(frameFloor ? { frameFloor } : {}),
+    ...(inpFrameFloor ? { inpFrameFloor } : {}),
     ...(entry?.breakdownWallMs != null ? { breakdownWallMs: entry.breakdownWallMs } : {}),
     ...(span.samples != null ? { samples: span.samples } : {}),
     ...(span.wallMinMs != null ? { wallMinMs: span.wallMinMs } : {}),
