@@ -25,6 +25,7 @@ import type {
   ThrashReport,
 } from "./recording.js";
 import type { Measured } from "./measured.js";
+import type { FrameFloorMatch } from "./frame-floor.js";
 
 /** Functions below the `--top` cutoff in a CPU overview, rolled up. */
 export interface CpuDropped {
@@ -392,6 +393,18 @@ export interface SpanAnatomy {
   /** headline wall (ms). On a STEP span the MEDIAN of its per-iteration walls, not the tiled window
    * (that is `breakdownWallMs`); on run/measure spans the tiled window itself. See SpanEntry.wallMs. */
   wallMs: number | null;
+  /**
+   * The frame-cadence floor `wallMs` pins to (`{floorMs, multiple}`: n× the one-frame floor), set only
+   * when the window is frame-DOMINATED (sub-frame work at 1x, or a wait-dominated multi-frame wall),
+   * so a `--format json` consumer can detect a floored wall programmatically rather than parse the
+   * human note. Absent when the wall is real work or the lane declares no floor (headed). The human
+   * report surfaces the faster sample / js slice beside it. See docs/dev/frame-floor.md.
+   */
+  frameFloor?: FrameFloorMatch;
+  /** the frame-cadence floor `inpMs` pins to; a floored INP is the frame boundary, not the
+   * interaction's own cost (the sub-frame cost is `interaction.processingMs`). Absent when INP is real
+   * work, unmeasured, or the lane declares no floor. See SpanAnatomy.frameFloor. */
+  inpFrameFloor?: FrameFloorMatch;
   /** the bar's own iteration-0 window (ms) the slices tile, present only on a STEP span (its bar tiles
    * iteration 0, which can diverge from the median `wallMs`). See SpanEntry.breakdownWallMs. */
   breakdownWallMs?: number;

@@ -402,11 +402,17 @@ program
       // Set a non-zero exit code so CI/scripts detect the failure. process.exitCode (not a hard
       // process.exit) lets buffered stdout/stderr flush and the browser/server teardown finish before
       // the process ends.
-      console.error(`record failed: ${recordFailureMessage(error)}`);
-      // A RangeError such as a stack overflow carries an unhelpful one-line message; the stack is the
-      // only pointer to where it blew. Print it under WPD_DEBUG, else name the flag.
-      if (process.env.WPD_DEBUG && error.stack) console.error(error.stack);
-      else console.error("(set WPD_DEBUG=1 to print the error stack)");
+      // The CAUSE leads on every path. Under WPD_DEBUG the full stack trails (a RangeError such as a
+      // stack overflow carries an unhelpful one-line message; the stack is the only pointer to where
+      // it blew). Otherwise the debug hint trails ON THE SAME LINE as the cause, so a caller reading
+      // only the last stderr line still gets the actual error, not a bare "(set WPD_DEBUG=1 ...)".
+      const cause = recordFailureMessage(error);
+      if (process.env.WPD_DEBUG && error.stack) {
+        console.error(`record failed: ${cause}`);
+        console.error(error.stack);
+      } else {
+        console.error(`record failed: ${cause} (set WPD_DEBUG=1 to print the error stack)`);
+      }
       process.exitCode = 1;
     }
   });

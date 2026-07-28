@@ -130,6 +130,7 @@ export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
   invalidations: false,
   durations: false,
   forced: false,
+  forcedDurations: false,
 };
 
 /**
@@ -153,6 +154,9 @@ export function capabilitiesFor(
     // Layout/style counts and durations come from the Gecko Reflow/Styles markers, forced from their
     // cause stacks; paint is off-main-thread (a side track), and there is no DevTools trace for
     // invalidations or long tasks. Reported not-measured, never a fake 0 (meta.notes says so).
+    // forcedDurations is false: the markers under-report the forced subset's flush duration ~7x
+    // (first-invalidation only), so forcedLayoutMs is not-measured; the honest total-layout duration
+    // is the reconciling bar's layout slice, and forced COUNTS stay (marker counts are honest counts).
     return {
       counts: config.gecko,
       paintCount: false,
@@ -160,6 +164,7 @@ export function capabilitiesFor(
       invalidations: false,
       durations: config.gecko,
       forced: config.gecko,
+      forcedDurations: false,
     };
   }
   if (config.categories == null) {
@@ -175,6 +180,10 @@ export function capabilitiesFor(
     // Durations are trustworthy ONLY on the light (no-`.stack`) trace; `.stack` inflates them.
     durations: !hasStack,
     forced: hasStack,
+    // The forced SUBSET's duration is never honestly measurable on chrome either: the forced flag
+    // needs `.stack`, and a `.stack` trace suppresses all durations (+38%). So forcedLayoutMs is
+    // structurally not-measured across every lane; forced COUNTS remain a --deep product.
+    forcedDurations: false,
   };
 }
 

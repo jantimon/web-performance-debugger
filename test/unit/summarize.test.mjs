@@ -166,6 +166,36 @@ test("buildSummary scopes paint/forced/total to the main thread, excluding an OO
   assert.equal(summary.totalEvents, 4, "totalEvents excludes the OOPIF process (would be 12 unfiltered)");
 });
 
+// forcedLayoutMs is the forced SUBSET's duration; no lane can honestly price it (chrome reads the
+// subset only from `.stack`, which suppresses durations; Firefox's markers under-report it ~7x). The
+// forcedDurations capability gates it to not-measured while forcedLayoutCount stays. This is the
+// firefox shape: forced markers present, durations on, but forcedDurations false.
+const FIREFOX_MARKER_CAP = {
+  counts: true,
+  paintCount: false,
+  longTasks: false,
+  invalidations: false,
+  durations: true,
+  forced: true,
+  forcedDurations: false,
+};
+test("buildSummary: forcedLayoutMs is not-measured (null) while forcedLayoutCount stays (firefox markers)", () => {
+  const events = [marker(1, 1), forcedLayout(10, 1080, 1, 1), forcedLayout(11, 500, 1, 1)];
+  const summary = buildSummary({
+    detailEvents: events,
+    detailWindowStart: null,
+    capabilities: FIREFOX_MARKER_CAP,
+  });
+  assert.equal(summary.forcedLayoutCount, 2, "forced COUNTS are honest marker counts and stay measured");
+  assert.equal(
+    summary.forcedLayoutMs,
+    null,
+    "the forced-subset duration is not reported: not-measured (null), never the misleading marker ms and never 0",
+  );
+  // The total-layout duration IS measured (marker durations, wall-tier) -- the honest layout signal.
+  assert.ok(summary.layoutMs != null, "total-layout ms stays measured; only the forced-subset ms is suppressed");
+});
+
 // F29: a step's counts are scoped to the RUN-selected thread, not re-picked by the heuristic on the
 // step's own marker-less window. Here the OOPIF thread does more layout inside the step window, so a
 // per-step heuristic would pick it; the run's marker selection (top process) must win, so the step's

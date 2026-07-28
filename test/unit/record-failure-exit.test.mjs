@@ -25,6 +25,21 @@ test("a record failure exits non-zero", () => {
   assert.match(result.stderr, /record failed:/, "names the failure on stderr");
 });
 
+test("the cause leads and the last stderr line names the actual error (not a bare debug hint)", () => {
+  const result = runRecord();
+  // A caller that reads only the final stderr line must still see the cause. The hint trails on the
+  // same line as the cause, so the last non-empty line names the real error, never just "(set WPD_DEBUG=1 ...)".
+  const lines = result.stderr.split("\n").filter((line) => line.trim().length > 0);
+  const lastLine = lines[lines.length - 1];
+  assert.match(lastLine, /record failed:/, "the cause leads the last line");
+  assert.match(
+    lastLine,
+    /intentional run failure for the exit-code test/,
+    "the last stderr line names the actual error, not a bare debug hint",
+  );
+  assert.match(lastLine, /set WPD_DEBUG=1/, "the debug hint trails on that same line");
+});
+
 test("WPD_DEBUG surfaces the error stack, not just the one-line message", () => {
   const result = runRecord({ WPD_DEBUG: "1" });
   assert.equal(result.status, 1, "still exits non-zero");

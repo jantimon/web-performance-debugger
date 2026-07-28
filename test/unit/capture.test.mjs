@@ -95,6 +95,7 @@ test("capabilitiesFor: default capture mode measures nothing; --breakdown counts
     invalidations: false,
     durations: false,
     forced: false,
+    forcedDurations: false,
   });
 
   const light = capabilitiesFor(captureFor(opts({ breakdown: true }), "chrome"), "chrome");
@@ -108,12 +109,21 @@ test("capabilitiesFor: default capture mode measures nothing; --breakdown counts
   assert.equal(deep.durations, false, "durations REFUSED on the .stack trace (it inflates them)");
   assert.equal(deep.forced, true, ".stack drives forced detection");
   assert.equal(deep.invalidations, true, "invalidationTracking present");
+  // No lane can honestly price the forced SUBSET's duration: chrome reads it only from `.stack`, which
+  // suppresses all durations. So forcedLayoutMs is structurally not-measured everywhere.
+  assert.equal(deep.forcedDurations, false, "the forced-subset duration is never measurable");
+  assert.equal(light.forcedDurations, false);
 });
 
 test("capabilitiesFor: firefox counts layout/style/forced from markers, never paint/invalidations/long-tasks", () => {
   const caps = capabilitiesFor(captureFor(opts(), "firefox"), "firefox");
   assert.equal(caps.counts, true);
-  assert.equal(caps.forced, true);
+  assert.equal(caps.forced, true, "forced COUNTS come from the marker cause stacks");
+  assert.equal(
+    caps.forcedDurations,
+    false,
+    "forcedLayoutMs is NOT reported: the markers under-report the forced subset ~7x",
+  );
   assert.equal(caps.paintCount, false, "paint is off-main-thread on Gecko");
   assert.equal(caps.invalidations, false);
   assert.equal(caps.longTasks, false);
