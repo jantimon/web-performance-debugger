@@ -10,7 +10,9 @@
 · [the useful LCP identifier is url+size+tag](#the-useful-lcp-identifier-is-urlsizetag)
 · [LCP finalizes on a trusted input and re-arms per document](#lcp-finalizes-on-a-trusted-input-and-re-arms-per-document)
 · [the boot-LCP entry-delivery race](#the-boot-lcp-entry-delivery-race)
+· [LCP is per-iteration sampled](#lcp-is-per-iteration-sampled)
 · [the headless startTime anomaly](#the-headless-starttime-anomaly)
+· [CLS is the session-window maximum, per step](#cls-is-the-session-window-maximum-per-step)
 · [soft navigations: standards status](#soft-navigations-standards-status)
 · [why wpd does not flip the heuristic flag](#why-wpd-does-not-flip-the-heuristic-flag)
 · [the url+timeOrigin classification](#the-urltimeorigin-classification)
@@ -104,6 +106,34 @@ The wait arms only on a **hard** navigation (which includes the built-in load st
 on a fresh document, so there is no boot entry to race for on a soft or static step, and the flush skips
 the wait there.
 
+## LCP is per-iteration sampled
+
+A boot LCP is a paint timestamp on the page's own clock, so it sits in the wall tier: it varies
+run to run. **[measured]** on one live production site the boot LCP swung **536 ms to 3644 ms**
+between two runs of the same URL; a single stored number could be either extreme and could not say
+which. So under `--iterations N` the load step captures its OWN entry each iteration (each iteration
+re-navigates, so LCP re-fires on the fresh document, `mergeLcp` in `trace/steps.ts`), and the stored
+`lcp` grows the same `perIteration` + `stats` treatment `wall` already carries:
+
+- `perIteration` is the render-time series in iteration order. An iteration that fired **no usable
+  entry** (the entry-delivery race lost it past the budget, no contentful paint, the startTime
+  anomaly, or a TAO-gated resource whose renderTime reads 0) is **null** in the series, never 0 --
+  null and 0 stay distinct, the same rule the counts hold to.
+- `stats` is min/median/mean/max over the non-null values, null below 2 samples (the wall `stats`
+  contract).
+- The identity/timing fields (`url`/`size`/`tag`/`renderTimeMs`) are the **lower-median-by-render-time
+  occurrence verbatim** -- a real sample, the way `mergeSpanOccurrences` keeps a real bar rather than
+  averaging one that never happened. So `renderTimeMs` is one iteration's real paint, and
+  `stats.medianMs` is the computed median; on an even sample count the two differ, which is honest.
+
+A single-iteration run keeps the shape (`perIteration` length 1, `stats` null), so a consumer reads
+one code path. `query span` prints the spread beside the median; `query spans` stays a compact single
+number.
+
+**[measured]** on the local layout-shift fixture booted through the on-ramp at `--iterations 3`, the
+text LCP (`H1#hero`, same-origin, so renderTime is populated) reported `perIteration` `[32, 16, 16]`
+ms -- the spread the single number would have hidden.
+
 ## The headless startTime anomaly
 
 **[measured, reproduced twice]** Chrome's built-in headless intermittently reports a grossly inflated
@@ -120,6 +150,57 @@ matching the ~6% rAF-stall rate; with `--disable-gpu` (the headless default), **
 normal ~80 ms entry. The inflated-`startTime` branch is the same stall surfacing as a broken paint
 clock instead of a missing entry. `--disable-gpu` addresses the root, so both branches are rare;
 `shapeLcp`'s guard stays as the backstop for the residual.
+
+## CLS is the session-window maximum, per step
+
+A driver step carries **Cumulative Layout Shift** from an in-page `layout-shift`
+`PerformanceObserver`, injected per step exactly like the INP/LoAF observers (`browser/driver.ts`),
+Chrome-only. The stored `layoutShift` is the spec **session-window maximum**, not a raw sum, computed
+by the pure `computeLayoutShift`:
+
+- Entries flagged `hadRecentInput` are **excluded** (a shift within 500 ms of a user input does not
+  count), which is why a click step usually reports none and the boot/load step is where CLS shows.
+- The rest are grouped into **session windows**: a new window opens when a shift lands **>1 s after
+  the previous shift** or **>5 s after the window's first**. Each window is scored by summing its
+  entries, and `cls` is the **largest window's** score. A raw sum is a lookalike that overstates the
+  metric; the session-window max is what earns the name.
+- **Attribution rides along.** The API scores an *entry*, not a source, so the winning window's score
+  is split across each entry's `sources` in proportion to their moved area (`max(currentRect,
+  previousRect)` area) -- a ranking proxy for "which element shifted most", never a spec quantity.
+  The top `LAYOUT_SHIFT_SOURCE_CAP` (3) elements are kept as `tag#id.class` descriptors with the
+  rects they moved between.
+
+**Probe [measured]** (Chrome 150, the committed `test/fixtures/layout-shift-probe.html`, which paints
+a text LCP then forces two input-free banner-insertion shifts):
+
+- **`--disable-gpu` is load-bearing, the same root as LCP above.** On the default GPU headless path
+  the fixture produced **0** `layout-shift` entries (the frame-starved branch: no frames, no shift to
+  measure); with `--disable-gpu` (the headless wpd launches) it produced both shifts. A mechanism
+  would predict shifts either way; the probe says otherwise.
+- A `layout-shift` entry is **not** replayed through `performance.getEntriesByType("layout-shift")`
+  (that buffer read **0** even after the shifts landed) -- only the observer sees it (`buffered: true`
+  replays to a late-registered observer). So the observer is the only route; a getEntries poll misses
+  it.
+- Both shifts had `hadRecentInput: false` and landed **<1 s apart**, so they formed **one** session
+  window. Booted through the on-ramp at `--iterations 3`, wpd reported `cls` **0.1211**, `windowCount`
+  1, `shiftCount` 2, attributed `body` 0.056 / `h1#hero` 0.043 / `div#banner-1` 0.018.
+
+**Scope: CLS covers the step's observation window** ([step start mark, end-of-step flush]), not the
+whole page lifetime. The on-ramp load step settles ~2 frames after the load event, so it captures the
+**early** boot shifts (CSS/layout reflow) that land in that window; a page that keeps shifting after
+settle needs an explicit `measureStep` `until` (or a later step) to bring those shifts inside a
+window. This is the same window-scoping every per-step signal has, stated so a short-window CLS is
+read as "the shift in this window", not "the page's lifetime CLS".
+
+**Per-iteration.** Unlike LCP, CLS is stored from the **first timed iteration** (matching the
+LoAF/counts windowing): the shifting-element attribution is a distribution of descriptors that cannot
+be medianed like a scalar, and pooling rects across iterations would fabricate a shift no frame
+produced. The `cls` scalar could be medianed, but keeping it beside its own iteration's sources is the
+honest pairing.
+
+Chrome ships the `layout-shift` entry type and Firefox does not (**[measured]** absent from
+`supportedEntryTypes`), so a firefox/node step carries no `layoutShift` -- absent, never a fabricated
+0, the `Measured` rule.
 
 ## Soft navigations: standards status
 

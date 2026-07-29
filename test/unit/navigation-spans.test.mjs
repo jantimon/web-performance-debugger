@@ -49,7 +49,15 @@ test("mergeSteps carries iteration 0's navigation/URLs/LCP onto the merged step"
   assert.equal(merged[0].navigation, "hard");
   assert.equal(merged[0].beforeUrl, "about:blank");
   assert.equal(merged[0].afterUrl, "https://site/");
-  assert.deepEqual(merged[0].lcp, { tag: "IMG", size: 100, url: "https://site/hero.png" });
+  // Identity verbatim from the (only) occurrence, now grown with the per-iteration render series.
+  // These fixtures carry no renderTimeMs, so the series is a lone null and stats stays degenerate.
+  assert.deepEqual(merged[0].lcp, {
+    tag: "IMG",
+    size: 100,
+    url: "https://site/hero.png",
+    perIteration: [null],
+    stats: null,
+  });
 });
 
 test("a merged step reports iteration 0's classification, not a later iteration's", () => {
@@ -65,7 +73,9 @@ test("a merged step reports iteration 0's classification, not a later iteration'
   ];
   const merged = mergeSteps(steps, undefined);
   assert.equal(merged[0].navigation, "hard", "iteration 0 is the representative");
-  assert.deepEqual(merged[0].lcp, { tag: "IMG" });
+  // With no render time to median on, the identity falls back to the first shaped occurrence
+  // (iteration 0's IMG), and the series is null for both un-timed iterations.
+  assert.deepEqual(merged[0].lcp, { tag: "IMG", perIteration: [null, null], stats: null });
 });
 
 test("a static step carries no navigation/LCP fields at all (not a fabricated marker)", () => {

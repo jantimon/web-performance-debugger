@@ -1,6 +1,8 @@
 import type {
   CpuModel,
   FlushScope,
+  LayoutShift,
+  LayoutShiftRect,
   NavigationKind,
   RecordingMeta,
   Span,
@@ -84,7 +86,53 @@ function printStepLcp(lcp: StepLcp): void {
     );
   if (lcp.startTimeMs != null) parts.push(`start ${num(lcp.startTimeMs, 1)} ms`);
   if (parts.length) console.log(dim(`  ${parts.join(" · ")}`));
+  // Per-iteration spread: a boot LCP swings run-to-run (field-measured 536ms vs 3644ms on one site),
+  // so the single render time above is one sample and the spread is what says whether to trust it. A
+  // miss (an iteration that fired no usable entry) stays null in the series, counted here, never 0.
+  if (lcp.perIteration && lcp.perIteration.length > 1) {
+    const misses = lcp.perIteration.filter((value) => value == null).length;
+    const missNote = misses ? `; ${misses} iteration(s) fired no entry` : "";
+    if (lcp.stats)
+      console.log(
+        dim(
+          `  render across ${lcp.stats.samples} iteration(s): min ${num(lcp.stats.minMs, 1)} · ` +
+            `median ${num(lcp.stats.medianMs, 1)} · max ${num(lcp.stats.maxMs, 1)} ms${missNote}`,
+        ),
+      );
+    else if (missNote) console.log(dim(`  render${missNote}`));
+  }
   if (lcp.className) console.log(dim(`  class ${lcp.className}`));
+}
+
+/** A source's rect move as `[x,y w×h] -> [x,y w×h]`, rounded to whole px (page coordinates). */
+function describeRectMove(previousRect: LayoutShiftRect, currentRect: LayoutShiftRect): string {
+  const rect = (box: LayoutShiftRect) =>
+    `[${num(box.x, 0)},${num(box.y, 0)} ${num(box.width, 0)}x${num(box.height, 0)}]`;
+  return `${rect(previousRect)} -> ${rect(currentRect)}`;
+}
+
+/** The CLS block for `query span`: the session-window-max score and the top shifting elements. */
+function printLayoutShift(layoutShift: LayoutShift): void {
+  console.log(
+    `\nCLS (boot, spec session-window max; wall-tier directional): ${bold(num(layoutShift.cls, 4))}`,
+  );
+  console.log(
+    dim(
+      `  ${layoutShift.shiftCount} shift(s) in the winning window; ${layoutShift.windowCount} session window(s)`,
+    ),
+  );
+  if (layoutShift.sources.length) {
+    console.log(
+      dim("  shifted most (score is an area-weighted share of the window, not a spec quantity):"),
+    );
+    for (const source of layoutShift.sources) {
+      const move =
+        source.previousRect && source.currentRect
+          ? `  ${describeRectMove(source.previousRect, source.currentRect)}`
+          : "";
+      console.log(dim(`    ${source.node}  score ${num(source.score, 4)}${move}`));
+    }
+  }
 }
 
 /**
@@ -191,6 +239,7 @@ export function printSpanAnatomy(
   // A driver step's navigation (what its document did) and, on a hard navigation, its boot LCP.
   printStepNavigation(anatomy.navigation, anatomy.beforeUrl, anatomy.afterUrl);
   if (anatomy.lcp) printStepLcp(anatomy.lcp);
+  if (anatomy.layoutShift) printLayoutShift(anatomy.layoutShift);
 
   // The reconciling bar, when the capture mode built one. A stored bar prints the seven-slice per-span
   // table; a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled).
@@ -474,6 +523,7 @@ export function printGroupSpanStitch(stitch: GroupSpanStitch): void {
 
   printStepNavigation(stitch.navigation, stitch.beforeUrl, stitch.afterUrl);
   if (stitch.lcp) printStepLcp(stitch.lcp);
+  if (stitch.layoutShift) printLayoutShift(stitch.layoutShift);
 
   if (stitch.inpMs != null || stitch.interaction) {
     const inp = stitch.inpMs == null ? "—" : `${num(stitch.inpMs)} ms`;

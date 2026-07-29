@@ -390,6 +390,7 @@ function buildSpanAnatomy(
     ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
     ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
     ...(span.lcp ? { lcp: span.lcp } : {}),
+    ...(span.layoutShift ? { layoutShift: span.layoutShift } : {}),
     ...(forced ? { forced } : {}),
     ...(thrash ? { thrash } : {}),
     ...(firefoxDirtied ? { firefoxDirtiedBy: firefoxDirtied } : {}),
@@ -552,6 +553,8 @@ async function buildGroupSpanStitch(
   // Navigation/URLs/LCP are a property of the step's own window, identical across every member of a
   // group (one workload, replayed), so any member's anatomy carries them.
   const navAnatomy = [...perMember.values()][0];
+  // CLS is Chrome-only: take it from whichever member observed a shift, not member 0.
+  const layoutShiftAnatomy = [...perMember.values()].find((anatomy) => anatomy.layoutShift);
 
   const barMember = pickMember(group, "slice-bar");
   const countsMember = pickMember(group, "counts");
@@ -615,6 +618,9 @@ async function buildGroupSpanStitch(
     ...(navAnatomy?.beforeUrl != null ? { beforeUrl: navAnatomy.beforeUrl } : {}),
     ...(navAnatomy?.afterUrl != null ? { afterUrl: navAnatomy.afterUrl } : {}),
     ...(navAnatomy?.lcp ? { lcp: navAnatomy.lcp } : {}),
+    // CLS is Chrome-only, so it is sourced from whichever member observed it, not member 0 (which may
+    // be the firefox member); a step's shift is the same workload across members.
+    ...(layoutShiftAnatomy?.layoutShift ? { layoutShift: layoutShiftAnatomy.layoutShift } : {}),
     ...(forcedAnatomy?.forced ? { forced: forcedAnatomy.forced } : {}),
     ...(forcedAnatomy?.thrash ? { thrash: forcedAnatomy.thrash } : {}),
     ...(forcedAnatomy?.firefoxDirtiedBy

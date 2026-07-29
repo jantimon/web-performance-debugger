@@ -533,6 +533,46 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
   assert.ok(many.steps[0].stats?.samples === 5, "the step span exposes the spread");
 });
 
+// Synthetic web vitals: the built-in on-ramp boots a fixture that forces two input-free layout shifts
+// and paints a text LCP. The boot (a hard navigation) must carry ONE LCP render-time sample per
+// iteration (not a single object that hides a run-to-run swing) and a CLS whose session-window max is
+// attributed to the elements that moved. No module: this is the zero-authoring --url on-ramp.
+e2e("web-vitals: the boot step carries per-iteration LCP samples and attributed CLS", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const html = path.join(repoRoot, "test", "fixtures", "layout-shift-probe.html");
+  assert.ok(existsSync(html), "layout-shift-probe.html is committed, so this test cannot silently skip");
+  const iterations = 3;
+  const out = path.join(dir, "web-vitals");
+  runCli(["record", "--url", html, "--iterations", String(iterations), "--out", out]);
+  const recording = JSON.parse(readFileSync(out, "utf8"));
+  const load = recording.spans.find((span) => span.kind === "step" && span.label === "load");
+  assert.ok(load, "the built-in on-ramp records a 'load' step");
+
+  // LCP: one render-time sample per iteration, null-honest (a miss is null, never 0), and on this
+  // same-origin text LCP at least one iteration fires a real number.
+  assert.ok(load.lcp, "the load step (a hard navigation) carries boot LCP");
+  assert.equal(load.lcp.perIteration.length, iterations, "one LCP render-time sample per iteration");
+  for (const sample of load.lcp.perIteration)
+    assert.ok(
+      sample === null || typeof sample === "number",
+      `each LCP sample is a render time or null, never a fabricated value (got ${sample})`,
+    );
+  assert.ok(
+    load.lcp.perIteration.some((sample) => typeof sample === "number"),
+    "the same-origin text LCP fires at least once",
+  );
+
+  // CLS: the spec session-window maximum, above zero, with the shifting elements named.
+  assert.ok(load.layoutShift, "the load step observed layout shifts");
+  assert.ok(load.layoutShift.cls > 0, `cls > 0 (got ${load.layoutShift.cls})`);
+  assert.ok(load.layoutShift.sources.length > 0, "CLS names the shifting elements, not just a score");
+  const shifted = load.layoutShift.sources.map((source) => source.node).join(" ");
+  assert.ok(
+    /hero|banner|body/.test(shifted),
+    `sources name the fixture's shifting elements (got '${shifted}')`,
+  );
+});
+
 // --- the fused --breakdown pass and the reconciling seven-slice bar ---
 
 const SLICE_NAMES = ["js", "style", "layout", "paint", "gc", "other", "idle"];

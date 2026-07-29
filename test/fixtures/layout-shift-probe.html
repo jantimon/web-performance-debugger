@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>wpd layout-shift + LCP probe</title>
+<!--
+  Host page for the web-vitals e2e (CLS + boot LCP). Committed rather than generated into a temp dir
+  because a local-file --url is served by a static server rooted at the cwd, so the file has to live
+  under the repo. Deliberately dependency-free.
+
+  #hero is a large same-origin text block, the LCP candidate (text LCP has a populated renderTime
+  same-origin, so lcp.perIteration carries a real number). After load, two input-free banners are
+  prepended that push #hero and #body down: layout shifts with no preceding interaction, so
+  hadRecentInput is false and they count toward CLS, and their `sources` name the shifted elements.
+-->
+<style>
+  body { margin: 0; font: 16px/1.5 sans-serif; }
+  #hero { font-size: 64px; font-weight: 700; padding: 40px; }
+  #body { padding: 0 40px; }
+  .banner { background: #fc0; padding: 40px; font-size: 24px; }
+</style>
+<h1 id="hero">Largest contentful heading, the LCP candidate for this page</h1>
+<p id="body">Body copy that gets pushed down by the injected banners above it.</p>
+<script>
+  // Deliberate, input-free layout shifts after the first paint: each banner prepended before #hero
+  // pushes the existing content down. No user interaction precedes them, so hadRecentInput is false and
+  // the shifts count toward CLS. rAF-scheduled so each lands after a painted baseline (a shift is scored
+  // against the previous frame) and early enough to sit inside a driven step's window. Both land in one
+  // session window (gap < 1s). `window.__wpdShiftsDone` flips once they have painted, so a driver step's
+  // `until` can wait for the shifts deterministically rather than racing the settle.
+  function injectBanner(label) {
+    const banner = document.createElement("div");
+    banner.className = "banner";
+    banner.id = "banner-" + label;
+    banner.textContent = "Injected banner " + label;
+    document.body.insertBefore(banner, document.body.firstChild);
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      injectBanner("1");
+      requestAnimationFrame(() => {
+        injectBanner("2");
+        requestAnimationFrame(() => {
+          window.__wpdShiftsDone = true;
+        });
+      });
+    });
+  });
+</script>

@@ -1,4 +1,10 @@
-import type { InteractionTiming, NavigationKind, StepLcp, StepLoaf } from "./recording.js";
+import type {
+  InteractionTiming,
+  LayoutShift,
+  NavigationKind,
+  StepLcp,
+  StepLoaf,
+} from "./recording.js";
 
 /**
  * The driver->steps contract: one measured step as browser/driver.ts's runDriver produces it,
@@ -67,4 +73,7 @@ export interface DriverStep {
   afterUrl?: string;
   /** boot LCP, present only on a HARD-navigation step (a fresh document); see shapeLcp */
   lcp?: StepLcp;
+  /** CLS (spec session-window max) for this step, with shifting elements attributed (Chrome only);
+   * absent when no qualifying shift was observed or the browser has no support. See computeLayoutShift. */
+  layoutShift?: LayoutShift;
 }
