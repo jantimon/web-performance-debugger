@@ -14,6 +14,7 @@
 · [sub-frame resolution](#sub-frame-cpu-work-is-measurable-on-both-engines-off-the-frame-floor-axis)
 · [what `--cpu-throttle` does to each tier](#what---cpu-throttle-does-to-each-trust-tier)
 · [the host-CPU index](#the-host-cpu-index)
+· [the browser-version axis](#the-browser-version-axis)
 
 Split out: [firefox-cpu.md](./firefox-cpu.md) (the Gecko sampler lane: shared pass, honest idle,
 the 1 ms floor), [cpu-attribution.md](./cpu-attribution.md) (which spans get samples, hot
@@ -552,3 +553,36 @@ on bare-metal-class runners but reaches **12.75% on virtualized macOS** -- the r
 cross-architecture pair (the false-trip case) does not exist in the runner pool, so the
 arch-skew check narrows to plausible-but-unclosed; revisit if a matched cross-arch pair becomes
 available.
+
+## The browser-version axis
+
+**The stamp.** `record` threads `browser.version()` (chrome `"Chrome/151.0.7922.47"`, firefox over
+BiDi `"Firefox/152.0"`) through the pass into `meta.browserVersion = { raw, milestone }`; the node lane
+stamps `process.version` (`"v24.13.0"`). The milestone is the first integer run
+(`model/engine-version.ts`), so 151 / 152 / 24. Both forms are kept: `raw` for the reader, `milestone`
+for the gate.
+
+**The gate.** `comparabilityMismatches` adds a `browser-version` axis that WARNS (never blocks) on a
+**milestone** difference -- a patch/build bump within one milestone is not comparability-relevant, so
+it is silent. It sits at the same advisory tier as `host-cpu` and `sampler-interval`: an engine version
+is an environmental fact, not a config wpd applied, so blocking on it would refuse a legitimate gate
+whenever a hosted runner rolled Chrome between two runs. One side missing the field (an older recording,
+or an unparsed format) falls back to a raw-string comparison and warns as unverifiable; both-absent is
+silent.
+
+**Which numbers survive an engine bump (why it warns, not blocks).** A gate across a milestone
+difference is fine for the exact tier and misleading for the directional tier:
+
+| Trust tier | Metric | Survives a Chrome/Firefox bump? |
+| --- | --- | --- |
+| exact (count) | layouts / styles / paints / forced-layout / invalidations | **Yes** -- trace-derived, main-thread windowed; a Blink version does not change what a Layout event counts (`rendering-counts.md`: Layout/style counts match the CDP counters 1:1) |
+| exact (floor) | the one-frame `wall`/`INP` floor (16.6 ms headless ~60 Hz) | **Yes** -- set by the headless frame cadence, not the engine milestone (`frame-floor.md`) |
+| directional (wall) | `renderTime`, slice ms, per-mode wall overhead | **No** -- engine work shifts across versions; the per-mode overhead numbers here are pinned to their probe's Chrome/Firefox build for exactly this reason |
+| environmental | frame-production stall rate under headless | **No** -- a compositor/BeginFrame change between builds moves it (`frame-floor.md`, `driver-timing.md`) |
+
+So a **count** `assert`/`diff` gate stays valid across a bump (the axis warns, the count is still
+exact); a **directional** `diff`/`cpu-diff` should keep the same build on both sides, and the warn is
+the signal that it did not. **[measured, format facts]** `browser.version()` returns
+`Chrome/<major>.<minor>.<build>.<patch>` (Chrome 151: `"Chrome/151.0.7922.47"`) and `process.version`
+returns `v<major>.<minor>.<patch>` (`"v24.13.0"`); the first-integer-run milestone parse holds for
+both and for Firefox's `Firefox/<major>.<minor>`.

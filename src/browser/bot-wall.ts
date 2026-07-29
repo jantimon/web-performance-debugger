@@ -44,6 +44,17 @@ export async function collectBotWallSignals(page: Page): Promise<BotWallSignals>
     const content = meta?.getAttribute("content") || "";
     const match = content.match(/url\s*=\s*(.+)$/i);
     if (match) metaRefreshUrl = match[1].trim().replace(/^['"]|['"]$/g, "");
+    // Cloudflare inline managed-challenge tells (see record/bot-wall.ts): every script src (the .src
+    // property is the resolved absolute URL, so a relative /cdn-cgi/... script reads same-origin), the
+    // _cf_chl_opt page global the interstitial sets, and the __cf_chl_rt_tk runtime token in the served
+    // markup. Reading outerHTML once (returning only a boolean) keeps the whole document in-page.
+    const scriptSrcs = Array.from(document.querySelectorAll("script[src]"))
+      .map((script) => (script as HTMLScriptElement).src || script.getAttribute("src") || "")
+      .filter((src) => !!src);
+    const cfChallengeGlobal = typeof (window as any)._cf_chl_opt !== "undefined";
+    const documentHasCfChallengeToken = (document.documentElement?.outerHTML || "").includes(
+      "__cf_chl_rt_tk",
+    );
     return {
       title: document.title || "",
       iframeSrcs,
@@ -51,6 +62,9 @@ export async function collectBotWallSignals(page: Page): Promise<BotWallSignals>
       interactiveElementCount,
       bodyTextLength,
       metaRefreshUrl,
+      scriptSrcs,
+      cfChallengeGlobal,
+      documentHasCfChallengeToken,
     };
   }, DOMINANT_IFRAME_MIN_FRACTION)) as Omit<BotWallSignals, "mainDocumentUrl">;
   return { mainDocumentUrl: page.url(), ...dom };

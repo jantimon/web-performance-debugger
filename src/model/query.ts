@@ -27,6 +27,7 @@ import type {
   ThrashReport,
 } from "./recording.js";
 import type { Measured } from "./measured.js";
+import type { SoftNavVerdict } from "./soft-nav.js";
 import type { FrameFloorMatch } from "./frame-floor.js";
 import type { AllocFunction, AllocGroupStat, AllocSamplingConfig } from "./alloc.js";
 
@@ -478,6 +479,11 @@ export interface SpanAnatomy {
    * `navigation`; absent when the engine fired no entry or the browser has no support. `query span`
    * reconciles it with `navigation` (see model/soft-nav.ts). */
   engineSoftNav?: EngineSoftNav;
+  /** How the url+timeOrigin `navigation` classifier and Chrome's `engineSoftNav` heuristic relate
+   * (agree / classifier-only / engine-only) with a non-alarmist note. The same reconciliation the human
+   * report prints, exposed to `--format json`; absent when there is nothing to reconcile ("none"). See
+   * model/soft-nav.ts. */
+  softNavAgreement?: SoftNavVerdict;
   /** boot LCP for a step that started a fresh document (a hard-navigation step); absent otherwise */
   lcp?: StepLcp;
   /** CLS (spec session-window max) with shifting elements attributed, for a driver step (Chrome only);
@@ -547,6 +553,9 @@ export interface GroupSpanStitch {
   afterUrl?: string;
   /** Chrome's own soft-navigation verdict (identical across members); absent when none fired */
   engineSoftNav?: EngineSoftNav;
+  /** how the classifier and the engine soft-nav verdict relate (see SpanAnatomy.softNavAgreement);
+   * absent when there is nothing to reconcile */
+  softNavAgreement?: SoftNavVerdict;
   /** boot LCP for a hard-navigation step (identical across members); absent otherwise */
   lcp?: StepLcp;
   /** CLS (spec session-window max) with shifting elements attributed, from whichever member observed it

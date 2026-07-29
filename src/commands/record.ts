@@ -53,6 +53,7 @@ import { extFor } from "../output/format.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 import { stableWorkloadPath } from "../model/compat.js";
+import { engineVersion } from "../model/engine-version.js";
 import { measureHostCpuIndex } from "../model/host-cpu.js";
 import type {
   AllocModel,
@@ -666,6 +667,19 @@ function buildMeta(
     notes,
     // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome".
     browser: browserName === "firefox" ? "firefox" : undefined,
+    // The launched browser build (chrome/firefox), parsed into raw + milestone for the comparability
+    // axis. Absent when the backend could not report it.
+    browserVersion: pass.browserVersion ? engineVersion(pass.browserVersion) : undefined,
+    // Bot-challenge verdict, stamped ONLY on a detected-but-measured (--allow-bot-wall) run: a refusal
+    // throws before this. A machine-readable copy of the loud note; absent on every clean run.
+    botWall: pass.botWallVerdict?.detected
+      ? {
+          detected: true,
+          signals: pass.botWallVerdict.firedSignals,
+          vendorOrigins: pass.botWallVerdict.vendors,
+          measuredAnyway: true,
+        }
+      : undefined,
     // The read a blame line names (flush-site everywhere blame runs). On --breakdown the capture mode
     // CAN produce sampled blame, but only when the trace carried per-sample lines; clear it when it did
     // not, so an unavailable feature is not advertised (the breakdownBlameUnavailable note says why).

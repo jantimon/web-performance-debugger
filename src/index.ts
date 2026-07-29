@@ -24,6 +24,7 @@ export type {
   RecordingWindow,
   BlameSemantic,
   RecordingMeta,
+  EngineVersion,
   Recording,
   Span,
   SpanCounts,

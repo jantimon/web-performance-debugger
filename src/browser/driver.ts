@@ -749,18 +749,24 @@ export async function runDriver(
       typeof PerformanceObserver !== "undefined" &&
       (PerformanceObserver.supportedEntryTypes || []).includes("soft-navigation");
     if (!supported) return;
+    const shape = (softNav: any) => ({
+      url: softNav.name || "",
+      navigationType: softNav.navigationType || "",
+      navigationId: typeof softNav.navigationId === "number" ? softNav.navigationId : NaN,
+      interactionId: typeof softNav.interactionId === "number" ? softNav.interactionId : NaN,
+    });
     try {
-      new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          const softNav = entry as any;
-          win.__cpSoftNav.push({
-            url: softNav.name || "",
-            navigationType: softNav.navigationType || "",
-            navigationId: typeof softNav.navigationId === "number" ? softNav.navigationId : NaN,
-            interactionId: typeof softNav.interactionId === "number" ? softNav.interactionId : NaN,
-          });
-        }
-      }).observe({ type: "soft-navigation", buffered: true } as any);
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) win.__cpSoftNav.push(shape(entry));
+      });
+      observer.observe({ type: "soft-navigation", buffered: true } as any);
+      // The entry is QUEUED to the observer before its callback dispatches: on a slow frame the
+      // end-of-step flush can read __cpSoftNav before that dispatch, seeing a race-empty list on a step
+      // whose trusted interaction DID drive a route. takeRecords() delivers the queued entries
+      // synchronously through the same shaper, so the flush can drain them rather than miss the soft nav.
+      win.__cpSoftNavDrain = () => {
+        for (const entry of observer.takeRecords()) win.__cpSoftNav.push(shape(entry));
+      };
     } catch {
       /* soft-navigation unsupported */
     }
@@ -860,7 +866,7 @@ export async function runDriver(
     // LoAF entries land on a later task too, so read them in the same frame+macrotask flush as the
     // Event-Timing entries: one round trip, both signals settled.
     const flushed = (await page.evaluate(
-      (ceilingMs, waitLcp, lcpBudgetMs) =>
+      (ceilingMs, waitLcp, waitSoftNav, entryBudgetMs) =>
         new Promise<{
           inp: RawEventTiming[];
           loaf: RawLoafFrame[];
@@ -869,8 +875,9 @@ export async function runDriver(
           softNav: RawSoftNavEntry[];
         }>((resolve) => {
           const win = window as any;
-          const drainLcp = () => {
+          const drainEntries = () => {
             if (typeof win.__cpLcpDrain === "function") win.__cpLcpDrain();
+            if (typeof win.__cpSoftNavDrain === "function") win.__cpSoftNavDrain();
           };
           const read = () => ({
             inp: (win.__cpInp as RawEventTiming[]) ?? [],
@@ -883,25 +890,31 @@ export async function runDriver(
           const finish = () => {
             if (done) return;
             done = true;
-            drainLcp();
+            drainEntries();
             resolve(read());
           };
           // The settle already threw on a stalled compositor, so rAF normally fires here; the
           // ceiling is a backstop that reads whatever landed rather than hanging if it does not.
           setTimeout(finish, ceilingMs);
-          // Base flush: one frame + a macrotask so INP/LoAF land. On a hard-nav step whose boot LCP
-          // entry has not reached the observer yet (paint races the callback dispatch), drain
-          // takeRecords() and, while still race-empty, wait bounded frames for the entry to queue. A
-          // page with no contentful paint queues nothing, so the wait ends at lcpBudgetMs and absence
-          // stays honest. All of this sits after the end mark, so it never grows the measured window.
+          // Base flush: one frame + a macrotask so INP/LoAF land. Two entries race the same end-of-step
+          // read after their paint/interaction: a hard-nav step's boot LCP, and a soft-nav step's
+          // engine `soft-navigation` entry. For whichever the step expects, drain takeRecords() and,
+          // while still race-empty, wait bounded frames for the entry to queue. A page that produces
+          // neither (no contentful paint / no qualifying route) queues nothing, so the wait ends at
+          // entryBudgetMs and absence stays honest. All of this sits after the end mark, so it never
+          // grows the measured window.
           const canWaitLcp = waitLcp && typeof win.__cpLcpDrain === "function";
-          let lcpWaitStartMs = -1;
+          const canWaitSoftNav = waitSoftNav && typeof win.__cpSoftNavDrain === "function";
+          let waitStartMs = -1;
           const settleRead = () => {
             if (done) return;
-            drainLcp();
-            if (canWaitLcp && (win.__cpLcp as RawLcpEntry[]).length === 0) {
-              if (lcpWaitStartMs < 0) lcpWaitStartMs = performance.now();
-              if (performance.now() - lcpWaitStartMs < lcpBudgetMs) {
+            drainEntries();
+            const lcpPending = canWaitLcp && (win.__cpLcp as RawLcpEntry[]).length === 0;
+            const softNavPending =
+              canWaitSoftNav && (win.__cpSoftNav as RawSoftNavEntry[]).length === 0;
+            if (lcpPending || softNavPending) {
+              if (waitStartMs < 0) waitStartMs = performance.now();
+              if (performance.now() - waitStartMs < entryBudgetMs) {
                 requestAnimationFrame(settleRead);
                 return;
               }
@@ -912,6 +925,7 @@ export async function runDriver(
         }),
       STALL_CEILING_MS,
       navigation === "hard",
+      navigation === "soft" || navigation === "soft-hash",
       LCP_ENTRY_WAIT_MS,
     )) as {
       inp: RawEventTiming[];

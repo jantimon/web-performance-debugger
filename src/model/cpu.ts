@@ -23,6 +23,15 @@ export interface CpuFunction {
   selfMs: number;
   selfPct: number;
   totalMs: number;
+  /**
+   * URL-mechanical site relation of the script ORIGIN this function was fetched from to the measured
+   * page: same-origin | same-site | cross-site, via the public-suffix list. Present on a `--url` run's
+   * REMOTE function (resolved or not) whose origin is not wpd's own served localhost; absent on a
+   * served/local frame, a non-remote frame, and a non-`--url` run. It is `site relation`, a fact --
+   * NEVER an ownership or "third-party" claim (a cross-site CDN can be first-party-owned). It also
+   * feeds the package/file rollup's uniform-bucket relation (cpuprofile.ts). See model/site-relation.ts.
+   */
+  siteRelation?: SiteRelation;
 }
 
 /** Self time grouped by some key (package or file). */
@@ -32,11 +41,13 @@ export interface CpuGroupStat {
   selfPct: number;
   functions: number;
   /**
-   * URL-mechanical site relation of an ORIGIN-bucket key (`(cdn.example.com)`) to the measured page:
-   * same-origin | same-site | cross-site, via the public-suffix list. Present only on origin buckets
-   * of a `--url` run (a real page URL to compare against); absent on real packages, non-origin buckets,
-   * and non-`--url` runs. It is `site relation`, a fact -- NEVER an ownership or "third-party" claim (a
-   * cross-site CDN can be first-party-owned). See model/site-relation.ts.
+   * URL-mechanical site relation of this bucket to the measured page: same-origin | same-site |
+   * cross-site, via the public-suffix list. On a `--url` run: an unmapped ORIGIN-bucket key
+   * (`(cdn.example.com)`) carries its own host's relation, and a RESOLVED package/file bucket carries
+   * the UNIFORM relation of its member functions (absent when they disagree or none carries one -- never
+   * a wrong tag on a mixed-origin bucket). Absent on non-`--url` runs. It is `site relation`, a fact --
+   * NEVER an ownership or "third-party" claim (a cross-site CDN can be first-party-owned). See
+   * model/site-relation.ts.
    */
   siteRelation?: SiteRelation;
 }
