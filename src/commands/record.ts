@@ -42,6 +42,14 @@ import {
 } from "../record/group.js";
 import { writeFileAtomic, copyFileAtomic } from "../model/atomic-write.js";
 import * as notesCatalog from "../record/notes.js";
+import { activeAddons } from "../addons/registry.js";
+import {
+  addonPageInits,
+  runEnrich,
+  type Addon,
+  type AddonEnrichContext,
+  type AddonSpanWindow,
+} from "../model/addon.js";
 import { RUN_START_MARK, RUN_END_MARK, RUN_MEASURE } from "../model/marks.js";
 import { printCpuHeadline, printCpuBreakdown, printSpanBreakdowns } from "./cpu.js";
 import { printAllocHeadline } from "./alloc.js";
@@ -218,6 +226,9 @@ interface RecordSetup {
   wantTrace: boolean;
   /** Host-CPU speed scalar, measured in node before the browser launches (never inside the window). */
   hostCpuIndex: number;
+  /** The framework addons active for this run (empty under --framework off). The core touches them only
+   * through the Addon interface; see model/addon.ts. */
+  addons: Addon[];
 }
 
 /** The one capture pass's products: the pass result, the (closed) server whose url string stays valid
@@ -316,13 +327,19 @@ async function resolveSetup(opts: RecordOptions): Promise<RecordSetup> {
     capabilities,
     wantTrace,
     hostCpuIndex,
+    // Framework addons: `auto` unless the CLI passed off. Every lane accepts it; an addon no-ops where
+    // its signals are absent. Resolved once here so the pass and the post-capture enrichment agree.
+    addons: activeAddons(opts.framework ?? "auto"),
   };
 }
 
 /** Start the static server, run the one capture pass (retrying a transient nav on a fresh browser),
  * then copy off and delete the gecko temp dump. */
 async function runCapturePass(setup: RecordSetup): Promise<CapturedPass> {
-  const { opts, root, mode, absModule, capture, outDir, base } = setup;
+  const { opts, root, mode, absModule, capture, outDir, base, addons } = setup;
+  // The active addons' in-page probes (e.g. the React detection hook), installed before any navigation.
+  // Empty under --framework off, so the pass runs exactly as it did before addons existed.
+  const pageInits = addonPageInits(addons);
   // In --url bench mode the host page is a remote origin that import()s the served module cross-origin,
   // so that one origin is granted CORS read access; every other mode serves the host page same-origin
   // and needs none. Never a wildcard: it would expose cwd files to any site open in the operator's
@@ -352,7 +369,7 @@ async function runCapturePass(setup: RecordSetup): Promise<CapturedPass> {
   };
   try {
     const outcome = await retryTransientNav(
-      () => runPass(server, root, capture, opts, mode, absModule, maps, botWall),
+      () => runPass(server, root, capture, opts, mode, absModule, maps, botWall, pageInits),
       NAV_RETRY_LIMIT,
     );
     pass = outcome.value;
@@ -949,6 +966,55 @@ async function buildSpanBars(
   });
 }
 
+/**
+ * Run the active framework addons' post-capture enrichment: attach each addon's facts onto the built
+ * spans' `addons` slot and push any run-level disclosure notes. Runs AFTER the spans and CPU model
+ * exist and BEFORE the artifacts serialize. A no-op under --framework off (no addons), so the recording
+ * is byte-identical to one wpd wrote before addons existed. The core touches the addons only through the
+ * Addon interface (model/addon.ts). See docs/dev/react-attribution.md.
+ */
+function enrichAddons(
+  setup: RecordSetup,
+  captured: CapturedPass,
+  derived: DerivedNotes,
+  recording: Recording,
+  cpuModel: CpuModel | undefined,
+): void {
+  if (!setup.addons.length) return;
+  // Trace-clock windows for the run span (the whole run window) and each driver step, so a per-span
+  // addon can scope the stored event log to a span.
+  const spanWindows: AddonSpanWindow[] = [
+    {
+      label: "run",
+      kind: "run",
+      startTs: recording.window.startTs,
+      endTs: recording.window.endTs,
+    },
+    ...(derived.mergedSteps ?? []).map((step) => ({
+      label: step.label,
+      kind: "step" as const,
+      startTs: step.startTs,
+      endTs: step.endTs,
+    })),
+  ];
+  // Per-step addon probe payloads (iteration 0), by step label.
+  const stepData = new Map<string, Record<string, unknown>>();
+  for (const step of derived.mergedSteps ?? [])
+    if (step.addons) stepData.set(step.label, step.addons);
+
+  const context: AddonEnrichContext = {
+    meta: recording.meta,
+    spans: recording.spans,
+    spanWindows,
+    pageData: captured.pass.addonPageData,
+    stepData,
+    cpuModel,
+    events: recording.events,
+  };
+  // derived.notes is meta.notes by reference, so pushing here lands the disclosures in the artifact.
+  derived.notes.push(...runEnrich(setup.addons, context));
+}
+
 /** Finalize the sourcemap diagnostics onto meta and push the sourcemap/position-miss notes. */
 function finalizeSourcemapMeta(
   captured: CapturedPass,
@@ -1061,6 +1127,7 @@ export async function record(opts: RecordOptions): Promise<{
   const { recording, summary } = buildRecordingObject(setup, captured, derived, meta);
   const cpuModel = await buildCpuArtifacts(setup, captured, derived, meta);
   await buildSpanBars(setup, captured, derived, recording, summary, cpuModel);
+  enrichAddons(setup, captured, derived, recording, cpuModel);
   finalizeSourcemapMeta(captured, meta, derived.notes, cpuModel);
   const { cpuModelPath, groupManifestPath } = await writeAllArtifacts(
     setup,

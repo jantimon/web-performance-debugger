@@ -85,4 +85,11 @@ export interface DriverStep {
   /** CLS (spec session-window max) for this step, with shifting elements attributed (Chrome only);
    * absent when no qualifying shift was observed or the browser has no support. See computeLayoutShift. */
   layoutShift?: LayoutShift;
+  /**
+   * Raw per-step framework-addon probe payload read at this step's flush (`window.__wpdAddonStepRead`),
+   * keyed by addon name. Opaque here (it crossed the page boundary); an addon's `enrich` shapes it into
+   * the stored `Span.addons` facts. Absent when no addon installed a per-step probe (e.g. --framework
+   * off) or the window read nothing. Carried from iteration 0 through mergeSteps.
+   */
+  addons?: Record<string, unknown>;
 }

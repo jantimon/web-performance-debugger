@@ -411,6 +411,8 @@ function buildSpanAnatomy(
     ...(thrash ? { thrash } : {}),
     ...(firefoxDirtied ? { firefoxDirtiedBy: firefoxDirtied } : {}),
     hot,
+    // Framework-addon facts (react/react-dev), when an addon attached any for this span. Additive.
+    ...(span.addons ? { addons: span.addons } : {}),
     hints,
   };
 }

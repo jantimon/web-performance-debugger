@@ -1,5 +1,6 @@
 import type { BrowserName } from "../browser/backend.js";
 import type { Format } from "../output/format.js";
+import type { FrameworkMode } from "../model/addon.js";
 
 export interface RecordOptions {
   /** the user's driver/bench/node module; omitted for the built-in on-ramp flow (--url only) */
@@ -71,4 +72,10 @@ export interface RecordOptions {
    * each append derives partial status structurally. Internal (no CLI flag); absent for a plain
    * single `--group` record, which is complete-by-construction. */
   groupRequested?: string[];
+  /**
+   * Framework-addon mode (`--framework off|auto`, default `auto`). `off` runs zero addon code; `auto`
+   * lets each registered addon's factual detection decide whether it contributes. Every lane accepts
+   * it; an addon no-ops where its signals are absent. Absent is read as `auto`. See model/addon.ts.
+   */
+  framework?: FrameworkMode;
 }

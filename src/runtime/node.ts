@@ -13,6 +13,8 @@ import { usToMs, msToUs } from "../model/time.js";
 import { attachTeardownFailure } from "../model/teardown.js";
 import { buildSummary, NO_RENDERING_CAPTURE } from "../metrics/summarize.js";
 import { buildRecordingSpans } from "../record/spans-build.js";
+import { activeAddons } from "../addons/registry.js";
+import { runEnrich } from "../model/addon.js";
 import { writePointer } from "../commands/resolve.js";
 import { writeFileAtomic } from "../model/atomic-write.js";
 import { serialize, extFor } from "../output/format.js";
@@ -228,6 +230,21 @@ export async function recordNode(opts: RecordOptions): Promise<{
       runWindowEnd: null,
     }),
   };
+
+  // Framework addons: the node lane has no page (no detection hook) and no trace event log, but the
+  // resolved CpuModel carries react-dom server frames, so an addon can roll self-time onto the React
+  // server-phase anchors. A no-op under --framework off. See docs/dev/react-attribution.md.
+  const addonNotes = runEnrich(activeAddons(opts.framework ?? "auto"), {
+    meta,
+    spans: recording.spans,
+    spanWindows: [{ label: "run", kind: "run", startTs: null, endTs: null }],
+    pageData: undefined,
+    stepData: new Map(),
+    cpuModel,
+    events: [],
+  });
+  meta.notes.push(...addonNotes);
+
   await writeFileAtomic(outPath, serialize(recording, opts.format));
 
   // A plain node record owns `latest`; a --group record defers the pointer to recordAndReport, which

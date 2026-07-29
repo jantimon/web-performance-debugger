@@ -8,6 +8,7 @@ import type {
   RecordingMeta,
   SoftNavRoute,
   Span,
+  SpanAddons,
   SpanScope,
   StepLcp,
 } from "../model/recording.js";
@@ -536,9 +537,47 @@ export function printSpanAnatomy(
     console.log(dim(`\nHot functions: not available in this capture mode (${remedy}).${pointer}`));
   }
 
+  printSpanAddons(anatomy.addons);
+
   if (anatomy.hints.length) {
     console.log("");
     for (const hint of anatomy.hints) console.log(dim(`  • ${hint}`));
+  }
+}
+
+/**
+ * A compact, clearly-labeled framework-addon block, printed only when an addon attached facts for the
+ * span. Factual tone: detection metadata, exact commit counts, the node-lane server-phase rollup, and
+ * (dev builds, --deep) the React Performance-Track summary. No editorial. See docs/dev/react-attribution.md.
+ */
+function printSpanAddons(addons: SpanAddons | undefined): void {
+  if (!addons) return;
+  const react = addons.react;
+  if (react) {
+    const identity: string[] = [];
+    if (react.detected) identity.push("detected");
+    else identity.push("not detected");
+    if (react.version) identity.push(`v${react.version}`);
+    if (react.rendererPackageName) identity.push(react.rendererPackageName);
+    if (react.build) identity.push(react.build);
+    if (react.commitCount != null)
+      identity.push(`${react.commitCount} commit${react.commitCount === 1 ? "" : "s"}`);
+    console.log(`\n${bold("React")} ${dim("(addon)")}: ${identity.join(" · ")}`);
+    if (react.phases) {
+      const anchors = react.phases.anchors
+        .map((anchor) => `${anchor.name} ${num(anchor.selfMs, 1)}`)
+        .join(" · ");
+      console.log(
+        dim(`  server phases: ${num(react.phases.totalMs, 1)} ms react-dom self-time  ${anchors}`),
+      );
+    }
+  }
+  const dev = addons["react-dev"];
+  if (dev) {
+    const tracks = dev.tracks.map((bucket) => `${bucket.track} ×${bucket.count}`).join(" · ");
+    console.log(
+      `${bold("React tracks")} ${dim("(react-dev addon, dev build)")}: ${dev.total} entries, ${num(dev.totalMs, 1)} ms  ${dim(tracks)}`,
+    );
   }
 }
 
