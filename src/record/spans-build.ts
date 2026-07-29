@@ -143,6 +143,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       ...(step.navigation ? { navigation: step.navigation } : {}),
       ...(step.beforeUrl != null ? { beforeUrl: step.beforeUrl } : {}),
       ...(step.afterUrl != null ? { afterUrl: step.afterUrl } : {}),
+      ...(step.engineSoftNav ? { engineSoftNav: step.engineSoftNav } : {}),
       ...(step.lcp ? { lcp: step.lcp } : {}),
       ...(step.layoutShift ? { layoutShift: step.layoutShift } : {}),
       perIteration: step.perIteration,

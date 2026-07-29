@@ -389,6 +389,7 @@ function buildSpanAnatomy(
     ...(span.navigation ? { navigation: span.navigation } : {}),
     ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
     ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
+    ...(span.engineSoftNav ? { engineSoftNav: span.engineSoftNav } : {}),
     ...(span.lcp ? { lcp: span.lcp } : {}),
     ...(span.layoutShift ? { layoutShift: span.layoutShift } : {}),
     ...(forced ? { forced } : {}),
@@ -555,6 +556,8 @@ async function buildGroupSpanStitch(
   const navAnatomy = [...perMember.values()][0];
   // CLS is Chrome-only: take it from whichever member observed a shift, not member 0.
   const layoutShiftAnatomy = [...perMember.values()].find((anatomy) => anatomy.layoutShift);
+  // The engine's soft-navigation verdict is Chrome-only too: take it from whichever member fired it.
+  const softNavAnatomy = [...perMember.values()].find((anatomy) => anatomy.engineSoftNav);
 
   const barMember = pickMember(group, "slice-bar");
   const countsMember = pickMember(group, "counts");
@@ -617,6 +620,7 @@ async function buildGroupSpanStitch(
     ...(navAnatomy?.navigation ? { navigation: navAnatomy.navigation } : {}),
     ...(navAnatomy?.beforeUrl != null ? { beforeUrl: navAnatomy.beforeUrl } : {}),
     ...(navAnatomy?.afterUrl != null ? { afterUrl: navAnatomy.afterUrl } : {}),
+    ...(softNavAnatomy?.engineSoftNav ? { engineSoftNav: softNavAnatomy.engineSoftNav } : {}),
     ...(navAnatomy?.lcp ? { lcp: navAnatomy.lcp } : {}),
     // CLS is Chrome-only, so it is sourced from whichever member observed it, not member 0 (which may
     // be the firefox member); a step's shift is the same workload across members.

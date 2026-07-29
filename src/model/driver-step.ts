@@ -1,4 +1,5 @@
 import type {
+  EngineSoftNav,
   InteractionTiming,
   LayoutShift,
   NavigationKind,
@@ -71,6 +72,9 @@ export interface DriverStep {
   beforeUrl?: string;
   /** `page.url()` at the step's end mark; a step's pair is self-contained (no cross-step continuity) */
   afterUrl?: string;
+  /** Chrome's own soft-navigation verdict (default-on Chrome 151), read opportunistically beside
+   * `navigation`; absent when the engine fired no entry or the browser has no support. See shapeEngineSoftNav */
+  engineSoftNav?: EngineSoftNav;
   /** boot LCP, present only on a HARD-navigation step (a fresh document); see shapeLcp */
   lcp?: StepLcp;
   /** CLS (spec session-window max) for this step, with shifting elements attributed (Chrome only);

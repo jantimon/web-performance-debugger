@@ -10,6 +10,7 @@ import type {
   CpuSlice,
   CpuSystem,
   DirtiedByWrite,
+  EngineSoftNav,
   EventKind,
   FirefoxDirtiedByReport,
   FrameSideTrack,
@@ -474,6 +475,10 @@ export interface SpanAnatomy {
   beforeUrl?: string;
   /** the URL the step ended on; absent on run/measure spans */
   afterUrl?: string;
+  /** Chrome's own soft-navigation verdict (default-on Chrome 151), read opportunistically beside
+   * `navigation`; absent when the engine fired no entry or the browser has no support. `query span`
+   * reconciles it with `navigation` (see model/soft-nav.ts). */
+  engineSoftNav?: EngineSoftNav;
   /** boot LCP for a step that started a fresh document (a hard-navigation step); absent otherwise */
   lcp?: StepLcp;
   /** CLS (spec session-window max) with shifting elements attributed, for a driver step (Chrome only);
@@ -541,6 +546,8 @@ export interface GroupSpanStitch {
   navigation?: NavigationKind;
   beforeUrl?: string;
   afterUrl?: string;
+  /** Chrome's own soft-navigation verdict (identical across members); absent when none fired */
+  engineSoftNav?: EngineSoftNav;
   /** boot LCP for a hard-navigation step (identical across members); absent otherwise */
   lcp?: StepLcp;
   /** CLS (spec session-window max) with shifting elements attributed, from whichever member observed it
