@@ -29,6 +29,30 @@ const examples = path.join(repoRoot, "examples");
 // instead of a single "file:line:col" `at` string. Reassemble it for the tests that match the old shape.
 const blameAt = (row) => [row.source, row.line, row.column].filter((part) => part != null).join(":");
 
+// Schema 5 stores counts/timing on the run span (no `recording.summary`). This projects the run span +
+// meta back onto the flat count/timing shape the assertions read, incl. the layout/style/paint slice ms
+// that now live on the run bar. The run window's step spans carry per-step timing.
+const runOf = (rec) => rec.spans.find((span) => span.kind === "run") ?? { counts: {} };
+const stepSpansOf = (rec) => rec.spans.filter((span) => span.kind === "step");
+function summaryLike(rec) {
+  const run = runOf(rec);
+  const bar = run.breakdown;
+  const sliceMs = (name) =>
+    bar ? (name === "paint" ? (bar.slices.paint?.ms ?? null) : bar.slices[name].ms) : null;
+  return {
+    ...run.counts,
+    wallMs: run.wallMs ?? null,
+    inpMs: run.inpMs ?? null,
+    longestTaskMs: run.longestTaskMs ?? null,
+    jsSelfMs: rec.meta.jsSelfMs ?? null,
+    layoutMs: sliceMs("layout"),
+    styleMs: sliceMs("style"),
+    paintMs: sliceMs("paint"),
+    perIteration: run.perIteration ?? [],
+    stats: run.stats ?? null,
+  };
+}
+
 async function browserAvailable() {
   try {
     // executablePath() is async in puppeteer v25 (it resolves the installed build).
@@ -238,7 +262,7 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
   // The recording carries the sampled read-site log and declares the flush-site semantic.
   const recording = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(recording.meta.blameSemantic, "flush-site", "--breakdown declares the sampled read-site semantic");
-  assert.ok(recording.meta.passes.includes("breakdown"), "capture mode is breakdown");
+  assert.ok(recording.meta.capture === "breakdown", "capture mode is breakdown");
   // Invariant: a counting-mode recording ALWAYS carries meta.mainThread, so countIntegrityRefusal can
   // read .split. countIntegrityRefusal returns "no refusal" when the field is absent, which is only
   // safe because a counting mode never omits it; a new counting mode that forgot to stamp it would
@@ -254,7 +278,7 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
     `meta.hostCpuIndex is a positive number, got ${recording.meta.hostCpuIndex}`,
   );
   // The forced COUNT stays not-measured on --breakdown (it needs .stack); only the blame is added.
-  assert.equal(recording.summary.forcedLayoutCount, null, "forced COUNT is still not measured (— ), never a fake 0");
+  assert.equal(summaryLike(recording).forcedLayoutCount, null, "forced COUNT is still not measured (— ), never a fake 0");
 
   const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
   assert.ok(Array.isArray(blame) && blame.length > 0, "at least one sampled forced-layout source group");
@@ -425,7 +449,7 @@ e2e("the capture modes: default has no counts; --deep has exact counts with supp
   // Default capture mode: no trace, so every rendering count is not-measured (null), never 0.
   const dfltOut = path.join(dir, "default");
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--iterations", "1", "--out", dfltOut]);
-  const dflt = JSON.parse(readFileSync(dfltOut, "utf8")).summary;
+  const dflt = summaryLike(JSON.parse(readFileSync(dfltOut, "utf8")));
   assert.equal(dflt.layoutCount, null, "default capture mode measures no layout count (—, never 0)");
   assert.equal(dflt.forcedLayoutCount, null, "and no forced count");
   assert.equal(dflt.layoutMs, null, "and no durations");
@@ -435,7 +459,7 @@ e2e("the capture modes: default has no counts; --deep has exact counts with supp
   const readDeep = (iterations) => {
     const out = path.join(dir, `deep-${iterations}`);
     runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", String(iterations), "--out", out]);
-    return JSON.parse(readFileSync(out, "utf8")).summary;
+    return summaryLike(JSON.parse(readFileSync(out, "utf8")));
   };
   const deep = readDeep(1);
   assert.ok(deep.layoutCount > 0, "--deep counts the forced layouts exactly");
@@ -508,13 +532,13 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
 
   // Every step is re-measured per iteration and keeps its own samples, grouped by label rather
   // than colliding on it (the label is what joins a step across passes).
-  const step = many.recording.summary.perStep[0];
+  const step = stepSpansOf(many.recording)[0];
   assert.equal(step.perIteration.length, 5, "each step carries one sample per iteration");
   assert.ok(step.stats && step.stats.samples === 5, "and gets real stats, not null");
-  assert.equal(one.recording.summary.perStep[0].stats, null, "one sample still yields no statistic");
+  assert.equal(stepSpansOf(one.recording)[0].stats, null, "one sample still yields no statistic");
   assert.equal(
-    many.recording.summary.perStep.length,
-    one.recording.summary.perStep.length,
+    stepSpansOf(many.recording).length,
+    stepSpansOf(one.recording).length,
     "repeating the flow must not multiply the steps",
   );
 
@@ -620,7 +644,7 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
   assert.ok(styleLayout > 3, `style+layout should be several ms, got ${styleLayout}`);
 
   // Forced-layout count is NOT measured in breakdown mode (no `.stack`): null, never a fake 0.
-  assert.equal(rec.summary.forcedLayoutCount, null, "forced is reported as not-measured, not 0");
+  assert.equal(summaryLike(rec).forcedLayoutCount, null, "forced is reported as not-measured, not 0");
 
   // Surface 2: the run span carries a layout/style scope DISTRIBUTION (p50/max), computed at record
   // time from the light trace. It is a distribution, never a sum, so max >= p50; and layout scope and
@@ -984,7 +1008,7 @@ e2e("record (driver): prepare()/warmup page-side JS stays out of the CPU model",
   runCli(["record", flow, "--iterations", "1", "--warmup", "1", "--out", out]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
-  const jsSelfMs = rec.summary.jsSelfMs;
+  const jsSelfMs = summaryLike(rec).jsSelfMs;
   assert.ok(jsSelfMs != null && jsSelfMs > 0.5, `run()'s own JS is measured, got ${jsSelfMs}`);
   assert.ok(
     jsSelfMs < 35,
@@ -1105,7 +1129,7 @@ e2e("record --breakdown (driver): a stray pre-nav flush does not blank the navig
     const rec = JSON.parse(readFileSync(out, "utf8"));
     // The navigated page laid out ~200 boxes; the run counts and the load step's bar must reflect it,
     // not the blank host's single stray flush. The whole bug is this reading 0/1.
-    assert.ok(rec.summary.layoutCount > 20, `the navigated page's layout is counted, got ${rec.summary.layoutCount}`);
+    assert.ok(summaryLike(rec).layoutCount > 20, `the navigated page's layout is counted, got ${summaryLike(rec).layoutCount}`);
     const load = rec.spans.find((span) => span.kind === "step" && span.label === "load");
     assert.ok(load?.breakdown, "the load step carries a reconciling bar");
     assert.ok(load.breakdown.slices.js.ms > 0, `the navigated step's js slice is non-zero, got ${load.breakdown.slices.js.ms}`);
@@ -1194,7 +1218,7 @@ e2e("record --breakdown (driver): prepare()/warmup page JS stays out of the trac
   const out = path.join(dir, "bd-lifecycle");
   runCli(["record", flow, "--breakdown", "--iterations", "1", "--warmup", "1", "--out", out]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
-  const jsSelfMs = rec.summary.jsSelfMs;
+  const jsSelfMs = summaryLike(rec).jsSelfMs;
   assert.ok(jsSelfMs != null && jsSelfMs > 0.5, `run()'s own JS is measured, got ${jsSelfMs}`);
   assert.ok(jsSelfMs < 35, `prepare()+warmup (~140 ms of page JS) must not leak into JS self-time, got ${jsSelfMs}`);
   const model = JSON.parse(readFileSync(`${out}.cpu.json`, "utf8"));
@@ -1479,7 +1503,7 @@ e2e("record --breakdown: a per-span frame side track is recorded and printed", {
   assert.equal(frames.frames.length, frames.total, "one raw record per frame");
   // The side track is display-only: it never leaks into the summary the gates read.
   assert.equal(
-    Object.keys(rec.summary).some((key) => /frame/i.test(key) && !/forced/i.test(key)),
+    Object.keys(summaryLike(rec)).some((key) => /frame/i.test(key) && !/forced/i.test(key)),
     false,
     "no frame field on summary, so assert/diff structurally cannot gate on it",
   );
@@ -1502,16 +1526,16 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
     runCli(["record", "--url", server.url, "--out", dfltOut]);
     const dflt = JSON.parse(readFileSync(dfltOut, "utf8"));
     assert.equal(dflt.meta.mode, "url", "the on-ramp records the url mode");
-    assert.equal(dflt.meta.driver, true, "the built-in flow is a driver flow");
+    assert.ok(["driver", "builtin-load"].includes(dflt.meta.workload.lane), "the built-in flow is a driver flow");
     const loadStep = dflt.spans.find((span) => span.kind === "step" && span.label === "load");
     assert.ok(loadStep, "a 'load' step span is recorded");
-    assert.equal(dflt.summary.inpMs, null, "a page load has no interaction, so INP is null");
+    assert.equal(summaryLike(dflt).inpMs, null, "a page load has no interaction, so INP is null");
     assert.equal(loadStep.counts.layoutCount, null, "default capture mode measures no counts (—, never 0)");
     assert.ok(
       dflt.meta.notes.some((note) => /Built-in load flow/.test(note)),
       "the built-in flow is disclosed in the notes",
     );
-    assert.ok(dflt.summary.jsSelfMs != null, "the CPU model still measures JS self-time on the boot");
+    assert.ok(summaryLike(dflt).jsSelfMs != null, "the CPU model still measures JS self-time on the boot");
     // The built-in load step navigated a fresh document, so it is a HARD navigation and carries boot
     // LCP (in-page observer, ungated by the no-trace capture mode). The <h1> is the contentful element.
     assert.equal(loadStep.navigation, "hard", "the built-in load step is a hard navigation");
@@ -1543,8 +1567,8 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
       );
     }
     assert.equal(bdLoad.wallClock, "trace", "the navigating load step is priced on the trace clock");
-    assert.ok(bd.summary.paintCount >= 1, "the boot painted at least once, counted on --breakdown");
-    assert.equal(bd.summary.forcedLayoutCount, null, "forced is not-measured on --breakdown (no .stack)");
+    assert.ok(summaryLike(bd).paintCount >= 1, "the boot painted at least once, counted on --breakdown");
+    assert.equal(summaryLike(bd).forcedLayoutCount, null, "forced is not-measured on --breakdown (no .stack)");
 
     // F4: --iterations in the default (no-trace) capture mode yields no wall and no median, because the
     // navigating load step resets the page clock and there is no trace clock to span it. The note must
@@ -1732,8 +1756,8 @@ e2e("record --url boot: counts/bar follow a cross-process navigation, not the bl
     const bdOut = path.join(dir, "boot-breakdown");
     runCli(["record", "--url", server.url, "--breakdown", "--out", bdOut]);
     const bd = JSON.parse(readFileSync(bdOut, "utf8"));
-    assert.ok(bd.summary.layoutCount > 0, `layoutCount must be non-zero on a laying-out boot (got ${bd.summary.layoutCount})`);
-    assert.ok(bd.summary.styleCount > 0, `styleCount must be non-zero on a laying-out boot (got ${bd.summary.styleCount})`);
+    assert.ok(summaryLike(bd).layoutCount > 0, `layoutCount must be non-zero on a laying-out boot (got ${summaryLike(bd).layoutCount})`);
+    assert.ok(summaryLike(bd).styleCount > 0, `styleCount must be non-zero on a laying-out boot (got ${summaryLike(bd).styleCount})`);
     const runSpan = bd.spans.find((span) => span.kind === "run");
     const bdLoad = bd.spans.find((span) => span.kind === "step" && span.label === "load");
     assert.ok(runSpan?.breakdown, "the run span carries a reconciling bar");
@@ -1750,8 +1774,8 @@ e2e("record --url boot: counts/bar follow a cross-process navigation, not the bl
     const deepOut = path.join(dir, "boot-deep");
     runCli(["record", "--url", server.url, "--deep", "--out", deepOut]);
     const deep = JSON.parse(readFileSync(deepOut, "utf8"));
-    assert.ok(deep.summary.layoutCount > 0, `--deep layoutCount must be non-zero (got ${deep.summary.layoutCount})`);
-    assert.ok(deep.summary.forcedLayoutCount > 0, "the forced-layout reads at boot are counted on --deep");
+    assert.ok(summaryLike(deep).layoutCount > 0, `--deep layoutCount must be non-zero (got ${summaryLike(deep).layoutCount})`);
+    assert.ok(summaryLike(deep).forcedLayoutCount > 0, "the forced-layout reads at boot are counted on --deep");
   } finally {
     server.close();
   }
@@ -1874,8 +1898,8 @@ e2e("query spans --min-wall hides a divergent step by its median in json and hum
   const all = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
   const step = all.spans.find((span) => span.kind === "step" && span.label === "slow-once");
   assert.ok(step, "the driver step is in the overview");
-  assert.ok(step.breakdownWallMs > step.wallMs * 5, "iteration 0 is an outlier: the bar window dwarfs the median wall");
-  const threshold = String((step.wallMs + step.breakdownWallMs) / 2);
+  assert.ok(step.windowMs > step.wallMs * 5, "iteration 0 is an outlier: the bar window dwarfs the median wall");
+  const threshold = String((step.wallMs + step.windowMs) / 2);
 
   // The structured overview hides the step by its median.
   const filtered = JSON.parse(runCli(["query", "spans", out, "--min-wall", threshold, "--format", "json"]));

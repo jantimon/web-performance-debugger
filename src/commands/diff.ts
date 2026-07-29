@@ -10,8 +10,9 @@ import { diffSpanSlices, type SpanSliceDiff } from "../model/spans.js";
 import { comparabilityMismatches } from "../model/compat.js";
 import { countIntegrityRefusal } from "../model/count-integrity.js";
 import { loadSpanEntries } from "./spanSource.js";
+import { runSpan } from "../model/span.js";
 import type { GroupMember } from "../model/group.js";
-import type { Recording, RecordingSummary } from "../model/recording.js";
+import type { Recording } from "../model/recording.js";
 
 // `gated` metrics participate in --fail-on-regression; `advisory` ones are printed but never
 // fail the build. A metric gates only if it is REPRODUCIBLE on unchanged code, which is not the
@@ -31,11 +32,43 @@ import type { Recording, RecordingSummary } from "../model/recording.js";
 //
 // The off-thread frame side track (SpanBreakdown.frames) is intentionally NOT a metric here: its
 // counts are scheduler noise (see docs/dev/rendering-counts.md), so it is display-only and would
-// manufacture regressions. This diff reads only `summary`, where the side track does not live, so
-// no frame delta can be produced.
+// manufacture regressions. This diff reads only the run-span counts + meta headline, where the side
+// track does not live, so no frame delta can be produced.
+type DiffMetricKey =
+  | "layoutCount"
+  | "styleCount"
+  | "paintCount"
+  | "forcedLayoutCount"
+  | "layoutInvalidations"
+  | "styleInvalidations"
+  | "longTaskCount"
+  | "inpMs"
+  | "wallMs"
+  | "jsSelfMs";
+
+/** The run-level metrics diff compares, read from the run span (counts/wall/INP) and meta (jsSelfMs) --
+ * the schema-5 count/timing store. Every not-measured field is a Measured null, so a metric absent on
+ * one side prints n/a and never fabricates a delta. */
+function diffMetrics(rec: Recording): Record<DiffMetricKey, Measured<number>> {
+  const run = runSpan(rec);
+  const counts = run?.counts;
+  return {
+    layoutCount: counts?.layoutCount ?? null,
+    styleCount: counts?.styleCount ?? null,
+    paintCount: counts?.paintCount ?? null,
+    forcedLayoutCount: counts?.forcedLayoutCount ?? null,
+    layoutInvalidations: counts?.layoutInvalidations ?? null,
+    styleInvalidations: counts?.styleInvalidations ?? null,
+    longTaskCount: counts?.longTaskCount ?? null,
+    inpMs: run?.inpMs ?? null,
+    wallMs: run?.wallMs ?? null,
+    jsSelfMs: rec.meta.jsSelfMs ?? null,
+  };
+}
+
 const METRICS: {
   label: string;
-  key: keyof RecordingSummary;
+  key: DiffMetricKey;
   higherIsWorse: boolean;
   gated: boolean;
 }[] = [
@@ -128,8 +161,8 @@ async function diffRecordings(
     loadSpanEntries(baseline),
     loadSpanEntries(current),
   ]);
-  const baselineSummary = baselineRec.summary;
-  const currentSummary = currentRec.summary;
+  const baselineMetrics = diffMetrics(baselineRec);
+  const currentMetrics = diffMetrics(currentRec);
 
   // Comparability: name every capture axis that differs, so a reader never reads a config-driven
   // delta as a code change. Warn (not refuse) by default so cross-config exploration stays possible;
@@ -180,8 +213,8 @@ async function diffRecordings(
   const rows: (string | number)[][] = [];
   const regressions: string[] = [];
   for (const metric of METRICS) {
-    const baseValue = baselineSummary[metric.key] as Measured<number>;
-    const currentValue = currentSummary[metric.key] as Measured<number>;
+    const baseValue = baselineMetrics[metric.key];
+    const currentValue = currentMetrics[metric.key];
     // Don't conflate "not measured" (null) with 0; that invents fake regressions
     // (0 → 45) and fake improvements (300 → 0) when a metric is absent on one side.
     if (baseValue == null || currentValue == null) {

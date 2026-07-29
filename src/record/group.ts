@@ -19,7 +19,9 @@ import {
   type GroupMember,
   type MemberCounts,
 } from "../model/group.js";
-import type { Recording, RecordingMeta, RecordingSummary } from "../model/recording.js";
+import { runSpan } from "../model/span.js";
+import { recordingRuntime } from "../model/meta.js";
+import type { Recording, RecordingMeta } from "../model/recording.js";
 import type { RecordOptions } from "./options.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
@@ -97,19 +99,24 @@ export function memberOutPath(dir: string, name: string, mode: string, format: F
   return path.join(dir, `${sanitizeName(name)}.${mode}${extFor(format)}`);
 }
 
-/** Read a recording (json/toon) and project its summary onto the exact-count fields the disagreement
- * check compares. Only counts are read: the manifest never stores or averages a member's numbers. */
+/** The exact-count fields the disagreement check compares, read from a recording's run span (schema
+ * 5's count store). Only counts are read: the manifest never stores or averages a member's numbers. */
+export function runCountFields(rec: Recording): MemberCounts["counts"] {
+  const run = runSpan(rec);
+  const counts: MemberCounts["counts"] = {};
+  for (const [field] of GROUP_COUNT_FIELDS) counts[field] = run?.counts[field] ?? null;
+  return counts;
+}
+
+/** Read a recording (json/toon) and project its run span onto the exact-count fields the disagreement
+ * check compares. */
 async function readMemberCounts(recordingPath: string, label: string): Promise<MemberCounts> {
   const body = await fs.readFile(recordingPath, "utf8");
   const rec = deserialize(body, path.extname(recordingPath).toLowerCase()) as Recording;
   // Fail loudly on a mis-referenced member (a hand-edited manifest, or a path pointing at a sibling
   // .cpu.json / .group.json): treating a non-recording as "no counts" would hide a real disagreement.
   assertRecordingArtifact(rec, recordingPath);
-  const summary = rec.summary ?? ({} as RecordingSummary);
-  const counts: MemberCounts["counts"] = {};
-  const summaryFields = summary as unknown as Record<string, number | null | undefined>;
-  for (const [field] of GROUP_COUNT_FIELDS) counts[field] = summaryFields[field] ?? null;
-  return { label, counts };
+  return { label, counts: runCountFields(rec) };
 }
 
 async function readManifest(manifestPath: string, format: Format): Promise<RunGroup | null> {
@@ -148,9 +155,10 @@ export interface AppendMemberInput {
   recordingPath: string;
   cpuModelPath?: string;
   cpuProfilePath?: string;
-  /** the joining recording's meta + summary (for formation + count-disagreement) */
+  /** the joining recording's meta (for formation) */
   meta: RecordingMeta;
-  summary: RecordingSummary;
+  /** the joining recording's run-span exact counts (for count-disagreement); see runCountFields */
+  runCounts: MemberCounts["counts"];
   /** the capture modes the `--members` runner asked for this invocation; unioned into the manifest's
    * `requested` set so partial status is derived structurally. Absent for an ad-hoc single `--group`
    * record, which is complete-by-construction and never reports partial. */
@@ -230,12 +238,12 @@ export async function preflightGroup(
  * disagreement surfaces both values loudly. Returns the written manifest.
  */
 export async function appendMember(input: AppendMemberInput): Promise<RunGroup> {
-  const { name, manifestPath, format, meta, summary } = input;
+  const { name, manifestPath, format, meta } = input;
   const manifestDir = path.dirname(manifestPath);
   const relative = (absPath: string | undefined): string | undefined =>
     absPath == null ? undefined : path.relative(manifestDir, absPath);
 
-  const mode = meta.passes[0];
+  const mode = meta.capture;
   const newMember: GroupMember = {
     mode,
     ...(meta.variant ? { variant: meta.variant } : {}),
@@ -268,7 +276,7 @@ export async function appendMember(input: AppendMemberInput): Promise<RunGroup> 
       ...(meta.headlessMode ? { headlessMode: meta.headlessMode } : {}),
       ...(meta.throttle ? { throttle: meta.throttle } : {}),
       ...(meta.browser ? { browser: meta.browser } : {}),
-      ...(meta.runtime && meta.runtime !== "chrome" ? { runtime: meta.runtime } : {}),
+      ...(recordingRuntime(meta) === "node" ? { runtime: "node" as const } : {}),
       ...(meta.variant ? { variant: meta.variant } : {}),
       members: [newMember],
       notes: [],
@@ -313,10 +321,7 @@ export async function appendMember(input: AppendMemberInput): Promise<RunGroup> 
   const memberCounts: MemberCounts[] = [];
   for (const member of group.members) {
     if (member === newMember) {
-      const counts: MemberCounts["counts"] = {};
-      const summaryFields = summary as unknown as Record<string, number | null | undefined>;
-      for (const [field] of GROUP_COUNT_FIELDS) counts[field] = summaryFields[field] ?? null;
-      memberCounts.push({ label: memberLabel(member), counts });
+      memberCounts.push({ label: memberLabel(member), counts: input.runCounts });
     } else {
       memberCounts.push(
         await readMemberCounts(path.resolve(manifestDir, member.recording), memberLabel(member)),

@@ -18,6 +18,11 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cli = path.join(repoRoot, "dist", "cli.js");
 const examples = path.join(repoRoot, "examples");
 
+// Schema 5 stores counts/timing on the run span (no `recording.summary`). Small readers back onto the
+// flat shape the assertions use.
+const runOf = (rec) => rec.spans.find((span) => span.kind === "run") ?? { counts: {} };
+const runForced = (rec) => runOf(rec).counts.forcedLayoutCount;
+
 // A `query blame --format json` row carries a structured location ({source, line, column}); reassemble it.
 const blameAt = (row) => [row.source, row.line, row.column].filter((part) => part != null).join(":");
 
@@ -101,14 +106,14 @@ e2e(
 
     const recording = JSON.parse(readFileSync(out, "utf8"));
     assert.equal(recording.meta.browser, "firefox", "meta records the firefox backend");
-    assert.deepEqual(recording.meta.passes, ["gecko"], "the one gecko pass is the whole plan");
+    assert.equal(recording.meta.capture, "gecko", "the one gecko pass is the whole plan");
     assert.ok(
       recording.meta.notes.some((note) => /Firefox backend/.test(note)),
       "notes disclose the Firefox capability limits",
     );
-    assert.ok(recording.summary.wallMs != null && recording.summary.wallMs >= 0, "wall time reported");
+    assert.ok(runOf(recording).wallMs != null && runOf(recording).wallMs >= 0, "wall time reported");
     // The point of the change: these were 0 before, which was indistinguishable from a clean run.
-    assert.ok(recording.summary.forcedLayoutCount > 0, "forced layout counted without --cpu-profile");
+    assert.ok(runForced(recording) > 0, "forced layout counted without --cpu-profile");
     // The bar footer is engine-conditioned: on firefox a forced layout bills to style/layout, so the
     // report must NOT repeat Chrome's "bills to the forcing frame" (js) sentence, and must disclose
     // the ~1ms sampler granularity.
@@ -142,7 +147,7 @@ e2e(
 
     const recording = JSON.parse(readFileSync(out, "utf8"));
     // The reporting tier is recorded as its own capture-mode name; the capture is still the one gecko pass.
-    assert.deepEqual(recording.meta.passes, ["gecko-deep"], "the --deep reporting tier over the one gecko pass");
+    assert.equal(recording.meta.capture, "gecko-deep", "the --deep reporting tier over the one gecko pass");
     // The run span's anatomy carries the dirtied-by report, first-invalidation-only, with a WRITE line.
     const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--format", "json"]));
     assert.ok(anatomy.firefoxDirtiedBy, "firefox dirtied-by report present");
@@ -198,7 +203,7 @@ e2e(
       const recording = JSON.parse(readFileSync(out, "utf8"));
       assert.equal(recording.meta.browser, "firefox", "the firefox backend");
       assert.equal(recording.meta.mode, "url", "the on-ramp records the url mode");
-      assert.equal(recording.meta.driver, true, "the built-in flow is a driver flow");
+      assert.ok(["driver", "builtin-load"].includes(recording.meta.workload.lane), "the built-in flow is a driver flow");
       const loadStep = recording.spans.find((span) => span.kind === "step" && span.label === "load");
       assert.ok(loadStep, "a 'load' step span is recorded");
       // Long Animation Frames are Chrome-only: Firefox has no such API, so the step stores nothing
@@ -214,7 +219,7 @@ e2e(
       assert.ok(loadStep.lcp.size > 0, "firefox reports the LCP size");
       // The gecko pass windows layout/style counts to the boot, so the load step carries real counts.
       assert.ok(loadStep.counts.layoutCount >= 1, "the boot's layout is counted from the gecko markers");
-      assert.equal(recording.summary.inpMs, null, "a page load has no interaction, so INP is null");
+      assert.equal(runOf(recording).inpMs ?? null, null, "a page load has no interaction, so INP is null");
       assert.ok(
         recording.meta.notes.some((note) => /Built-in load flow/.test(note)),
         "the built-in flow is disclosed in the notes",

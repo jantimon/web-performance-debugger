@@ -13,7 +13,8 @@ import { mainThread, REANCHOR_MAX_MARKER_SHARE } from "../trace/main-thread.js";
 import { countsFromSummary, notMeasuredSpanCounts } from "../model/span.js";
 import { spanAggregation } from "../model/spans.js";
 import type { MergedStep } from "../trace/steps.js";
-import type { NormalizedEvent, RecordingSummary, Span, SpanBreakdown } from "../model/recording.js";
+import type { RecordingSummary } from "../metrics/summarize.js";
+import type { NormalizedEvent, Span, SpanBreakdown } from "../model/recording.js";
 
 export interface SpansBuildInput {
   /** the run-level summary: the run span's wall, counts, INP, and per-iteration stats */
@@ -84,8 +85,12 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
     kind: "run",
     aggregation: spanAggregation("run"),
     wallMs: summary.wallMs,
+    // A non-null run wall is the summed timed samples on the page clock (bench/node); a driver run has
+    // none. The bar's trace-clock window lives on `breakdown.wallMs`, a distinct quantity.
+    ...(summary.wallMs != null ? { wallClock: "page" as const } : {}),
     ...(runBar?.breakdown ? { breakdown: runBar.breakdown } : {}),
     counts: countsFromSummary(summary),
+    ...(summary.longestTaskMs != null ? { longestTaskMs: summary.longestTaskMs } : {}),
     ...(summary.inpMs != null ? { inpMs: summary.inpMs } : {}),
     ...(summary.interaction ? { interaction: summary.interaction } : {}),
     ...(summary.perIteration.length ? { perIteration: summary.perIteration } : {}),
@@ -163,6 +168,8 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       kind: "measure",
       aggregation: spanAggregation("measure", bar.samples),
       wallMs: bar.breakdown.wallMs,
+      // A measure's headline IS its bar's trace-clock tiled window.
+      wallClock: "trace",
       breakdown: bar.breakdown,
       counts: notMeasuredSpanCounts(),
       ...(bar.samples != null ? { samples: bar.samples } : {}),

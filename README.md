@@ -762,7 +762,7 @@ sits together; the only thing kept out of your tree is the `latest` pointer:
 
 | File | When | Where |
 | --- | --- | --- |
-| recording `<timestamp>.json` | every run — the summary + `spans[]` (+ `events[]` under `--deep`/firefox) | `./recordings/` or `--out` |
+| recording `<timestamp>.json` | every run — `spans[]` (run + steps + measures, carrying the counts/timing) + `meta` (+ `events[]` under `--deep`/firefox) | `./recordings/` or `--out` |
 | `<base>.cpuprofile` | chrome/node CPU capture (raw, for DevTools/Speedscope) | next to the recording |
 | `<base>.geckoprofile.json` | firefox (raw Gecko dump, for profiler.firefox.com) | next to the recording |
 | `<base>.cpu.json` | CPU capture — the resolved `CpuModel` the verbs read | next to the recording |
@@ -948,7 +948,7 @@ const rec: Recording = JSON.parse(await readFile("run.json", "utf8"));
 
 | File / output | Type |
 | --- | --- |
-| recording `.json` (summary + `spans[]` + `events[]` under `--deep`/firefox) | `Recording` (spans: `Span`, events: `NormalizedEvent`) |
+| recording `.json` (`spans[]` carry the counts/timing + `events[]` under `--deep`/firefox) | `Recording` (spans: `Span`, events: `NormalizedEvent`) |
 | `.cpu.json` (CPU model) | `CpuModel` (functions: `CpuFunction`, edges: `CpuEdge`) |
 | run-group `.group.json` manifest | `RunGroup` (members: `GroupMember`) |
 | `query spans` | `SpansOutput` = `SpansResult` \| `GroupSpansResult` |

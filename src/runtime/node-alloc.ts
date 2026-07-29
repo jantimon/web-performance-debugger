@@ -168,10 +168,8 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     hostCpuIndex,
     userDataDir: null,
     lifecycle,
-    passes: ["node-alloc"],
+    capture: "node-alloc",
     notes: [nodeAllocRuntime()],
-    driver: false,
-    runtime: "node",
   };
 
   const allocProfilePath = path.join(outDir, `${base}.heapprofile`);
@@ -196,12 +194,12 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     capabilities: NO_RENDERING_CAPTURE,
     jsSelfMs: null,
   });
+  meta.totalEvents = summary.totalEvents;
   const recording: Recording = {
     meta,
     window: { measure: RUN_MEASURE, startTs: null, endTs: null, wallMs },
     marks: [],
     events: [],
-    summary,
     // One run span; no reconciling bar (allocation has no ms-tiled window), so query spans reports it
     // barless. The allocation attribution lives on the sibling AllocModel, read by `query alloc`.
     spans: buildRecordingSpans({

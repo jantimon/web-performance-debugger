@@ -7,7 +7,7 @@ import { comparabilityMismatches } from "../../dist/model/compat.js";
 // runtime are absent (default "chrome"), throttle absent ("off"), variant absent ("(none)").
 function baseMeta() {
   return {
-    passes: ["breakdown"],
+    capture: "breakdown",
     iterations: 5,
     warmup: 1,
     cpuIntervalUs: 200,

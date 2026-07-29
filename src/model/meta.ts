@@ -1,5 +1,6 @@
 import type { BlameSemantic } from "./attribution.js";
 import type { SourceMapDiagnostics } from "./sourcemap-meta.js";
+import type { Measured } from "./measured.js";
 
 /**
  * Which way the run executed the flow:
@@ -74,12 +75,18 @@ export interface RecordingMeta {
   lifecycle: string[];
   /**
    * The one capture that ran, by capture-mode name: "default" (sampler only) | "breakdown" | "deep" |
-   * "gecko" (firefox) | "node-cpu" | "node-alloc" (the --alloc heap-sampling lane; CPU not measured)
-   * (plus "precise-wall" on retired recordings). Every invocation is exactly one pass (one browser
-   * launch, one run of the flow), so this is a single-element array naming the capture mode, not a
-   * multi-pass plan.
+   * "gecko" | "gecko-deep" (firefox) | "node-cpu" | "node-alloc" (the --alloc heap-sampling lane; CPU
+   * not measured). Every invocation is exactly one pass (one browser launch, one run of the flow), so
+   * this is a scalar naming the capture mode, not a multi-pass plan.
    */
-  passes: string[];
+  capture: string;
+  /** JS self-time from the sibling CpuModel (`CpuModel.jsSelfMs`), cached here so a reader gets the
+   * headline without opening the model; `Measured`, null/absent on `--deep` (sampler off, no model) and
+   * `--alloc`. NOT the non-idle sampled total: gc/engine/native are excluded. */
+  jsSelfMs?: Measured<number>;
+  /** count of classified trace events in the run window, a diagnostic: 0 fires the empty-run hint and
+   * shows beside the JS-self line. Absent on lanes that capture no trace (node). */
+  totalEvents?: number;
   notes: string[];
   /**
    * Sourcemap resolution for this run: how many scripts a map was attempted for, how many
@@ -89,8 +96,6 @@ export interface RecordingMeta {
    * whether `query cpu --by package` can be trusted.
    */
   sourcemaps?: SourceMapDiagnostics;
-  /** driver (puppeteer) mode: run executed in Node with { page, ctx, measureStep } */
-  driver: boolean;
   /** browser backend: "chrome" (default, CDP) or "firefox" (BiDi + Gecko profiler). Absent => chrome. */
   browser?: "chrome" | "firefox";
   /**
@@ -99,8 +104,6 @@ export interface RecordingMeta {
    * (--target node, or a chrome capture mode without a .stack trace).
    */
   blameSemantic?: BlameSemantic;
-  /** execution runtime: "chrome" (Puppeteer page) or "node" (in-process V8, CPU only) */
-  runtime?: "chrome" | "node";
   /**
    * The renderer main thread the trace-derived counts and the reconciling bar were scoped to, and how
    * it was chosen (see trace/main-thread.ts). `split` is the load-bearing signal: true when the run's
@@ -120,4 +123,20 @@ export interface RecordingMeta {
   throttle?: { cpuRate?: number };
   /** when this recording is one step of a stepped run */
   step?: { index: number; label: string };
+}
+
+/**
+ * Did this run drive the page via Puppeteer (`measureStep`)? Derived from the workload lane rather
+ * than a stored flag: "driver" (a module drove the page) and "builtin-load" (the zero-authoring
+ * on-ramp navigated a host page) are both driver mode; "bench" and "node" are not.
+ */
+export function isDriverRecording(meta: Pick<RecordingMeta, "workload">): boolean {
+  const lane = meta.workload?.lane;
+  return lane === "driver" || lane === "builtin-load";
+}
+
+/** The execution runtime: "node" (in-process V8, CPU only) or "chrome" (a Puppeteer page, the default
+ * for every browser lane). Derived from the workload lane: only the node lane runs in-process. */
+export function recordingRuntime(meta: Pick<RecordingMeta, "workload">): "chrome" | "node" {
+  return meta.workload?.lane === "node" ? "node" : "chrome";
 }

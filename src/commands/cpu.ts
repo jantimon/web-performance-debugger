@@ -4,6 +4,7 @@ import { num, table, middleEllipsis, LABEL_COL_MAX } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
 import { structuredFormat, emit, type StructuredOutOpts } from "../output/format.js";
 import { spanAggregation } from "../model/spans.js";
+import { recordingRuntime } from "../model/meta.js";
 import { resolveVerbTarget, routingNote } from "./group.js";
 
 /**
@@ -115,7 +116,7 @@ export function printCpuBreakdown(model: CpuModel, iterations?: number): void {
   // An empty profile (no sampled window) has nothing to tile; skip rather than print an
   // all-placeholder ("—") table that says nothing.
   if (wallMs <= 0) return;
-  const isNode = model.meta.runtime === "node";
+  const isNode = recordingRuntime(model.meta) === "node";
   // On the node lane the non-JS engine slice is V8 runtime/native, not a browser; label it honestly.
   const browserLabel = isNode ? "native" : "browser";
 

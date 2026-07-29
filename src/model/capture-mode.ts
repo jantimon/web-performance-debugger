@@ -1,10 +1,10 @@
-// Capture-mode predicates over `meta.passes` (a one-element array naming the one capture mode). Pure,
+// Capture-mode predicates over `meta.capture` (the scalar naming the one capture mode). Pure,
 // no imports, so any layer can ask "did the gecko pass run" or "is this the firefox --deep report"
 // without pulling in a heavier module (and without an import cycle).
 
 /** The gecko pass ran (firefox, any reporting tier): the deep event log, counts and blame exist. */
-export function isGeckoCaptureMode(passes: readonly string[]): boolean {
-  return passes.includes("gecko") || passes.includes("gecko-deep");
+export function isGeckoCaptureMode(capture: string): boolean {
+  return capture === "gecko" || capture === "gecko-deep";
 }
 
 /**
@@ -13,8 +13,8 @@ export function isGeckoCaptureMode(passes: readonly string[]): boolean {
  * capture mode -- this only requests the write-side annotation Gecko already carries, never chrome's
  * exact counts, forced-by read side, or the thrash detector.
  */
-export function isFirefoxDeep(passes: readonly string[]): boolean {
-  return passes.includes("gecko-deep");
+export function isFirefoxDeep(capture: string): boolean {
+  return capture === "gecko-deep";
 }
 
 /**
@@ -22,15 +22,12 @@ export function isFirefoxDeep(passes: readonly string[]): boolean {
  * and firefox always store it. --breakdown stores a SAMPLED read-site log ONLY when the trace emitted
  * per-sample executing lines; record() records that durable capability as `blameSemantic ===
  * "flush-site"` and CLEARS it when the browser emitted none. So gate breakdown on the capability, never
- * on `passes.includes("breakdown")` alone: an old --breakdown recording, or one whose browser emitted no
+ * on `capture === "breakdown"` alone: an old --breakdown recording, or one whose browser emitted no
  * lines, holds an EMPTY event log that must degrade to unavailable, never read as a clean run.
  */
-export function hasBlameEventLog(
-  passes: readonly string[],
-  blameSemantic: string | undefined,
-): boolean {
-  if (passes.includes("deep") || isGeckoCaptureMode(passes)) return true;
-  return passes.includes("breakdown") && blameSemantic === "flush-site";
+export function hasBlameEventLog(capture: string, blameSemantic: string | undefined): boolean {
+  if (capture === "deep" || isGeckoCaptureMode(capture)) return true;
+  return capture === "breakdown" && blameSemantic === "flush-site";
 }
 
 /**

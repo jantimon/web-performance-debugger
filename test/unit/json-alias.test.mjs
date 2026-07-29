@@ -41,7 +41,7 @@ test("query spans --json produces byte-identical output to --format json", async
   writeFileSync(
     file,
     JSON.stringify({
-      meta: { schemaVersion: "4", target: "chrome", passes: ["deep"], iterations: 1 },
+      meta: { schemaVersion: "5", target: "chrome", capture: "deep", iterations: 1 },
       spans: [
         {
           label: "run",

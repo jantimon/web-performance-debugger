@@ -129,7 +129,7 @@ test("loadCpuModel: an old model without a breakdown still loads and queries", a
   // but no `breakdown` key. The verbs must read it without assuming the field is present.
   const legacy = {
     profile: "old.cpuprofile",
-    meta: { tool: "wpd", version: "0.9.0", schemaVersion: "4" },
+    meta: { tool: "wpd", version: "0.9.0", schemaVersion: "5" },
     sampleCount: 2,
     sampleIntervalUs: 200,
     totalMs: 5,
@@ -452,7 +452,7 @@ test("cpu-diff sums self-time on a join-key collision instead of dropping one (F
     id: 0, fn, file, source, package: "app", selfMs, totalMs: selfMs, selfPct: 0, callers: [], callees: [],
   });
   const model = (functions, jsSelfMs) => ({
-    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "4", iterations: 1 },
+    meta: { tool: "wpd", version: "0.0.0", schemaVersion: "5", iterations: 1 },
     profile: "x.cpuprofile", jsSelfMs, activeMs: jsSelfMs, totalMs: jsSelfMs, sampleCount: 1, sampleIntervalUs: 200,
     system: { idleMs: 0, gcMs: 0, programMs: 0 }, functions,
   });

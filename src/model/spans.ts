@@ -12,6 +12,7 @@ import type {
   SpanAggregation,
   SpanKind,
 } from "./recording.js";
+import { recordingRuntime } from "./meta.js";
 import type { SpanCountsEntry, SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
 import { gateMeasured, type Measured } from "./measured.js";
 
@@ -71,12 +72,12 @@ export function resolveSpanSelector(spans: SpanEntry[], selector: string): SpanE
 
 /**
  * The engine lane a recording was produced on -- the `--target` axis, "chrome" | "firefox" |
- * "node". Derived from `meta.browser`/`meta.runtime`, NOT from `meta.target` (which holds the
- * recorded module/url/html path, a different thing). Absent browser/runtime => the chrome default,
- * so old recordings resolve correctly.
+ * "node". Derived from `meta.browser` + the workload lane (only the node lane runs in-process), NOT
+ * from `meta.target` (which holds the recorded module/url/html path, a different thing). Absent
+ * browser/workload => the chrome default.
  */
-export function recordingLane(meta: Pick<RecordingMeta, "browser" | "runtime">): string {
-  if (meta.runtime === "node") return "node";
+export function recordingLane(meta: Pick<RecordingMeta, "browser" | "workload">): string {
+  if (recordingRuntime(meta) === "node") return "node";
   if (meta.browser === "firefox") return "firefox";
   return "chrome";
 }
@@ -129,7 +130,7 @@ function entryFromSpan(span: BarSpan, iterations: number): SpanEntry {
   // A step's HEADLINE wall is the median of its per-iteration samples (`span.wallMs`); its bar tiles
   // iteration 0 ONLY (`span.breakdown.wallMs`), so on an outlier iteration 0 (a retry/backoff inside
   // the timed action) the two diverge, and the median is the honest headline. Carry the bar's own
-  // window as `breakdownWallMs` so the slices still reconcile against the window they tile. A
+  // window as `windowMs` so the slices still reconcile against the window they tile. A
   // run/measure span's wall IS its bar window (the whole-loop run window, the merged measure
   // occurrence), so those report `breakdown.wallMs` and the slices reconcile to `wallMs` directly. Fall
   // back to the bar window only when a step's median is unpriceable (a navigating step, wallMs null).
@@ -138,7 +139,7 @@ function entryFromSpan(span: BarSpan, iterations: number): SpanEntry {
     label: span.label,
     kind: span.kind,
     wallMs: isStep ? (span.wallMs ?? span.breakdown.wallMs) : span.breakdown.wallMs,
-    ...(isStep ? { breakdownWallMs: span.breakdown.wallMs } : {}),
+    ...(isStep ? { windowMs: span.breakdown.wallMs } : {}),
     // Derived from kind + occurrence count, identical to the `aggregation` buildRecordingSpans stored;
     // deriving here keeps a hand-built bar (no stored aggregation) legible too.
     aggregation: spanAggregation(span.kind, span.samples),

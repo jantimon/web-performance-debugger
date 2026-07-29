@@ -368,19 +368,45 @@ export function writeRecording(name, summaryOverrides) {
   return writeSchemaArtifact(name, SCHEMA_VERSION, summaryOverrides);
 }
 
-/** Like writeRecording, but the caller pins the schema epoch (to exercise the reject path). */
-export function writeSchemaArtifact(name, schemaVersion, summaryOverrides) {
-  const summary = {
-    wallMs: null, inpMs: null, jsSelfMs: 0,
-    layoutCount: 0, styleCount: 0, paintCount: 0,
-    forcedLayoutCount: 0, layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0,
-    longTaskCount: 0, totalEvents: 0, perIteration: [], stats: null,
-    ...summaryOverrides,
+/**
+ * A schema-5 run span (`kind: "run"`) carrying the run-level counts/timing, the sole count/timing
+ * store. `values` set any of the counts, wallMs, inpMs, longestTaskMs, perIteration, stats.
+ */
+export function runSpanFixture(values = {}) {
+  const v = {
+    wallMs: null, inpMs: null, longestTaskMs: null,
+    layoutCount: 0, styleCount: 0, paintCount: 0, forcedLayoutCount: 0,
+    layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0, longTaskCount: 0,
+    perIteration: [], stats: null, ...values,
   };
-  const meta = { schemaVersion, passes: ["default"], driver: false };
+  return {
+    label: "run", kind: "run", aggregation: "sum",
+    wallMs: v.wallMs,
+    ...(v.wallMs != null ? { wallClock: "page" } : {}),
+    counts: {
+      layoutCount: v.layoutCount, styleCount: v.styleCount, paintCount: v.paintCount,
+      forcedLayoutCount: v.forcedLayoutCount, layoutInvalidations: v.layoutInvalidations,
+      paintInvalidations: v.paintInvalidations, styleInvalidations: v.styleInvalidations,
+      longTaskCount: v.longTaskCount,
+    },
+    ...(v.longestTaskMs != null ? { longestTaskMs: v.longestTaskMs } : {}),
+    ...(v.inpMs != null ? { inpMs: v.inpMs } : {}),
+    ...(v.perIteration.length ? { perIteration: v.perIteration } : {}),
+    ...(v.stats ? { stats: v.stats } : {}),
+  };
+}
+
+/** Like writeRecording, but the caller pins the schema epoch (to exercise the reject path).
+ * `overrides` set the run-level counts/timing (schema 5 stores them on the run span). */
+export function writeSchemaArtifact(name, schemaVersion, overrides = {}) {
+  const meta = {
+    schemaVersion, capture: "default",
+    workload: { lane: "bench", host: null, module: null },
+    jsSelfMs: overrides.jsSelfMs ?? 0, totalEvents: overrides.totalEvents ?? 0,
+  };
   const file = path.join(tmpDir, name);
-  // A minimal non-stepped recording: the run span only (no bar), so assert gates the run summary.
-  writeFileSync(file, JSON.stringify({ meta, summary, spans: [] }), "utf8");
+  // A minimal non-stepped recording: the run span carries the run-level counts/timing (no bar).
+  writeFileSync(file, JSON.stringify({ meta, spans: [runSpanFixture(overrides)] }), "utf8");
   return file;
 }
 

@@ -13,7 +13,7 @@ import { countProvenance } from "../../dist/commands/summaryView.js";
 import * as notesCatalog from "../../dist/record/notes.js";
 import { assertSchemaVersion } from "../../dist/model/artifact.js";
 import { SCHEMA_VERSION } from "../../dist/index.js";
-import { writeRecording, writeSchemaArtifact, captureExitCode, tmpDir } from "./helpers.mjs";
+import { writeRecording, writeSchemaArtifact, runSpanFixture, captureExitCode, tmpDir } from "./helpers.mjs";
 
 test("serialize/deserialize round-trips json and toon", () => {
   const obj = { a: 1, b: [{ x: 1 }, { x: 2 }], c: "hi" };
@@ -22,7 +22,7 @@ test("serialize/deserialize round-trips json and toon", () => {
 });
 
 test("public entrypoint exposes the schema version anchor", () => {
-  assert.equal(SCHEMA_VERSION, "4");
+  assert.equal(SCHEMA_VERSION, "5");
 });
 
 // Write-first (§17.13.9 item 5): an artifact stamped with an older schema epoch is REJECTED, loudly,
@@ -71,9 +71,9 @@ test("package-lock version tracks package.json version", () => {
 
 test("published types declare the documented public shapes", () => {
   const dts = readFileSync(new URL("../../dist/index.d.ts", import.meta.url), "utf8");
-  // StepTiming is the element type of the public RecordingSummary.perStep: without it a consumer
-  // cannot name the shape without importing from dist/model/, which this package calls internal.
-  for (const name of ["CpuModel", "CpuOverview", "BlameEntry", "CpuDiffResult", "RawCpuProfile", "LastPointer", "StepTiming"]) {
+  // Span is the schema-5 count/timing store: without it a consumer cannot name the run/step/measure
+  // shape without importing from dist/model/, which this package calls internal.
+  for (const name of ["CpuModel", "CpuOverview", "BlameEntry", "CpuDiffResult", "RawCpuProfile", "LastPointer", "Span"]) {
     assert.match(dts, new RegExp(`\\b${name}\\b`), `index.d.ts should re-export ${name}`);
   }
 });
@@ -81,21 +81,24 @@ test("published types declare the documented public shapes", () => {
 // --- Count provenance (the same number means different things per target) ---
 
 test("countProvenance distinguishes exact trace counts, Gecko markers, and a capture mode that measured none", () => {
-  const recording = (meta, summary = {}) => ({ meta: { passes: ["default"], ...meta }, summary });
+  const recording = (metaOverrides, runValues = {}) => ({
+    meta: { capture: "default", ...metaOverrides },
+    spans: [runSpanFixture(runValues)],
+  });
 
   // Chrome with a trace (breakdown/deep): counts come from the trace, main-thread windowed, exact.
-  const exact = countProvenance(recording({ passes: ["deep"] }, { layoutCount: 5 }));
+  const exact = countProvenance(recording({ capture: "deep" }, { layoutCount: 5 }));
   assert.match(exact, /exact/);
   assert.doesNotMatch(exact, /NOT measured/);
 
   // Firefox + gecko pass: counts from Reflow/Styles markers -- real, but batched by a different
   // engine, so they must not read as comparable to Chrome.
-  const gecko = countProvenance(recording({ browser: "firefox", passes: ["gecko"] }, { layoutCount: 3 }));
+  const gecko = countProvenance(recording({ browser: "firefox", capture: "gecko" }, { layoutCount: 3 }));
   assert.match(gecko, /Gecko markers/);
   assert.match(gecko, /not comparable to Chrome/);
 
   // The default capture mode captures no trace: layoutCount is null, so the header says NOT measured, never 0.
-  const none = countProvenance(recording({ passes: ["default"] }, { layoutCount: null }));
+  const none = countProvenance(recording({ capture: "default" }, { layoutCount: null }));
   assert.match(none, /NOT measured/);
 });
 
@@ -128,17 +131,18 @@ test("notes: the no-median on-ramp note names iterations and steers to --breakdo
 
 // F31: a diff across incompatible captures subtracts numbers that do not describe the same thing.
 // Write recordings with explicit meta (browser/passes/iterations) to exercise the comparability gate.
-function writeRecMeta(name, metaOverrides, summaryOverrides = {}) {
-  const summary = {
-    wallMs: null, inpMs: null, jsSelfMs: 0,
-    layoutCount: 0, styleCount: 0, paintCount: 0,
-    forcedLayoutCount: 0, layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0,
-    longTaskCount: 0, totalEvents: 0, perIteration: [], stats: null,
-    ...summaryOverrides,
+function writeRecMeta(name, metaOverrides = {}, runOverrides = {}) {
+  const { passes, driver, runtime, ...restMeta } = metaOverrides;
+  const meta = {
+    schemaVersion: "5",
+    capture: passes ? passes[0] : "deep",
+    iterations: 5,
+    jsSelfMs: runOverrides.jsSelfMs ?? 0,
+    totalEvents: 0,
+    ...restMeta,
   };
-  const meta = { schemaVersion: "4", passes: ["deep"], driver: false, iterations: 5, ...metaOverrides };
   const file = path.join(tmpDir, name);
-  writeFileSync(file, JSON.stringify({ meta, summary, spans: [] }), "utf8");
+  writeFileSync(file, JSON.stringify({ meta, spans: [runSpanFixture(runOverrides)] }), "utf8");
   return file;
 }
 
@@ -432,8 +436,16 @@ test("diff: --fail-on-regression REFUSES across a mismatched capture-mode/browse
 // R05: cpu-diff had NO comparability check. It joins per-function self-time across two models as if
 // they measured the same JS; a workload/lane mismatch makes that a fabricated delta. It now warns
 // always and REFUSES a --fail-on-regression gate across browser/runtime/workload.
-function writeCpuModel(name, metaOverrides, jsSelfMs) {
-  const meta = { schemaVersion: "4", passes: ["default"], iterations: 1, target: "a.mjs", ...metaOverrides };
+function writeCpuModel(name, metaOverrides = {}, jsSelfMs) {
+  const { passes, runtime, ...restMeta } = metaOverrides;
+  const meta = {
+    schemaVersion: "5",
+    capture: passes ? passes[0] : "default",
+    iterations: 1,
+    target: "a.mjs",
+    ...(runtime ? { workload: { lane: "node", host: null, module: "a.mjs" } } : {}),
+    ...restMeta,
+  };
   const model = {
     profile: "x.cpuprofile", meta, jsSelfMs, activeMs: jsSelfMs, totalMs: jsSelfMs,
     sampleCount: 1, sampleIntervalUs: 200, system: { idleMs: 0, gcMs: 0, programMs: 0 },

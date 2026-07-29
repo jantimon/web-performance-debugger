@@ -147,7 +147,7 @@ test("buildSpans: aggregation is per-kind (run=sum, step/measure=first) and iter
 // A step's headline wall is the MEDIAN of its per-iteration samples (span.wallMs), never the bar's
 // iteration-0 window (span.breakdown.wallMs): on an outlier iteration 0 (a retry inside the timed
 // action) the window can be ~70x the median, and the median is the honest headline. The bar's window
-// rides breakdownWallMs so the slices still reconcile against what they tile.
+// rides windowMs so the slices still reconcile against what they tile.
 test("buildSpans: a step entry reports the median wall, not the iteration-0 bar window", () => {
   const bars = [
     { label: "run", kind: "run", breakdown: chromeBreakdown(20) },
@@ -162,8 +162,8 @@ test("buildSpans: a step entry reports the median wall, not the iteration-0 bar 
   const result = buildSpans(bars, undefined, "chrome", 3);
   const step = result.spans.find((span) => span.kind === "step");
   assert.equal(step.wallMs, 16.03, "the step headline is the median, not the 2023.43 ms window");
-  assert.equal(step.breakdownWallMs, 2023.43, "the bar's own iteration-0 window rides breakdownWallMs");
-  // The slices tile the bar window, so Σ slices + idle reconciles to breakdownWallMs, not wallMs.
+  assert.equal(step.windowMs, 2023.43, "the bar's own iteration-0 window rides windowMs");
+  // The slices tile the bar window, so Σ slices + idle reconciles to windowMs, not wallMs.
   const sliceSum =
     step.slices.js.ms +
     step.slices.style.ms +
@@ -172,12 +172,12 @@ test("buildSpans: a step entry reports the median wall, not the iteration-0 bar 
     step.slices.gc.ms +
     step.slices.other.ms +
     step.slices.idle.ms;
-  assert.ok(Math.abs(sliceSum - step.breakdownWallMs) < 1e-6, "slices reconcile to the bar window");
+  assert.ok(Math.abs(sliceSum - step.windowMs) < 1e-6, "slices reconcile to the bar window");
 });
 
 // A run/measure span's wall IS its bar window (the whole-loop run window / the merged occurrence), so
-// it stays breakdown.wallMs and carries no breakdownWallMs (nothing to disambiguate).
-test("buildSpans: run and measure entries keep the bar window as wall, with no breakdownWallMs", () => {
+// it stays breakdown.wallMs and carries no windowMs (nothing to disambiguate).
+test("buildSpans: run and measure entries keep the bar window as wall, with no windowMs", () => {
   const bars = [
     { label: "run", kind: "run", wallMs: 999, breakdown: chromeBreakdown(20) },
     { label: "work", kind: "measure", wallMs: 999, breakdown: chromeBreakdown(3) },
@@ -186,9 +186,9 @@ test("buildSpans: run and measure entries keep the bar window as wall, with no b
   const run = result.spans.find((span) => span.kind === "run");
   const measure = result.spans.find((span) => span.kind === "measure");
   assert.equal(run.wallMs, 20, "the run wall is its tiled window, not a stray span.wallMs");
-  assert.equal(run.breakdownWallMs, undefined, "run carries no breakdownWallMs");
+  assert.equal(run.windowMs, undefined, "run carries no windowMs");
   assert.equal(measure.wallMs, 3, "the measure wall is its tiled window");
-  assert.equal(measure.breakdownWallMs, undefined, "measure carries no breakdownWallMs");
+  assert.equal(measure.windowMs, undefined, "measure carries no windowMs");
 });
 
 // A step whose median is unpriceable (a navigating step, wallMs null) falls back to the bar window so
@@ -200,11 +200,11 @@ test("buildSpans: a step with a null median wall falls back to the bar window", 
   ];
   const step = buildSpans(bars, undefined, "chrome", 3).spans.find((span) => span.kind === "step");
   assert.equal(step.wallMs, 12, "the bar window is the only wall available");
-  assert.equal(step.breakdownWallMs, 12, "the bar window is still disclosed");
+  assert.equal(step.windowMs, 12, "the bar window is still disclosed");
 });
 
 // The --min-wall flood filter reads a step's MEDIAN wall (SpanEntry.wallMs), never its iteration-0 bar
-// window (breakdownWallMs). On an outlier iteration 0 the two diverge, so filtering on the window would
+// window (windowMs). On an outlier iteration 0 the two diverge, so filtering on the window would
 // hide/show a step differently from the median. The human bar table selects its raw bars from THIS kept
 // set (by kind:label), so `query spans --min-wall` hides the same spans in json and human output.
 test("filterSpanEntries: a divergent step is filtered by its median wall, not its iteration-0 window", () => {
@@ -409,12 +409,12 @@ test("buildSpans: a bar-less step in a breakdown recording (a navigating step) s
 
 test("query spans on a default-capture driver flow shows the run bar + every step (item 3)", async () => {
   const file = writeRec("spans-mixed.json", {
-    meta: { schemaVersion: "4", target: "chrome", passes: ["default"], iterations: 1 },
+    meta: { schemaVersion: "5", target: "chrome", capture: "default", iterations: 1 },
     spans: defaultDriverSpans,
   });
   writeFileSync(
     path.join(tmpDir, "spans-mixed.cpu.json"),
-    JSON.stringify({ meta: { schemaVersion: "4" }, functions: [], breakdown: firefoxCpu }),
+    JSON.stringify({ meta: { schemaVersion: "5" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
   const parsed = JSON.parse(await captureJson(() => querySpans(file, { format: "json" })));
@@ -431,12 +431,12 @@ test("query spans on a default-capture driver flow shows the run bar + every ste
 
 test("query spans --label can target a bar-less step in a mixed recording (item 3)", async () => {
   const file = writeRec("spans-mixed-label.json", {
-    meta: { schemaVersion: "4", target: "chrome", passes: ["default"], iterations: 1 },
+    meta: { schemaVersion: "5", target: "chrome", capture: "default", iterations: 1 },
     spans: defaultDriverSpans,
   });
   writeFileSync(
     path.join(tmpDir, "spans-mixed-label.cpu.json"),
-    JSON.stringify({ meta: { schemaVersion: "4" }, functions: [], breakdown: firefoxCpu }),
+    JSON.stringify({ meta: { schemaVersion: "5" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
   const parsed = JSON.parse(
@@ -447,12 +447,12 @@ test("query spans --label can target a bar-less step in a mixed recording (item 
   assert.equal(parsed.barlessSpans[0].label, "first increment");
 });
 
-test("recordingLane: the engine axis comes from browser/runtime, not meta.target", () => {
-  // meta.target holds the recorded module path, so the lane must be derived from browser/runtime.
+test("recordingLane: the engine axis comes from browser + workload lane, not meta.target", () => {
+  // meta.target holds the recorded module path, so the lane must be derived from browser/workload.
   assert.equal(recordingLane({ browser: "firefox" }), "firefox");
-  assert.equal(recordingLane({ runtime: "node" }), "node");
-  assert.equal(recordingLane({}), "chrome", "absent browser/runtime => the chrome default");
-  assert.equal(recordingLane({ runtime: "chrome" }), "chrome");
+  assert.equal(recordingLane({ workload: { lane: "node" } }), "node");
+  assert.equal(recordingLane({}), "chrome", "absent browser/workload => the chrome default");
+  assert.equal(recordingLane({ workload: { lane: "bench" } }), "chrome");
 });
 
 // --- F32: span selectors and joins key on kind+label, so a user measure named "run" never
@@ -530,7 +530,7 @@ async function captureJson(runner) {
 
 test("query spans --label keeps the exact match; a miss is an empty array, not an error", async () => {
   const file = writeRec("spans-chrome.json", {
-    meta: { schemaVersion: "4", target: "chrome", iterations: 4 },
+    meta: { schemaVersion: "5", target: "chrome", iterations: 4 },
     spans: chromeBreakdowns,
   });
 
@@ -547,13 +547,13 @@ test("query spans --label keeps the exact match; a miss is an empty array, not a
 
 test("query spans synthesizes the run span from a sibling cpu model (never empty when a bar exists)", async () => {
   const file = writeRec("spans-ff.json", {
-    meta: { schemaVersion: "4", target: "firefox", browser: "firefox" },
+    meta: { schemaVersion: "5", target: "firefox", browser: "firefox" },
     spans: [],
   });
   // loadCpuModel finds `<base>.cpu.json` beside the recording; it must carry a functions array.
   writeFileSync(
     path.join(tmpDir, "spans-ff.cpu.json"),
-    JSON.stringify({ meta: { schemaVersion: "4" }, functions: [], breakdown: firefoxCpu }),
+    JSON.stringify({ meta: { schemaVersion: "5" }, functions: [], breakdown: firefoxCpu }),
     "utf8",
   );
   const parsed = JSON.parse(await captureJson(() => querySpans(file, { format: "json" })));
@@ -615,7 +615,7 @@ test("buildSpanCounts projects a bar-less recording's spans onto counts + wall (
 
 test("query spans on a --deep recording renders the counts overview instead of erroring", async () => {
   const file = writeRec("spans-deep.json", {
-    meta: { schemaVersion: "4", target: "chrome", passes: ["deep"], iterations: 1 },
+    meta: { schemaVersion: "5", target: "chrome", capture: "deep", iterations: 1 },
     spans: deepSpans,
   });
   const parsed = JSON.parse(await captureJson(() => querySpans(file, { format: "json" })));
@@ -632,7 +632,7 @@ test("query spans on a --deep recording renders the counts overview instead of e
 
 test("query spans errors (non-zero) only on a recording that holds no spans at all", async () => {
   const file = writeRec("spans-no-bar.json", {
-    meta: { schemaVersion: "4", target: "chrome" },
+    meta: { schemaVersion: "5", target: "chrome" },
     spans: [],
   });
   await assert.rejects(() => querySpans(file, { format: "json" }), /carries no spans/);
@@ -642,7 +642,7 @@ test("query spans errors (non-zero) only on a recording that holds no spans at a
 // reads as a capture mode that never sampled). Only the ENOCPUMODEL "no model here" case is the empty case.
 test("query spans surfaces a corrupt sibling cpu model instead of reporting 'no breakdown' (F35)", async () => {
   const file = writeRec("spans-corrupt-sibling.json", {
-    meta: { schemaVersion: "4", target: "chrome" },
+    meta: { schemaVersion: "5", target: "chrome" },
     spans: [],
   });
   writeFileSync(path.join(tmpDir, "spans-corrupt-sibling.cpu.json"), "{ this is not valid json", "utf8");

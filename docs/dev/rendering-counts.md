@@ -242,8 +242,8 @@ never gate-able**, by the same rule as `compositeCount`:
   `SubmitCompositorFrameToPresentationCompositorFrame`) are inter-event **durations** on scheduler/viz
   threads -- wall-time, not work, exactly what killed `UpdateLayer`+`Commit` above.
 
-So the side track lives on the breakdowns, NOT on `RecordingSummary`; `assert`/`diff` read only the
-summary, so they structurally cannot gate on it. Nothing in it is summed into a breakdown bar either
+So the side track lives on the breakdowns, NOT on the run-span counts; `assert`/`diff` read only the
+run-span counts, so they structurally cannot gate on it. Nothing in it is summed into a breakdown bar either
 (the wall is main-thread self-time; these frames run off-thread). `Paint` stays the only exact,
 gate-able rendering signal.
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { queryBlame } from "../../dist/commands/query.js";
-import { tmpDir } from "./helpers.mjs";
+import { tmpDir, runSpanFixture } from "./helpers.mjs";
 
 // Firefox counts forced flushes from Reflow/Styles markers but blames the READ by sampling it at the
 // ~1ms Gecko interval, so a cheap read can be missed. An empty `blame --forced` beside a nonzero
@@ -23,41 +23,27 @@ async function captureText(runner) {
   return out;
 }
 
-const summary = {
-  wallMs: null,
-  inpMs: null,
-  jsSelfMs: 0,
-  layoutCount: 1,
-  styleCount: 1,
-  paintCount: null,
-  forcedLayoutCount: 1,
-  layoutInvalidations: null,
-  paintInvalidations: null,
-  styleInvalidations: null,
-  longTaskCount: 0,
-  totalEvents: 0,
-  perIteration: [],
-  stats: null,
-};
-
 function writeFirefoxRec(name, events) {
   const file = path.join(tmpDir, name);
   writeFileSync(
     file,
     JSON.stringify({
       meta: {
-        schemaVersion: "4",
+        schemaVersion: "5",
         target: "firefox",
         browser: "firefox",
-        passes: ["gecko"],
+        capture: "gecko",
         iterations: 1,
         driver: false,
       },
       window: { startTs: 0, endTs: 1000 },
       marks: [],
       events,
-      spans: [],
-      summary,
+      spans: [runSpanFixture({
+        layoutCount: 1, styleCount: 1, paintCount: null,
+        forcedLayoutCount: 1, layoutInvalidations: null, paintInvalidations: null,
+        styleInvalidations: null, longTaskCount: 0,
+      })],
     }),
     "utf8",
   );
