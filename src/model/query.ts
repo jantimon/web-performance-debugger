@@ -96,10 +96,20 @@ export interface FrameQueryResult {
   callees: CpuEdgeRef[];
 }
 
-/** One row of `query blame`: events sharing a source location, rolled up. */
+/**
+ * One row of `query blame`: events sharing a source location, rolled up. The location is structured
+ * (`source` + `line` + `column`) to match the human table's columns, so a consumer reads the fields
+ * directly instead of parsing a `file:line:col` string (the old `at` shape). `source` is relative to
+ * root for a local file, or the origin/url for a remote frame; `line`/`column` are absent when the
+ * frame carried no position.
+ */
 export interface BlameEntry {
-  /** source location "file:line:col" (relative to root) */
-  at: string;
+  /** bare source path/url of the read site (no `:line:col`); relative to root for a local file */
+  source: string;
+  /** 1-based line of the read site; absent when the frame carried no line */
+  line?: number;
+  /** 1-based column of the read site; absent when the frame carried no column (a line-only sample) */
+  column?: number;
   count: number;
   /** how many of `count` were synchronously forced by JS (thrashing) */
   forced: number;

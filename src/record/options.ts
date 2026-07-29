@@ -29,6 +29,9 @@ export interface RecordOptions {
   keepPartial?: boolean;
   /** artificial slowdown: CPU throttling multiplier (e.g. 4 = 4x slower) */
   cpuThrottle?: number;
+  /** skip bot-wall detection and measure the page even when it matches challenge-interstitial signals
+   * (--allow-bot-wall). A loud meta.notes entry records that the numbers describe the challenge page. */
+  allowBotWall?: boolean;
   /** capture a CPU sampling profile (writes .cpuprofile + .cpu model); on by default, off on --deep
    * (the sampler cannot ride a `.stack` trace). */
   cpuProfile?: boolean;

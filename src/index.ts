@@ -45,6 +45,7 @@ export type {
   StepIndexEntry,
   CpuFunction,
   CpuGroupStat,
+  SiteRelation,
   CpuEdge,
   CpuSystem,
   CpuModel,

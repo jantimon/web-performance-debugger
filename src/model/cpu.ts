@@ -1,4 +1,5 @@
 import type { RecordingMeta } from "./meta.js";
+import type { SiteRelation } from "./site-relation.js";
 
 /** One function aggregated across a CPU sampling profile (self/total time). */
 export interface CpuFunction {
@@ -30,6 +31,14 @@ export interface CpuGroupStat {
   selfMs: number;
   selfPct: number;
   functions: number;
+  /**
+   * URL-mechanical site relation of an ORIGIN-bucket key (`(cdn.example.com)`) to the measured page:
+   * same-origin | same-site | cross-site, via the public-suffix list. Present only on origin buckets
+   * of a `--url` run (a real page URL to compare against); absent on real packages, non-origin buckets,
+   * and non-`--url` runs. It is `site relation`, a fact -- NEVER an ownership or "third-party" claim (a
+   * cross-site CDN can be first-party-owned). See model/site-relation.ts.
+   */
+  siteRelation?: SiteRelation;
 }
 
 /** A call-graph edge: time the callee's subtree spent directly under the caller. */

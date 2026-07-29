@@ -28,6 +28,15 @@ const heat = (pct: number, text: string): string =>
 const slicePct = (ms: number, wallMs: number): string => `${num((ms / wallMs) * 100, 1)}%`;
 
 /**
+ * A subtle tag on an origin-bucket package cell for a CROSS-SITE origin (a different registrable
+ * domain than the measured page). It is `site relation`, a URL-mechanical fact, NEVER an ownership or
+ * "third-party" claim: a cross-site CDN can be first-party-owned. same-origin/same-site stay unmarked
+ * to keep the table quiet; only cross-site (the row a reader most wants flagged) carries the tag.
+ */
+const siteRelationTag = (entry: { siteRelation?: string }): string =>
+  entry.siteRelation === "cross-site" ? ` ${dim("cross-site")}` : "";
+
+/**
  * The "what the js slice includes" footer, engine-conditioned AND bar-conditioned, because the two
  * chrome bars measure js differently:
  *
@@ -84,7 +93,7 @@ export function printCpuHeadline(model: CpuModel): void {
       byPackage
         .slice(0, 8)
         .map((entry) => [
-          entry.key,
+          entry.key + siteRelationTag(entry),
           num(entry.selfMs, 1),
           heat(entry.selfPct, `${num(entry.selfPct, 1)}%`),
           dim(String(entry.functions)),
@@ -363,13 +372,21 @@ export async function queryCpu(file: string, opts: OutOpts): Promise<void> {
         grouping
           .slice(0, 15)
           .map((entry) => [
-            by === "file" ? tailPath(entry.key, 3) : entry.key,
+            by === "file" ? tailPath(entry.key, 3) : entry.key + siteRelationTag(entry),
             num(entry.selfMs, 1),
             heat(entry.selfPct, `${num(entry.selfPct, 1)}%`),
             dim(String(entry.functions)),
           ]),
       ),
     );
+    // Explain the cross-site tag once, and draw the honesty boundary loudly: it is a URL-mechanical
+    // relation, never an ownership or third-party claim (a cross-site CDN can be first-party-owned).
+    if (by === "package" && byPackage.some((entry) => entry.siteRelation === "cross-site"))
+      console.log(
+        dim(
+          "  cross-site = a different registrable domain than the measured page (a URL fact via the public-suffix list), NOT an ownership or third-party claim: a cross-site CDN can be first-party-owned (e.g. a brand's own asset CDN).",
+        ),
+      );
   }
   console.log(`\nHot functions (by self time). Drill with ${cyan("`query frame <id>`")}:\n`);
   console.log(
