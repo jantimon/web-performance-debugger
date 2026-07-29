@@ -1740,6 +1740,96 @@ e2e("driver flow: opportunistic engine soft-nav verdict (agree) + the classifier
   }
 });
 
+// Per-soft-step ROUTE METRICS (Chrome 151+): a trusted driver click drives a soft nav that (1) paints a
+// large contentful block (route LCP) and (2) shifts content >500ms later, past the hadRecentInput window,
+// so the shift carries the new navigationId and scores a route CLS. The step's `softNav` carries both, on
+// the route clock, keyed by the engine soft nav's navigationId. A PROGRAMMATIC pushState step fires no
+// engine entry, so it gets NO `softNav` object -- the feature keys strictly on the engine's verdict. No
+// --enable-features anywhere. The route LCP block is a styled text div (contentful, same-origin, so its
+// render time is populated); the late banner insertion pushes the content down for the route CLS.
+const SOFTNAV_ROUTE_HTML =
+  "<!doctype html><meta charset=utf-8><title>softnav-route</title>" +
+  "<style>#app p{font-size:24px}#hero{padding:40px;font-size:40px;background:#c00;color:#fff}</style>" +
+  "<button id=go>go</button><div id=app></div>" +
+  "<script>const app=document.getElementById('app');" +
+  "document.getElementById('go').addEventListener('click',()=>{" +
+  "history.pushState({},'','/route');" +
+  "const hero=document.createElement('div');hero.id='hero';" +
+  "hero.textContent='ROUTE HERO CONTENT BLOCK';app.appendChild(hero);" +
+  "for(let index=0;index<8;index++){const para=document.createElement('p');" +
+  "para.textContent='route content line '+index;app.appendChild(para);}" +
+  // Route CLS: a banner inserted >500ms later (past hadRecentInput) shifts the content down.
+  "setTimeout(()=>{const banner=document.createElement('div');banner.style.height='140px';" +
+  "banner.style.background='#08f';banner.textContent='late banner';" +
+  "app.insertBefore(banner,app.firstChild);},700);});" +
+  "<\/script>";
+e2e("driver flow: per-soft-step route metrics (routeLcp + routeCls) keyed by navigationId", { timeout: TIMEOUT_MS }, () => {
+  const server = startOnrampServer(SOFTNAV_ROUTE_HTML, "127.0.0.1");
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const flow = path.join(dir, "route-flow.mjs");
+  // Step "route": a TRUSTED click drives the soft nav; the until keeps the window open past the 700ms
+  // banner shift so the route CLS lands. Step "programmatic": an UNTRUSTED pushState (no engine entry).
+  writeFileSync(
+    flow,
+    `export async function run({ page, measureStep }) {
+       await measureStep("route", () => page.click("#go"), {
+         until: () => new Promise((resolve) => setTimeout(resolve, 1200)),
+       });
+       await measureStep("programmatic", () => page.evaluate(() => {
+         history.pushState({}, "", "/prog");
+         const app = document.getElementById("app");
+         const para = document.createElement("p");
+         para.textContent = "programmatic content";
+         app.appendChild(para);
+       }));
+     }`,
+  );
+  try {
+    const out = path.join(dir, "route");
+    runCli(["record", flow, "--url", server.url, "--out", out]);
+    const rec = JSON.parse(readFileSync(out, "utf8"));
+    const route = rec.spans.find((span) => span.kind === "step" && span.label === "route");
+    const prog = rec.spans.find((span) => span.kind === "step" && span.label === "programmatic");
+    assert.ok(route && prog, "both steps are recorded");
+
+    // The trusted click's soft nav carries route metrics keyed by the engine's navigationId.
+    assert.ok(route.softNav, "the soft-navigating step carries route metrics");
+    assert.equal(
+      route.softNav.navigationId,
+      route.engineSoftNav.navigationIds[0],
+      "the route metrics are keyed by the engine soft nav's navigationId",
+    );
+    assert.ok(route.softNav.routeLcp, "the route carries an LCP-equivalent (interaction-contentful-paint)");
+    // routeMs is on the route clock (anchored to the soft nav startTime), so it is a small non-negative
+    // number, never the absolute document-clock renderTime.
+    assert.ok(
+      route.softNav.routeLcp.routeMs >= 0 && route.softNav.routeLcp.routeMs < 5000,
+      `route LCP is a plausible route-clock ms (got ${route.softNav.routeLcp.routeMs})`,
+    );
+    // The banner shifted content >500ms after the click, so it scores a route CLS on the new id.
+    assert.ok(route.softNav.routeCls, "the post-route banner shift scores a route CLS");
+    assert.ok(
+      route.softNav.routeCls.cls > 0,
+      `route CLS is a positive session-window score (got ${route.softNav.routeCls.cls})`,
+    );
+
+    // The programmatic step fires no engine entry, so it carries NO route metrics (keyed on the engine's
+    // verdict, never the classifier's) -- absent, never a fabricated 0.
+    assert.equal(prog.navigation, "soft", "the programmatic pushState is still a same-document soft route");
+    assert.ok(!prog.softNav, "no engine entry -> no route metrics on a programmatic navigation");
+
+    // query span renders the route block on the route step, labelled as the route transition.
+    const routeHuman = runCli(["query", "span", out, "step:route"]);
+    assert.match(routeHuman, /Route transition/, "the human report names the route transition");
+    assert.match(routeHuman, /route LCP/, "the report prints the route LCP");
+    assert.match(routeHuman, /route CLS/, "the report prints the route CLS");
+    const routeJson = JSON.parse(runCli(["query", "span", out, "step:route", "--format", "json"]));
+    assert.ok(routeJson.softNav?.routeLcp, "the JSON view carries the route metrics additively");
+  } finally {
+    server.close();
+  }
+});
+
 // F1/F2 regression: a --url boot navigates the blank host page (wpd serves it on 127.0.0.1) to the
 // target on a DIFFERENT SITE ("localhost"), which swaps the renderer process. wpd:run:start is marked
 // on the pre-navigation renderer; all the boot's layout/style/paint runs on the process the page

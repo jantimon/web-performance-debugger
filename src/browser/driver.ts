@@ -18,6 +18,8 @@ import type {
   LayoutShiftSource,
   LoafFrame,
   NavigationKind,
+  SoftNavRoute,
+  SoftNavRouteLcp,
   StepLcp,
   StepLoaf,
 } from "../model/recording.js";
@@ -144,6 +146,9 @@ export interface RawEventTiming {
   duration: number;
   /** 0 for events that are not part of an interaction (pointerover, mouseover, ...) */
   interactionId: number;
+  /** the entry's `navigationId` (Chrome 151+): the interactions AFTER a soft nav carry the new id, the
+   * triggering interaction the pre-nav id, so route INP slices by it. NaN on a build that omits it. */
+  navigationId: number;
 }
 
 /**
@@ -274,6 +279,9 @@ export interface RawLayoutShiftEntry {
   hadRecentInput: boolean;
   startTimeMs: number;
   sources: RawLayoutShiftSource[];
+  /** the entry's `navigationId` (Chrome 151+): a shift AFTER a soft nav carries the new id, so route CLS
+   * slices by it. NaN on a build that omits it (route CLS then matches nothing, staying absent). */
+  navigationId: number;
 }
 
 /** A new session window opens when a shift lands more than this (ms) after the PREVIOUS shift. Spec. */
@@ -388,7 +396,11 @@ export function computeLayoutShift(entries: RawLayoutShiftEntry[]): LayoutShift 
   };
 }
 
-/** One `soft-navigation` entry, serialized in-page (Chrome 151+ Soft Navigations API). */
+/**
+ * One `soft-navigation` entry, read back out of the page at the end-of-step flush (NOT eagerly in the
+ * observer callback): the route's LICP identity is read then, off the retained live entry's
+ * `getLargestInteractionContentfulPaint()`, so a paint that grows after the entry fires is still caught.
+ */
 export interface RawSoftNavEntry {
   /** the route's URL (`entry.name`) */
   url: string;
@@ -398,6 +410,86 @@ export interface RawSoftNavEntry {
   navigationId: number;
   /** the `interactionId` of the trusted interaction the engine tied the route to */
   interactionId: number;
+  /** the route's time origin (`entry.startTime`), the clock every route metric anchors to */
+  startTimeMs: number;
+  /** the route LICP's resource url (`...largestContentfulPaint.url`); "" for a text paint or no paint */
+  lcpUrl: string;
+  /** the route LICP's intrinsic size (px^2); 0 when none */
+  lcpSize: number;
+  /** the route LICP element's tag (e.g. "IMG", "P"); "" when none */
+  lcpTag: string;
+  /** the route LICP's `renderTime` on the document clock; 0 when TAO-gated or no paint */
+  lcpRenderTimeMs: number;
+}
+
+/**
+ * Shape a soft nav entry's route LICP into the stored `SoftNavRouteLcp`, anchoring the paint time to the
+ * route's `startTime` (the route clock). Returns null when the entry carried no largest-interaction-
+ * contentful-paint identity AND no usable render time (no route paint observed yet), so the caller omits
+ * `routeLcp`. A TAO-gated paint keeps its identity but drops `routeMs` (its renderTime reads 0 by spec).
+ */
+function shapeSoftNavRouteLcp(entry: RawSoftNavEntry): SoftNavRouteLcp | null {
+  const hasIdentity = !!entry.lcpUrl || !!entry.lcpTag || entry.lcpSize > 0;
+  const routeMs =
+    entry.lcpRenderTimeMs > 0 && entry.lcpRenderTimeMs >= entry.startTimeMs
+      ? entry.lcpRenderTimeMs - entry.startTimeMs
+      : null;
+  if (!hasIdentity && routeMs == null) return null;
+  const routeLcp: SoftNavRouteLcp = {};
+  if (routeMs != null) routeLcp.routeMs = routeMs;
+  if (entry.lcpTag) routeLcp.tag = entry.lcpTag;
+  if (entry.lcpUrl) routeLcp.url = entry.lcpUrl;
+  if (entry.lcpSize > 0) routeLcp.size = entry.lcpSize;
+  return routeLcp;
+}
+
+/**
+ * Shape a soft-navigating step's route-transition metrics from the raw entries observed in its window:
+ * the engine `soft-navigation` entries, the step's `layout-shift` entries, and its `event`-timing
+ * entries. Keys strictly on the engine's verdict -- returns null when no `soft-navigation` entry fired,
+ * since only that entry carries a `navigationId` to slice the metrics by. Pure, so the slicing rules are
+ * unit-testable without a browser.
+ *
+ * - Route LCP: the FIRST soft nav's `getLargestInteractionContentfulPaint()`, on the route clock.
+ * - Route CLS: the `layout-shift` entries carrying the route's `navigationId` (the post-route shifts),
+ *   scored by the same spec session-window maximum as boot CLS (`computeLayoutShift`).
+ * - Route INP: the `event`-timing entries carrying the route's `navigationId` (the post-route
+ *   interactions). The interaction that TRIGGERED the soft nav carries the PRE-nav id, so slicing by the
+ *   route id excludes it -- it stays in the step's main `inpMs`.
+ *
+ * A non-finite `navigationId` (a build that did not populate it) matches nothing, so route CLS/INP stay
+ * absent rather than folding pre-nav work in. When more than one soft nav fired, the FIRST is reported
+ * and the rest counted in `additionalSoftNavs`, never averaged into a synthetic route.
+ */
+export function shapeSoftNavRoute(
+  softNavs: RawSoftNavEntry[],
+  layoutShifts: RawLayoutShiftEntry[],
+  events: RawEventTiming[],
+): SoftNavRoute | null {
+  if (!softNavs.length) return null;
+  const [first, ...rest] = softNavs;
+  const navigationId = first.navigationId;
+  const route: SoftNavRoute = {
+    navigationId,
+    navigationType: first.navigationType,
+    ...(first.url ? { url: first.url } : {}),
+  };
+  const routeLcp = shapeSoftNavRouteLcp(first);
+  if (routeLcp) route.routeLcp = routeLcp;
+  if (Number.isFinite(navigationId)) {
+    const routeShifts = layoutShifts.filter((entry) => entry.navigationId === navigationId);
+    const routeCls = computeLayoutShift(routeShifts);
+    if (routeCls) route.routeCls = routeCls;
+    const routeEvents = events.filter((entry) => entry.navigationId === navigationId);
+    const routeInpMs = routeEvents.length
+      ? Math.max(...routeEvents.map((entry) => entry.duration))
+      : null;
+    if (routeInpMs != null) route.routeInpMs = routeInpMs;
+    const routeInteraction = interactionBreakdown(routeEvents);
+    if (routeInteraction) route.routeInteraction = routeInteraction;
+  }
+  if (rest.length) route.additionalSoftNavs = rest.length;
+  return route;
 }
 
 /**
@@ -599,6 +691,9 @@ export async function runDriver(
             processingEnd: event.processingEnd,
             duration: event.duration,
             interactionId: event.interactionId ?? 0,
+            // navigationId slices route INP: post-soft-nav interactions carry the new id, the triggering
+            // one the pre-nav id. NaN where the build omits it, so route INP matches nothing there.
+            navigationId: typeof event.navigationId === "number" ? event.navigationId : NaN,
           });
         }
       }).observe({ type: "event", durationThreshold: 16, buffered: true } as any);
@@ -714,6 +809,9 @@ export async function runDriver(
             value: shift.value || 0,
             hadRecentInput: !!shift.hadRecentInput,
             startTimeMs: shift.startTime,
+            // navigationId slices route CLS: a shift after a soft nav carries the new id. NaN where the
+            // build omits it, so route CLS matches nothing there (absent, never folding pre-nav shifts).
+            navigationId: typeof shift.navigationId === "number" ? shift.navigationId : NaN,
             sources: (shift.sources || []).map((source: any) => {
               const node = source.node;
               return {
@@ -736,31 +834,54 @@ export async function runDriver(
   await page.evaluate(installLayoutShiftObserver);
 
   // Observe Chrome's own soft-navigation heuristic so a step carries the engine's verdict BESIDE the
-  // url+timeOrigin classifier. Same re-arm-on-navigation install as the other observers. OPPORTUNISTIC:
-  // `supportedEntryTypes` gates registration, so an older Chrome or Firefox (no `soft-navigation` type)
-  // leaves `win.__cpSoftNav` [] and the step stores nothing (never a fake zero, never a forced
-  // `--enable-features`). The entry is default-on from Chrome 151. A `PerformanceSoftNavigation`'s
-  // fields are read explicitly (its `element`-bearing LICP method is not serializable across the
-  // boundary and is out of scope here): the route URL, the history op, and the ids that slice metrics.
+  // url+timeOrigin classifier AND its route-transition metrics. Same re-arm-on-navigation install as the
+  // other observers. OPPORTUNISTIC: `supportedEntryTypes` gates registration, so an older Chrome or
+  // Firefox (no `soft-navigation` type) leaves the retained list [] and the step stores nothing (never a
+  // fake zero, never a forced `--enable-features`). The entry is default-on from Chrome 151.
+  //
+  // The live entry objects are RETAINED (`win.__cpSoftNavEntries`), not serialized in the callback,
+  // because the route's largest paint is read at the end-of-step flush off each entry's
+  // `getLargestInteractionContentfulPaint()`: reading in the callback would freeze it at the FCP the
+  // entry fires on and miss a larger paint that lands after. `win.__cpSoftNavRead()` produces the
+  // serialized `RawSoftNavEntry[]` (route URL, history op, ids, startTime, and the LICP identity) at
+  // flush time; `win.__cpSoftNavDrain()` delivers a queued entry synchronously, the same race the LCP
+  // observer guards (an entry can be queued before its callback dispatches).
   const installSoftNavObserver = () => {
     const win = window as any;
-    win.__cpSoftNav = [];
+    win.__cpSoftNavEntries = [];
     const supported =
       typeof PerformanceObserver !== "undefined" &&
       (PerformanceObserver.supportedEntryTypes || []).includes("soft-navigation");
     if (!supported) return;
+    const readEntry = (softNav: any) => {
+      const licp =
+        typeof softNav.getLargestInteractionContentfulPaint === "function"
+          ? softNav.getLargestInteractionContentfulPaint()
+          : null;
+      const paint = licp && licp.largestContentfulPaint ? licp.largestContentfulPaint : null;
+      const element = paint && paint.element;
+      return {
+        url: softNav.name || "",
+        navigationType: softNav.navigationType || "",
+        navigationId: typeof softNav.navigationId === "number" ? softNav.navigationId : NaN,
+        interactionId: typeof softNav.interactionId === "number" ? softNav.interactionId : NaN,
+        startTimeMs: softNav.startTime || 0,
+        lcpUrl: paint ? paint.url || "" : "",
+        lcpSize: paint ? paint.size || 0 : 0,
+        lcpTag: element && element.tagName ? element.tagName : "",
+        lcpRenderTimeMs: paint ? paint.renderTime || 0 : 0,
+      };
+    };
     try {
-      new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          const softNav = entry as any;
-          win.__cpSoftNav.push({
-            url: softNav.name || "",
-            navigationType: softNav.navigationType || "",
-            navigationId: typeof softNav.navigationId === "number" ? softNav.navigationId : NaN,
-            interactionId: typeof softNav.interactionId === "number" ? softNav.interactionId : NaN,
-          });
-        }
-      }).observe({ type: "soft-navigation", buffered: true } as any);
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) win.__cpSoftNavEntries.push(entry);
+      });
+      observer.observe({ type: "soft-navigation", buffered: true } as any);
+      win.__cpSoftNavDrain = () => {
+        for (const entry of observer.takeRecords()) win.__cpSoftNavEntries.push(entry);
+      };
+      win.__cpSoftNavRead = () =>
+        (win.__cpSoftNavEntries as any[]).map((entry) => readEntry(entry));
     } catch {
       /* soft-navigation unsupported */
     }
@@ -837,7 +958,7 @@ export async function runDriver(
       (window as any).__cpLoaf = [];
       (window as any).__cpLcp = [];
       (window as any).__cpLs = [];
-      (window as any).__cpSoftNav = [];
+      (window as any).__cpSoftNavEntries = [];
     });
     const startClock = await stepClock(`wpd:step:${stepMark}:start`);
     // page.url() is CDP-free (Puppeteer reads it off the page handle). Read it at both marks so the
@@ -860,7 +981,7 @@ export async function runDriver(
     // LoAF entries land on a later task too, so read them in the same frame+macrotask flush as the
     // Event-Timing entries: one round trip, both signals settled.
     const flushed = (await page.evaluate(
-      (ceilingMs, waitLcp, lcpBudgetMs) =>
+      (ceilingMs, waitLcp, waitSoftNav, entryBudgetMs) =>
         new Promise<{
           inp: RawEventTiming[];
           loaf: RawLoafFrame[];
@@ -872,36 +993,53 @@ export async function runDriver(
           const drainLcp = () => {
             if (typeof win.__cpLcpDrain === "function") win.__cpLcpDrain();
           };
+          const drainSoftNav = () => {
+            if (typeof win.__cpSoftNavDrain === "function") win.__cpSoftNavDrain();
+          };
           const read = () => ({
             inp: (win.__cpInp as RawEventTiming[]) ?? [],
             loaf: (win.__cpLoaf as RawLoafFrame[]) ?? [],
             lcp: (win.__cpLcp as RawLcpEntry[]) ?? [],
             ls: (win.__cpLs as RawLayoutShiftEntry[]) ?? [],
-            softNav: (win.__cpSoftNav as RawSoftNavEntry[]) ?? [],
+            // The route LICP is read HERE (at the flush), off the retained live entries, so a paint that
+            // grew after the soft-nav entry fired is caught. `__cpSoftNavRead` is absent where the entry
+            // type is unsupported, so the list reads [] and the step stores no route metrics.
+            softNav:
+              typeof win.__cpSoftNavRead === "function"
+                ? (win.__cpSoftNavRead() as RawSoftNavEntry[])
+                : [],
           });
           let done = false;
           const finish = () => {
             if (done) return;
             done = true;
             drainLcp();
+            drainSoftNav();
             resolve(read());
           };
           // The settle already threw on a stalled compositor, so rAF normally fires here; the
           // ceiling is a backstop that reads whatever landed rather than hanging if it does not.
           setTimeout(finish, ceilingMs);
-          // Base flush: one frame + a macrotask so INP/LoAF land. On a hard-nav step whose boot LCP
-          // entry has not reached the observer yet (paint races the callback dispatch), drain
-          // takeRecords() and, while still race-empty, wait bounded frames for the entry to queue. A
-          // page with no contentful paint queues nothing, so the wait ends at lcpBudgetMs and absence
-          // stays honest. All of this sits after the end mark, so it never grows the measured window.
+          // Base flush: one frame + a macrotask so INP/LoAF land. Two racing entries can be queued to
+          // their observer before its callback dispatches: a hard-nav step's boot LCP, and a soft-nav
+          // step's `soft-navigation` entry (whose route LICP the metrics need). For each, drain
+          // takeRecords() and, while still race-empty, wait bounded frames for the entry to queue. A step
+          // that produced neither (no contentful paint, no engine route) queues nothing, so the wait ends
+          // at entryBudgetMs and absence stays honest. A step is hard XOR soft, so at most one arms. All
+          // of this sits after the end mark, so it never grows the measured window.
           const canWaitLcp = waitLcp && typeof win.__cpLcpDrain === "function";
-          let lcpWaitStartMs = -1;
+          const canWaitSoftNav = waitSoftNav && typeof win.__cpSoftNavDrain === "function";
+          let entryWaitStartMs = -1;
           const settleRead = () => {
             if (done) return;
             drainLcp();
-            if (canWaitLcp && (win.__cpLcp as RawLcpEntry[]).length === 0) {
-              if (lcpWaitStartMs < 0) lcpWaitStartMs = performance.now();
-              if (performance.now() - lcpWaitStartMs < lcpBudgetMs) {
+            drainSoftNav();
+            const needLcp = canWaitLcp && (win.__cpLcp as RawLcpEntry[]).length === 0;
+            const needSoftNav =
+              canWaitSoftNav && (win.__cpSoftNavEntries as unknown[]).length === 0;
+            if (needLcp || needSoftNav) {
+              if (entryWaitStartMs < 0) entryWaitStartMs = performance.now();
+              if (performance.now() - entryWaitStartMs < entryBudgetMs) {
                 requestAnimationFrame(settleRead);
                 return;
               }
@@ -912,6 +1050,7 @@ export async function runDriver(
         }),
       STALL_CEILING_MS,
       navigation === "hard",
+      navigation === "soft" || navigation === "soft-hash",
       LCP_ENTRY_WAIT_MS,
     )) as {
       inp: RawEventTiming[];
@@ -925,6 +1064,10 @@ export async function runDriver(
     // The engine's own soft-navigation verdict for this window, opportunistic and beside `navigation`:
     // present only where Chrome fired an entry (a trusted-interaction route on 151+), null otherwise.
     const engineSoftNav = shapeEngineSoftNav(flushed.softNav);
+    // The route-transition metrics (LCP-equivalent / CLS / INP on the route clock) for a step the engine
+    // soft-navigated, keyed by the soft nav's navigationId. Null where the engine fired no entry (a
+    // programmatic/untrusted route, older Chrome, Firefox), so it keys strictly on the engine's verdict.
+    const softNav = shapeSoftNavRoute(flushed.softNav, flushed.ls, flushed.inp);
     // CLS: the spec session-window maximum over the shifts observed in this step's window, with the
     // shifting elements attributed. Chrome-only (the observer stays empty on Firefox); a step with no
     // qualifying shift stores nothing (null), never a fake 0. The boot/load step is where it shows: a
@@ -961,6 +1104,7 @@ export async function runDriver(
       beforeUrl,
       afterUrl,
       ...(engineSoftNav ? { engineSoftNav } : {}),
+      ...(softNav ? { softNav } : {}),
       ...(lcp ? { lcp } : {}),
       ...(layoutShift ? { layoutShift } : {}),
     });

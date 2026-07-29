@@ -606,6 +606,17 @@ both. They usually agree; where they split — a **programmatic** `pushState` mo
 heuristic, which needs a real user interaction, ignores it — the step notes both verdicts so you see a
 route the engine's metrics will miss, rather than one number hiding the gap.
 
+**Per-route web vitals for a soft navigation (Chrome 151+).** When a driver step soft-navigates and
+Chrome's heuristic fires, the step also carries the **route transition's own** LCP, CLS, and INP in
+`step.softNav`, sliced by the soft nav's `navigationId` and anchored to the route's start (the route
+clock, not the boot clock). `softNav.routeLcp` is the route's largest paint (`tag`/`url`/`size`, and
+`routeMs` into the route); `softNav.routeCls` is the shifts that landed after the route change (the same
+session-window maximum boot CLS uses); `softNav.routeInpMs` is the worst interaction after the route —
+the click that *triggered* the route keeps the pre-nav id, so it stays in the step's main `inp` rather
+than here. It is opportunistic: a programmatic or untrusted-click route, an older Chrome, or Firefox
+fires no engine entry, so `softNav` is simply absent, never a fabricated 0. `query span <step>` prints
+the route numbers under the step; multiple soft navs in one step report the first and count the rest.
+
 **Clicking a page that never stops re-rendering.** Prefer a stable selector and `page.click('#id')`. A
 raw element handle throws `Node is detached from document` when the app re-renders between grabbing the
 node and clicking it, and `page.locator(sel).click()` can hang on its actionability wait when the page
