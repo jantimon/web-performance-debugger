@@ -189,6 +189,12 @@ export function onrampWarmVsCold(iterations: number): string {
   return `Iteration 1 boots cold, but ${laterIterations} the same browser (one launch per run), so they hit its HTTP/disk cache and warm JIT: the 'load' step's wall median mixes the cold first load with warm reloads. Per-step counts describe iteration 1 (the cold boot). Use --iterations 1 for a purely cold boot.`;
 }
 
+/** --allow-bot-wall was set and the page matched bot-challenge signals: it was measured anyway. Loud,
+ * because the numbers describe the challenge page, not the site. */
+export function botWallMeasuredAnyway(signals: string): string {
+  return `WARNING: the measured page matched bot-challenge interstitial signals (${signals}); --allow-bot-wall was set, so wpd measured it anyway. These numbers describe the CHALLENGE page, not the site. A query cpu origin bucket naming a challenge vendor (challenges.cloudflare.com, captcha-delivery.com, hcaptcha.com, ...) confirms which wall it was.`;
+}
+
 // --- Cross-lane ---
 
 export function traceWindowMissing(): string {

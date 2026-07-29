@@ -18,6 +18,9 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cli = path.join(repoRoot, "dist", "cli.js");
 const examples = path.join(repoRoot, "examples");
 
+// A `query blame --format json` row carries a structured location ({source, line, column}); reassemble it.
+const blameAt = (row) => [row.source, row.line, row.column].filter((part) => part != null).join(":");
+
 // executablePath() mis-guesses the Firefox build path, so probe by actually launching it (the
 // e2e needs a working launch anyway); a failure means Firefox is not installed => skip.
 async function firefoxAvailable() {
@@ -160,8 +163,8 @@ e2e(
     assert.ok(Array.isArray(blame) && blame.length > 0, "read-site forced blame still present");
     const readLines = new Set(
       blame
-        .filter((row) => row.at?.includes("forces-layout.mjs"))
-        .map((row) => Number(row.at.match(/forces-layout\.mjs:(\d+)/)?.[1])),
+        .filter((row) => row.source?.includes("forces-layout.mjs"))
+        .map((row) => Number(blameAt(row).match(/forces-layout\.mjs:(\d+)/)?.[1])),
     );
     assert.ok([...readLines].some((line) => line >= 46 && line <= 145), "a geometry-read line is still blamed");
     assert.equal(recording.meta.blameSemantic, "flush-site", "blame semantic stays the read site");
@@ -268,7 +271,7 @@ e2e(
 
     const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
     assert.ok(Array.isArray(blame) && blame.length > 0, "at least one forced layout/style source group");
-    const fromExample = blame.filter((row) => row.at?.includes("forces-layout.mjs"));
+    const fromExample = blame.filter((row) => row.source?.includes("forces-layout.mjs"));
     assert.ok(fromExample.length > 0, "forced layout/style attributed to forces-layout.mjs");
     assert.ok(fromExample[0].forced > 0, "forced count is positive");
     const kinds = new Set(fromExample.flatMap((row) => row.kinds ?? []));
@@ -276,7 +279,7 @@ e2e(
 
     // Read-site semantics: the geometry READ lines are named, never the bump()/style-write lines.
     const blamedLines = new Set(
-      fromExample.map((row) => Number(row.at.match(/forces-layout\.mjs:(\d+)/)?.[1])),
+      fromExample.map((row) => Number(blameAt(row).match(/forces-layout\.mjs:(\d+)/)?.[1])),
     );
     for (const writeLine of [13, 15, 16, 17, 19, 21])
       assert.ok(!blamedLines.has(writeLine), `write line ${writeLine} must never be blamed`);

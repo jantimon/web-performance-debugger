@@ -13,6 +13,8 @@ import {
 import type { GeckoMeasureWindow } from "../profile/gecko-breakdown.js";
 import { runHarness } from "../browser/harness.js";
 import { runDriver, type PartialRun } from "../browser/driver.js";
+import { inspectBotWall } from "../browser/bot-wall.js";
+import type { BotWallVerdict } from "./bot-wall.js";
 import type { DriverStep } from "../model/driver-step.js";
 import { applyCpuThrottle } from "../browser/throttle.js";
 import { parseTrace, findWindow, findSteps, type StepWindow } from "../trace/parse.js";
@@ -73,6 +75,10 @@ export interface PassResult {
   geckoMeasures?: GeckoMeasureWindow[];
   /** Chrome reported the trace buffer dropped events (overflow). Drives a loud not-silent note. */
   traceDataLoss?: boolean;
+  /** Bot-wall detection verdict for a wpd-performed navigation (onramp / --url host page). Present
+   * only when it was detected AND --allow-bot-wall let the run continue (an undetected page and a
+   * refused run both leave it undefined -- a refusal throws before the pass returns). */
+  botWallVerdict?: BotWallVerdict;
 }
 
 function toServedUrl(server: StaticServer, root: string, absFile: string): string {
@@ -184,6 +190,7 @@ export async function runPass(
   mode: "module" | "html" | "url",
   absModule: string | undefined,
   maps: SourceMapResolver,
+  botWall?: { allow: boolean; screenshotPath: string },
 ): Promise<PassResult> {
   const browserName: BrowserName = opts.browser ?? "chrome";
   // No module = the built-in on-ramp flow (driver mode only). It skips the host-page pre-navigation
@@ -209,6 +216,16 @@ export async function runPass(
       : undefined,
   });
   let result: PassResult;
+  // Bot-wall detection for a wpd-performed navigation. `inspect()` collects + classifies the settled
+  // page; on a detected wall with no --allow-bot-wall it screenshots + throws (refusing before any
+  // measurement pass), else it stores the verdict so a detected-but-allowed run can note it. Called
+  // for the onramp (after the load step, via the driver hook) and for a --url/--html host pre-navigation.
+  let botWallVerdict: BotWallVerdict | undefined;
+  const inspect = botWall
+    ? async () => {
+        botWallVerdict = await inspectBotWall(page, botWall);
+      }
+    : undefined;
   try {
     if (opts.cpuThrottle && client && caps.throttle)
       await applyCpuThrottle(client, opts.cpuThrottle);
@@ -230,8 +247,11 @@ export async function runPass(
         waitUntil: "load",
         timeout: 30000,
       });
+      // The host page is a wpd navigation, so inspect it (a --url pointed at a wall drives a wall).
+      if (inspect) await inspect();
     } else if (mode === "url") {
       await page.goto(opts.url!, { waitUntil: "load", timeout: 30000 });
+      if (inspect) await inspect();
     } else {
       // Same-origin blank page so the module import() below is not cross-origin.
       await page.goto(`${server.url}/__wpd_blank__`, { waitUntil: "load" });
@@ -269,7 +289,7 @@ export async function runPass(
         absModule,
         opts.fn,
         { iterations: opts.iterations, warmup: opts.warmup, keepPartial: opts.keepPartial },
-        onramp ? { navigateUrl: onrampNavigateUrl! } : undefined,
+        onramp ? { navigateUrl: onrampNavigateUrl!, afterFirstLoad: inspect } : undefined,
         startProfiler,
       );
       driverSteps = driverResult.steps;
@@ -455,6 +475,7 @@ export async function runPass(
       cpuSampleIntervalUs,
       sampledBlame,
       traceDataLoss,
+      botWallVerdict,
     };
   } catch (runError) {
     // The run failed. Close the browser (which also flushes a Firefox shutdown dump) so nothing is

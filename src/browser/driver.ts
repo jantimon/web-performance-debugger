@@ -321,6 +321,12 @@ export interface DriverContext {
  */
 export interface OnrampFlow {
   navigateUrl: string;
+  /**
+   * Inspect the settled page for a bot-challenge interstitial, run ONCE right after the first
+   * navigation (the built-in load step's own goto), before the timed measurement continues. Throws a
+   * BotWallError to refuse a wall; the driver lets it propagate so record aborts with no artifact.
+   */
+  afterFirstLoad?: () => Promise<void>;
 }
 
 /**
@@ -705,10 +711,24 @@ export async function runDriver(
   phase = "timed";
   timedIndexBase = indexInIteration;
 
+  // Bot-wall detection runs ONCE, right after the first navigation lands (the built-in load step's
+  // goto), before any timed measurement. A wall throws a BotWallError that propagates out of runDriver
+  // to abort the whole record. The first navigation is the first run() call: a warmup iteration when
+  // --warmup > 0, else timed iteration 0.
+  let onrampInspected = false;
+  const inspectOnrampOnce = async () => {
+    if (!onramp?.afterFirstLoad || onrampInspected) return;
+    onrampInspected = true;
+    await onramp.afterFirstLoad();
+  };
+
   // Warmup, before the counters and marks: its DOM work must not land in the counts, and its
   // wall must not land in the samples. prepare() already ran, so warmup repeats the flow itself.
   recording = false;
-  for (let warm = 0; warm < options.warmup; warm++) await run(driverArg);
+  for (let warm = 0; warm < options.warmup; warm++) {
+    await run(driverArg);
+    await inspectOnrampOnce();
+  }
   recording = true;
 
   // prepare() and warmup have run; open the CPU sampler HERE, right before the run mark, not before
@@ -757,6 +777,9 @@ export async function runDriver(
       };
       break;
     }
+    // After iteration 0's navigation settled: refuse a bot-wall before more iterations run (a no-op
+    // once warmup already inspected). A BotWallError propagates out to abort the record.
+    if (iteration === 0) await inspectOnrampOnce();
   }
   await mark("wpd:run:end");
 

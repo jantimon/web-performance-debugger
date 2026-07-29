@@ -25,6 +25,10 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cli = path.join(repoRoot, "dist", "cli.js");
 const examples = path.join(repoRoot, "examples");
 
+// A `query blame --format json` row now carries a structured location ({source, line, column})
+// instead of a single "file:line:col" `at` string. Reassemble it for the tests that match the old shape.
+const blameAt = (row) => [row.source, row.line, row.column].filter((part) => part != null).join(":");
+
 async function browserAvailable() {
   try {
     // executablePath() is async in puppeteer v25 (it resolves the installed build).
@@ -162,7 +166,7 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
 
   const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
   assert.ok(Array.isArray(blame) && blame.length > 0, "at least one forced-layout source group");
-  const fromExample = blame.filter((row) => row.at?.includes("forces-layout.mjs"));
+  const fromExample = blame.filter((row) => row.source?.includes("forces-layout.mjs"));
   assert.ok(fromExample.length > 0, "forced layout attributed to forces-layout.mjs");
   const top = fromExample[0];
   assert.ok(top.forced > 0, "forced count is positive");
@@ -195,7 +199,7 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
   assert.ok(drillRow, "a forces-layout.mjs blame row has an eventId to drill");
   const raw = JSON.parse(runCli(["query", "get", out, String(drillRow.eventId)]));
   assert.equal(raw.id, drillRow.eventId, "query get returns the addressed event");
-  assert.equal(raw.at, drillRow.at, "the raw event's source is the blame row's line");
+  assert.equal(raw.at, blameAt(drillRow), "the raw event's source is the blame row's line");
   assert.ok(
     Array.isArray(raw.args?.beginData?.stackTrace) && raw.args.beginData.stackTrace.length > 0,
     "the raw flush carries its forcing stack (args.beginData.stackTrace)",
@@ -254,7 +258,7 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
 
   const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
   assert.ok(Array.isArray(blame) && blame.length > 0, "at least one sampled forced-layout source group");
-  const fromExample = blame.filter((row) => row.at?.includes("forces-layout.mjs"));
+  const fromExample = blame.filter((row) => row.source?.includes("forces-layout.mjs"));
   assert.ok(fromExample.length > 0, "sampled forced layout attributed to forces-layout.mjs");
   assert.ok(fromExample.every((row) => row.forced > 0), "every attributed line is forced");
   assert.ok(
@@ -266,7 +270,7 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
   // statement, so allow ±1. Assert several sampled sites land on/near the real read lines.
   const knownReadLines = [46, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108, 120, 124];
   const blamedLines = fromExample
-    .map((row) => Number(row.at.match(/forces-layout\.mjs:(\d+)/)?.[1]))
+    .map((row) => Number(blameAt(row).match(/forces-layout\.mjs:(\d+)/)?.[1]))
     .filter((line) => Number.isFinite(line));
   const onKnownRead = blamedLines.filter((line) =>
     knownReadLines.some((read) => Math.abs(line - read) <= 1),
@@ -315,7 +319,7 @@ e2e("record --deep detects layout thrashing and dual-annotates read + dirtied-by
   assert.ok(annotated, "a forced read-site carries a dirtied-by write");
   const bumpWrite = annotated.dirtiedBy.find((w) => /forces-layout\.mjs:16\b/.test(w.at));
   assert.equal(bumpWrite.reason, "Inline CSS style declaration was mutated", "the write names its mutation reason");
-  assert.ok(annotated.at.includes("forces-layout.mjs"), "the read (headline) is a forces-layout.mjs line");
+  assert.ok(annotated.source.includes("forces-layout.mjs"), "the read (headline) is a forces-layout.mjs line");
 });
 
 // The browser-free `--target node` hot-functions test lives in test/unit/cli-wiring.test.mjs (the
@@ -2015,3 +2019,64 @@ e2e("record --group: a duplicate capture-mode member refuses before writing anyt
 
 // The browser-free B-01 node-lane cpu-diff stability test lives in test/unit/cli-wiring.test.mjs
 // (--target node imports the module in-process, no browser).
+
+// Bot-wall detection: when wpd's OWN navigation (the built-in --url load flow) lands on a
+// bot-challenge interstitial, wpd refuses BEFORE measuring, saves a screenshot as proof, and points
+// at the skip flag. The fixture mimics Cloudflare's managed-challenge shape: a "Just a moment..."
+// title plus a full-viewport same-origin /cdn-cgi/challenge-platform/ iframe (served locally, so the
+// test needs no external network and never hangs). Detection reads the RENDERED interstitial, so a
+// live challenge origin is not required. Live sites are never in tests.
+const BOT_WALL_FIXTURE =
+  "<!doctype html><meta charset=utf-8><title>Just a moment...</title>" +
+  "<style>html,body{margin:0}iframe{width:100vw;height:100vh;border:0}</style>" +
+  '<body><iframe src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"></iframe></body>';
+
+e2e("record --url refuses a bot-wall interstitial with a screenshot, and --allow-bot-wall overrides", { timeout: TIMEOUT_MS }, () => {
+  const server = startOnrampServer(BOT_WALL_FIXTURE);
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-botwall-"));
+  try {
+    // 1. Refusal: non-zero exit, evidence-listed error naming the signals + the skip flag, a
+    //    screenshot saved as proof, and NO recording written.
+    const out = path.join(dir, "botwall");
+    const refusal = spawnSync(process.execPath, [cli, "record", "--url", server.url, "--out", out], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: CLI_KILL_MS,
+      killSignal: "SIGKILL",
+      env: process.env,
+    });
+    assert.equal(refusal.status, 1, `a bot-wall must exit 1:\n${refusal.stdout}\n${refusal.stderr}`);
+    const stderr = refusal.stderr ?? "";
+    assert.match(stderr, /bot-challenge/i, "the error names the bot-challenge class");
+    assert.match(stderr, /challenge-platform|challenge path|challenge marker/i, "the error lists the signal that fired");
+    assert.match(stderr, /--allow-bot-wall/, "the error points at the skip flag");
+    assert.doesNotMatch(stderr, /bypass the challenge|solve the challenge/i, "never suggests bypassing/solving");
+    const screenshot = `${out}.wall.png`;
+    assert.ok(existsSync(screenshot), "a screenshot is saved as proof");
+    assert.ok(statSync(screenshot).size > 0, "the screenshot is non-empty");
+    assert.ok(stderr.includes(screenshot), "the error names the screenshot path");
+    assert.ok(!existsSync(out), "no recording is written for a refused run");
+
+    // 2. Override: --allow-bot-wall measures it anyway and stamps a loud note that the numbers
+    //    describe the challenge page.
+    const allowed = path.join(dir, "allowed.json");
+    const ok = spawnSync(process.execPath, [cli, "record", "--url", server.url, "--allow-bot-wall", "--out", allowed], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: CLI_KILL_MS,
+      killSignal: "SIGKILL",
+      env: process.env,
+    });
+    assert.equal(ok.status, 0, `--allow-bot-wall records the page:\n${ok.stdout}\n${ok.stderr}`);
+    assert.ok(existsSync(allowed), "a recording is written under --allow-bot-wall");
+    const recording = JSON.parse(readFileSync(allowed, "utf8"));
+    assert.ok(
+      recording.meta.notes.some((note) => /bot-challenge interstitial signals/.test(note) && /--allow-bot-wall/.test(note)),
+      "the recording carries a loud note that the numbers describe the challenge page",
+    );
+  } finally {
+    server.close();
+  }
+});

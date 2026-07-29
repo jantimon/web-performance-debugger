@@ -84,6 +84,21 @@ idle    26.5  41.2%  (waiting, not work)
 four-slice CPU bar; `--breakdown` adds the
 reconciling js/style/layout/paint bar and exact counts above; `--deep` adds forced-layout blame.
 
+**The boot wall ends at the idle settle, which on a streamed SPA is before LCP.** The `load` step's
+window closes when the page goes idle (two quiet frames), so on a page that keeps streaming content in,
+the reported wall is *up to first idle*, not *fully loaded* — it can read well below LCP. Read the
+**counts** and the **boot LCP** (`step.lcp`, on the `load` step) as the completeness signals, and treat
+a high `~N% idle` tag on the bar as the tell that the window closed early. The wall is honest about what
+it measured; it is not "the page is up in N ms".
+
+**If wpd's own navigation lands on a bot-challenge interstitial** (Cloudflare, DataDome, and the like)
+instead of the site, `record` refuses *before* measuring — a non-zero exit, an evidence-listed error
+naming the signals that fired and the challenge origin observed, and a `<recording>.wall.png` screenshot
+saved as proof — rather than reporting the challenge page's numbers as the site's. Detection is
+conservative (it keys on the rendered interstitial, never on a captcha script a normal form embeds).
+wpd never bypasses, waits out, or solves a challenge. To measure the challenge page itself on purpose,
+pass `--allow-bot-wall`; the recording then carries a loud note that its numbers describe that page.
+
 A page load has no interaction, so `INP` stays null there. To measure a click, a re-render, or SSR
 you write a small `run` function and pick a **lane** by where the code runs, then a **capture** by
 what you want to know. That is the whole model:
@@ -189,7 +204,10 @@ question with different instrumentation, and wanting two answers means running `
   low-confidence). The exact forced **count** still needs the `.stack` trace — record `--deep` for that.
 - **`--deep`** — the full trace (`.stack` + invalidations) with the CPU sampler off: the
   **attribution report** — forced-by read-sites, dirtied-by writes, the thrash detector, invalidation
-  rollup, exact counts, long tasks. Span wall but no slice ms, and no CPU model.
+  rollup, exact counts, long tasks. Span wall but no slice ms, and no CPU model. On heavy production
+  pages, **budget `--deep` as effectively single-iteration**: it stores the full event log, which grows
+  with the trace, and a recording whose log would exceed the ~512 MB a single JSON string can hold is
+  refused early with a clear message (drop to `--iterations 1`, scope the flow, or use `--breakdown`).
 
 **Speed** is the median wall-time overhead each mode adds over the no-measurement baseline, on a
 mid-size mixed JS + layout workload (`examples/capture-mode-speed.mjs`). It is directional and
@@ -544,6 +562,18 @@ profile dir stores real browser state — cookies, logins, history — so point 
 dedicated to wpd, never your everyday profile, and add it to `.gitignore` so a session token never
 lands in a commit.
 
+A real-site interaction driver needs **per-site selector knowledge** — the search box, the menu
+trigger, the result container — and a live DOM reveals those only when you read it (a search field
+hidden behind an icon click, a container that streams in). The example below uses placeholder selectors
+for exactly that reason: budget selector-reversing time per site, there is no record-and-replay helper.
+
+**wpd retries its own machinery's races, never the site's refusals.** A transient cross-process boot or
+a headless frame stall is wpd's to recover, so the built-in `--url` flow retries it silently. A
+navigation timeout, an HTTP/2 stream reset, or a self-navigating anti-bot interstitial is the *site's*
+behavior, and retrying it is a measurement decision (the second hit is warm, cookied, and differently
+bot-scored) — so the built-in flow surfaces it and points you here, to a driver module where you own
+the timeout, the backoff, the headers, and the wait, rather than deciding it for you.
+
 **A full production journey** ties these patterns together. This stays README material, not a
 committed example — a live third-party DOM is not stable enough to keep a runnable fixture green — so
 copy it and replace the placeholder selectors with your own:
@@ -867,6 +897,20 @@ ratio is not the trust signal — hand-written unbundled ESM resolves 0 of 1 and
 on a real source line. The signal is the **WARNING** wpd prints, which fires only when a minified
 bundle went unmapped or a remote frame fell back to an origin bucket.
 
+**The origin buckets are themselves a signal.** They tell you which host served the cost, which is often
+all a landscape read needs — and a bucket naming a challenge vendor (`(challenges.cloudflare.com)`,
+`(geo.captcha-delivery.com)`, `(...hcaptcha.com)`) is a diagnostic that the page wpd measured is a
+bot-challenge wall, not the store (the same evidence [bot-wall detection](#your-first-run) refuses on up
+front).
+
+On a `--url` run, `query cpu` tags each origin bucket with its **site relation** to the measured page —
+`same-origin`, `same-site`, or `cross-site` — computed with the public-suffix list (registrable domain,
+so `co.uk` is handled), and carried on the `byPackage` JSON as `siteRelation`. This is a URL-mechanical
+fact and **only** that: it is not ownership and not "third-party". A cross-site CDN can be
+first-party-owned — `assets.alicdn.com` is cross-site from `aliexpress.com` yet the same company runs
+both. wpd states the mechanical relation and leaves the ownership call, which needs context wpd does not
+have, to you.
+
 ### Consuming the JSON
 
 Every artifact and `--format json|toon` output is typed. Import the types from the package root:
@@ -886,6 +930,20 @@ const rec: Recording = JSON.parse(await readFile("run.json", "utf8"));
 | `query cpu` / `frame` / `blame` | `CpuOverview` / `FrameQueryResult` / `BlameEntry[]` |
 | `query get` / `events` | `NormalizedEvent` / `NormalizedEvent[]` |
 | `cpu-diff` | `CpuDiffResult` |
+
+**The one extract you probably want.** For a first/third-party cost read, take the per-package rollup
+straight off `query cpu --format json` — no spelunking through the raw `.cpu.json`:
+
+```bash
+wpd query cpu latest --format json \
+  | jq '.byPackage[] | {package: .key, selfMs, selfPct, siteRelation}'
+```
+
+Field names to know (they are not the obvious ones): a function's display name is `fn` (not `name`),
+its self time is `selfMs`, its source is `source`/`file`; the JS headline is `jsSelfMs`; the by-package
+split lives at `byPackage[]` (`key`/`selfMs`/`selfPct`, plus `siteRelation` on a `--url` origin bucket).
+For per-span numbers, `query spans --format json` gives one `UnifiedSlices` shape (`js.byPackage`,
+`style`, `layout`, …) across chrome/firefox/node — read that, never the multi-MB recording.
 
 Recordings are self-describing: `meta.schemaVersion` stamps the on-disk schema epoch (currently
 `"4"`), and a reader **rejects** any artifact from another epoch with a "recorded by an older wpd;

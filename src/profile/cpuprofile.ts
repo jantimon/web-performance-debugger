@@ -35,6 +35,7 @@ import { reconcileResidual } from "../model/reconcile.js";
 import { deserialize } from "../output/format.js";
 import { assertSchemaVersion } from "../model/artifact.js";
 import { EPHEMERAL_PORT_MIN, EPHEMERAL_PORT_MAX } from "../model/compat.js";
+import { measuredPageUrl, originBucketHost, siteRelation } from "../model/site-relation.js";
 import { resolveTarget } from "../commands/resolve.js";
 
 /** Edges below this carry no signal; dropped to keep the model bounded. */
@@ -875,7 +876,9 @@ export async function packagesByProfileNode(
   return byNode;
 }
 
-/** Self time bucketed by a per-function key (package or file), descending. */
+/** Self time bucketed by a per-function key (package or file), descending. An origin-bucket key
+ * (`(cdn.example.com)`) of a `--url` run carries its URL-mechanical site relation to the measured
+ * page (same-origin/same-site/cross-site); real packages and non-origin buckets carry none. */
 function rollup(model: CpuModel, keyOf: (fn: CpuFunction) => string): CpuGroupStat[] {
   const byKey = new Map<string, { selfMs: number; functions: number }>();
   for (const fn of model.functions) {
@@ -885,15 +888,21 @@ function rollup(model: CpuModel, keyOf: (fn: CpuFunction) => string): CpuGroupSt
     entry.functions += 1;
     byKey.set(key, entry);
   }
+  const pageUrl = measuredPageUrl(model.meta);
   return [...byKey.entries()]
-    .map(([key, entry]) => ({
-      key,
-      selfMs: entry.selfMs,
-      // Denominated by jsSelfMs (the JS-only headline), the sum these buckets tile, so the shares add
-      // to 100%. activeMs would leave them short of 100 (it also carries gc/engine/native).
-      selfPct: model.jsSelfMs > 0 ? (entry.selfMs / model.jsSelfMs) * 100 : 0,
-      functions: entry.functions,
-    }))
+    .map(([key, entry]) => {
+      const host = originBucketHost(key);
+      const relation = host && pageUrl ? siteRelation(host, pageUrl) : undefined;
+      return {
+        key,
+        selfMs: entry.selfMs,
+        // Denominated by jsSelfMs (the JS-only headline), the sum these buckets tile, so the shares add
+        // to 100%. activeMs would leave them short of 100 (it also carries gc/engine/native).
+        selfPct: model.jsSelfMs > 0 ? (entry.selfMs / model.jsSelfMs) * 100 : 0,
+        functions: entry.functions,
+        ...(relation ? { siteRelation: relation } : {}),
+      };
+    })
     .sort((left, right) => right.selfMs - left.selfMs);
 }
 

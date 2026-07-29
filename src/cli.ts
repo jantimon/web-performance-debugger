@@ -4,6 +4,7 @@ import { Command, Option } from "commander";
 import { recordAndReport, recordMembersAndReport, type RecordOptions } from "./commands/record.js";
 import { GROUP_MEMBER_MODES, isGroupMemberMode, type GroupMemberMode } from "./record/group.js";
 import { resolvePageOption } from "./record/page-option.js";
+import { builtinFlowFailureGuidance } from "./record/nav-failure.js";
 import { isPrivateHostname } from "./trace/sourcemap.js";
 import { queryBlame, queryEvents, queryGet, querySpan, querySpans } from "./commands/query.js";
 import { queryCpu, queryFrame } from "./commands/cpu.js";
@@ -123,6 +124,10 @@ program
     "chrome only: launch with --no-sandbox for environments that cannot start Chrome's sandbox (containers, restricted CI). WARNING: reduces process containment; only use in a trusted, isolated environment and not with --user-data-dir or a non-loopback --url",
   )
   .option("--cpu-throttle <rate>", "artificial slowdown: CPU multiplier (4 = 4x slower)", toInt)
+  .option(
+    "--allow-bot-wall",
+    "skip bot-wall detection: measure the page even if wpd's navigation lands on a bot-challenge interstitial (Cloudflare/DataDome/etc.). Off by default, where such a page is refused with a screenshot before measuring. Use only when you deliberately want to measure the challenge page itself; the recording carries a loud note that the numbers describe it, not the site",
+  )
   .option(
     "--protocol-timeout <ms>",
     "timeout in ms for one protocol call (default 180000); raise it when a heavy traced interaction pins the main thread, or when a loaded machine makes Firefox time out launching",
@@ -282,6 +287,7 @@ program
         cmdOpts.headless === false && "--no-headless",
         cmdOpts.keepPartial && "--keep-partial",
         cmdOpts.protocolTimeout != null && "--protocol-timeout",
+        cmdOpts.allowBotWall && "--allow-bot-wall",
       ].filter(Boolean);
       if (browserOnly.length)
         program.error(
@@ -406,6 +412,7 @@ program
       keepPartial: !!cmdOpts.keepPartial,
       runtime: node ? "node" : "chrome",
       cpuThrottle: cmdOpts.cpuThrottle,
+      allowBotWall: !!cmdOpts.allowBotWall,
       // On by default; captureFor turns it off on --deep (the sampler cannot ride a .stack trace).
       // On firefox it is what produces counts + blame at all.
       cpuProfile: true,
@@ -431,7 +438,12 @@ program
       // stack overflow carries an unhelpful one-line message; the stack is the only pointer to where
       // it blew). Otherwise the debug hint trails ON THE SAME LINE as the cause, so a caller reading
       // only the last stderr line still gets the actual error, not a bare "(set WPD_DEBUG=1 ...)".
-      const cause = recordFailureMessage(error);
+      // The built-in --url load flow (no module) failing on a site-behavior class gets the
+      // driver-module escape-hatch guidance appended; a bot-wall refusal already carries its own
+      // evidence + skip-flag message, so it is left as-is.
+      const builtinFlow = !module && !!cmdOpts.url;
+      const guidance = builtinFlow ? builtinFlowFailureGuidance(error) : null;
+      const cause = recordFailureMessage(error) + (guidance ?? "");
       if (process.env.WPD_DEBUG && error.stack) {
         console.error(`record failed: ${cause}`);
         console.error(error.stack);

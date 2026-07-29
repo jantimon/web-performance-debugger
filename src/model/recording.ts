@@ -19,6 +19,7 @@ export type {
   CpuBreakdown,
   CpuModel,
 } from "./cpu.js";
+export type { SiteRelation } from "./site-relation.js";
 export type { AllocFunction, AllocGroupStat, AllocSamplingConfig, AllocModel } from "./alloc.js";
 export type { FrameState, FrameRecord, FrameSideTrack } from "./frames.js";
 export type {

@@ -335,9 +335,17 @@ async function runCapturePass(setup: RecordSetup): Promise<CapturedPass> {
   // failure (a bad host still fails immediately). See browser/launch.ts isTransientNavError.
   let navRetries = 0;
   let frameStallRetries = 0;
+  // Bot-wall detection config for a wpd-performed navigation (onramp / --url host): the screenshot
+  // lands beside the (would-be) recording. runPass gates WHERE it inspects; --allow-bot-wall turns a
+  // refusal into a measured-anyway run with a loud note. A BotWallError is not transient, so
+  // retryTransientNav re-throws it immediately (no wasted relaunches on a wall).
+  const botWall = {
+    allow: !!opts.allowBotWall,
+    screenshotPath: path.join(outDir, `${base}.wall.png`),
+  };
   try {
     const outcome = await retryTransientNav(
-      () => runPass(server, root, capture, opts, mode, absModule, maps),
+      () => runPass(server, root, capture, opts, mode, absModule, maps, botWall),
       NAV_RETRY_LIMIT,
     );
     pass = outcome.value;
@@ -469,6 +477,15 @@ function assembleNotes(setup: RecordSetup, captured: CapturedPass): DerivedNotes
           : notesCatalog.onrampWarmVsCold(opts.iterations),
       );
     }
+  }
+  // The measured page matched bot-challenge signals but --allow-bot-wall let it run (a refusal throws
+  // before this). Loud in the recording AND on stderr: these numbers describe the challenge page.
+  if (pass.botWallVerdict?.detected) {
+    const botWallNote = notesCatalog.botWallMeasuredAnyway(
+      pass.botWallVerdict.firedSignals.join("; "),
+    );
+    notes.push(botWallNote);
+    console.error(botWallNote);
   }
   // --url named a host with no scheme (localhost:5173): http:// was assumed to reach it. Disclose
   // the target the run actually navigated to, whether or not a module drove it.

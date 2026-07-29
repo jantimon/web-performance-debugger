@@ -923,6 +923,20 @@ export interface BlameQuery extends OutOpts {
   top?: number;
 }
 
+/**
+ * Split a blame `at` ("file:line:col") into its structured parts for the JSON view. Parsed from the
+ * RIGHT so a source that itself carries colons (a remote url like `https://host:443/x.js:10:5`) keeps
+ * its host:port in `source`: the trailing `:line:col` (or `:line`) is stripped, everything before it
+ * is the source. A source with no trailing position keeps the whole string and reports no line/col.
+ */
+export function splitReadSite(at: string): { source: string; line?: number; column?: number } {
+  const lineCol = at.match(/^(.*):(\d+):(\d+)$/);
+  if (lineCol) return { source: lineCol[1], line: Number(lineCol[2]), column: Number(lineCol[3]) };
+  const lineOnly = at.match(/^(.*):(\d+)$/);
+  if (lineOnly) return { source: lineOnly[1], line: Number(lineOnly[2]) };
+  return { source: at };
+}
+
 export async function queryBlame(file: string, query: BlameQuery): Promise<void> {
   if (query.kind && !isEventKind(query.kind))
     throw new Error(`Unknown --kind '${query.kind}'. Valid kinds: ${EVENT_KINDS.join(", ")}`);
@@ -1012,18 +1026,23 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   const sampledBlameLane = rec.meta.passes.includes("breakdown");
   const fmt = structuredFormat(query);
   if (fmt) {
-    const entries: BlameEntry[] = rows.map((row) => ({
-      at: row.at,
-      count: row.count,
-      forced: row.forced,
-      durMs: row.durMs,
-      kinds: [...row.kinds] as EventKind[],
-      properties: row.properties.size ? [...row.properties] : undefined,
-      eventId: representativeEventId(row.events),
-      dirtiedBy: dirtiedByReadSite[row.at]?.length ? dirtiedByReadSite[row.at] : undefined,
-      lowConfidence: blameRowLowConfidence(sampledBlameLane, row.confident, row.lowConfidence),
-      scope: blameScope.get(row.at),
-    }));
+    const entries: BlameEntry[] = rows.map((row) => {
+      const { source, line, column } = splitReadSite(row.at);
+      return {
+        source,
+        ...(line != null ? { line } : {}),
+        ...(column != null ? { column } : {}),
+        count: row.count,
+        forced: row.forced,
+        durMs: row.durMs,
+        kinds: [...row.kinds] as EventKind[],
+        properties: row.properties.size ? [...row.properties] : undefined,
+        eventId: representativeEventId(row.events),
+        dirtiedBy: dirtiedByReadSite[row.at]?.length ? dirtiedByReadSite[row.at] : undefined,
+        lowConfidence: blameRowLowConfidence(sampledBlameLane, row.confident, row.lowConfidence),
+        scope: blameScope.get(row.at),
+      };
+    });
     return emit(entries, fmt);
   }
   if (!rows.length) {
