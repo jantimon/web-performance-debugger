@@ -1,6 +1,6 @@
 import { DEFAULT_CPU_INTERVAL_US } from "../profile/cpuprofile.js";
 import type { RawCpuProfile, RawProfileNode, RawCallFrame } from "../profile/cpuprofile.js";
-import { toRawTraceEvents } from "./scan.js";
+import { readTraceEvents } from "./scan.js";
 
 // The trace's CPU profiler stream. Enabling the `disabled-by-default-v8.cpu_profiler` trace category
 // makes V8 emit a `Profile` event (the stream's startTime) followed by `ProfileChunk` events
@@ -129,7 +129,7 @@ function medianInterval(timeDeltas: number[]): number {
 export function assembleTraceCpuProfile(
   trace: string | Uint8Array | { traceEvents?: RawTraceEvent[] } | Iterable<RawTraceEvent>,
 ): AssembledTraceCpuProfile | null {
-  const events = toRawTraceEvents<RawTraceEvent>(trace);
+  const events = readTraceEvents<RawTraceEvent>(trace);
 
   const groups = new Map<string, ProfileGroup>();
   const groupFor = (event: RawTraceEvent): ProfileGroup => {

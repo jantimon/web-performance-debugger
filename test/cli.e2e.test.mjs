@@ -1466,7 +1466,7 @@ e2e("query span <step>: --deep driver recording shows the step's counts and forc
   assert.ok(anatomy.counts.forcedLayoutCount > 0, "and it forced layout synchronously");
   // Forced read-sites from the event log, each naming a resolved source line.
   assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length > 0, "forced read-sites present");
-  assert.ok(anatomy.forced.every((entry) => typeof entry.at === "string"), "each forced entry names a source line");
+  assert.ok(anatomy.forced.every((entry) => typeof entry.source === "string"), "each forced entry names a source line (structured source/line/column)");
   const dirtied = anatomy.forced.some((entry) => entry.dirtiedBy?.length > 0);
   assert.ok(dirtied, "a forced read-site is dual-annotated with the dirtied-by write");
   // A step span carries no run-window hot list.

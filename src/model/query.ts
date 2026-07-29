@@ -263,6 +263,14 @@ export interface SpanEntry {
    * span` for the block. See SpanScope.
    */
   scope?: SpanScope;
+  /**
+   * The one-frame cadence floor this span's `wallMs` pins to (`{ floorMs, multiple }`), present ONLY
+   * when the wall is frame-DOMINATED (frame-floor.md): a sub-frame value, or a multi-frame value whose
+   * window is wait-dominated. Absent when the wall is real work, unmeasured, or the lane declares no
+   * floor. The same tag `query span` carries in its detail (SpanAnatomy.frameFloor), surfaced on the
+   * overview so a consumer reads flooring off the row instead of recomputing it from `wallMs` + idle.
+   */
+  frameFloor?: FrameFloorMatch;
 }
 
 /**
@@ -289,6 +297,12 @@ export interface SpanCountsEntry {
   beforeUrl?: string;
   /** the URL the step ended on; absent on run/measure spans */
   afterUrl?: string;
+  /**
+   * The one-frame cadence floor this span's `wallMs` pins to, present only when frame-dominated (see
+   * SpanEntry.frameFloor). A bar-less row carries no idle split, so only a sub-frame (single-frame)
+   * wall is tagged here; a multi-frame wall needs the wait signal a bar would carry.
+   */
+  frameFloor?: FrameFloorMatch;
 }
 
 /**
@@ -351,10 +365,19 @@ export interface GroupSpansResult extends SpansResult {
  */
 export type SpansOutput = SpansResult | GroupSpansResult;
 
-/** One forced (synchronous) layout/style read-site within a span, with the write(s) that dirtied it. */
+/**
+ * One forced (synchronous) layout/style read-site within a span, with the write(s) that dirtied it.
+ * The read location is structured (`source` + `line` + `column`), the same shape `query blame
+ * --forced` emits (BlameEntry), so a consumer reads the fields directly instead of parsing a
+ * `file:line:col` string.
+ */
 export interface SpanForced {
-  /** source location "file:line:col" of the geometry read that forced the flush (relative to root) */
-  at: string;
+  /** bare source path/url of the geometry read that forced the flush (no `:line:col`); relative to root for a local file */
+  source: string;
+  /** 1-based line of the read site; absent when the frame carried no line */
+  line?: number;
+  /** 1-based column of the read site; absent when the frame carried no column (a line-only sample) */
+  column?: number;
   count: number;
   durMs: number;
   /** id of the widest flush at this line for the `query get <eventId>` drill; absent on the chrome

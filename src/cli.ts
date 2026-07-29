@@ -36,6 +36,22 @@ function recordFailureMessage(error: Error): string {
   return `${error.message}\n\nThe page did not answer in time, usually because a traced interaction pinned the main thread. Retry with a higher --protocol-timeout (e.g. --protocol-timeout 600000), or measure less work per step.`;
 }
 
+/**
+ * The one error-report shape every top-level catch shares. The message reaches the user first; under
+ * WPD_DEBUG the full stack trails it (a RangeError such as a stack overflow carries an unhelpful
+ * one-line message; the stack is the only pointer to where it blew). Otherwise the debug hint trails
+ * ON THE SAME LINE as the message, so a caller reading only the last stderr line still gets the real
+ * error, not a bare "(set WPD_DEBUG=1 ...)".
+ */
+function emitFailure(message: string, error: Error): void {
+  if (process.env.WPD_DEBUG && error.stack) {
+    console.error(message);
+    console.error(error.stack);
+  } else {
+    console.error(`${message} (set WPD_DEBUG=1 to print the error stack)`);
+  }
+}
+
 const program = new Command();
 program
   .name(TOOL)
@@ -434,22 +450,13 @@ program
       // Set a non-zero exit code so CI/scripts detect the failure. process.exitCode (not a hard
       // process.exit) lets buffered stdout/stderr flush and the browser/server teardown finish before
       // the process ends.
-      // The CAUSE leads on every path. Under WPD_DEBUG the full stack trails (a RangeError such as a
-      // stack overflow carries an unhelpful one-line message; the stack is the only pointer to where
-      // it blew). Otherwise the debug hint trails ON THE SAME LINE as the cause, so a caller reading
-      // only the last stderr line still gets the actual error, not a bare "(set WPD_DEBUG=1 ...)".
       // The built-in --url load flow (no module) failing on a site-behavior class gets the
       // driver-module escape-hatch guidance appended; a bot-wall refusal already carries its own
       // evidence + skip-flag message, so it is left as-is.
       const builtinFlow = !module && !!cmdOpts.url;
       const guidance = builtinFlow ? builtinFlowFailureGuidance(error) : null;
       const cause = recordFailureMessage(error) + (guidance ?? "");
-      if (process.env.WPD_DEBUG && error.stack) {
-        console.error(`record failed: ${cause}`);
-        console.error(error.stack);
-      } else {
-        console.error(`record failed: ${cause} (set WPD_DEBUG=1 to print the error stack)`);
-      }
+      emitFailure(`record failed: ${cause}`, error);
       process.exitCode = 1;
     }
   });
@@ -466,7 +473,10 @@ const fmtOpts = (command: Command) =>
 // Surface query errors (bad --kind, missing recording, unknown id) as a clean message
 // and exit 1, not a raw unhandled-rejection stack trace.
 const run = (promise: Promise<void>) =>
-  promise.catch((error: Error) => program.error(error.message));
+  promise.catch((error: Error) => {
+    emitFailure(error.message, error);
+    process.exitCode = 1;
+  });
 
 fmtOpts(
   query
@@ -611,9 +621,10 @@ program
       inp: opts.maxInp,
       wall: opts.maxWall,
     };
-    return assertCmd(file, thresholds, sliceBudgets, opts.label).catch((error) =>
-      program.error(error.message),
-    );
+    return assertCmd(file, thresholds, sliceBudgets, opts.label).catch((error) => {
+      emitFailure(error.message, error);
+      process.exitCode = 1;
+    });
   });
 
 program
@@ -624,9 +635,10 @@ program
     "exit 1 if a gated exact count increased (INP and other wall-tier numbers stay advisory)",
   )
   .action((baseline, current, opts) =>
-    diffCmd(baseline, current, { failOnRegression: !!opts.failOnRegression }).catch((error) =>
-      program.error(error.message),
-    ),
+    diffCmd(baseline, current, { failOnRegression: !!opts.failOnRegression }).catch((error) => {
+      emitFailure(error.message, error);
+      process.exitCode = 1;
+    }),
   );
 
 program
@@ -644,12 +656,16 @@ program
       failOnRegression: !!opts.failOnRegression,
       json: opts.json,
       format: opts.format,
-    }).catch((error) => program.error(error.message)),
+    }).catch((error) => {
+      emitFailure(error.message, error);
+      process.exitCode = 1;
+    }),
   );
 
-// Any error that escapes a command action (one not already routed through program.error) must still
+// Any error that escapes a command action (one not already routed through emitFailure) must still
 // exit non-zero, independent of Node's --unhandled-rejections policy, so CI never reads a silent 0.
 program.parseAsync(process.argv).catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  const failure = error instanceof Error ? error : new Error(String(error));
+  emitFailure(failure.message, failure);
   process.exitCode = 1;
 });

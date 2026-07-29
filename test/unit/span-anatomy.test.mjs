@@ -228,7 +228,8 @@ test("query span run (--deep): no bar (slices null), forced read-sites from the 
   const anatomy = await captureJson(() => querySpan(file, "run", { format: "json" }));
   assert.equal(anatomy.slices, null, "a --deep run built no reconciling bar: capture-mode-honest null, never a fabricated bar");
   assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length === 1, "forced read-sites come from the deep event log");
-  assert.equal(anatomy.forced[0].at, "src/app.js:10");
+  assert.equal(anatomy.forced[0].source, "src/app.js", "structured read-site, the shape query blame --forced emits");
+  assert.equal(anatomy.forced[0].line, 10);
   assert.equal(anatomy.forced[0].count, 2, "both flushes at the line roll up");
   assert.ok(anatomy.thrash, "a --deep run carries a thrash rollup (count 0 when nothing thrashed)");
   assert.equal(anatomy.hot, null, "no sibling CPU model on --deep => hot is not available");

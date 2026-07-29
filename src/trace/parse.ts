@@ -1,7 +1,7 @@
 import type { NormalizedEvent } from "../model/recording.js";
 import { RUN_START_MARK, RUN_END_MARK, matchStepEdgeMark } from "../model/marks.js";
 import { classify } from "./classify.js";
-import { toRawTraceEvents } from "./scan.js";
+import { readTraceEvents } from "./scan.js";
 
 interface RawTraceEvent {
   cat?: string;
@@ -28,7 +28,7 @@ export function parseTrace(
   rawJson: string | Uint8Array | { traceEvents?: RawTraceEvent[] } | Iterable<RawTraceEvent>,
   options?: { keepThreadIds?: boolean },
 ): NormalizedEvent[] {
-  const raw = toRawTraceEvents<RawTraceEvent>(rawJson);
+  const raw = readTraceEvents<RawTraceEvent>(rawJson);
   const keepThreadIds = options?.keepThreadIds === true;
   const out: NormalizedEvent[] = [];
   let id = 0;

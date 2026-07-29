@@ -640,7 +640,12 @@ export async function runDriver(
       return undefined;
     };
     run = pick(fnName, "run") ?? (typeof mod.default === "function" ? mod.default : undefined);
-    if (!run) throw new Error(`Driver module has no '${fnName}' / 'run' / default export.`);
+    if (!run) {
+      const alsoTried = fnName && fnName !== "run" ? ` (no \`${fnName}\` export either)` : "";
+      throw new Error(
+        `The driver module exports no \`run\` function${alsoTried}. Export \`run\` (or a default function): export async function run({ page, ctx, measureStep }) { ... }`,
+      );
+    }
     prepare = pick("prepare", "setup", "beforeAll");
     cleanup = pick("cleanup", "teardown", "afterAll");
   }
