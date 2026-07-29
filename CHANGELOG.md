@@ -1,5 +1,73 @@
 # @jantimon/web-performance-debugger
 
+## 0.23.0
+
+### Minor Changes
+
+- 32df428: **Breaking (`query blame --format json`):** each read-site row is now a structured location
+  (`{ source, line?, column?, ... }`) matching the human table's columns, instead of a single
+  `file:line:col` string under `at`. Split `at` yourself only if you still need the joined form.
+
+  Add bot-wall detection: when wpd's own navigation (the built-in `--url` load flow, a `--url` host page)
+  lands on a bot-challenge interstitial (Cloudflare, DataDome, hCaptcha, PerimeterX, Arkose), `record`
+  refuses before measuring — non-zero exit, an evidence-listed error, and a `<recording>.wall.png`
+  screenshot — rather than reporting the challenge page as the site. Detection is conservative (rendered
+  interstitial only, never a captcha script a form embeds). `--allow-bot-wall` measures it anyway, with a
+  loud note.
+
+  Add `siteRelation` (`same-origin` | `same-site` | `cross-site`) on `query cpu` origin buckets of a
+  `--url` run, via the public-suffix list. It is a URL-mechanical fact, never an ownership or
+  "third-party" claim (a cross-site CDN can be first-party-owned).
+
+  The built-in `--url` flow now names the failure class (navigation timeout, HTTP/2 reset,
+  context-destroyed) and points at the driver-module escape hatch: wpd retries its own machinery's races,
+  never the site's refusals.
+
+- ac00852: Record Chrome's own soft-navigation verdict on a driver step, beside the url+timeOrigin classifier. On
+  a Chrome that ships the Soft Navigations API (151+, default-on) a step carries `engineSoftNav`
+  (`count`, `navigationTypes`, and the numeric ids) from an in-page `soft-navigation` observer. It is
+  opportunistic: wpd never forces `--enable-features`, so an older Chrome or Firefox records nothing, and
+  absence is never a fabricated 0.
+
+  `query span` reconciles the two verdicts: where the classifier reads a step "soft" but the engine fired
+  no entry (a programmatic history change, an untrusted click, or no qualifying paint), it notes both and
+  picks no winner, so a route the engine's metrics miss is visible rather than hidden.
+
+- bcb0a9b: Add `--alloc`: a node-lane allocation-attribution capture mode. `wpd record <module> --target node
+--alloc` runs V8's heap sampler (GC-inclusive) around your `run()` loop and attributes allocated bytes
+  to source/package, answering "which dependency allocates". Read it with the new `query alloc --by
+package|file|function`. It is a dedicated mode with the CPU sampler OFF (a co-riding heap sampler
+  inflates CPU self-time), so an `--alloc` recording carries no CPU model; `query cpu`/`cpu-diff` on one
+  point you at `query alloc`. Byte shares/ratios are trustworthy (~5%); the absolute total is directional
+  (~10-20%).
+- 875c448: Boot LCP is now per-iteration sampled: under `--iterations N` the `load` step's `lcp` grows
+  `perIteration` (the render-time series, `null` for an iteration that fired no entry, never 0) and
+  `stats` (min/median/max), the same shape `wall` carries, so a run-to-run LCP swing is visible instead
+  of hidden behind one number. `query span` prints the spread; the identity fields stay a real sample.
+
+  Add per-step CLS: a driver step carries `layoutShift` (Chrome only) — the spec session-window maximum
+  (session windows gap-capped at 1s / window-capped at 5s, `hadRecentInput` shifts excluded), not a raw
+  sum, with the top shifting elements attributed (`tag#id`, rect deltas). Scoped to the step's own
+  window; Firefox has no `layout-shift` entry type, so it is absent there, never a fake 0. Both are
+  additive fields (schema stays 4).
+
+### Patch Changes
+
+- e745844: Move the bundled browser to Chrome 151 (Puppeteer 25.4.0), so CI, e2e, and a fresh install all run
+  one browser. Re-probed the load-bearing headless facts on 151: the one-frame floor (16.7 ms / 60 Hz)
+  is unchanged; the GPU frame-sink stall no longer reproduces (its `--in-process-gpu` forcing lever now
+  produces frames cleanly), so the `--disable-gpu` default stays as belt-and-braces; boot-LCP delivery
+  still recovers within its bounded budget, with no missing-entry or 60 s-`startTime` anomaly; and a
+  cross-origin LCP without `Timing-Allow-Origin` now reports a coarsened `renderTime` (more data, not
+  wrong data). Soft-navigation entry types (`soft-navigation`, `interaction-contentful-paint`) are
+  present by default in the measured browser.
+- db12e7a: Lower the cross-process split-detection floor so a lighter second navigation is not silently
+  uncounted. A run that navigates across renderer processes now sets `meta.mainThread.split` (so
+  `assert` / `diff --fail-on-regression` refuse count gates) once the second navigation renders at least
+  5% of the busiest thread's layout/paint -- the same husk share the re-anchor uses. A second navigation
+  doing 5-24% of the first page's work previously left `split` false, so `assert --max-layouts` gated
+  green on the first page's counts alone. Keep each run to one navigation for counts that cover all of it.
+
 ## 0.22.0
 
 ### Minor Changes
