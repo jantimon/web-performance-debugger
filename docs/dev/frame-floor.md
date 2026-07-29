@@ -121,11 +121,22 @@ synthetic default, not a Chrome-for-Testing build property.
 
 ## Frame production stalls intermittently, so headless software-composites
 
-**[measured]** Chrome's built-in headless intermittently loses frame production: the compositor's
-BeginFrame source stops producing frames, so every `requestAnimationFrame` callback stalls (timers
-still fire). On the default GPU path it hits **~6% of records** [measured, 6/100 realistic
-3-step x 3-iteration records], and the state is **permanent and browser-wide** -- once a browser
-stalls, a fresh rAF, a re-`goto`, and a brand-new page in the same browser all stay frameless
+**[measured, Chrome 151]** On the pinned build (Puppeteer 25.4.0 / Chrome 151) this race does not
+reproduce. `--in-process-gpu`, the lever that forces the stall to 100% on Chrome 150 (below), produces
+every frame cleanly (0/16 boots stalled, all three probe frames each), and a default-GPU boot stalls
+0/80. So the GPU-process frame-sink startup race is fixed or vanishingly rare on Chrome 151. The
+`--disable-gpu` default, the frame-health probe, and the relaunch stay as belt-and-braces: they are
+free (the cadence and the one-frame floor are unchanged, above), they align a dev machine's headless
+with GPU-less CI, and they still defend an older Chrome pointed at via `PUPPETEER_EXECUTABLE_PATH` and
+the residual. The frame-health probe itself still fires -- with `requestAnimationFrame` killed it
+reports a stall at the ceiling (0.8s at an 0.8s ceiling). The rest of this section is **[measured]** on
+Chrome 150, where the race is live and drives those defenses.
+
+**[measured]** On Chrome 150 the built-in headless intermittently loses frame production: the
+compositor's BeginFrame source stops producing frames, so every `requestAnimationFrame` callback
+stalls (timers still fire). On the default GPU path it hits **~6% of records** [measured, 6/100
+realistic 3-step x 3-iteration records], and the state is **permanent and browser-wide** -- once a
+browser stalls, a fresh rAF, a re-`goto`, and a brand-new page in the same browser all stay frameless
 [measured, 0/8 and 0/5 recovered], so only a fresh browser process recovers. An rAF-based settle in
 that state waits to the 180s protocol timeout.
 

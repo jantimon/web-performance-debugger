@@ -60,10 +60,19 @@ On a production build the identifier worth keeping is **url + size + tag**. `id`
 the element's `class`/`cssPath` are hashed CSS-module names — noise, not a label. On the production
 SPA the boot LCP was a 2016 px CDN hero image with `renderTime` ~604-784 ms.
 
-`renderTime` is populated **only when the resource is same-origin or the server sends
+On Chrome 150 `renderTime` is populated **only when the resource is same-origin or the server sends
 `Timing-Allow-Origin`**. That CDN sets the header, so `renderTime` was present cross-origin; absent
 the header it reads 0 by spec, and `loadTime` is the only timing left
 (https://developer.mozilla.org/en-US/docs/Web/API/LargestContentfulPaint/renderTime).
+
+**[measured, Chrome 151]** on the pinned build a cross-origin boot image served WITHOUT
+`Timing-Allow-Origin` reports a populated (coarsened) `renderTime` too -- 5/5 boots, distinct from
+`loadTime` -- not the spec's 0, the same version shift the soft-nav section records
+([the soft-navigation entry on Chrome 151](#the-soft-navigation-entry-on-chrome-151)). So on Chrome
+151 `driver.ts`'s `renderTimeMs > 0` branch fires for the cross-origin-no-TAO case that fell through
+to the `loadTime`-only reading on Chrome 150: more data, not wrong data, and both fields store
+independently. Do not assume the TAO/`renderTime` rule across versions; re-probe before keying on
+`renderTime`.
 
 ## LCP finalizes on a trusted input and re-arms per document
 
@@ -96,9 +105,16 @@ boot entry **40 of 40 times** on a page that genuinely painted — the paint hap
 not.
 
 `PerformanceObserver.takeRecords()` delivers the queued entries **synchronously**, through the same
-shaper the callback uses. Draining it recovers the entry **~60% of the time immediately**, and the
-rest **within one frame**. Under a 20x CPU throttle recovery stays within **two frames** (`<=41ms`), so
-the whole race closes in a small, bounded number of frames.
+shaper the callback uses. On Chrome 150 draining it recovers the entry **~60% of the time
+immediately**, and the rest **within one frame**. Under a 20x CPU throttle recovery stays within **two
+frames** (`<=41ms`), so the whole race closes in a small, bounded number of frames.
+
+**[measured, Chrome 151]** on the pinned build the synchronous fraction is **~0**: right after
+`observe({ buffered: true })` the entry is not yet drainable, so `takeRecords()` returns nothing (0/30
+boots recovered synchronously) and recovery is **frame-wait-dominated** -- within **two frames** with
+no throttle, **one to two** under a 20x CPU throttle (still `<=41ms`), 0/30 lost either way. The
+driver already drains **then** waits frame by frame, so this shifts nothing in its path or its
+`LCP_ENTRY_WAIT_MS` budget: the entry is recovered on every boot.
 
 So the driver's end-of-step flush, on a hard-navigation step whose entry has not arrived yet, drains
 `takeRecords()` and, while the list is still race-empty, waits frame by frame up to a bounded budget
@@ -159,6 +175,12 @@ matching the ~6% rAF-stall rate; with `--disable-gpu` (the headless default), **
 normal ~80 ms entry. The inflated-`startTime` branch is the same stall surfacing as a broken paint
 clock instead of a missing entry. `--disable-gpu` addresses the root, so both branches are rare;
 `shapeLcp`'s guard stays as the backstop for the residual.
+
+**[measured, Chrome 151]** on the pinned build neither branch reproduces: over 80 boots (both GPU
+paths) every launch delivered a normal ~80 ms boot entry with a sane `startTime` (0 inflated, 0
+missing), tracking the frame-production stall being gone on Chrome 151
+([frame-floor.md](./frame-floor.md)). `shapeLcp`'s guard stays as a free backstop for an older Chrome
+and the residual.
 
 ## CLS is the session-window maximum, per step
 
