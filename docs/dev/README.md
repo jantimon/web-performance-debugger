@@ -107,6 +107,7 @@ permalink).
 - Why does the boot LCP need a bounded wait, and how does absence stay honest? -> [the entry-delivery race](./navigation-and-lcp.md#the-boot-lcp-entry-delivery-race)
 - What is a usable LCP identifier on a production build, and when is `renderTime` 0? -> [url+size+tag](./navigation-and-lcp.md#the-useful-lcp-identifier-is-urlsizetag)
 - Why is there no per-soft-step LCP, and what is the clean semantic? -> [finalization](./navigation-and-lcp.md#lcp-finalizes-on-a-trusted-input-and-re-arms-per-document)
+- What does the Chrome 151 soft-navigation API expose, and where does it disagree with wpd's classifier? -> [the soft-navigation entry on Chrome 151](./navigation-and-lcp.md#the-soft-navigation-entry-on-chrome-151)
 - How is a step classified static/hard/soft without CDP or a browser flag? -> [url+timeOrigin](./navigation-and-lcp.md#the-urltimeorigin-classification)
 - Where does the URL diff break down (hash, query, reverting replaceState)? -> [the ambiguity family](./navigation-and-lcp.md#the-ambiguity-family)
 

@@ -15,14 +15,18 @@
 · [CLS is the session-window maximum, per step](#cls-is-the-session-window-maximum-per-step)
 · [soft navigations: standards status](#soft-navigations-standards-status)
 · [why wpd does not flip the heuristic flag](#why-wpd-does-not-flip-the-heuristic-flag)
+· [the soft-navigation entry on Chrome 151](#the-soft-navigation-entry-on-chrome-151)
 · [the url+timeOrigin classification](#the-urltimeorigin-classification)
 · [the ambiguity family](#the-ambiguity-family)
 · [what wpd records today](#what-wpd-records-today)
 
 **Provenance.** Facts are **[measured]** on Chrome 150 (Puppeteer 25.2.1) and Firefox 152, either
 against synthetic probes or against one traced four-step journey on **a production Next.js SPA**
-(a heavy, hydrating framework page, named here only as such). External standards status is
-**[source]** with a dated link. Nothing is read off vendor docs alone where a probe was possible.
+(a heavy, hydrating framework page, named here only as such). The soft-navigation facts are
+**[measured]** on Chrome 151 (Puppeteer 25.4.0), with the version boundary read off Chrome 150
+(Puppeteer 25.2.1), against a synthetic pushState/replaceState SPA driven headless with wpd's own
+launch flags. External standards status is **[source]** with a dated link. Nothing is read off
+vendor docs alone where a probe was possible.
 
 ## LCP fires under headless Chrome and Firefox
 
@@ -72,11 +76,16 @@ Buffered LCP entries are **per document**. A cross-document navigation starts a 
 the observer re-arms through `evaluateOnNewDocument` on every navigation — the same re-arm the INP and
 LoAF observers use in `driver.ts`.
 
-**No soft navigation ever produced a new LCP entry** on the production SPA — not a route change, not a
-hash change. So a per-soft-step LCP is structurally empty: there is nothing to attribute to a step
-that did not reload the document. The clean semantic is therefore **boot LCP, up to the first
-interaction** — one number for the cold load, not a per-step series. LCP is a paint timestamp on the
-page's own clock, so it sits in the wall tier: directional, not exact.
+**No soft navigation ever produced a new `largest-contentful-paint` entry** on the production SPA —
+not a route change, not a hash change. That entry type re-fires only on a fresh document. But it is
+not the whole LCP story: Chrome 151 routes a soft navigation's LCP-equivalent through the separate
+`interaction-contentful-paint` entry and the soft-nav entry's `getLargestInteractionContentfulPaint()`
+method (see [the soft-navigation entry on Chrome 151](#the-soft-navigation-entry-on-chrome-151)). So a
+per-soft-step LCP is empty only for the `largest-contentful-paint` entry type; the route's own largest
+paint is reachable, gated on a trusted interaction. The semantic that needs no soft-nav support and is
+available on every engine is still **boot LCP, up to the first interaction** — one number for the cold
+load, not a per-step series. LCP is a paint timestamp on the page's own clock, so it sits in the wall
+tier: directional, not exact.
 
 ## The boot-LCP entry-delivery race
 
@@ -205,30 +214,108 @@ Chrome ships the `layout-shift` entry type and Firefox does not (**[measured]** 
 ## Soft navigations: standards status
 
 A **soft navigation** is a same-document route change an SPA drives with `history.pushState` plus a
-DOM swap, which the platform is learning to treat like a navigation for metrics. Status, **[source]**
-with dates:
+DOM swap, which the platform now treats like a navigation for metrics. Status:
 
-- The WICG Soft Navigations API is **shipping, not abandoned**. Origin trial from Chrome 139
-  (July 2025); a final origin trial runs Chrome 147-149 (Chrome blog dated 2026-04-20,
-  https://developer.chrome.com/blog/final-soft-navigations-origin-trial); default-on is projected
-  around Chrome 151.
-- Chrome has **deferred** the decision to feed soft navigations into Core Web Vitals / CrUX — the
-  same blog states the CWV integration is not decided.
-- The feature is behind `--enable-features=SoftNavigationHeuristics` today, exposing the
-  `soft-navigation` and `interaction-contentful-paint` entry types
+- The WICG Soft Navigations API is **default-on from Chrome 151**. It ran as an origin trial from
+  Chrome 139 (July 2025) through a final trial in Chrome 147-149 (**[source]**, Chrome blog dated
+  2026-04-20, https://developer.chrome.com/blog/final-soft-navigations-origin-trial).
+- **[measured]** on Chrome 151 (Puppeteer 25.4.0) `PerformanceObserver.supportedEntryTypes` lists
+  `soft-navigation` and `interaction-contentful-paint` with **no flag**; on Chrome 150 (Puppeteer
+  25.2.1) both are absent unless the browser is launched with
+  `--enable-features=SoftNavigationHeuristics`
   (https://developer.chrome.com/docs/web-platform/soft-navigations ,
   https://github.com/WICG/soft-navigations/blob/main/README.md).
+- Chrome has **deferred** the decision to feed soft navigations into Core Web Vitals / CrUX
+  (**[source]**, the same blog states the CWV integration is not decided).
+- **Firefox does not implement it. [measured]** on Firefox 152 neither `soft-navigation` nor
+  `interaction-contentful-paint` is in `supportedEntryTypes`.
 
 ## Why wpd does not flip the heuristic flag
 
-Four reasons, each on its own:
+The question splits by Chrome version.
 
-1. `--enable-features=SoftNavigationHeuristics` **changes the browser under test**. A measurement tool
-   must not alter the thing it measures.
-2. The heuristic is **unspecified** — an implementation detail that can move between Chrome versions.
-3. Its CWV use is **undecided** (above), so a number keyed off it has no stable meaning yet.
-4. **Firefox has no support**, so relying on it would break the never-fake-parity rule the cross-engine
-   work holds to ([engine-mapping.md](./engine-mapping.md)).
+**On Chrome 150 and earlier, wpd never forces the flag.**
+`--enable-features=SoftNavigationHeuristics` **changes the browser under test**, and a measurement
+tool must not alter the thing it measures. So on the version the repo currently pins (Puppeteer 25.2.1
+/ Chrome 150) the soft-navigation entry types are simply unavailable, and wpd falls back to the
+url+timeOrigin classifier below.
+
+**On Chrome 151 and later there is no flag to flip.** **[measured]** the `soft-navigation` and
+`interaction-contentful-paint` entry types are default-on (`supportedEntryTypes` lists both with no
+`--enable-features`), so reading them changes nothing about the browser. wpd can read the entries where
+present. A fresh `^25.2.1` install already resolves Puppeteer 25.4.0 / Chrome 151, so new users are on
+the default-on browser.
+
+Three constraints stand at every version, which is why the url+timeOrigin classifier stays the
+always-available answer and a soft-navigation entry is an opportunistic overlay on top of it, never the
+sole signal:
+
+- The heuristic is **unspecified** — an implementation detail, not a W3C recommendation.
+- Its CWV use is **undecided** (above), so a number keyed off it has no stable meaning yet.
+- **Firefox has no support** (**[measured]** above), so relying on it alone would break the
+  never-fake-parity rule the cross-engine work holds to ([engine-mapping.md](./engine-mapping.md)).
+
+## The soft-navigation entry on Chrome 151
+
+**[measured]** on Chrome 151 (Puppeteer 25.4.0), headless, with wpd's own launch flags. A soft
+navigation is detected only when three conditions all hold:
+
+1. a **trusted** user interaction (click/tap/keyboard, INP-aligned),
+2. a same-document history change (`pushState` or `replaceState`), and
+3. a contentful paint after the interaction.
+
+**Trusted input is load-bearing, and it is the same trusted path a driver click takes.** A Puppeteer
+`page.click` fires a `soft-navigation` entry headless; the same handler invoked through
+`page.evaluate(() => element.click())` (an untrusted synthetic click) fires **none**, even though the
+`pushState` ran and the URL changed. A driver-driven flow therefore detects; an in-page synthetic
+dispatch does not.
+
+**The 151 entry shape** (read off the live entries):
+
+- `soft-navigation` (`PerformanceSoftNavigation`): `name` (the new URL), `startTime` (the route's time
+  origin), `duration` (the route's FCP), `navigationId` (numeric), `interactionId`, `navigationType`
+  (`"push"` or `"replace"`), and a `getLargestInteractionContentfulPaint()` method.
+- `interaction-contentful-paint` (`InteractionContentfulPaint`): `startTime`, `paintTime`,
+  `presentationTime`, `navigationId`, `interactionId`, and a nested `largestContentfulPaint`. The
+  paint's identity — `element`, `size`, `url`, `renderTime` — sits on that nested
+  `LargestContentfulPaint`, not on the ICP entry itself.
+- The route's LCP-equivalent is
+  `softNavEntry.getLargestInteractionContentfulPaint().largestContentfulPaint`, a
+  `LargestContentfulPaint` carrying the same url+size+tag identifier the boot-LCP section keeps. On a
+  600x400 route image it read `element: IMG`, `size 187800`, the image `url`, `renderTime ~428 ms`.
+- **[measured, Chrome 151]** a cross-origin route image served WITHOUT `Timing-Allow-Origin` still
+  reported a populated `renderTime` (~408 ms, distinct from its `loadTime`), not the spec's 0 the
+  boot-LCP section cites for Chrome 150. So the TAO/`renderTime` rule is not assumable across versions;
+  re-probe before keying on `renderTime` from a soft-nav LCP.
+
+**navigationId slices the metrics.** Boot entries and the soft-nav entry carry distinct
+`navigationId`s (one run: boot 1861, soft nav 1868), and a post-soft-nav `layout-shift` entry carries
+the soft-nav's id — so per-soft-step CLS/INP/LCP are sliceable by `navigationId`. The interaction that
+*triggers* the soft nav carries the pre-nav id (the interaction precedes the navigation).
+
+**Where the Chrome 151 heuristic and wpd's url+timeOrigin classifier disagree** (verified rows only):
+
+| Case | Chrome 151 heuristic | url+timeOrigin |
+| --- | --- | --- |
+| Trusted click + `pushState` + paint | soft nav | soft |
+| Trusted click + `replaceState` + paint | soft nav | soft |
+| Programmatic `pushState` + paint, **no interaction** | **none** | soft |
+| Untrusted synthetic click + `pushState` + paint | **none** | soft |
+
+The last two rows are the false-negative class: the classifier reads a URL change with an unchanged
+`timeOrigin` as soft, while the engine, seeing no trusted interaction, records nothing. A recording
+that carries both verdicts should surface the disagreement, not silently pick one.
+
+**Integration verdicts as they stand:**
+
+- **Read the soft-navigation entry opportunistically, where present** (Chrome 151+); keep
+  url+timeOrigin as the always-available classifier and fallback (older Chrome, Firefox, programmatic
+  navs). Buildable now.
+- **Record both verdicts and note the disagreement** (engine heuristic vs url+timeOrigin), the
+  count-disagreement pattern. Buildable now.
+- **Per-soft-step ICP/CLS/INP sliced by `navigationId`** is the real SPA-metrics feature. The pieces
+  measured above make it reachable; it stays gated on a trusted-interaction driver flow, since a
+  programmatic or synthetic-click route produces no entry to slice.
 
 ## The url+timeOrigin classification
 
