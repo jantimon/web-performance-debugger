@@ -11,12 +11,13 @@ import { countIntegrityRefusal } from "../model/count-integrity.js";
 import { gateSliceBudgets, type SliceBudgets } from "../model/spans.js";
 import { loadSpanEntries } from "./spanSource.js";
 import { isSteppedRecording, stepEntry, stepSpans } from "../model/step-view.js";
-import type { Recording, RecordingSummary, StepIndexEntry } from "../model/recording.js";
+import { runSpan } from "../model/span.js";
+import type { Recording, StepIndexEntry } from "../model/recording.js";
 
-// Every threshold gates a `summary` field. The off-thread frame side track
-// (SpanBreakdown.frames) is deliberately absent: its counts are scheduler noise (see
+// Every threshold gates a run-span count/timing field (the schema-5 count store). The off-thread
+// frame side track (SpanBreakdown.frames) is deliberately absent: its counts are scheduler noise (see
 // docs/dev/rendering-counts.md), so it is DISPLAY-ONLY and must never gate. It also lives on the
-// breakdowns, not the summary this file reads, so a frame threshold cannot be added by accident.
+// breakdown, not the run-span counts this file reads, so a frame threshold cannot be added by accident.
 export interface Thresholds {
   forced?: number;
   layouts?: number;
@@ -53,16 +54,21 @@ const CHECKS: { label: string; key: keyof Metrics; opt: keyof Thresholds }[] = [
   { label: "wall ms", key: "wallMs", opt: "wall" },
 ];
 
-function fromSummary(summary: RecordingSummary): Metrics {
+/** Run-level metrics from the run span (schema-5 count/timing store); every not-measured field is a
+ * Measured null, the same n/a-FAIL the summary path produced. Null run span (an empty artifact) makes
+ * every axis n/a. */
+function fromRunSpan(rec: Recording): Metrics {
+  const run = runSpan(rec);
+  const counts = run?.counts;
   return {
-    forcedLayoutCount: summary.forcedLayoutCount,
-    layoutCount: summary.layoutCount,
-    paintCount: summary.paintCount,
-    layoutInvalidations: summary.layoutInvalidations,
-    styleInvalidations: summary.styleInvalidations,
-    longTaskCount: summary.longTaskCount,
-    inpMs: summary.inpMs,
-    wallMs: summary.wallMs,
+    forcedLayoutCount: counts?.forcedLayoutCount ?? null,
+    layoutCount: counts?.layoutCount ?? null,
+    paintCount: counts?.paintCount ?? null,
+    layoutInvalidations: counts?.layoutInvalidations ?? null,
+    styleInvalidations: counts?.styleInvalidations ?? null,
+    longTaskCount: counts?.longTaskCount ?? null,
+    inpMs: run?.inpMs ?? null,
+    wallMs: run?.wallMs ?? null,
   };
 }
 
@@ -189,7 +195,7 @@ export async function assertCmd(
       targets.push({ label: `step ${entry.index} "${entry.label}"`, m: fromStep(entry) });
     }
   } else {
-    targets.push({ label: "run", m: fromSummary(rec.summary) });
+    targets.push({ label: "run", m: fromRunSpan(rec) });
   }
 
   const active = CHECKS.filter((check) => thresholds[check.opt] != null);
@@ -321,7 +327,7 @@ async function assertGroup(
           const entry = stepEntry(step);
           return { label: `step ${entry.index} "${entry.label}"`, m: fromStep(entry) };
         })
-      : [{ label: check.label, m: fromSummary(rec.summary) }];
+      : [{ label: check.label, m: fromRunSpan(rec) }];
     for (const target of memberTargets) {
       const metricCell = stepped ? `${target.label} ${check.label}` : check.label;
       const prefix = stepped

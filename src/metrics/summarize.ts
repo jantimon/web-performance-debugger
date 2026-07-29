@@ -1,10 +1,4 @@
-import type {
-  BenchStats,
-  InteractionTiming,
-  NormalizedEvent,
-  RecordingSummary,
-  StepTiming,
-} from "../model/recording.js";
+import type { BenchStats, InteractionTiming, NormalizedEvent } from "../model/recording.js";
 import { invalidationKind } from "../trace/classify.js";
 import { STYLE_PARSE_NAMES } from "../trace/taxonomy.js";
 import { mainThread } from "../trace/main-thread.js";
@@ -129,6 +123,34 @@ export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
   forcedDurations: false,
 };
 
+/**
+ * The build-time run/step metrics struct buildSummary produces, consumed by spans-build to fill the
+ * run and step spans. NOT serialized: schema 5 stores counts/timing only on the `Span[]` (the run span
+ * carries these run-level numbers), so this is an internal assembly shape, never a recording field.
+ */
+export interface RecordingSummary {
+  wallMs: number | null;
+  inpMs: number | null;
+  interaction?: InteractionTiming | null;
+  layoutCount: Measured<number>;
+  layoutMs: Measured<number>;
+  styleCount: Measured<number>;
+  styleMs: Measured<number>;
+  paintCount: Measured<number>;
+  paintMs: Measured<number>;
+  layoutInvalidations: Measured<number>;
+  paintInvalidations: Measured<number>;
+  styleInvalidations: Measured<number>;
+  forcedLayoutCount: Measured<number>;
+  forcedLayoutMs: Measured<number>;
+  longTaskCount: Measured<number>;
+  longestTaskMs: Measured<number>;
+  jsSelfMs: Measured<number>;
+  totalEvents: number;
+  perIteration: number[];
+  stats: BenchStats | null;
+}
+
 export interface SummaryInputs {
   detailEvents: NormalizedEvent[];
   detailWindowStart: number | null;
@@ -138,12 +160,6 @@ export interface SummaryInputs {
   interaction?: InteractionTiming | null;
   /** bench (in-page iterations) per-iteration wall times */
   perIteration?: number[];
-  /**
-   * driver (stepped) raw per-iteration wall times per step. `stats` is omitted because it is
-   * derived here, not by the caller: every stats block in the model then comes from the one
-   * computeStats contract, and no caller can invent a statistic that bypasses it.
-   */
-  perStep?: Omit<StepTiming, "stats">[];
   /** what the capture could observe; defaults to NO_RENDERING_CAPTURE (default capture mode / node). */
   capabilities?: CaptureCapabilities;
   /** JS self-time from the CPU model (`CpuModel.jsSelfMs`), or null (--deep has no sampler, so no CPU
@@ -272,12 +288,5 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     totalEvents: total,
     perIteration,
     stats: computeStats(perIteration),
-    perStep: (input.perStep ?? []).map(
-      (step): StepTiming => ({
-        label: step.label,
-        perIteration: step.perIteration,
-        stats: computeStats(step.perIteration),
-      }),
-    ),
   };
 }

@@ -55,9 +55,9 @@ test("record --target node --alloc: attributes allocation to the app, no CPU mod
 
   // The recording marks the capture mode and reports CPU self-time as NOT measured (null, never 0).
   const recording = JSON.parse(readFileSync(out, "utf8"));
-  assert.deepEqual(recording.meta.passes, ["node-alloc"], "capture mode is node-alloc");
-  assert.equal(recording.meta.runtime, "node");
-  assert.equal(recording.summary.jsSelfMs, null, "jsSelfMs is not-measured (null) on an --alloc run");
+  assert.equal(recording.meta.capture, "node-alloc", "capture mode is node-alloc");
+  assert.equal(recording.meta.workload.lane, "node", "the node lane");
+  assert.equal(recording.meta.jsSelfMs ?? null, null, "jsSelfMs is not-measured (null) on an --alloc run");
 
   // query alloc renders a real model: a positive byte total, the app package present, the mandatory
   // GC-inclusion flags round-tripped into the stored sampling config.

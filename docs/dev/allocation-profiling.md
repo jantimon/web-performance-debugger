@@ -29,7 +29,7 @@ SAME resolver the CPU model uses (`resolveCallFrame`), so an allocation's packag
 
 It is a **dedicated capture mode**: one heap-sampling pass, the CPU profiler OFF, so CPU self-time and a
 `CpuModel` are NOT measured on an `--alloc` recording (absent per the `Measured` honesty convention,
-never a perturbed-but-disclosed number). `meta.passes` is `["node-alloc"]`; the artifacts are a raw
+never a perturbed-but-disclosed number). `meta.capture` is `"node-alloc"`; the artifacts are a raw
 `<base>.heapprofile` (loads in Chrome DevTools > Memory) and a resolved `<base>.alloc.json`
 (`AllocModel`). `query cpu`/`cpu-diff` on an `--alloc` recording refuse and point at `query alloc`
 (there is no alloc-diff in v1); `query alloc` on a CPU recording points back at `query cpu`.

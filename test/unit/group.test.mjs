@@ -37,7 +37,7 @@ const meta = (over = {}) => ({
   cpuIntervalUs: 150,
   userDataDir: null,
   lifecycle: [],
-  passes: ["breakdown"],
+  capture: "breakdown",
   notes: [],
   driver: false,
   ...over,
@@ -55,7 +55,7 @@ const group = (modes) => ({
 test("formationVerdict: a differing capture mode joins; a differing gating axis refuses", () => {
   // breakdown reference, deep joining: only the capture mode (and the sampler interval) differ. The
   // mode is the group's purpose, so it does not refuse; the interval annotates rather than blocks.
-  const verdict = formationVerdict(meta(), meta({ passes: ["deep"], cpuIntervalUs: 200 }), [
+  const verdict = formationVerdict(meta(), meta({ capture: "deep", cpuIntervalUs: 200 }), [
     { mode: "breakdown" },
   ]);
   assert.deepEqual(verdict.refusals, [], "a capture-mode difference does not refuse");
@@ -65,7 +65,7 @@ test("formationVerdict: a differing capture mode joins; a differing gating axis 
   );
 
   // A differing gating axis (iterations) refuses.
-  const refused = formationVerdict(meta(), meta({ passes: ["deep"], iterations: 3 }), [
+  const refused = formationVerdict(meta(), meta({ capture: "deep", iterations: 3 }), [
     { mode: "breakdown" },
   ]);
   assert.ok(
@@ -75,7 +75,7 @@ test("formationVerdict: a differing capture mode joins; a differing gating axis 
 });
 
 test("formationVerdict: a duplicate (mode, variant) pair is refused", () => {
-  const verdict = formationVerdict(meta(), meta({ passes: ["breakdown"] }), [{ mode: "breakdown" }]);
+  const verdict = formationVerdict(meta(), meta({ capture: "breakdown" }), [{ mode: "breakdown" }]);
   assert.ok(
     verdict.refusals.some((reason) => reason.includes("duplicate member")),
     "a second breakdown member is a duplicate, not a second question",
@@ -83,7 +83,7 @@ test("formationVerdict: a duplicate (mode, variant) pair is refused", () => {
   // Same mode, DIFFERENT variant is allowed (future cross-variant groups stay legal).
   const distinct = formationVerdict(
     meta({ variant: "b" }),
-    meta({ passes: ["breakdown"], variant: "b2" }),
+    meta({ capture: "breakdown", variant: "b2" }),
     [{ mode: "breakdown", variant: "b" }],
   );
   // variant differs -> a gating refusal (variant blocks), but NOT the duplicate refusal.
@@ -345,14 +345,13 @@ test("preflightGroup: no manifest and a non-duplicate member both pass silently"
   await preflightGroup(manifestPath, "json", "perf", [{ mode: "deep" }]);
 });
 
-// A minimal on-disk recording for a member, so appendMember can read its meta + summary.
+// A minimal on-disk recording for a member, so appendMember can read its meta + run-span counts.
 const recordingFor = (mode) => ({
-  meta: meta({ passes: [mode] }),
+  meta: meta({ capture: mode }),
   window: { measure: "wpd:run", startTs: null, endTs: null, wallMs: null },
   marks: [],
   events: [],
   spans: [],
-  summary: {},
 });
 
 test("appendMember: a partial group's stale note is GONE once the missing member records (D3)", async () => {
@@ -368,8 +367,8 @@ test("appendMember: a partial group's stale note is GONE once the missing member
       manifestPath,
       format,
       recordingPath: path.join(dir, `${mode}.json`),
-      meta: meta({ passes: [mode] }),
-      summary: {},
+      meta: meta({ capture: mode }),
+      runCounts: {},
       requested,
     });
 
@@ -405,8 +404,8 @@ test("appendMember: a name that only sanitize-collides is refused, naming both n
     manifestPath,
     format: "json",
     recordingPath: path.join(dir, "breakdown.json"),
-    meta: meta({ passes: ["breakdown"] }),
-    summary: {},
+    meta: meta({ capture: "breakdown" }),
+    runCounts: {},
   });
   writeFileSync(path.join(dir, "deep.json"), JSON.stringify(recordingFor("deep")));
   // A second record whose --group "perf-app" folds to the same filename must refuse, not silently join.
@@ -416,8 +415,8 @@ test("appendMember: a name that only sanitize-collides is refused, naming both n
       manifestPath,
       format: "json",
       recordingPath: path.join(dir, "deep.json"),
-      meta: meta({ passes: ["deep"] }),
-      summary: {},
+      meta: meta({ capture: "deep" }),
+      runCounts: {},
     }),
     (error) => error.message.includes("perf app") && error.message.includes("perf-app"),
     "the append refuses a name-collision, naming both the stored and requested names",
@@ -459,8 +458,8 @@ test("appendMember: refuses a second member that would overwrite the first membe
     manifestPath,
     format: "json",
     recordingPath: shared,
-    meta: meta({ passes: ["breakdown"] }),
-    summary: {},
+    meta: meta({ capture: "breakdown" }),
+    runCounts: {},
   });
   // A second, different-mode member pointed at the SAME --out (its file already clobbered on disk).
   writeFileSync(shared, JSON.stringify(recordingFor("default")));
@@ -470,8 +469,8 @@ test("appendMember: refuses a second member that would overwrite the first membe
       manifestPath,
       format: "json",
       recordingPath: shared,
-      meta: meta({ passes: ["default"] }),
-      summary: {},
+      meta: meta({ capture: "default" }),
+      runCounts: {},
     }),
     (error) => /overwrite that member/.test(error.message) && error.message.includes("breakdown"),
     "the primitive refuses a second member overwriting the first member's recording",

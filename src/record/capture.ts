@@ -28,19 +28,11 @@ import type { BlameSemantic } from "../model/recording.js";
 import type { CaptureCapabilities } from "../metrics/summarize.js";
 import type { RecordOptions } from "./options.js";
 
-export type CaptureMode =
-  | "default"
-  | "breakdown"
-  | "deep"
-  // retired: no invocation produces it; kept so an old recording carrying the string opens and
-  // reports not-measured rather than failing the schema gate.
-  | "precise-wall"
-  | "gecko"
-  | "gecko-deep";
+export type CaptureMode = "default" | "breakdown" | "deep" | "gecko" | "gecko-deep";
 
 /** The single capture that runs for an invocation. `categories: null` means no DevTools trace. */
 export interface CaptureConfig {
-  /** capture-mode name, recorded verbatim as meta.passes (a one-element array; no multi-pass plan) */
+  /** capture-mode name, recorded verbatim as meta.capture (the scalar; no multi-pass plan) */
   mode: CaptureMode;
   /** DevTools trace categories, or null for a trace-free pass (default mode, firefox) */
   categories: string[] | null;

@@ -1,4 +1,5 @@
 import type { RecordingMeta, WorkloadIdentity } from "./recording.js";
+import { recordingRuntime } from "./meta.js";
 
 /**
  * One capture axis that differs between two recordings being compared. `blocksGating` axes make a
@@ -26,10 +27,9 @@ export interface CompatMismatch {
   blocksGating: boolean;
 }
 
-/** The one capture mode this recording captured, as a stable string (passes are single-element today,
- * but sort+join keeps an older multi-pass recording comparing deterministically). */
+/** The one capture mode this recording captured. */
 function captureModeOf(meta: RecordingMeta): string {
-  return [...(meta.passes ?? [])].sort().join("+");
+  return meta.capture;
 }
 
 /** Headless frame cadence, which sets the wall/INP floor: "headed" | "new" (chrome built-in headless,
@@ -245,8 +245,8 @@ export function comparabilityMismatches(
     },
     {
       axis: "runtime",
-      base: base.runtime ?? "chrome",
-      current: current.runtime ?? "chrome",
+      base: recordingRuntime(base),
+      current: recordingRuntime(current),
       blocksGating: true,
     },
     {

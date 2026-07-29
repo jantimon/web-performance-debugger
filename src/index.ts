@@ -21,8 +21,6 @@ export type {
   StepLoaf,
   NavigationKind,
   StepLcp,
-  StepTiming,
-  RecordingSummary,
   RecordingWindow,
   BlameSemantic,
   RecordingMeta,

@@ -18,7 +18,7 @@ const cli = path.join(root, "dist", "cli.js");
 const baseMeta = () => ({
   tool: "wpd",
   version: "0.0.0",
-  schemaVersion: "4",
+  schemaVersion: "5",
   createdAt: new Date().toISOString(),
   mode: "module",
   target: "probe",
@@ -28,7 +28,7 @@ const baseMeta = () => ({
   headless: true,
   userDataDir: null,
   lifecycle: [],
-  passes: ["deep"],
+  capture: "deep",
   notes: [],
   driver: false,
 });

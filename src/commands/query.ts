@@ -36,6 +36,7 @@ import {
   hasBlameEventLog,
   blameRowLowConfidence,
 } from "../model/capture-mode.js";
+import { runSpan } from "../model/span.js";
 import { dim } from "../output/color.js";
 import { num, table, middleEllipsis, SOURCE_COL_MAX } from "../output/ascii.js";
 import { analyzeThrash } from "../trace/thrash.js";
@@ -115,15 +116,15 @@ function requireEventLog(rec: Recording, file: string): void {
   // events) ONLY when the trace emitted per-sample lines, recorded as blameSemantic === "flush-site".
   // Gate on that capability, not passes.includes("breakdown"): an old --breakdown recording or one whose
   // browser emitted no lines has an EMPTY log and must degrade to unavailable, never read as clean.
-  if (hasBlameEventLog(rec.meta.passes, rec.meta.blameSemantic)) return;
-  if (rec.meta.passes.includes("breakdown"))
+  if (hasBlameEventLog(rec.meta.capture, rec.meta.blameSemantic)) return;
+  if (rec.meta.capture === "breakdown")
     throw new Error(
       `${file}: this --breakdown recording carries no sampled read-site blame log -- the browser emitted ` +
         `no per-sample executing lines, so the CPU stream could not name the forcing reads. Re-record ` +
         `with --deep for the exact forced-layout blame + invalidation log.`,
     );
   throw new Error(
-    `${file}: the event log was not captured in this capture mode (${rec.meta.passes.join("+")}). Events, ` +
+    `${file}: the event log was not captured in this capture mode (${rec.meta.capture}). Events, ` +
       `forced-layout blame, and invalidation records are stored under --deep (chrome), --breakdown ` +
       `(chrome, sampled read-site blame only), or --target firefox. Re-record with --deep for the full log.`,
   );
@@ -272,9 +273,9 @@ function buildSpanAnatomy(
   // resolves), so forced read-sites surface there too; thrash/dirtied stay --deep (they need the
   // invalidation records --breakdown drops).
   const hasEventLog =
-    rec.meta.passes.includes("deep") ||
-    rec.meta.passes.includes("breakdown") ||
-    isGeckoCaptureMode(rec.meta.passes);
+    rec.meta.capture === "deep" ||
+    rec.meta.capture === "breakdown" ||
+    isGeckoCaptureMode(rec.meta.capture);
   let forced: SpanForced[] | undefined;
   let thrash: SpanAnatomy["thrash"];
   let firefoxDirtied: SpanAnatomy["firefoxDirtiedBy"];
@@ -284,18 +285,18 @@ function buildSpanAnatomy(
     // The dirtied-by write map (chrome --deep) is run-level and keyed by the read-site `at`, so it
     // annotates whichever windowed read-sites resolved a write; thrash is a run-window interleave, so
     // it rides only the run span.
-    const thrashAnalysis = rec.meta.passes.includes("deep")
-      ? analyzeThrash(rec.events, rec.window.startTs)
-      : null;
+    const thrashAnalysis =
+      rec.meta.capture === "deep" ? analyzeThrash(rec.events, rec.window.startTs) : null;
     const dirtiedByReadSite = thrashAnalysis?.dirtiedByReadSite ?? {};
     // Layout/style scope per read site (chrome --deep: the stored flush events carry the trace args).
     // Empty on --breakdown (sampled events, no flush args) and firefox (the read is sampled), so those
     // rows carry no scope -- the never-fake-parity rule, from the data's own absence.
-    const scopeByAt = rec.meta.passes.includes("deep")
-      ? scopeByReadSite(
-          windowed.filter((event) => window.startTs == null || event.ts >= window.startTs),
-        )
-      : new Map<string, FlushScope>();
+    const scopeByAt =
+      rec.meta.capture === "deep"
+        ? scopeByReadSite(
+            windowed.filter((event) => window.startTs == null || event.ts >= window.startTs),
+          )
+        : new Map<string, FlushScope>();
     forced = forcedLayouts(windowed, window.startTs).map((group) => {
       const dirtiedBy = dirtiedByReadSite[group.at];
       const scope = scopeByAt.get(group.at);
@@ -309,7 +310,7 @@ function buildSpanAnatomy(
       };
     });
     if (span.kind === "run" && thrashAnalysis) thrash = thrashAnalysis.report;
-    if (isFirefoxDeep(rec.meta.passes))
+    if (isFirefoxDeep(rec.meta.capture))
       firefoxDirtied = firefoxDirtiedBy(windowed, window.startTs) ?? undefined;
   }
 
@@ -369,12 +370,12 @@ function buildSpanAnatomy(
     aggregation: entry?.aggregation ?? span.aggregation,
     iterations,
     // A step's headline is the MEDIAN wall (entry.wallMs), never its iteration-0 bar window; the bar
-    // window rides `breakdownWallMs` so the two are not conflated. entry.wallMs already carries the
+    // window rides `windowMs` so the two are not conflated. entry.wallMs already carries the
     // median for a step (model/spans.ts entryFromSpan); the fallback covers a capture mode with no bar.
     wallMs,
     ...(frameFloor ? { frameFloor } : {}),
     ...(inpFrameFloor ? { inpFrameFloor } : {}),
-    ...(entry?.breakdownWallMs != null ? { breakdownWallMs: entry.breakdownWallMs } : {}),
+    ...(entry?.windowMs != null ? { windowMs: entry.windowMs } : {}),
     ...(span.samples != null ? { samples: span.samples } : {}),
     ...(span.wallMinMs != null ? { wallMinMs: span.wallMinMs } : {}),
     ...(span.wallMaxMs != null ? { wallMaxMs: span.wallMaxMs } : {}),
@@ -480,6 +481,7 @@ function emptySpanCounts(): SpanCounts {
     paintCount: null,
     forcedLayoutCount: null,
     layoutInvalidations: null,
+    paintInvalidations: null,
     styleInvalidations: null,
     longTaskCount: null,
   };
@@ -868,7 +870,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   // A group has an event log iff a deep member is present; on a plain recording, iff this capture kept one.
   const hasEventLog = groupCtx
     ? groupCtx.deepLabel != null
-    : rec.meta.passes.includes("deep") || isGeckoCaptureMode(rec.meta.passes);
+    : rec.meta.capture === "deep" || isGeckoCaptureMode(rec.meta.capture);
   if (hasEventLog)
     console.log(
       dim(`  • The classified event log: wpd query events ${hintPath} (drill: query get)`),
@@ -966,9 +968,8 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
 
   // Layout/style scope per read site (chrome --deep: the stored flush events carry the trace args).
   // Empty on the sampled --breakdown lane and firefox (no flush args), so those rows carry no scope.
-  const blameScope = rec.meta.passes.includes("deep")
-    ? scopeByReadSite(events)
-    : new Map<string, FlushScope>();
+  const blameScope =
+    rec.meta.capture === "deep" ? scopeByReadSite(events) : new Map<string, FlushScope>();
 
   const groups = new Map<
     string,
@@ -1025,15 +1026,16 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   // and no second line prints there.
   // Pass the full event log: the enclosing RunTask can begin just before the run:start mark, and the
   // interleave walk needs it. analyzeThrash windows internally to the in-window flushes.
-  const dirtiedByReadSite = rec.meta.passes.includes("deep")
-    ? analyzeThrash(rec.events, rec.window.startTs).dirtiedByReadSite
-    : {};
+  const dirtiedByReadSite =
+    rec.meta.capture === "deep"
+      ? analyzeThrash(rec.events, rec.window.startTs).dirtiedByReadSite
+      : {};
 
   // Only a --breakdown recording samples the read site, so only its rows carry a confidence marker;
   // a --deep/firefox row is exact (or an unsampled lane) and leaves the field ABSENT, so a consumer
   // reads absent as "not a sampled row", false as "sampled and confident", true as "sampled but
   // sub-interval". See blameRowLowConfidence.
-  const sampledBlameLane = rec.meta.passes.includes("breakdown");
+  const sampledBlameLane = rec.meta.capture === "breakdown";
   const fmt = structuredFormat(query);
   if (fmt) {
     const entries: BlameEntry[] = rows.map((row) => {
@@ -1059,7 +1061,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     // Firefox counts forced flushes from markers but blames the read by SAMPLING it, so a cheap read
     // can go uncaught: an empty --forced beside a nonzero count is a sampling miss, NOT "no forced
     // layout". Say which, so the count is not read as a contradiction of the empty result.
-    const firefoxForced = rec.summary.forcedLayoutCount;
+    const firefoxForced = runSpan(rec)?.counts.forcedLayoutCount ?? null;
     if (
       query.forced &&
       rec.meta.browser === "firefox" &&
@@ -1076,7 +1078,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     // Chrome --breakdown samples the read from the CPU profile (no `.stack`), so an empty --forced can
     // be a sampling miss, not a measured 0 -- and --breakdown never measures the forced COUNT, so there
     // is no count to reconcile against (unlike firefox above). Say which, and point at --deep.
-    if (query.forced && rec.meta.browser !== "firefox" && rec.meta.passes.includes("breakdown")) {
+    if (query.forced && rec.meta.browser !== "firefox" && rec.meta.capture === "breakdown") {
       console.log(
         "No forced read-site sampled on this --breakdown run. The read is sampled from the CPU profile's " +
           "per-sample executing line, so a cheap sub-interval flush can be missed; --breakdown does not " +
@@ -1161,7 +1163,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
   // both without the two ever merging into one row. It is Gecko's cause-stack write identity,
   // first-invalidation-only -- a distinct concept from the read rows above (whose `at` is the read
   // that paid). The full JSON write report is `query blame --dirtied`.
-  if (isFirefoxDeep(rec.meta.passes)) {
+  if (isFirefoxDeep(rec.meta.capture)) {
     const report = firefoxDirtiedBy(eventsInWindow(rec), rec.window.startTs);
     if (report) {
       console.log(
@@ -1185,7 +1187,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
     const semantic = blameSemanticLine(
       rec.meta.blameSemantic,
       rec.meta.browser,
-      rec.meta.passes.includes("breakdown"),
+      rec.meta.capture === "breakdown",
     );
     if (semantic) console.log(`\n${semantic}`);
   }
@@ -1201,10 +1203,10 @@ async function queryDirtied(rec: Recording, file: string, query: BlameQuery): Pr
     throw new Error(
       "--forced (read-site rows) and --dirtied (the write report) are separate answers; pass one.",
     );
-  if (!isFirefoxDeep(rec.meta.passes))
+  if (!isFirefoxDeep(rec.meta.capture))
     throw new Error(
       `${file}: --dirtied is the firefox --deep write report (Gecko cause stacks, first-invalidation-only). ` +
-        `This recording is not one (passes: ${rec.meta.passes.join("+")}). On firefox, re-record with ` +
+        `This recording is not one (capture: ${rec.meta.capture}). On firefox, re-record with ` +
         `--deep; on chrome, the write side is the dirtied-by rows under \`query blame\` and the thrash ` +
         `rollup in \`query span run\`.`,
     );

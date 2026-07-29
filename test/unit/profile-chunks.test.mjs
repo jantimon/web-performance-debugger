@@ -110,7 +110,7 @@ test("assembleTraceCpuProfile: buildCpuModel runs UNCHANGED and attributes BOTH 
   const { profile, sampleIntervalUs } = assembleTraceCpuProfile(fixture);
   const model = await buildCpuModel(profile, {
     profilePath: "/tmp/x.cpuprofile",
-    meta: { schemaVersion: "4" },
+    meta: { schemaVersion: "5" },
     sampleIntervalUs,
     root: os.tmpdir(),
   });

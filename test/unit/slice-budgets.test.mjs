@@ -206,7 +206,7 @@ function writeBreakdownRecording(name, breakdowns) {
   const file = path.join(tmpDir, name);
   writeFileSync(
     file,
-    JSON.stringify({ meta: { schemaVersion: "4", target: "chrome", iterations: 1 }, summary: emptySummary, spans: breakdowns }),
+    JSON.stringify({ meta: { schemaVersion: "5", target: "chrome", iterations: 1 }, summary: emptySummary, spans: breakdowns }),
     "utf8",
   );
   return file;
@@ -256,7 +256,7 @@ test("assertCmd: a corrupt sibling CPU model surfaces instead of reading as no s
   const file = path.join(tmpDir, "no-bars.json");
   writeFileSync(
     file,
-    JSON.stringify({ meta: { schemaVersion: "4", target: "chrome", iterations: 1 }, summary: emptySummary }),
+    JSON.stringify({ meta: { schemaVersion: "5", target: "chrome", iterations: 1 }, summary: emptySummary }),
     "utf8",
   );
   writeFileSync(path.join(tmpDir, "no-bars.cpu.json"), "{ not json", "utf8");

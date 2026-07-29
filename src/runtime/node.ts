@@ -181,10 +181,8 @@ export async function recordNode(opts: RecordOptions): Promise<{
     hostCpuIndex,
     userDataDir: null,
     lifecycle,
-    passes: ["node-cpu"],
+    capture: "node-cpu",
     notes: [nodeRuntime()],
-    driver: false,
-    runtime: "node",
   };
 
   const cpuProfilePath = path.join(outDir, `${base}.cpuprofile`);
@@ -209,12 +207,14 @@ export async function recordNode(opts: RecordOptions): Promise<{
     // the in-process V8 profile's JS self-time.
     jsSelfMs: cpuModel.jsSelfMs,
   });
+  // Cache the CPU headline on meta (schema-5 home of jsSelfMs), so `diff`/`query` read it without the model.
+  meta.jsSelfMs = cpuModel.jsSelfMs;
+  meta.totalEvents = summary.totalEvents;
   const recording: Recording = {
     meta,
     window: { measure: RUN_MEASURE, startTs: null, endTs: null, wallMs },
     marks: [],
     events: [],
-    summary,
     // One run span; its reconciling bar lives on CpuModel.breakdown (js/native/gc/idle), which
     // `query spans` synthesizes the run entry from, so no bar is stored on the span itself.
     spans: buildRecordingSpans({

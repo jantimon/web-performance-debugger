@@ -147,7 +147,7 @@ test("jsSelfMs is the package-rollup denominator and reconciles to 100% (B-02)",
 function writeModel(name, jsSelfMs, activeMs, functions) {
   const model = {
     profile: `${name}.cpuprofile`,
-    meta: { tool: "wpd", version: "0", schemaVersion: SCHEMA_VERSION, passes: ["node-cpu"], iterations: 1, target: "a.mjs", runtime: "node" },
+    meta: { tool: "wpd", version: "0", schemaVersion: SCHEMA_VERSION, capture: "node-cpu", iterations: 1, target: "a.mjs", runtime: "node" },
     sampleCount: 1,
     sampleIntervalUs: 200,
     totalMs: activeMs,
@@ -187,7 +187,7 @@ test("cpu-diff: two identical no-op profiles produce no regression (B-01)", asyn
 function writeModelAt(name, jsSelfMs, sampleIntervalUs) {
   const model = {
     profile: `${name}.cpuprofile`,
-    meta: { tool: "wpd", version: "0", schemaVersion: SCHEMA_VERSION, passes: ["node-cpu"], iterations: 1, target: "a.mjs", runtime: "node" },
+    meta: { tool: "wpd", version: "0", schemaVersion: SCHEMA_VERSION, capture: "node-cpu", iterations: 1, target: "a.mjs", runtime: "node" },
     sampleCount: 1,
     sampleIntervalUs,
     totalMs: jsSelfMs,

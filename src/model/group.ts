@@ -26,7 +26,7 @@ export interface GroupMeta {
 
 /** One member of a group: a whole recording captured in one mode, referenced by path. */
 export interface GroupMember {
-  /** the member's capture mode = its recording's `meta.passes[0]` (breakdown/deep/gecko/...) */
+  /** the member's capture mode = its recording's `meta.capture` (breakdown/deep/gecko/...) */
   mode: string;
   /** the member's variant label, when the recording carried one (`--variant`); absent otherwise */
   variant?: string;
@@ -112,7 +112,7 @@ export function formationVerdict(
       );
     else annotations.push(`${mismatch.axis} differs (${mismatch.base} vs ${mismatch.current})`);
   }
-  const joiningMode = joining.passes[0];
+  const joiningMode = joining.capture;
   const joiningVariant = joining.variant;
   if (existingPairs.some((pair) => pair.mode === joiningMode && pair.variant === joiningVariant)) {
     const label = joiningVariant ? `${joiningMode}/${joiningVariant}` : joiningMode;
@@ -132,10 +132,9 @@ export function modeIsDeep(mode: string): boolean {
 }
 
 /** A member's mode ran a CPU sampler, so it carries a CpuModel and (breakdown/gecko/node) a bar.
- * The retired "precise-wall" arm stays so an old recording carrying it reports no CPU, never a crash.
  * "node-alloc" ran the HEAP sampler with the CPU sampler off, so it carries no CpuModel either. */
 export function modeHasCpu(mode: string): boolean {
-  return mode !== "deep" && mode !== "precise-wall" && mode !== "node-alloc";
+  return mode !== "deep" && mode !== "node-alloc";
 }
 
 /** A member's mode carries exact rendering counts (layout/style/paint, plus forced on the deep tiers). */

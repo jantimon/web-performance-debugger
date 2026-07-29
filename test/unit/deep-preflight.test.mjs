@@ -13,9 +13,7 @@ import { deepEventLogOverflowError } from "../../dist/record/artifacts.js";
 
 test("storesFullTraceEventLog: only chrome --deep stores the full trace event log", () => {
   assert.equal(storesFullTraceEventLog("deep"), true, "--deep stores every event for blame");
-  // Includes "precise-wall": no invocation produces it, but an old recording carrying it must read
-  // as no-event-log, never crash the preflight.
-  for (const mode of ["breakdown", "default", "precise-wall", "gecko", "gecko-deep", "node-cpu"]) {
+  for (const mode of ["breakdown", "default", "gecko", "gecko-deep", "node-cpu"]) {
     assert.equal(
       storesFullTraceEventLog(mode),
       false,
@@ -38,8 +36,7 @@ test("deepEventLogWouldOverflow: fires on a --deep trace above the floor only", 
 
 test("deepEventLogWouldOverflow: never fires on a mode that stores no full event log", () => {
   const huge = DEEP_EVENT_LOG_TRACE_BYTE_CEILING * 4;
-  // "precise-wall" is a retired mode kept for old-recording reads; the preflight must ignore it too.
-  for (const mode of ["breakdown", "default", "precise-wall", "gecko", "gecko-deep"]) {
+  for (const mode of ["breakdown", "default", "gecko", "gecko-deep"]) {
     assert.equal(
       deepEventLogWouldOverflow(mode, huge),
       false,

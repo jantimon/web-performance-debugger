@@ -4,10 +4,10 @@ import type { CpuSlice, CpuJsSlice } from "./cpu.js";
 import type { RecordingMeta } from "./meta.js";
 import type { FrameSideTrack } from "./frames.js";
 
-// The model is split across focused domain files by domain; this module keeps the
-// Recording/RecordingSummary/Span core and RE-EXPORTS the moved types every reader consumes through
-// it, so `../model/recording.js` stays the one import path. (WorkloadLane has no consumer through the
-// barrel, so it is not re-exported; import it from ./meta.js if one ever needs it.)
+// The model is split across focused domain files by domain; this module keeps the Recording/Span core
+// and RE-EXPORTS the moved types every reader consumes through it, so `../model/recording.js` stays the
+// one import path. (WorkloadLane has no consumer through the barrel, so it is not re-exported; import it
+// from ./meta.js if one ever needs it.)
 export type { EventKind, StackFrame, NormalizedEvent, InvalidationRecord } from "./events.js";
 export type {
   CpuFunction,
@@ -46,102 +46,6 @@ export interface BenchStats {
   medianMs: number;
   meanMs: number;
   maxMs: number;
-}
-
-export interface RecordingSummary {
-  /** wall time of the run/step window (coarse) */
-  wallMs: number | null;
-  /** worst interaction-to-next-paint in the window, ms (driver mode); null if unmeasured */
-  inpMs: number | null;
-  /**
-   * In-page CWV split of `inpMs` for the step it came from. Absent on lanes with no observed
-   * interaction (bench/node), and null when no step crossed the 16ms Event Timing floor.
-   */
-  interaction?: InteractionTiming | null;
-
-  /**
-   * Rendering counts and durations are `Measured` (model/measured.ts): a number is the exact count
-   * (0 = measured clean), null = NOT measured in this capture mode. The default mode (sampler only, no
-   * trace) observes no rendering work at all, so every count/duration here is null there, never a
-   * fake 0. Counts come from the trace, windowed on the bar's main thread; a `--breakdown`/`--deep`
-   * capture supplies them.
-   */
-  layoutCount: Measured<number>;
-  /**
-   * Wall-tier trace duration (`base::TimeTicks`, ~1% directional), valid only on the light
-   * (no-`.stack`) trace. Null in the default mode (no trace) AND on `--deep`, whose `.stack` trace
-   * inflates style dur up to +38% (a distorted number is worse than none). Run `--breakdown` for it.
-   */
-  layoutMs: Measured<number>;
-  styleCount: Measured<number>;
-  /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
-  styleMs: Measured<number>;
-  /**
-   * Main-thread paint chunks: one per dirtied region, [measured] exactly N+1 for N regions with
-   * zero run-to-run variance. Raster (off-main-thread) is deliberately not in here; it counts
-   * scheduler behaviour, not the page. See docs/dev/rendering-counts.md. `Measured`: null on the
-   * default mode (no trace) and on Firefox (paint is off-main-thread there), never a fake 0.
-   */
-  paintCount: Measured<number>;
-  /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
-  paintMs: Measured<number>;
-
-  layoutInvalidations: Measured<number>;
-  paintInvalidations: Measured<number>;
-  styleInvalidations: Measured<number>;
-
-  /**
-   * layout/style synchronously forced by JS (thrashing), as a `Measured` value (see
-   * model/measured.ts): a number is the count (0 = measured, no thrashing); null = NOT measured,
-   * because the mode dropped the `.stack` trace category forced detection needs (--breakdown). The
-   * tri-state contract -- incl. why a gate treats null as a loud failure -- lives on the Measured type.
-   */
-  forcedLayoutCount: Measured<number>;
-  forcedLayoutMs: Measured<number>;
-
-  /** tasks >= 50ms ("long tasks") in the window; `Measured`, null in the default mode (no trace). */
-  longTaskCount: Measured<number>;
-  /** wall-tier trace duration; same not-measured rule as `layoutMs` (light trace only). */
-  longestTaskMs: Measured<number>;
-
-  /** JS self-time from the CPU model (`CpuModel.jsSelfMs`); `Measured`, null on `--deep` (sampler off,
-   * no CPU model). NOT the non-idle sampled total: gc/engine/native are excluded. */
-  jsSelfMs: Measured<number>;
-  totalEvents: number;
-
-  /**
-   * Per-iteration wall times of the measured unit + their stats. Bench: each timed run() call.
-   * A per-step recording: that step's repetitions under --iterations. Empty on the overall
-   * recording of a driver run, whose steps are heterogeneous (see perStep).
-   */
-  perIteration: number[];
-  stats: BenchStats | null;
-  /**
-   * driver (stepped) only: each step's wall timing, labelled. Empty in bench/node runs.
-   *
-   * Deliberately NOT folded into the `stats` above: steps are heterogeneous ("mount" vs "inp"),
-   * so a median across them would be meaningless. Each step carries its own samples + stats
-   * instead, which is the only aggregation that means anything here.
-   */
-  perStep: StepTiming[];
-}
-
-/**
- * One driver step's wall timing. Mirrors the bench shape (`perIteration` + `stats`) so a step
- * block reads exactly like the top-level one, and so repeating a step later only lengthens the
- * array rather than changing the type.
- */
-export interface StepTiming {
-  label: string;
-  /**
-   * Raw per-iteration wall times for THIS step, in run order; never empty. Raw samples are kept
-   * rather than only the aggregate: a median hides bimodality (a GC spike in one iteration), and a
-   * consumer may want its own statistic. This array is the axis that grows when a step is repeated,
-   * so the shape holds either way.
-   */
-  perIteration: number[];
-  /** this step's own min/median/mean/max; null below 2 samples, same contract as the bench `stats` */
-  stats: BenchStats | null;
 }
 
 export interface RecordingWindow {
@@ -501,6 +405,7 @@ export interface SpanCounts {
   /** the JS-forced SUBSET of `layoutCount`/`styleCount`, never a separate addend */
   forcedLayoutCount: Measured<number>;
   layoutInvalidations: Measured<number>;
+  paintInvalidations: Measured<number>;
   styleInvalidations: Measured<number>;
   /** tasks >= 50ms ("long tasks") within this span's window */
   longTaskCount: Measured<number>;
@@ -602,17 +507,25 @@ export interface Span {
   /** a step's position within its iteration; absent on run/measure spans */
   index?: number;
   /**
-   * Headline wall (ms) on the page's own clock: the trace-clock window between the span's marks
-   * (--breakdown/--deep), else the page's performance.now delta (a driver step in the default mode),
-   * else the summed timed samples (a bench run). Null when unmeasured (a step that navigated in a
-   * no-trace capture mode; see docs/dev/driver-timing.md).
+   * The span's HEADLINE wall (ms), one number per span kind, each on the clock `wallClock` names:
+   *   - run (bench/node): the SUMMED timed samples across `--iterations` (page clock).
+   *   - run (driver): null -- there is no honest run wall (the run window is ~all settle floor); a
+   *     driver step's wall lives on its own step span, and the run's tiled window is `breakdown.wallMs`.
+   *   - step: the MEDIAN of the step's per-iteration samples (`perIteration`/`stats` hold the spread),
+   *     priced on the clock `wallClock` names (the trace window between its marks, else the page's
+   *     performance.now delta).
+   *   - measure: the merged occurrence's own window (a `performance.measure`, page clock).
+   * Null only when there is genuinely no such wall (a driver run, or a step that navigated in a
+   * no-trace capture). The trace-clock window a reconciling bar TILES is `breakdown.wallMs`, a distinct
+   * quantity that can diverge from this headline (a step's median vs its iteration-0 window, or a bench
+   * run's summed samples vs the profiler's whole-loop window). See docs/dev/driver-timing.md.
    */
   wallMs: number | null;
   /**
-   * Which clock priced a STEP span's wall: "trace" (the window between its marks; reconciles with
-   * the bar) or "page" (the page's performance.now delta; beside a trace-clock `breakdown` it does
-   * NOT reconcile with the bar, e.g. a step whose end mark was lost). Absent on run/measure spans,
-   * whose clock is fixed by kind (see wallMs), and when wallMs is null.
+   * The clock `wallMs` is priced on: "trace" (a trace-clock window; on a step it reconciles with the
+   * bar's `breakdown.wallMs` when they cover the same iteration) or "page" (a performance.now delta or
+   * the summed timed samples). Present on every span whose `wallMs` is non-null, so the headline never
+   * leaves its clock ambiguous; absent when `wallMs` is null.
    */
   wallClock?: "trace" | "page";
   /**
@@ -624,6 +537,9 @@ export interface Span {
   breakdown?: Breakdown;
   /** exact rendering counts windowed to this span's representative occurrence; Measured throughout */
   counts: SpanCounts;
+  /** the longest task (>=50ms) in this span's window, ms; `Measured` (wall-tier, light trace only,
+   * null where the capture measured no task duration). Present on the run span; absent elsewhere. */
+  longestTaskMs?: Measured<number>;
   /** worst-interaction INP (ms) for a driver step; null when no interaction crossed the 16ms floor */
   inpMs?: number | null;
   /** in-page CWV split of `inpMs` (a driver step); absent when no interaction was observed */
@@ -746,11 +662,13 @@ export interface SpanBreakdown {
 }
 
 /**
- * The one small default artifact a run writes (schema 4): the run summary, the collapsed `Span[]`
- * (run + steps + user measures), and meta. The raw `.cpuprofile` and the resolved `.cpu.json` model
- * are separate siblings; the `events[]` DEEP EVENT LOG is written into this file ONLY under --deep
- * (chrome) and firefox, where blame/`query get`/`query events` read it -- every other capture mode leaves it
- * empty, which keeps the default artifact digest-sized.
+ * The one small default artifact a run writes (schema 5): the collapsed `Span[]` (run + steps + user
+ * measures) and meta. The `spans` array is the SOLE store of counts and timing -- the run-level counts,
+ * wall, INP and per-iteration stats live on the run span (`kind: "run"`), each driver step on its own
+ * `kind: "step"` span. The raw `.cpuprofile` and the resolved `.cpu.json` model are separate siblings;
+ * the `events[]` DEEP EVENT LOG is written into this file ONLY under --deep (chrome) and firefox, where
+ * blame/`query get`/`query events` read it -- every other capture mode leaves it empty, which keeps the
+ * default artifact digest-sized.
  */
 export interface Recording {
   meta: RecordingMeta;
@@ -762,11 +680,11 @@ export interface Recording {
    * --breakdown capture modes, where `query events`/`get`/`blame` report "not captured in this capture mode".
    */
   events: NormalizedEvent[];
-  summary: RecordingSummary;
   /**
-   * Every labelled unit of measured work: the run window, each driver step, and every user
-   * `performance.measure`. Always present (at least the run span). The one artifact carries them all;
-   * steps are spans of `kind: "step"`, read as an anatomy by `query span <label>`.
+   * Every labelled unit of measured work AND the sole count/timing store: the run window (`kind: "run"`,
+   * carrying the run-level counts/wall/INP/stats), each driver step (`kind: "step"`), and every user
+   * `performance.measure` (`kind: "measure"`). Always present (at least the run span). The one artifact
+   * carries them all; a step is read as an anatomy by `query span <label>`.
    */
   spans: Span[];
 }

@@ -171,7 +171,7 @@ node:                  [node-cpu]                     in-process V8, four-slice 
 - **gecko**: firefox only; one Gecko-profiler run yields CPU samples *and* layout/style markers. It
   is the firefox lane in every capture mode (the profiler is a whole-browser-lifetime startup feature), so
   the capture modes are reporting tiers over this one capture. `--deep` adds a dirtied-by write report from
-  Gecko's native cause stacks; `meta.passes` is `gecko` or `gecko-deep`. See
+  Gecko's native cause stacks; `meta.capture` is `gecko` or `gecko-deep`. See
   [firefox-cpu.md](./firefox-cpu.md).
 - **node**: `--target node`; the in-process V8 sampler (`runtime/node.ts`), CPU-only, four-slice bar
   with the engine slice labeled `native`.

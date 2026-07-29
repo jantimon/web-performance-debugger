@@ -25,8 +25,8 @@ export interface FrameRecord {
  * durations.
  *
  * DISPLAY-ONLY, and the type is shaped so the rule is enforced by construction: this lives on
- * SpanBreakdown, NEVER on RecordingSummary, so the gate readers (`assert`/`diff`, which see only the
- * summary) structurally cannot reach it. Nothing here is summed into any breakdown bar either -- the
+ * SpanBreakdown, NEVER on the run-span counts, so the gate readers (`assert`/`diff`, which read only the
+ * run-span counts) structurally cannot reach it. Nothing here is summed into any breakdown bar either -- the
  * wall is main-thread self-time and these frames run on compositor/viz threads (the §9 rule). The
  * counts are scheduler noise, the one reason they must not gate; see FrameRecord and
  * docs/dev/rendering-counts.md.

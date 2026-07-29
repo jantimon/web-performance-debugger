@@ -710,7 +710,7 @@ export async function printBarlessSpans(
 
   const count = (value: Measured<number>): string =>
     formatMeasured(value, (measured) => String(measured));
-  const isDeep = meta.passes.includes("deep") || isGeckoCaptureMode(meta.passes);
+  const isDeep = meta.capture === "deep" || isGeckoCaptureMode(meta.capture);
   console.log(
     `\nspans overview ${dim(`(${overview.target}${meta.variant ? ` · variant ${meta.variant}` : ""} · no reconciling bar at this capture · counts Measured: — = not measured, never 0)`)}\n`,
   );

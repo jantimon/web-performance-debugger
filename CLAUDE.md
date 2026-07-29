@@ -72,7 +72,7 @@ Flow: **`record` produces a `Recording` (model/recording.ts) → `query`/`assert
 `src/cli.ts` (commander) is the only entry point and wires every command; `cli-validation.ts` holds
 the one numeric-validation policy (whole-number/ms-threshold parsers that throw an
 `InvalidArgumentError` at the argument boundary before any browser launches). The model is split across
-`model/`: `recording.ts` (the `Recording`/`RecordingSummary`/`Span`/`Breakdown` core, and a BARREL that
+`model/`: `recording.ts` (the `Recording`/`Span`/`Breakdown` core, and a BARREL that
 re-exports the domain files so `../model/recording.js` stays the one import path: `events.ts` (`EventKind`/
 `NormalizedEvent`/`StackFrame`), `cpu.ts` (`CpuModel`/`CpuFunction`/`CpuBreakdown`), `frames.ts`
 (`FrameSideTrack`), `attribution.ts` (`ThrashReport`/`DirtiedBy*`/`BlameSemantic`), `meta.ts`
@@ -82,7 +82,7 @@ mark namespace), `time.ts` (clock/us↔ms helpers), `host-cpu.ts` (the host-CPU 
 honesty wrapper), `reconcile.ts` (slice-sum-vs-wall residual), `span-merge.ts`
 (`mergeSpanOccurrences`: collapse a repeated `measure` label to its lower-median-by-wall occurrence,
 verbatim), `span.ts`/`spans.ts` (the stored `Span` count projection + the `query spans` adapter),
-`capture-mode.ts` (capture-mode/passes predicates like `isFirefoxDeep`/`isGeckoCaptureMode`), `artifact.ts` (the
+`capture-mode.ts` (capture-mode predicates over `meta.capture` like `isFirefoxDeep`/`isGeckoCaptureMode`), `artifact.ts` (the
 schema-version + recording-shape gates every reader passes through), `query.ts` (the derived view
 shapes the `query`/`cpu-diff` verbs emit under `--format json|toon`, kept off the stored types so the
 JSON contract cannot silently drift), and `compat.ts` (`comparabilityMismatches`: the capture axes
@@ -149,7 +149,7 @@ from the successful attempt.
 Every invocation is **exactly one capture pass** — one browser launch, one run of the flow, one
 recording. `record/capture.ts` `captureFor(opts, browser)` picks the ONE `CaptureConfig` (categories,
 cpu on/off, keepThreadIds, gecko) from the flags; there is no multi-pass plan and no pass windowing.
-`meta.passes` is a single-element array naming the capture mode. The chrome capture modes:
+`meta.capture` is the scalar naming the capture mode. The chrome capture modes:
 
 - **default** (no flag) — `categories: null` (no trace), CPU sampler on. The four-slice CPU bar, no
   rendering counts, cleanest wall (~1%).
@@ -171,8 +171,7 @@ lane. The capture modes are mutually exclusive (`--breakdown --deep` is rejected
 invocations), and the CLI rejects `--breakdown` on firefox/node. There is no sampler-free wall mode:
 the sampler's ~4-7% cost is systematic and cancels in `diff`/`cpu-diff`, so absolute-wall benchmarking
 is a signal wpd does not measure. `--precise-wall` is retired -- an early `program.error` names the
-migration, and readers keep the `"precise-wall"` mode string alive (the `CaptureMode` arm,
-`model/group.ts` `modeHasCpu`) so an old recording still opens honestly.
+migration (the CLI stub sunsets by the stated policy, not this schema bump).
 
 **Why the split, present-tense [measured] constraints** (docs/dev/cpu-profiling.md):
 
@@ -201,8 +200,12 @@ iteration for the wall samples, a counting capture mode's counts **total across 
 (`countScopeNote` says so); a driver step's counts window to iteration 0 (`labelWindows`), so per-step
 counts stay one iteration's work. Bench `wallMs` is the **sum of the timed samples**, not a window.
 
-**The artifact is one file (schema 4).** `Recording` = the run summary + the collapsed `Span[]` (the
-run window, each driver step, and every user `performance.measure`) + meta. Siblings: the raw
+**The artifact is one file (schema 5).** `Recording` = the collapsed `Span[]` (the run window, each
+driver step, and every user `performance.measure`) + meta. **The `spans[]` is the SOLE count/timing
+store**: the run-level counts, wall, INP, longest-task and per-iteration stats live on the run span
+(`kind: "run"`), each driver step on its own step span -- there is no `summary` object. `assert`/`diff`/
+the record report read the run span (`model/span.ts` `runSpan`) and `meta.jsSelfMs`; `summarize.ts` still
+produces a build-time `RecordingSummary` struct to fill those spans, but it is never serialized. Siblings: the raw
 `.cpuprofile` and the resolved `.cpu.json` `CpuModel`. The classified `events[]` DEEP EVENT LOG is
 written INTO the recording only under `--deep` (chrome) and firefox — every other capture mode leaves it
 empty, which keeps the default artifact digest-sized. `model/artifact.ts` REJECTS any artifact whose
@@ -262,8 +265,9 @@ Two things this rule is **not**, both documented in
 
 ### Output & consumption
 
-- `metrics/summarize.ts` builds `RecordingSummary` from trace events alone (counts main-thread
-  windowed, durations wall-tier on the light trace, `Measured` null where the capture mode observed nothing).
+- `metrics/summarize.ts` builds the internal (never-serialized) `RecordingSummary` struct from trace
+  events alone (counts main-thread windowed, durations wall-tier on the light trace, `Measured` null
+  where the capture mode observed nothing); `spans-build.ts` reads it into the run/step spans.
 - `commands/query.ts` = 6 verbs: `spans`, `span`, `events`, `blame`, `get`, and the `--dirtied` mode
   of `blame` (plus `cpu`/`frame` in `commands/cpu.ts`); `commands/query-view.ts` renders each verb's
   view shape into the human report. `query spans` (via `model/spans.ts`) is the
@@ -355,7 +359,8 @@ imports the module *in this process* and profiles `run()` with node's built-in `
 frames to local paths; `node:` builtins fall to the `(node)` bucket); the tool's own loop frames drop
 via `isToolFrameUrl` (`/runtime/node.`). CPU-only means no rendering counts: `recordAndReport`
 dispatches to `recordNode` + `printNodeReport` (CPU headline + per-iteration timing, no DOM tables).
-The CLI errors on browser-only flags; `meta.runtime` records the lane, `meta.passes` is `["node-cpu"]`.
+The CLI errors on browser-only flags; the node lane is `workload.lane: "node"` (which `recordingRuntime`
+derives `"node"` from), and `meta.capture` is `"node-cpu"`.
 
 **Firefox backend (`--target firefox`)**: a second browser lane over WebDriver BiDi (no CDP).
 `browser/backend.ts` `capsFor()` is a plain caps object (`cdpCounts/trace/throttle/cpuProfile/

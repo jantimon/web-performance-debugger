@@ -6,7 +6,11 @@ import { mergeSteps, type MergedStep } from "../trace/steps.js";
 import { mainThread, type MainThreadSelection } from "../trace/main-thread.js";
 import { retryTransientNav } from "../browser/launch.js";
 import { SourceMapResolver } from "../trace/sourcemap.js";
-import { buildSummary, type CaptureCapabilities } from "../metrics/summarize.js";
+import {
+  buildSummary,
+  type CaptureCapabilities,
+  type RecordingSummary,
+} from "../metrics/summarize.js";
 import {
   buildCpuModel,
   packagesByProfileNode,
@@ -26,11 +30,13 @@ import { runPass, type PassResult } from "../record/runpass.js";
 import type { RecordOptions } from "../record/options.js";
 import { buildBreakdowns, userMeasureSpans } from "../record/breakdown-spans.js";
 import { buildRecordingSpans } from "../record/spans-build.js";
+import { runSpan } from "../model/span.js";
 import { writeRecording, writeCpuModel } from "../record/artifacts.js";
 import {
   appendMember,
   groupManifestPathFor,
   preflightGroup,
+  runCountFields,
   runMembers,
   type GroupMemberMode,
 } from "../record/group.js";
@@ -656,9 +662,8 @@ function buildMeta(
     userDataDir: shorterPath(root, opts.userDataDir),
     lifecycle: detail.lifecycle,
     // The one capture that ran, by capture-mode name (there is no multi-pass plan).
-    passes: [capture.mode],
+    capture: capture.mode,
     notes,
-    driver: opts.driver,
     // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome".
     browser: browserName === "firefox" ? "firefox" : undefined,
     // The read a blame line names (flush-site everywhere blame runs). On --breakdown the capture mode
@@ -683,13 +688,15 @@ function buildMeta(
   return meta;
 }
 
-/** The run summary + window + marks + event log, assembled into the Recording (spans filled later). */
+/** The window + marks + event log, assembled into the Recording (spans filled later), plus the
+ * build-time run summary threaded to the span builder. `spans` is the sole stored count/timing store,
+ * so the summary is NOT a recording field; it lives here only until the run/step spans are built. */
 function buildRecordingObject(
   setup: RecordSetup,
   captured: CapturedPass,
   derived: DerivedNotes,
   meta: RecordingMeta,
-): Recording {
+): { recording: Recording; summary: RecordingSummary } {
   const { opts, browserName } = setup;
   const { pass } = captured;
   const { mergedSteps, traceWindowMissing, effectiveCapabilities } = derived;
@@ -747,6 +754,27 @@ function buildRecordingObject(
   // --breakdown stores ONLY the small sampled read-site blame log (edge marks + sampled forced events),
   // not the full trace, so the artifact stays digest-sized while `query blame --forced` still answers.
   const breakdownEventLog = opts.breakdown ? (pass.sampledBlame ?? []) : [];
+  const summary = buildSummary({
+    // perIteration is bench-only: it feeds computeStats, which is only meaningful over repetitions of
+    // the SAME work. Driver steps are heterogeneous ("mount" vs "inp"), so their walls go to the step
+    // spans (each its own median) and are never summarized into one median here.
+    perIteration: opts.driver ? [] : timing.perIteration,
+    // In-page (bench/node): the summed timed samples. Driver: null on purpose; see runWallMs.
+    wallMs: runWallMs,
+    inpMs: overallInp,
+    interaction: overallInteraction,
+    // No window => not measured (see traceWindowMissing note); don't count the whole trace.
+    detailEvents: traceWindowMissing ? [] : detail.events,
+    detailWindowStart: detail.windowStart,
+    // What this capture mode could observe (per capture): gates each count/duration to Measured null
+    // vs a number, so the default mode reports no counts and --deep reports counts but null durations.
+    capabilities: effectiveCapabilities,
+    // jsSelfMs is patched onto meta after the CPU model is built below; null here, and stays null on
+    // --deep, which has no sampler and no model.
+    jsSelfMs: null,
+  });
+  // totalEvents is a diagnostic on meta (schema-5 home): 0 fires the empty-run hint in the report.
+  meta.totalEvents = summary.totalEvents;
   const recording: Recording = {
     meta,
     window: {
@@ -757,35 +785,12 @@ function buildRecordingObject(
     },
     marks: timing.marks,
     events: storeEventLog ? detail.events : breakdownEventLog,
-    // Assembled below, once the summary is finalized and any per-span bars are built.
+    // Assembled below (buildSpanBars), once any per-span bars are built. The run/step spans carry the
+    // counts and timing this run's summary holds.
     spans: [],
-    summary: buildSummary({
-      // perIteration is bench-only: it feeds computeStats, which is only meaningful over
-      // repetitions of the SAME work. Driver steps are heterogeneous ("mount" vs "inp"), so
-      // their walls go to perStep instead and are never summarized into a median.
-      perIteration: opts.driver ? [] : timing.perIteration,
-      // Clean in-page walls, one sample per step per --iterations, grouped by label in mergeSteps,
-      // which is the only place that knows a repeated label is a repetition rather than a collision.
-      // buildSummary derives the stats; never pass a statistic in from here.
-      perStep:
-        mergedSteps?.map((step) => ({ label: step.label, perIteration: step.perIteration })) ?? [],
-      // In-page (bench/node): the summed timed samples. Driver: null on purpose; see runWallMs.
-      wallMs: runWallMs,
-      inpMs: overallInp,
-      interaction: overallInteraction,
-      // No window => not measured (see traceWindowMissing note); don't count the whole trace.
-      detailEvents: traceWindowMissing ? [] : detail.events,
-      detailWindowStart: detail.windowStart,
-      // What this capture mode could observe (per capture): gates each count/duration to Measured null
-      // vs a number, so the default mode reports no counts and --deep reports counts but null durations.
-      capabilities: effectiveCapabilities,
-      // jsSelfMs is patched in after the CPU model is built below (it is the model's JS
-      // self-time); null here, and stays null on --deep, which has no sampler and no model.
-      jsSelfMs: null,
-    }),
   };
 
-  return recording;
+  return { recording, summary };
 }
 
 /** Build the resolved CPU model (writing the raw chrome .cpuprofile first), patch the model-derived
@@ -797,7 +802,6 @@ async function buildCpuArtifacts(
   captured: CapturedPass,
   derived: DerivedNotes,
   meta: RecordingMeta,
-  recording: Recording,
 ): Promise<CpuModel | undefined> {
   const { opts, browserName, outDir, base, root } = setup;
   const { server, maps } = captured;
@@ -832,10 +836,10 @@ async function buildCpuArtifacts(
       maps,
     });
   }
-  // jsSelfMs is the CPU model's JS self-time. Patched onto the summary here (the model exists
-  // now, and `recording.summary` is shared by reference), so a capture mode with no sampler (--deep) keeps
-  // the null it was built with -- a distinct not-measured, never a fake 0.
-  if (cpuModel) recording.summary.jsSelfMs = cpuModel.jsSelfMs;
+  // jsSelfMs is the CPU model's JS self-time, cached on meta (its schema-5 home; meta is shared by
+  // reference with every artifact). Absent on a capture mode with no sampler (--deep), where readers
+  // default it to null -- a distinct not-measured, never a fake 0.
+  if (cpuModel) meta.jsSelfMs = cpuModel.jsSelfMs;
   // On the trace-sourced --breakdown lane the sampler interval is the v8.cpu_profiler stream's own
   // fixed rate (read back from the chunks), not a value wpd requested, so record that observed
   // interval rather than the default constant this lane does not use. Chrome only: firefox keeps the
@@ -871,6 +875,7 @@ async function buildSpanBars(
   captured: CapturedPass,
   derived: DerivedNotes,
   recording: Recording,
+  summary: RecordingSummary,
   cpuModel: CpuModel | undefined,
 ): Promise<void> {
   const { opts, browserName, root } = setup;
@@ -921,7 +926,7 @@ async function buildSpanBars(
   // Collapse the run, every driver step, and every user measure into the stored Span[]. Steps carry
   // their windowed counts (from detail.events, iteration 0); bars attach where the capture mode built one.
   recording.spans = buildRecordingSpans({
-    summary: recording.summary,
+    summary,
     mergedSteps,
     detailEvents: detail.events,
     capabilities: effectiveCapabilities,
@@ -1002,7 +1007,7 @@ async function writeAllArtifacts(
       cpuModelPath,
       cpuProfilePath,
       meta,
-      summary: recording.summary,
+      runCounts: runCountFields(recording),
       requested: opts.groupRequested,
     });
     await writePointer({
@@ -1039,9 +1044,9 @@ export async function record(opts: RecordOptions): Promise<{
   const captured = await runCapturePass(setup);
   const derived = assembleNotes(setup, captured);
   const meta = buildMeta(setup, captured, derived);
-  const recording = buildRecordingObject(setup, captured, derived, meta);
-  const cpuModel = await buildCpuArtifacts(setup, captured, derived, meta, recording);
-  await buildSpanBars(setup, captured, derived, recording, cpuModel);
+  const { recording, summary } = buildRecordingObject(setup, captured, derived, meta);
+  const cpuModel = await buildCpuArtifacts(setup, captured, derived, meta);
+  await buildSpanBars(setup, captured, derived, recording, summary, cpuModel);
   finalizeSourcemapMeta(captured, meta, derived.notes, cpuModel);
   const { cpuModelPath, groupManifestPath } = await writeAllArtifacts(
     setup,
@@ -1078,8 +1083,9 @@ function printNodeReport(result: {
   printCpuHeadline(result.cpuModel);
   printCpuBreakdown(result.cpuModel);
 
-  const stats = result.recording.summary.stats;
-  const perIteration = result.recording.summary.perIteration;
+  const run = runSpan(result.recording);
+  const stats = run?.stats ?? null;
+  const perIteration = run?.perIteration ?? [];
   if (stats && perIteration.length > 1) {
     console.log("\nPer-iteration wall time\n");
     console.log(
@@ -1121,8 +1127,9 @@ function printAllocNodeReport(result: {
   );
   printAllocHeadline(result.allocModel);
 
-  const stats = result.recording.summary.stats;
-  const perIteration = result.recording.summary.perIteration;
+  const run = runSpan(result.recording);
+  const stats = run?.stats ?? null;
+  const perIteration = run?.perIteration ?? [];
   if (stats && perIteration.length > 1) {
     console.log("\nPer-iteration wall time (under allocation sampling)\n");
     console.log(
@@ -1214,7 +1221,7 @@ export async function recordAndReport(opts: RecordOptions): Promise<void> {
         cpuModelPath: result.cpuModelPath,
         cpuProfilePath: result.cpuProfilePath,
         meta: result.recording.meta,
-        summary: result.recording.summary,
+        runCounts: runCountFields(result.recording),
         requested: opts.groupRequested,
       });
       await writePointer({
