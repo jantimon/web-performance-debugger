@@ -1,6 +1,9 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
-  "changelog": "@changesets/cli/changelog",
+  "changelog": [
+    "@changesets/changelog-github",
+    { "repo": "jantimon/web-performance-debugger", "disableThanks": true }
+  ],
   "commit": false,
   "fixed": [],
   "linked": [],
