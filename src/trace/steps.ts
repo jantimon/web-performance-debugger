@@ -6,6 +6,7 @@ import type {
   InteractionTiming,
   LayoutShift,
   NavigationKind,
+  SoftNavRoute,
   StepLcp,
   StepLoaf,
 } from "../model/recording.js";
@@ -66,6 +67,13 @@ export interface MergedStep {
    * no entry fired or the browser has no support. See EngineSoftNav.
    */
   engineSoftNav?: EngineSoftNav;
+  /**
+   * Route-transition metrics for a soft-navigating step from the FIRST timed iteration (Chrome 151+),
+   * matching the layoutShift/counts windowing: the route's navigationId changes per run and its LCP/CLS
+   * attribution is a distribution that cannot be medianed. Absent when no engine soft-nav fired. See
+   * SoftNavRoute.
+   */
+  softNav?: SoftNavRoute;
   /**
    * Boot LCP for a hard-navigation step, grown across the timed iterations: identity from the
    * lower-median-by-render-time occurrence, `perIteration` the render-time series (null where an
@@ -378,6 +386,7 @@ export function mergeSteps(
       // same navigation every iteration, so iteration 0's is the honest representative.
       ...(first.navigation ? { navigation: first.navigation } : {}),
       ...(first.engineSoftNav ? { engineSoftNav: first.engineSoftNav } : {}),
+      ...(first.softNav ? { softNav: first.softNav } : {}),
       ...(first.beforeUrl != null ? { beforeUrl: first.beforeUrl } : {}),
       ...(first.afterUrl != null ? { afterUrl: first.afterUrl } : {}),
       // LCP grows across iterations (each boots a fresh document, capturing its own entry); CLS comes
