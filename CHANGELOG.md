@@ -1,5 +1,25 @@
 # @jantimon/web-performance-debugger
 
+## 1.1.0
+
+### Minor Changes
+
+- [#166](https://github.com/jantimon/web-performance-debugger/pull/166) [`6e84b40`](https://github.com/jantimon/web-performance-debugger/commit/6e84b4034bc52e98fcf00d67bcb9f05a410ee167) - Clearer errors and a tidier `query spans` contract.
+
+  - A module missing its `run` export now gets a message naming the module and the one-line fix (`export async function run(ctx) { ... }`), instead of the placeholder `'run' / 'run' export`.
+  - Every verb honors `WPD_DEBUG=1`: the message always prints, and the full stack follows when the env is set. The one-line message trails the ` (set WPD_DEBUG=1 ...)` hint so a caller reading only the last stderr line still sees the real error.
+  - A trace wpd cannot parse now says so as a capture fault ("re-record; file an issue"), keeping the mechanical detail.
+  - `query get <id>` on a missing id points at `query events`.
+  - JSON contract: `query span`'s `forced[]` read-sites move from the `at: "file:line:col"` string to structured `{ source, line, column }`, matching `query blame --forced`. `query spans` rows gain a compact `frameFloor: { floorMs, multiple }` when the wall is frame-floor dominated, so a consumer reads flooring off the overview instead of recomputing it.
+
+- [#168](https://github.com/jantimon/web-performance-debugger/pull/168) [`21b14bd`](https://github.com/jantimon/web-performance-debugger/commit/21b14bd7a29197adea2d4be170135a501ef80399) - React framework addon, opt-out via `--framework off|auto` (default `auto`):
+
+  - **Detection + commit counts** on the browser lanes (dev and production alike): React present/version/renderer/build from a pre-load hook, plus an exact per-step commit count. Ride the run span and each step span under `Span.addons.react`.
+  - **Node-lane server phases** (`--target node`): react-dom self-time rolled onto the stable server-phase anchors. React 19 production resolves them; React 18 production is mangled, so the fact is honestly absent.
+  - **React Performance Tracks** on chrome `--deep` dev builds (`Span.addons["react-dev"]`), classified from the `TimeStamp` events wpd already stores. A production browser build emits none, so this is absent there.
+
+  `--framework off` runs zero addon code and leaves the recording unchanged. All React logic lives behind one registry interface the core never imports through; addons only read what the capture recorded. `query span` shows a labeled `React (addon)` block; `--format json` adds an `addons` object. New public types: `ReactFacts`, `ReactDevFacts`, `SpanAddons`, `FrameworkMode`.
+
 ## 1.0.0
 
 ### Major Changes
