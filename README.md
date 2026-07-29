@@ -55,6 +55,39 @@ dominate; on a typical interaction most of the wall is `idle` (the frame wait) a
 
 Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use the short `wpd`.
 
+## At a glance
+
+- **What it does that a scorecard cannot:** decompose one real interaction, page load, or SSR render
+  into slices that tile the wall exactly (`Σ slices + idle = wall`), and name the source line, package,
+  and count behind each -- across Chrome, Firefox, and Node. Forced layout, CPU self-time, allocation,
+  and rendering counts, attributed to code, not graded.
+- **How far to trust each number:** every load-bearing figure is measured in both engines, tagged with
+  its provenance, and drift-tested in CI. [How wpd verifies its numbers](docs/verification.md).
+- **Try it now:** `npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown`
+
+## Contents
+
+- [Your first run](#your-first-run)
+- [Choose a lane: where your code runs](#choose-a-lane-where-your-code-runs)
+- [Choose a capture: what you want to know](#choose-a-capture-what-you-want-to-know)
+  - [Run groups: two questions, one workload](#run-groups-two-questions-one-workload)
+  - [Firefox and node](#firefox-and-node)
+- [Read the results](#read-the-results)
+  - [The reconciling bar, and reading idle](#the-reconciling-bar-and-reading-idle)
+  - [Forced-layout blame](#forced-layout-blame)
+  - [CPU self-time (SSR and hot loops)](#cpu-self-time-ssr-and-hot-loops)
+  - [Allocation attribution](#allocation-attribution---alloc-which-dependency-allocates)
+  - [Driving a real interaction](#driving-a-real-interaction)
+- [Repetition and CI gating](#repetition-and-ci-gating)
+  - [Gating a budget: assert, diff, cpu-diff](#gating-a-budget-assert-diff-cpu-diff)
+- [What one record writes](#what-one-record-writes)
+- [Reference](#reference)
+  - [The query verbs](#the-query-verbs)
+  - [The numbers, and how far to trust them](#the-numbers-and-how-far-to-trust-them)
+  - [What each target gives you](#what-each-target-gives-you)
+  - [Consuming the JSON](#consuming-the-json)
+- [How wpd verifies its numbers](docs/verification.md) · [Contributing](CONTRIBUTING.md) · [Driving wpd from an agent](AGENTS.md) · [Security](SECURITY.md)
+
 ## Your first run
 
 The fastest start needs no file at all: point `wpd` at a URL your dev/preview server is already
@@ -573,6 +606,17 @@ both. They usually agree; where they split — a **programmatic** `pushState` mo
 heuristic, which needs a real user interaction, ignores it — the step notes both verdicts so you see a
 route the engine's metrics will miss, rather than one number hiding the gap.
 
+**Per-route web vitals for a soft navigation (Chrome 151+).** When a driver step soft-navigates and
+Chrome's heuristic fires, the step also carries the **route transition's own** LCP, CLS, and INP in
+`step.softNav`, sliced by the soft nav's `navigationId` and anchored to the route's start (the route
+clock, not the boot clock). `softNav.routeLcp` is the route's largest paint (`tag`/`url`/`size`, and
+`routeMs` into the route); `softNav.routeCls` is the shifts that landed after the route change (the same
+session-window maximum boot CLS uses); `softNav.routeInpMs` is the worst interaction after the route —
+the click that *triggered* the route keeps the pre-nav id, so it stays in the step's main `inp` rather
+than here. It is opportunistic: a programmatic or untrusted-click route, an older Chrome, or Firefox
+fires no engine entry, so `softNav` is simply absent, never a fabricated 0. `query span <step>` prints
+the route numbers under the step; multiple soft navs in one step report the first and count the rest.
+
 **Clicking a page that never stops re-rendering.** Prefer a stable selector and `page.click('#id')`. A
 raw element handle throws `Node is detached from document` when the app re-renders between grabbing the
 node and clicking it, and `page.locator(sel).click()` can hang on its actionability wait when the page
@@ -1004,7 +1048,7 @@ For per-span numbers, `query spans --format json` gives one `UnifiedSlices` shap
 `style`, `layout`, …) across chrome/firefox/node — read that, never the multi-MB recording.
 
 Recordings are self-describing: `meta.schemaVersion` stamps the on-disk schema epoch (currently
-`"4"`), and a reader **rejects** any artifact from another epoch with a "recorded by an older wpd;
+`"5"`), and a reader **rejects** any artifact from another epoch with a "recorded by an older wpd;
 re-record" message rather than mis-parsing it into silent nulls. Numbers are rounded to 4 decimals on
 disk (the raw `.cpuprofile` stays exact); TOON encodes the same shape, read back auto-detecting the
 format. These root-level types are covered by semver; breaking field changes ship as a schema-epoch

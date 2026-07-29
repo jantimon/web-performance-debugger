@@ -3,6 +3,7 @@ import type {
   InteractionTiming,
   LayoutShift,
   NavigationKind,
+  SoftNavRoute,
   StepLcp,
   StepLoaf,
 } from "./recording.js";
@@ -75,6 +76,10 @@ export interface DriverStep {
   /** Chrome's own soft-navigation verdict (default-on Chrome 151), read opportunistically beside
    * `navigation`; absent when the engine fired no entry or the browser has no support. See shapeEngineSoftNav */
   engineSoftNav?: EngineSoftNav;
+  /** route-transition metrics (LCP-equivalent / CLS / INP on the route clock) for a step the engine
+   * soft-navigated (Chrome 151+), keyed by the soft nav's navigationId; absent when no engine soft-nav
+   * fired. See shapeSoftNavRoute. */
+  softNav?: SoftNavRoute;
   /** boot LCP, present only on a HARD-navigation step (a fresh document); see shapeLcp */
   lcp?: StepLcp;
   /** CLS (spec session-window max) for this step, with shifting elements attributed (Chrome only);

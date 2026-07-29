@@ -17,6 +17,7 @@
 · [why wpd does not flip the heuristic flag](#why-wpd-does-not-flip-the-heuristic-flag)
 · [the soft-navigation entry on Chrome 151](#the-soft-navigation-entry-on-chrome-151)
 · [what wpd stores for the engine soft-navigation](#what-wpd-stores-for-the-engine-soft-navigation)
+· [what wpd stores per soft-navigating step](#what-wpd-stores-per-soft-navigating-step)
 · [the url+timeOrigin classification](#the-urltimeorigin-classification)
 · [the ambiguity family](#the-ambiguity-family)
 · [what wpd records today](#what-wpd-records-today)
@@ -336,8 +337,8 @@ url+timeOrigin classifier), read from an in-page `soft-navigation` `PerformanceO
 step exactly like the INP/LoAF/LCP observers (`browser/driver.ts`). The stored shape keeps the fields
 per-soft-step metrics slice by: `{ count, navigationTypes ("push"/"replace"), navigationIds?,
 interactionIds? }` (`shapeEngineSoftNav`, `EngineSoftNav`). The paint identity on the entry's
-`getLargestInteractionContentfulPaint()` is out of scope here (its `element` does not serialize across
-the boundary; it is the gated per-soft-step-metrics feature below).
+`getLargestInteractionContentfulPaint()` is read separately for the route metrics below (`softNav`),
+off the retained live entry at the flush; the raw verdict here keeps only the ids that slice them.
 
 - **Opportunistic.** Registration is gated by `PerformanceObserver.supportedEntryTypes`, so an older
   Chrome or Firefox leaves the observer empty and the field ABSENT; a step the engine fired no entry for
@@ -356,11 +357,40 @@ verdicts and the known cause classes, picking no winner. The reverse split (engi
 none/hard) is surfaced too. The note is not alarmist: two definitions of a navigation, both facts.
 `query spans` stays uncluttered (it carries only the classifier's `nav` marker).
 
-The remaining piece stays out of scope, a separately-approved build:
+## What wpd stores per soft-navigating step
 
-- **Per-soft-step ICP/CLS/INP sliced by `navigationId`** is the real SPA-metrics feature. The pieces
-  measured above make it reachable; it stays gated on a trusted-interaction driver flow, since a
-  programmatic or synthetic-click route produces no entry to slice.
+Beside the verdict, a soft-navigating step carries the **route's own web vitals** in an optional
+`softNav` (`SoftNavRoute`), sliced by the soft nav's `navigationId` -- the SPA-metrics hole the entry
+shape above makes reachable. It keys STRICTLY on the ENGINE's verdict: only the `soft-navigation` entry
+carries a `navigationId`, so a step the engine fired no entry for stores no `softNav` (absent, never a
+fabricated 0), and a programmatic or untrusted-click route -- which the engine ignores -- gets none even
+though the classifier still reads it "soft". Every metric anchors to the ROUTE clock (the soft nav's
+`startTime`), kept distinct from the boot LCP/CLS on the same step.
+
+- **Route LCP-equivalent** (`routeLcp`): the route's largest paint, read off the soft-nav entry's
+  `getLargestInteractionContentfulPaint().largestContentfulPaint` -- the engine's OWN largest selection,
+  so wpd runs no manual max over the `interaction-contentful-paint` stream and needs no second observer.
+  It is read at the end-of-step flush off the RETAINED live entry, not in the observer callback, so a
+  paint that grows after the entry fires is still caught. `routeMs` is the paint time measured FROM the
+  soft nav's `startTime` (`renderTime - startTime`), named so the anchor is unambiguous; `tag`/`url`/`size`
+  are the same identifiers boot LCP keeps. A TAO-gated paint reads `renderTime` 0 by spec, so `routeMs`
+  is absent while the identity stays. Wall-tier directional.
+- **Route CLS** (`routeCls`): the `layout-shift` entries carrying the route's `navigationId` (the shifts
+  AFTER the route change, which the engine stamps with the new id), scored by the SAME spec session-window
+  maximum as boot CLS (`computeLayoutShift`, reused). A pre-nav shift carries the old id and is excluded.
+- **Route INP** (`routeInpMs` + `routeInteraction`): the `event`-timing entries carrying the route's
+  `navigationId` -- the interactions AFTER the route change. **The interaction that TRIGGERED the soft
+  nav carries the PRE-nav id** (the interaction precedes the navigation), so slicing by the route id
+  excludes it; it stays in the step's main `inpMs`, never double-counted here.
+
+Multiple soft navs in one step report the FIRST and count the rest in `additionalSoftNavs`, rather than
+inventing an aggregation across two distinct routes. Entry delivery is hardened the same way boot LCP is:
+on a soft-classified step the end-of-step flush drains `takeRecords()` and waits a bounded number of
+frames (`LCP_ENTRY_WAIT_MS`) for the `soft-navigation` entry to queue, all AFTER the step's end mark, so
+it never grows the measured window and absence stays absence. `query span` prints the three under the
+step's own metrics, labelled as the route transition's numbers on the route clock; `query spans` is
+untouched. Chrome 151+ only; Firefox/node and older Chrome carry no `softNav` (`shapeSoftNavRoute`,
+`browser/driver.ts`).
 
 ## The url+timeOrigin classification
 

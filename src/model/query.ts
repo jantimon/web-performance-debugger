@@ -18,6 +18,7 @@ import type {
   LayoutShift,
   NavigationKind,
   FlushScope,
+  SoftNavRoute,
   SpanAggregation,
   SpanCounts,
   SpanKind,
@@ -484,6 +485,9 @@ export interface SpanAnatomy {
    * report prints, exposed to `--format json`; absent when there is nothing to reconcile ("none"). See
    * model/soft-nav.ts. */
   softNavAgreement?: SoftNavVerdict;
+  /** route-transition metrics (LCP-equivalent / CLS / INP on the route clock) for a step the engine
+   * soft-navigated (Chrome 151+), keyed by the soft nav's navigationId; absent otherwise. See SoftNavRoute. */
+  softNav?: SoftNavRoute;
   /** boot LCP for a step that started a fresh document (a hard-navigation step); absent otherwise */
   lcp?: StepLcp;
   /** CLS (spec session-window max) with shifting elements attributed, for a driver step (Chrome only);
@@ -556,6 +560,9 @@ export interface GroupSpanStitch {
   /** how the classifier and the engine soft-nav verdict relate (see SpanAnatomy.softNavAgreement);
    * absent when there is nothing to reconcile */
   softNavAgreement?: SoftNavVerdict;
+  /** route-transition metrics for a soft-navigating step (from whichever member observed them); absent
+   * when no engine soft-nav fired. See SoftNavRoute. */
+  softNav?: SoftNavRoute;
   /** boot LCP for a hard-navigation step (identical across members); absent otherwise */
   lcp?: StepLcp;
   /** CLS (spec session-window max) with shifting elements attributed, from whichever member observed it

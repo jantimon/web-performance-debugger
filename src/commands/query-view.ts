@@ -6,6 +6,7 @@ import type {
   LayoutShiftRect,
   NavigationKind,
   RecordingMeta,
+  SoftNavRoute,
   Span,
   SpanScope,
   StepLcp,
@@ -145,6 +146,59 @@ function printLayoutShift(layoutShift: LayoutShift): void {
 }
 
 /**
+ * The route-transition block for `query span`: a soft-navigating step's LCP-equivalent, CLS, and worst
+ * post-route interaction, all on the ROUTE clock (anchored to the soft nav's startTime), clearly labelled
+ * as the route's own numbers and kept distinct from the boot LCP/CLS above. Chrome 151+ only.
+ */
+function printSoftNavRoute(softNav: SoftNavRoute): void {
+  const extra = softNav.additionalSoftNavs
+    ? dim(` (+${softNav.additionalSoftNavs} more soft nav(s) this step, first shown)`)
+    : "";
+  console.log(
+    `\nRoute transition (${bold(softNav.navigationType || "soft nav")}, nav ${softNav.navigationId}` +
+      `${softNav.url ? ` -> ${softNav.url}` : ""}; on the route clock)${extra}`,
+  );
+  if (softNav.routeLcp) {
+    const lcp = softNav.routeLcp;
+    const identity = `${lcp.tag ?? "(element)"}${lcp.url ? ` ${lcp.url}` : ""}`;
+    const parts: string[] = [];
+    if (lcp.routeMs != null) parts.push(`${num(lcp.routeMs, 1)} ms into the route`);
+    if (lcp.size != null) parts.push(`size ${lcp.size}`);
+    console.log(
+      `  route LCP (interaction-contentful-paint; wall-tier directional): ${bold(identity)}` +
+        (parts.length ? dim(` (${parts.join(" · ")})`) : ""),
+    );
+  }
+  if (softNav.routeCls) {
+    console.log(
+      `  route CLS (spec session-window max; wall-tier directional): ${bold(num(softNav.routeCls.cls, 4))}` +
+        dim(
+          ` (${softNav.routeCls.shiftCount} shift(s), ${softNav.routeCls.windowCount} window(s))`,
+        ),
+    );
+    for (const source of softNav.routeCls.sources)
+      console.log(dim(`    ${source.node}  score ${num(source.score, 4)}`));
+  }
+  if (softNav.routeInpMs != null) {
+    const split = softNav.routeInteraction
+      ? dim(
+          `  (input ${num(softNav.routeInteraction.inputDelayMs, 1)} · ` +
+            `processing ${num(softNav.routeInteraction.processingMs, 1)} · ` +
+            `presentation ${num(softNav.routeInteraction.presentationDelayMs, 1)} ms)`,
+        )
+      : "";
+    console.log(
+      `  worst post-route interaction (INP): ${bold(`${num(softNav.routeInpMs, 1)} ms`)}${split}`,
+    );
+  }
+  console.log(
+    dim(
+      "  the triggering interaction carries the pre-nav id, so it stays in the step's INP above, not here",
+    ),
+  );
+}
+
+/**
  * A compact dim suffix naming a forced flush's scope for a blame/forced row's source cell: layout
  * objects relaid out over the document total, elements recalculated, and a contained flush's root.
  * "" when the row carries no scope (the sampled --breakdown/firefox lanes). Chrome --deep only.
@@ -254,6 +308,7 @@ export function printSpanAnatomy(
   );
   if (anatomy.lcp) printStepLcp(anatomy.lcp);
   if (anatomy.layoutShift) printLayoutShift(anatomy.layoutShift);
+  if (anatomy.softNav) printSoftNavRoute(anatomy.softNav);
 
   // The reconciling bar, when the capture mode built one. A stored bar prints the seven-slice per-span
   // table; a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled).
@@ -538,6 +593,7 @@ export function printGroupSpanStitch(stitch: GroupSpanStitch): void {
   printStepNavigation(stitch.navigation, stitch.beforeUrl, stitch.afterUrl, stitch.engineSoftNav);
   if (stitch.lcp) printStepLcp(stitch.lcp);
   if (stitch.layoutShift) printLayoutShift(stitch.layoutShift);
+  if (stitch.softNav) printSoftNavRoute(stitch.softNav);
 
   if (stitch.inpMs != null || stitch.interaction) {
     const inp = stitch.inpMs == null ? "—" : `${num(stitch.inpMs)} ms`;

@@ -295,6 +295,68 @@ export interface EngineSoftNav {
 }
 
 /**
+ * The route's LCP-equivalent for a soft-navigating step: Chrome's `interaction-contentful-paint`, read
+ * off the soft-nav entry's `getLargestInteractionContentfulPaint().largestContentfulPaint` (the engine's
+ * own largest selection for the route, so no manual max over ICP entries). Wall-tier directional, same
+ * trust tier as boot LCP. The identifiers to trust across a production build are `url` + `size` + `tag`
+ * (an SVG-image hero and a text paint have no `url`). See SoftNavRoute and docs/dev/navigation-and-lcp.md.
+ */
+export interface SoftNavRouteLcp {
+  /**
+   * The route's largest contentful paint time, ms measured FROM the soft nav's `startTime` (the ROUTE
+   * clock, not the document time origin), so it reads as "this far into the route". Absent when the
+   * paint carried no usable render time (a genuinely TAO-gated resource reads 0 by spec, or no paint).
+   */
+  routeMs?: number;
+  /** the paint element's tag (e.g. "IMG", "P"); the identifier that survives a production build */
+  tag?: string;
+  /** the LCP resource url (an image); absent for a text paint or an SVG-image hero Chrome does not score */
+  url?: string;
+  /** the entry's intrinsic size (px^2); absent when 0 */
+  size?: number;
+}
+
+/**
+ * The route-transition metrics for a soft-navigating driver step (Chrome 151+ only), keyed by the
+ * engine soft navigation's `navigationId`. Present ONLY where Chrome's own heuristic fired a
+ * `soft-navigation` entry (a trusted interaction + a same-document history change + a contentful paint),
+ * so it keys strictly on the ENGINE's verdict -- the only signal that carries a `navigationId` to slice
+ * the metrics by. A step with no engine soft-nav entry carries none (absent, never a fabricated 0); this
+ * is a THIRD fact beside `navigation` (the classifier) and `engineSoftNav` (the raw verdict), never in
+ * place of either. Every metric here is on the ROUTE clock (anchored to the soft nav's `startTime`),
+ * NOT the boot clock. When more than one soft nav fired in the step, the FIRST is reported and the rest
+ * counted in `additionalSoftNavs` rather than aggregated. See docs/dev/navigation-and-lcp.md.
+ */
+export interface SoftNavRoute {
+  /** the soft nav's numeric `navigationId`, the key every route metric below is sliced by */
+  navigationId: number;
+  /** the history op the engine attributed ("push"/"replace") */
+  navigationType: string;
+  /** the route's URL (`entry.name`); absent when the entry carried none */
+  url?: string;
+  /** the route's LCP-equivalent (interaction-contentful-paint), on the route clock; absent when no route
+   * paint was observed */
+  routeLcp?: SoftNavRouteLcp;
+  /**
+   * The route's CLS: the `layout-shift` entries carrying this `navigationId` (the shifts AFTER the route
+   * change), scored by the same spec session-window maximum as boot CLS (`computeLayoutShift`). Absent
+   * when no qualifying post-route shift was observed. See LayoutShift.
+   */
+  routeCls?: LayoutShift;
+  /**
+   * The worst interaction AFTER the route change: the `event`-timing entries carrying this `navigationId`
+   * only. The interaction that TRIGGERED the soft nav carries the PRE-nav id, so it stays in the step's
+   * main `inpMs` and is excluded here. Absent when no post-route interaction crossed the 16ms floor.
+   */
+  routeInpMs?: number;
+  /** in-page CWV split of `routeInpMs`; absent when no post-route interaction was observed */
+  routeInteraction?: InteractionTiming;
+  /** further soft navs the engine fired in the same step, counted not aggregated (the FIRST is reported
+   * above). Absent when the step had exactly one. */
+  additionalSoftNavs?: number;
+}
+
+/**
  * The seven work slices of a span, plus idle. Every slice is main-thread self-time from the TRACE
  * (children subtracted from parents), so they never overlap; `idle` is the window remainder. The
  * `js` slice alone is subdivided by package, from the CPU samples that landed inside its self-time
@@ -585,6 +647,14 @@ export interface Span {
    * See LayoutShift.
    */
   layoutShift?: LayoutShift;
+  /**
+   * Route-transition metrics (LCP-equivalent / CLS / INP on the route clock) for a step that SOFT-navigated
+   * on Chrome 151+, keyed by the engine soft nav's `navigationId`. Present only where Chrome's own
+   * heuristic fired an entry (a trusted-interaction route); absent on a step with no engine soft-nav
+   * (a programmatic or untrusted navigation, older Chrome, Firefox/node), run/measure spans, and older
+   * recordings. Never a fake 0. Distinct from `engineSoftNav` (the raw verdict). See SoftNavRoute.
+   */
+  softNav?: SoftNavRoute;
   /**
    * Per-iteration wall samples in run order (a driver step under --iterations, or a bench run). Raw,
    * not just the aggregate: a median hides the bimodality that says "the first iteration was cold".
