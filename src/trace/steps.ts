@@ -2,6 +2,7 @@ import type { DriverStep } from "../model/driver-step.js";
 import type { StepWindow } from "./parse.js";
 import type {
   BenchStats,
+  EngineSoftNav,
   InteractionTiming,
   LayoutShift,
   NavigationKind,
@@ -59,6 +60,12 @@ export interface MergedStep {
   navigation?: NavigationKind;
   beforeUrl?: string;
   afterUrl?: string;
+  /**
+   * Chrome's own soft-navigation verdict from the FIRST timed iteration (iterations replay the same
+   * flow, so the engine fires the same verdict each time). Opportunistic and Chrome-only; absent when
+   * no entry fired or the browser has no support. See EngineSoftNav.
+   */
+  engineSoftNav?: EngineSoftNav;
   /**
    * Boot LCP for a hard-navigation step, grown across the timed iterations: identity from the
    * lower-median-by-render-time occurrence, `perIteration` the render-time series (null where an
@@ -370,6 +377,7 @@ export function mergeSteps(
       // counts/LoAF windowing: a URL pair and a nav kind cannot be medianed, and the flow replays the
       // same navigation every iteration, so iteration 0's is the honest representative.
       ...(first.navigation ? { navigation: first.navigation } : {}),
+      ...(first.engineSoftNav ? { engineSoftNav: first.engineSoftNav } : {}),
       ...(first.beforeUrl != null ? { beforeUrl: first.beforeUrl } : {}),
       ...(first.afterUrl != null ? { afterUrl: first.afterUrl } : {}),
       // LCP grows across iterations (each boots a fresh document, capturing its own entry); CLS comes

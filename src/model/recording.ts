@@ -365,6 +365,31 @@ export interface LayoutShift {
 }
 
 /**
+ * The soft-navigation verdict Chrome's OWN heuristic emitted during a driver step's window, read from
+ * an in-page `soft-navigation` PerformanceObserver (default-on from Chrome 151, the WICG Soft
+ * Navigations API). It is a SECOND, independent fact recorded BESIDE `navigation` (the always-available
+ * url+timeOrigin classifier), never in place of it. Present only where the engine actually fired an
+ * entry; absent on a browser without support (older Chrome, Firefox) and where no entry fired -- the
+ * `Measured` rule, absent means not observed, never a fabricated 0. wpd reads it OPPORTUNISTICALLY and
+ * never forces `--enable-features` to obtain it. The engine detects a soft navigation only from a
+ * trusted interaction + a same-document history change + a contentful paint, so a programmatic history
+ * change or an untrusted synthetic click fires none even when the URL moved. See
+ * docs/dev/navigation-and-lcp.md and model/soft-nav.ts (the classifier-vs-engine agreement).
+ */
+export interface EngineSoftNav {
+  /** soft-navigation entries the engine fired in the step window (>= 1 when present) */
+  count: number;
+  /** each entry's `navigationType` ("push"/"replace"): the history op the engine attributed */
+  navigationTypes: string[];
+  /** each entry's numeric `navigationId` (Chrome 151); the id per-soft-step metrics slice by. Absent
+   * on a build that did not populate it. */
+  navigationIds?: number[];
+  /** each entry's `interactionId`: the trusted interaction the engine tied the route to. Absent on a
+   * build that did not populate it. */
+  interactionIds?: number[];
+}
+
+/**
  * The seven work slices of a span, plus idle. Every slice is main-thread self-time from the TRACE
  * (children subtracted from parents), so they never overlap; `idle` is the window remainder. The
  * `js` slice alone is subdivided by package, from the CPU samples that landed inside its self-time
@@ -623,6 +648,13 @@ export interface Span {
   /** the URL the step ended on (`page.url()` at the end mark). Never assume it is the next step's
    * beforeUrl: a replaceState can fire between steps, so each step's pair is self-contained. */
   afterUrl?: string;
+  /**
+   * Chrome's own soft-navigation verdict for this step (default-on Chrome 151), read opportunistically
+   * beside `navigation`. Absent on a browser without the entry type (older Chrome, Firefox/node steps),
+   * on a step the engine fired no entry for, on run/measure spans, and on older recordings. Never a
+   * fake 0. See EngineSoftNav and model/soft-nav.ts.
+   */
+  engineSoftNav?: EngineSoftNav;
   /**
    * Boot LCP for a step that started a fresh document (the built-in load step, or a HARD-navigation
    * step); absent on soft/none steps, where LCP is structurally frozen (never a fake 0). Wall-tier

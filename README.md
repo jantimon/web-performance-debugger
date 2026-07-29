@@ -564,6 +564,15 @@ documents, and one `performance.now` clock cannot measure across them. Record wi
 `--deep` to price it — those windows sit on the trace clock, which does span the swap. The counts, bar,
 and boot LCP are unaffected.
 
+**How a step is classified, and the engine's own verdict.** Every driver step is labelled
+`none`/`hard`/`soft`/`soft-hash` from two reads it already takes — the URL and the document clock — so
+an SPA route change shows up as `soft` on any browser. On a Chrome that ships the Soft Navigations API
+(151+, default-on) wpd *also* reads Chrome's own soft-navigation verdict, opportunistically: no flags,
+no change to the browser, and nothing recorded where the engine stays silent. `query span <step>` shows
+both. They usually agree; where they split — a **programmatic** `pushState` moves the URL but Chrome's
+heuristic, which needs a real user interaction, ignores it — the step notes both verdicts so you see a
+route the engine's metrics will miss, rather than one number hiding the gap.
+
 **Clicking a page that never stops re-rendering.** Prefer a stable selector and `page.click('#id')`. A
 raw element handle throws `Node is detached from document` when the app re-renders between grabbing the
 node and clicking it, and `page.locator(sel).click()` can hang on its actionability wait when the page

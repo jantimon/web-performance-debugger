@@ -12,6 +12,7 @@ import { waitForStable } from "./until.js";
 import { duplicateLabelError } from "../trace/steps.js";
 import type { DriverStep } from "../model/driver-step.js";
 import type {
+  EngineSoftNav,
   InteractionTiming,
   LayoutShift,
   LayoutShiftSource,
@@ -387,6 +388,41 @@ export function computeLayoutShift(entries: RawLayoutShiftEntry[]): LayoutShift 
   };
 }
 
+/** One `soft-navigation` entry, serialized in-page (Chrome 151+ Soft Navigations API). */
+export interface RawSoftNavEntry {
+  /** the route's URL (`entry.name`) */
+  url: string;
+  /** "push" or "replace": the history op the engine attributed */
+  navigationType: string;
+  /** the numeric `navigationId` per-soft-step metrics slice by */
+  navigationId: number;
+  /** the `interactionId` of the trusted interaction the engine tied the route to */
+  interactionId: number;
+}
+
+/**
+ * Shape the raw `soft-navigation` entries observed in a step's window into the stored `EngineSoftNav`,
+ * Chrome's own verdict beside the url+timeOrigin classifier. Returns null when none fired (no support,
+ * or no trusted-interaction route in the window), so the caller stores nothing rather than a fabricated
+ * zero -- absence stays absence. Keeps only the fields per-soft-step metrics slice by: the history op,
+ * the numeric navigationId, and the interaction the engine tied the route to; each id array is dropped
+ * when the build populated none of it.
+ */
+export function shapeEngineSoftNav(raw: RawSoftNavEntry[]): EngineSoftNav | null {
+  if (!raw.length) return null;
+  const navigationTypes = raw.map((entry) => entry.navigationType).filter((type) => !!type);
+  const navigationIds = raw.map((entry) => entry.navigationId).filter((id) => Number.isFinite(id));
+  const interactionIds = raw
+    .map((entry) => entry.interactionId)
+    .filter((id) => Number.isFinite(id) && id > 0);
+  return {
+    count: raw.length,
+    navigationTypes,
+    ...(navigationIds.length ? { navigationIds } : {}),
+    ...(interactionIds.length ? { interactionIds } : {}),
+  };
+}
+
 /** A timed iteration failed partway and --keep-partial salvaged the ones that completed. */
 export interface PartialRun {
   /** iterations the caller asked for */
@@ -699,6 +735,39 @@ export async function runDriver(
   await page.evaluateOnNewDocument(installLayoutShiftObserver);
   await page.evaluate(installLayoutShiftObserver);
 
+  // Observe Chrome's own soft-navigation heuristic so a step carries the engine's verdict BESIDE the
+  // url+timeOrigin classifier. Same re-arm-on-navigation install as the other observers. OPPORTUNISTIC:
+  // `supportedEntryTypes` gates registration, so an older Chrome or Firefox (no `soft-navigation` type)
+  // leaves `win.__cpSoftNav` [] and the step stores nothing (never a fake zero, never a forced
+  // `--enable-features`). The entry is default-on from Chrome 151. A `PerformanceSoftNavigation`'s
+  // fields are read explicitly (its `element`-bearing LICP method is not serializable across the
+  // boundary and is out of scope here): the route URL, the history op, and the ids that slice metrics.
+  const installSoftNavObserver = () => {
+    const win = window as any;
+    win.__cpSoftNav = [];
+    const supported =
+      typeof PerformanceObserver !== "undefined" &&
+      (PerformanceObserver.supportedEntryTypes || []).includes("soft-navigation");
+    if (!supported) return;
+    try {
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const softNav = entry as any;
+          win.__cpSoftNav.push({
+            url: softNav.name || "",
+            navigationType: softNav.navigationType || "",
+            navigationId: typeof softNav.navigationId === "number" ? softNav.navigationId : NaN,
+            interactionId: typeof softNav.interactionId === "number" ? softNav.interactionId : NaN,
+          });
+        }
+      }).observe({ type: "soft-navigation", buffered: true } as any);
+    } catch {
+      /* soft-navigation unsupported */
+    }
+  };
+  await page.evaluateOnNewDocument(installSoftNavObserver);
+  await page.evaluate(installSoftNavObserver);
+
   // Frame-health gate, before any user action. Chrome's built-in headless can come up with a dead
   // compositor BeginFrame source (permanent, browser-wide), which would hang ANY rAF-based wait in
   // the flow -- a settle, or a user `page.waitForFunction` whose default polling is rAF -- to the
@@ -768,6 +837,7 @@ export async function runDriver(
       (window as any).__cpLoaf = [];
       (window as any).__cpLcp = [];
       (window as any).__cpLs = [];
+      (window as any).__cpSoftNav = [];
     });
     const startClock = await stepClock(`wpd:step:${stepMark}:start`);
     // page.url() is CDP-free (Puppeteer reads it off the page handle). Read it at both marks so the
@@ -796,6 +866,7 @@ export async function runDriver(
           loaf: RawLoafFrame[];
           lcp: RawLcpEntry[];
           ls: RawLayoutShiftEntry[];
+          softNav: RawSoftNavEntry[];
         }>((resolve) => {
           const win = window as any;
           const drainLcp = () => {
@@ -806,6 +877,7 @@ export async function runDriver(
             loaf: (win.__cpLoaf as RawLoafFrame[]) ?? [],
             lcp: (win.__cpLcp as RawLcpEntry[]) ?? [],
             ls: (win.__cpLs as RawLayoutShiftEntry[]) ?? [],
+            softNav: (win.__cpSoftNav as RawSoftNavEntry[]) ?? [],
           });
           let done = false;
           const finish = () => {
@@ -846,9 +918,13 @@ export async function runDriver(
       loaf: RawLoafFrame[];
       lcp: RawLcpEntry[];
       ls: RawLayoutShiftEntry[];
+      softNav: RawSoftNavEntry[];
     };
     const observed = flushed.inp;
     const loaf = summarizeLoaf(flushed.loaf);
+    // The engine's own soft-navigation verdict for this window, opportunistic and beside `navigation`:
+    // present only where Chrome fired an entry (a trusted-interaction route on 151+), null otherwise.
+    const engineSoftNav = shapeEngineSoftNav(flushed.softNav);
     // CLS: the spec session-window maximum over the shifts observed in this step's window, with the
     // shifting elements attributed. Chrome-only (the observer stays empty on Firefox); a step with no
     // qualifying shift stores nothing (null), never a fake 0. The boot/load step is where it shows: a
@@ -884,6 +960,7 @@ export async function runDriver(
       navigation,
       beforeUrl,
       afterUrl,
+      ...(engineSoftNav ? { engineSoftNav } : {}),
       ...(lcp ? { lcp } : {}),
       ...(layoutShift ? { layoutShift } : {}),
     });

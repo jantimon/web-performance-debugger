@@ -1,5 +1,6 @@
 import type {
   CpuModel,
+  EngineSoftNav,
   FlushScope,
   LayoutShift,
   LayoutShiftRect,
@@ -9,6 +10,7 @@ import type {
   SpanScope,
   StepLcp,
 } from "../model/recording.js";
+import { classifySoftNavAgreement } from "../model/soft-nav.js";
 import type {
   GroupSpanStitch,
   SpanAnatomy,
@@ -46,22 +48,29 @@ function navMarker(navigation: NavigationKind | undefined): string {
   return navigation && navigation !== "none" ? dim(` [nav: ${navigation}]`) : "";
 }
 
-/** The step's navigation line for `query span`: the classification and its before -> after URLs. */
+/**
+ * The step's navigation line for `query span`: the url+timeOrigin classification with its before ->
+ * after URLs, then (where present) Chrome's own soft-navigation verdict beside it. The two are
+ * independent facts; where they disagree the note states both and picks no winner (model/soft-nav.ts).
+ */
 function printStepNavigation(
   navigation: NavigationKind | undefined,
   beforeUrl: string | undefined,
   afterUrl: string | undefined,
+  engineSoftNav: EngineSoftNav | undefined,
 ): void {
   if (!navigation) return;
   if (navigation === "none") {
     console.log(
       `\nNavigation: ${bold("none")}${beforeUrl ? dim(` (stayed on ${beforeUrl})`) : ""}`,
     );
-    return;
+  } else {
+    console.log(
+      `\nNavigation: ${bold(navigation)} ${dim(`(${beforeUrl ?? "?"} -> ${afterUrl ?? "?"})`)}`,
+    );
   }
-  console.log(
-    `\nNavigation: ${bold(navigation)} ${dim(`(${beforeUrl ?? "?"} -> ${afterUrl ?? "?"})`)}`,
-  );
+  const verdict = classifySoftNavAgreement(navigation, engineSoftNav);
+  if (verdict.note) console.log(dim(`  engine soft-nav: ${verdict.note}`));
 }
 
 /** The boot-LCP block for `query span` (wall-tier directional, frozen at the first trusted input). */
@@ -237,7 +246,12 @@ export function printSpanAnatomy(
   }
 
   // A driver step's navigation (what its document did) and, on a hard navigation, its boot LCP.
-  printStepNavigation(anatomy.navigation, anatomy.beforeUrl, anatomy.afterUrl);
+  printStepNavigation(
+    anatomy.navigation,
+    anatomy.beforeUrl,
+    anatomy.afterUrl,
+    anatomy.engineSoftNav,
+  );
   if (anatomy.lcp) printStepLcp(anatomy.lcp);
   if (anatomy.layoutShift) printLayoutShift(anatomy.layoutShift);
 
@@ -521,7 +535,7 @@ export function printGroupSpanStitch(stitch: GroupSpanStitch): void {
   );
   if (stitch.scope) printSpanScope(stitch.scope);
 
-  printStepNavigation(stitch.navigation, stitch.beforeUrl, stitch.afterUrl);
+  printStepNavigation(stitch.navigation, stitch.beforeUrl, stitch.afterUrl, stitch.engineSoftNav);
   if (stitch.lcp) printStepLcp(stitch.lcp);
   if (stitch.layoutShift) printLayoutShift(stitch.layoutShift);
 

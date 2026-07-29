@@ -16,6 +16,7 @@
 · [soft navigations: standards status](#soft-navigations-standards-status)
 · [why wpd does not flip the heuristic flag](#why-wpd-does-not-flip-the-heuristic-flag)
 · [the soft-navigation entry on Chrome 151](#the-soft-navigation-entry-on-chrome-151)
+· [what wpd stores for the engine soft-navigation](#what-wpd-stores-for-the-engine-soft-navigation)
 · [the url+timeOrigin classification](#the-urltimeorigin-classification)
 · [the ambiguity family](#the-ambiguity-family)
 · [what wpd records today](#what-wpd-records-today)
@@ -328,13 +329,35 @@ The last two rows are the false-negative class: the classifier reads a URL chang
 `timeOrigin` as soft, while the engine, seeing no trusted interaction, records nothing. A recording
 that carries both verdicts should surface the disagreement, not silently pick one.
 
-**Integration verdicts as they stand:**
+## What wpd stores for the engine soft-navigation
 
-- **Read the soft-navigation entry opportunistically, where present** (Chrome 151+); keep
-  url+timeOrigin as the always-available classifier and fallback (older Chrome, Firefox, programmatic
-  navs). Buildable now.
-- **Record both verdicts and note the disagreement** (engine heuristic vs url+timeOrigin), the
-  count-disagreement pattern. Buildable now.
+A driver step carries the engine's own verdict in an optional `engineSoftNav`, BESIDE `navigation` (the
+url+timeOrigin classifier), read from an in-page `soft-navigation` `PerformanceObserver` injected per
+step exactly like the INP/LoAF/LCP observers (`browser/driver.ts`). The stored shape keeps the fields
+per-soft-step metrics slice by: `{ count, navigationTypes ("push"/"replace"), navigationIds?,
+interactionIds? }` (`shapeEngineSoftNav`, `EngineSoftNav`). The paint identity on the entry's
+`getLargestInteractionContentfulPaint()` is out of scope here (its `element` does not serialize across
+the boundary; it is the gated per-soft-step-metrics feature below).
+
+- **Opportunistic.** Registration is gated by `PerformanceObserver.supportedEntryTypes`, so an older
+  Chrome or Firefox leaves the observer empty and the field ABSENT; a step the engine fired no entry for
+  stores nothing. Absent means not observed, never a fabricated 0 (the `Measured` rule). wpd never
+  forces `--enable-features=SoftNavigationHeuristics`: it reads the entry only where the browser already
+  offers it (Chrome 151+, default-on), so it never alters the browser under test.
+- **The url+timeOrigin classifier is unchanged and stays the always-available answer** (Firefox, older
+  Chrome, programmatic navs). `engineSoftNav` is a second, independent fact recorded beside it.
+
+`query span` reconciles the two through the pure `classifySoftNavAgreement` (`model/soft-nav.ts`): the
+four cells of {engine fired?} x {classifier soft?}. Where they agree, the step notes a quiet
+engine-confirmed line. Where they split -- the classifier reads a URL change with an unchanged
+`timeOrigin` as soft while the engine, seeing no trusted interaction, records nothing (the
+programmatic-nav / untrusted-click / no-qualifying-paint class) -- it prints a compact note stating BOTH
+verdicts and the known cause classes, picking no winner. The reverse split (engine fired, classifier
+none/hard) is surfaced too. The note is not alarmist: two definitions of a navigation, both facts.
+`query spans` stays uncluttered (it carries only the classifier's `nav` marker).
+
+The remaining piece stays out of scope, a separately-approved build:
+
 - **Per-soft-step ICP/CLS/INP sliced by `navigationId`** is the real SPA-metrics feature. The pieces
   measured above make it reachable; it stays gated on a trusted-interaction driver flow, since a
   programmatic or synthetic-click route produces no entry to slice.

@@ -1635,6 +1635,87 @@ e2e("driver flow: step navigation classification + boot LCP on the hard-nav step
   }
 });
 
+// Opportunistic engine soft-navigation verdict + the classifier-disagreement note. On the bundled
+// Chrome 151 the `soft-navigation` entry type is default-on, so a TRUSTED driver click that drives a
+// same-document pushState + a contentful paint fires an engine entry: the step carries `engineSoftNav`
+// (navigationType "push") AND the url+timeOrigin classifier reads "soft" -> they AGREE. A PROGRAMMATIC
+// pushState step (page.evaluate, no trusted interaction) fires no engine entry -- the probe-verified
+// false-negative class -- so the field stays ABSENT while the classifier still reads "soft", and
+// `query span` surfaces the disagreement note. No --enable-features anywhere: opportunistic. The
+// fixture's button handler streams contentful text so the heuristic sees a paint after the interaction.
+const SOFTNAV_SPA_HTML =
+  "<!doctype html><meta charset=utf-8><title>softnav-spa</title>" +
+  "<button id=go>go</button><div id=app></div>" +
+  "<script>const app=document.getElementById('app');" +
+  "document.getElementById('go').addEventListener('click',()=>{" +
+  "history.pushState({},'','/clicked');" +
+  "for(let index=0;index<20;index++){const para=document.createElement('p');" +
+  "para.textContent='route content line '+index;para.style.fontSize='24px';app.appendChild(para);}});" +
+  "<\/script>";
+e2e("driver flow: opportunistic engine soft-nav verdict (agree) + the classifier-disagreement note", { timeout: TIMEOUT_MS }, () => {
+  const server = startOnrampServer(SOFTNAV_SPA_HTML, "127.0.0.1");
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const flow = path.join(dir, "softnav-flow.mjs");
+  // Step "route": a TRUSTED page.click drives pushState + a contentful paint (engine fires). Step
+  // "programmatic": an UNTRUSTED page.evaluate pushState + DOM change (engine fires nothing), the
+  // disagreement case. Both are same-document (timeOrigin holds), so the classifier reads both "soft".
+  writeFileSync(
+    flow,
+    `export async function run({ page, measureStep }) {
+       await measureStep("route", () => page.click("#go"));
+       await measureStep("programmatic", () => page.evaluate(() => {
+         history.pushState({}, "", "/prog");
+         const app = document.getElementById("app");
+         for (let index = 0; index < 20; index++) {
+           const para = document.createElement("p");
+           para.textContent = "programmatic line " + index;
+           para.style.fontSize = "24px";
+           app.appendChild(para);
+         }
+       }));
+     }`,
+  );
+  try {
+    const out = path.join(dir, "softnav");
+    runCli(["record", flow, "--url", server.url, "--out", out]);
+    const rec = JSON.parse(readFileSync(out, "utf8"));
+    const route = rec.spans.find((span) => span.kind === "step" && span.label === "route");
+    const prog = rec.spans.find((span) => span.kind === "step" && span.label === "programmatic");
+    assert.ok(route && prog, "both steps are recorded");
+
+    // AGREE path: the trusted click is a soft route on both verdicts.
+    assert.equal(route.navigation, "soft", "the click's pushState is a same-document soft route");
+    assert.ok(route.engineSoftNav, "the engine fired a soft-navigation entry for the trusted click");
+    assert.ok(route.engineSoftNav.count >= 1, "the engine verdict carries at least one entry");
+    assert.ok(
+      route.engineSoftNav.navigationTypes.includes("push"),
+      `the engine attributed a pushState (got ${JSON.stringify(route.engineSoftNav.navigationTypes)})`,
+    );
+
+    // DISAGREEMENT path: the classifier still reads soft, but the engine fired nothing (no trusted
+    // interaction), so the field is ABSENT -- never a fabricated zero.
+    assert.equal(prog.navigation, "soft", "the programmatic pushState is a same-document soft route");
+    assert.ok(!prog.engineSoftNav, "no engine entry for a programmatic (untrusted) navigation");
+
+    // query span surfaces both: the agree confirmation on the click step, the disagreement note on the
+    // programmatic step (stating both verdicts and the cause classes, picking no winner).
+    const routeJson = JSON.parse(runCli(["query", "span", out, "step:route", "--format", "json"]));
+    assert.ok(routeJson.engineSoftNav, "query span carries the engine soft-nav verdict on the agree path");
+    const routeHuman = runCli(["query", "span", out, "step:route"]);
+    assert.match(routeHuman, /Navigation: soft/, "the human report names the soft navigation");
+    assert.match(routeHuman, /engine soft-nav:.*agree/, "the human report notes the engine agrees");
+
+    const progJson = JSON.parse(runCli(["query", "span", out, "step:programmatic", "--format", "json"]));
+    assert.ok(!progJson.engineSoftNav, "query span omits the engine verdict where none fired");
+    const progHuman = runCli(["query", "span", out, "step:programmatic"]);
+    assert.match(progHuman, /engine soft-nav:/, "the human report carries the disagreement note");
+    assert.match(progHuman, /soft-navigation heuristic fired no entry/, "the note states the engine fired none");
+    assert.match(progHuman, /both facts/i, "the note discloses two definitions without picking a winner");
+  } finally {
+    server.close();
+  }
+});
+
 // F1/F2 regression: a --url boot navigates the blank host page (wpd serves it on 127.0.0.1) to the
 // target on a DIFFERENT SITE ("localhost"), which swaps the renderer process. wpd:run:start is marked
 // on the pre-navigation renderer; all the boot's layout/style/paint runs on the process the page
