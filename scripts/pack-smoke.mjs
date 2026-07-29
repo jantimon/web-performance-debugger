@@ -79,9 +79,12 @@ try {
   const cpuModel = out.replace(/\.json$/, ".cpu.json");
   if (!existsSync(cpuModel)) throw new Error("record --target node did not write the CPU model");
   const recording = JSON.parse(readFileSync(out, "utf8"));
-  if (recording.meta.runtime !== "node")
-    throw new Error(`expected meta.runtime "node", got ${JSON.stringify(recording.meta.runtime)}`);
-  console.log(`record --target node -> ${path.basename(out)} (runtime ${recording.meta.runtime})`);
+  if (recording.meta.workload?.lane !== "node" || recording.meta.capture !== "node-cpu")
+    throw new Error(
+      `expected a node-lane recording (workload.lane "node", capture "node-cpu"), got ` +
+        `lane ${JSON.stringify(recording.meta.workload?.lane)}, capture ${JSON.stringify(recording.meta.capture)}`,
+    );
+  console.log(`record --target node -> ${path.basename(out)} (lane ${recording.meta.workload.lane})`);
 
   // The documented root types compile against the installed package. One name per line so extending
   // this list (e.g. run-group types) as they land in the export is a one-line change.
