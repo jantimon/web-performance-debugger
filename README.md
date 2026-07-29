@@ -714,6 +714,35 @@ model's sampled window (labeled `sampled window`, JSON `source: "cpu-model"`), w
 from the sum of the timed `run()` samples. See
 [docs/dev/cpu-attribution.md](docs/dev/cpu-attribution.md#which-spans-get-cpu-attribution).
 
+### Framework addons (React)
+
+wpd stays a general profiler; framework support is an **optional addon**, on by default via
+`--framework auto` and switched off with `--framework off`. An addon only READS what the capture
+already recorded and adds facts to a span's `addons` slot; it never changes what is measured, and a run
+against an app with no detected framework carries no framework vocabulary at all. `--framework off`
+guarantees zero addon code runs.
+
+The React addon adds measured facts, never editorial. What you get depends on the build, stated
+plainly:
+
+- **Detection + commit counts work everywhere React runs (dev or production).** On the browser lanes a
+  pre-load hook reports whether React is present, its version, the renderer package, and the build
+  (`development`/`production`), plus an exact per-step **commit count** (`onCommitFiberRoot` fires once
+  per committed update). These need no sampler and no trace, so they ride every capture mode.
+- **Node-lane server phases (`--target node`) work on React 19 production, not React 18.** When the
+  CPU profile resolves react-dom's server-render frames, self-time rolls onto the stable server-phase
+  anchors (`renderWithHooks`, `renderElement`, ...). React 19 ships those names unmangled in its
+  production server build; React 18 production is mangled, so the phases are honestly **absent** there
+  (per-package attribution still holds).
+- **React Performance Tracks are dev-only, on chrome `--deep`.** A development/profiling build writes
+  `console.timeStamp` track events wpd already stores; the `react-dev` addon classifies them into
+  per-track Render/Commit/Event facts. **A production browser build emits none**, so this is absent on
+  a shipped build (as it should be) and only appears when the React addon detected a development build.
+
+The facts surface under `query span <label>` in a clearly-labeled `React (addon)` block, and additively
+in the `--format json` anatomy under `addons`. See
+[docs/dev/react-attribution.md](docs/dev/react-attribution.md).
+
 ## Repetition and CI gating
 
 ### Measuring more than once

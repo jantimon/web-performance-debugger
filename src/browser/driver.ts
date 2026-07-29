@@ -964,6 +964,10 @@ export async function runDriver(
       (window as any).__cpLcp = [];
       (window as any).__cpLs = [];
       (window as any).__cpSoftNavEntries = [];
+      // Reset any active framework-addon per-step counters (e.g. React commit count). Absent when no
+      // addon installed the channel (--framework off), so this is a no-op then.
+      const resetAddons = (window as any).__wpdAddonStepReset;
+      if (typeof resetAddons === "function") resetAddons();
     });
     const startClock = await stepClock(`wpd:step:${stepMark}:start`);
     // page.url() is CDP-free (Puppeteer reads it off the page handle). Read it at both marks so the
@@ -993,6 +997,7 @@ export async function runDriver(
           lcp: RawLcpEntry[];
           ls: RawLayoutShiftEntry[];
           softNav: RawSoftNavEntry[];
+          addonStep: Record<string, unknown> | null;
         }>((resolve) => {
           const win = window as any;
           const drainLcp = () => {
@@ -1013,6 +1018,12 @@ export async function runDriver(
               typeof win.__cpSoftNavRead === "function"
                 ? (win.__cpSoftNavRead() as RawSoftNavEntry[])
                 : [],
+            // Framework-addon per-step payload (e.g. React commit count for this step's window).
+            // Null when no addon installed the channel.
+            addonStep:
+              typeof win.__wpdAddonStepRead === "function"
+                ? (win.__wpdAddonStepRead() as Record<string, unknown>)
+                : null,
           });
           let done = false;
           const finish = () => {
@@ -1063,6 +1074,7 @@ export async function runDriver(
       lcp: RawLcpEntry[];
       ls: RawLayoutShiftEntry[];
       softNav: RawSoftNavEntry[];
+      addonStep: Record<string, unknown> | null;
     };
     const observed = flushed.inp;
     const loaf = summarizeLoaf(flushed.loaf);
@@ -1112,6 +1124,9 @@ export async function runDriver(
       ...(softNav ? { softNav } : {}),
       ...(lcp ? { lcp } : {}),
       ...(layoutShift ? { layoutShift } : {}),
+      // Framework-addon per-step payload (keyed by addon name); an addon's enrich shapes it into
+      // Span.addons. Absent when no addon installed the per-step channel.
+      ...(flushed.addonStep ? { addons: flushed.addonStep } : {}),
     });
     activeStepLabel = null;
   }

@@ -83,6 +83,10 @@ export interface PassResult {
    * "Chrome/151.0.7922.47", firefox "Firefox/152.0"). Undefined when the backend could not report it.
    * buildMeta parses the milestone off it for the comparability axis. */
   browserVersion?: string;
+  /** The run-level framework-addon probe payload read off `window.__wpdAddons` at the end of the run
+   * (keyed by addon name); undefined when no addon installed a page probe (--framework off) or the read
+   * failed. An addon's enrich shapes it into `Span.addons`. Browser lanes only (node has no page). */
+  addonPageData?: Record<string, unknown>;
 }
 
 function toServedUrl(server: StaticServer, root: string, absFile: string): string {
@@ -195,6 +199,10 @@ export async function runPass(
   absModule: string | undefined,
   maps: SourceMapResolver,
   botWall?: { allow: boolean; screenshotPath: string },
+  /** self-contained in-page install functions from the active framework addons; installed via
+   * evaluateOnNewDocument BEFORE any navigation so a probe (e.g. the React hook) is present before app
+   * code runs on every document. Empty when --framework off. */
+  addonPageInits: (() => void)[] = [],
 ): Promise<PassResult> {
   const browserName: BrowserName = opts.browser ?? "chrome";
   // No module = the built-in on-ramp flow (driver mode only). It skips the host-page pre-navigation
@@ -234,6 +242,16 @@ export async function runPass(
       }
     : undefined;
   try {
+    // Install the active framework addons' in-page probes BEFORE any navigation, so a probe (e.g. the
+    // React detection hook) is present before app code runs on every document (evaluateOnNewDocument
+    // re-arms on each navigation). Best-effort per addon: a backend that cannot preload a script must
+    // not fail the run (detection stays honestly absent instead). Also install on the current blank
+    // document. See docs/dev/react-attribution.md.
+    for (const install of addonPageInits) {
+      await page.evaluateOnNewDocument(install).catch(() => {});
+      await page.evaluate(install).catch(() => {});
+    }
+
     if (opts.cpuThrottle && client && caps.throttle)
       await applyCpuThrottle(client, opts.cpuThrottle);
 
@@ -334,6 +352,16 @@ export async function runPass(
       });
       perIteration = timed.perIteration;
       runCleanup = () => page.evaluate(runHarness, { ...harnessArg, phase: "cleanup" as const });
+    }
+
+    // Read the run-level framework-addon probe payload off the final document before the browser
+    // closes (detection metadata + cumulative commit count). Best-effort: a page that navigated away or
+    // a failed read leaves it undefined, so detection stays honestly absent. Only when an addon
+    // installed a probe.
+    let addonPageData: Record<string, unknown> | undefined;
+    if (addonPageInits.length) {
+      const raw = await page.evaluate(() => (window as any).__wpdAddons ?? null).catch(() => null);
+      if (raw && typeof raw === "object") addonPageData = raw as Record<string, unknown>;
     }
 
     // Let asynchronous paint/composite work flush before we stop tracing. [measured] This trailing
@@ -484,6 +512,7 @@ export async function runPass(
       traceDataLoss,
       botWallVerdict,
       browserVersion,
+      addonPageData,
     };
   } catch (runError) {
     // The run failed. Close the browser (which also flushes a Firefox shutdown dump) so nothing is

@@ -88,6 +88,12 @@ export interface MergedStep {
   layoutShift?: LayoutShift;
   startTs: number | null;
   endTs: number | null;
+  /**
+   * Raw per-step framework-addon probe payload from the FIRST timed iteration (keyed by addon name),
+   * matching the per-step counts windowing: it describes iteration 0's work and an addon shapes it into
+   * `Span.addons`. Absent when no addon installed a per-step probe. See DriverStep.addons.
+   */
+  addons?: Record<string, unknown>;
 }
 
 function median(samples: number[]): number {
@@ -393,6 +399,8 @@ export function mergeSteps(
       // from iteration 0, matching LoAF/counts, since its shifting-element attribution cannot be medianed.
       ...(mergedLcp ? { lcp: mergedLcp } : {}),
       ...(first.layoutShift ? { layoutShift: first.layoutShift } : {}),
+      // Addon per-step payload from iteration 0, matching the per-step counts windowing.
+      ...(first.addons ? { addons: first.addons } : {}),
       startTs: window?.startTs ?? null,
       endTs: window?.endTs ?? null,
     });

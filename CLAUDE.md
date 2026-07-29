@@ -309,6 +309,24 @@ Two things this rule is **not**, both documented in
   `commands/record.ts`): heat-colored `self %`, cyan packages, dimmed paths/source/secondary counts,
   bold headline numbers.
 
+### Framework addons (optional, isolated)
+
+Framework support (React today) is an **optional addon, never core**. All addon code lives under
+`src/addons/react/` + `src/addons/react-dev/` behind ONE narrow interface, `model/addon.ts` `Addon`
+(`{ name, pageInit?, enrich? }`), wired in `src/addons/registry.ts` `activeAddons(mode)`. The core
+(`record`/`query`/`driver`) calls addons only through that interface + `addonPageInits`/`runEnrich`; it
+imports no addon internals. `--framework off|auto` (default auto; `RecordOptions.framework`): `off`
+resolves to no addons, so no addon code runs and the recording is byte-identical to a pre-addon one.
+An addon READS what the capture recorded and attaches facts to `Span.addons` (`{ react?: ReactFacts;
+"react-dev"?: ReactDevFacts }`, fact types exported BY the addon modules, referenced from core only
+through the slot); it never changes what is captured. `pageInit` installs a browser-lane in-page probe
+before app code (the React `__REACT_DEVTOOLS_GLOBAL_HOOK__` detection hook + a per-step commit channel,
+`runpass.ts` installs it via `evaluateOnNewDocument`; the driver reads the per-step channel). `enrich`
+runs post-capture (record.ts `enrichAddons`, node.ts) over the built spans + CpuModel + event log.
+`query span` renders a labeled `React (addon)` block; `SpanAnatomy.addons` mirrors it in JSON. The
+measured facts behind the shapes are in [react-attribution.md](docs/dev/react-attribution.md); read it
+before touching the hook, the anchor allowlist, or the TimeStamp classifier.
+
 ### CPU profiling (always on wherever a chrome capture samples; no opt-out)
 
 For JS cost, the V8 sampling profiler runs bracketed around the timed window, its source set by the

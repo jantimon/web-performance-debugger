@@ -27,6 +27,8 @@ export type {
   EngineVersion,
   Recording,
   Span,
+  SpanAddons,
+  FrameworkMode,
   SpanCounts,
   FlushScope,
   SpanScope,
@@ -89,6 +91,12 @@ export type { RawCpuProfile } from "./profile/cpuprofile.js";
 
 // The `latest` pointer file (cwd-keyed, under the XDG state dir).
 export type { LastPointer } from "./commands/resolve.js";
+
+// Framework-addon fact shapes (the `Span.addons` slot). Present only when `--framework auto` (default)
+// detected the framework's factual signals; a recording of an app with no detected framework carries
+// none. See docs/dev/react-attribution.md.
+export type { ReactFacts, ReactPhaseRollup } from "./addons/react/facts.js";
+export type { ReactDevFacts, ReactTrackBucket } from "./addons/react-dev/facts.js";
 
 // Driver helpers a user's module can import. `waitForStable` is a `measureStep` `until` that waits
 // for a streamed / soft-navigating transition to finish (the default settle can end before it does).

@@ -12,6 +12,7 @@
 · [node-lane function names by version and build](#node-lane-function-names-by-react-version-and-build)
 · [framework detection metadata: the pre-load hook](#framework-detection-metadata-the-pre-load-global-hook)
 · [the anchor allowlist is fragile across majors](#the-anchor-allowlist-is-fragile-across-majors)
+· [what wpd stores today: the addon seam](#what-wpd-stores-today-the-addon-seam)
 · [what is not established yet](#what-is-not-established-yet)
 
 **Provenance.** Facts are **[measured]** on Chrome 151 (Puppeteer 25.4.0), react 19.2.8 and react
@@ -121,6 +122,41 @@ server-render anchors are stable, but two of ten client work-loop anchors **rena
 
 So a hard-coded internal-name list silently loses a fraction of its anchors on a major bump. Keep any
 such list short and re-verify it against each React major's build before trusting it.
+
+## What wpd stores today: the addon seam
+
+React support is an **optional addon**, never core. All React code lives under `src/addons/react/` and
+`src/addons/react-dev/`, behind one narrow registry interface (`src/model/addon.ts` `Addon`, wired in
+`src/addons/registry.ts`). The core (record/query/driver) calls the addons only through that interface;
+it imports no addon internals. `--framework off` runs zero addon code, and an empty registry leaves
+every recording byte-identical to one wpd wrote before addons existed. Each addon READS what the
+capture already recorded and attaches facts to a span's `addons` slot (`Span.addons`, keyed by addon
+name); it never changes what is captured.
+
+The `react` addon stores build-INDEPENDENT facts:
+
+- **Detection** (`ReactFacts.detected`/`version`/`rendererPackageName`/`build`), from the pre-load
+  `__REACT_DEVTOOLS_GLOBAL_HOOK__` mini-hook (`hook.ts`, installed via `evaluateOnNewDocument` on every
+  browser lane, before app code). `build` is `bundleType` (DEV=1 -> "development", PROD=0 ->
+  "production"), the cheapest dev/prod signal. Rides the run span. Node has no page hook, so detection
+  is absent there (never a fabricated value).
+- **Commit count** (`ReactFacts.commitCount`), from `onCommitFiberRoot`: exact-count tier,
+  build-independent. Cumulative on the run span; per-step on each driver step (its own window, read
+  through the driver's per-step channel, iteration 0).
+- **Server phases** (`ReactFacts.phases`), node lane only: react-dom self-time rolled onto the minimal
+  server-phase anchor allowlist (`phases.ts`). Absent when no anchor resolves (React 18 production is
+  mangled), with a run-level note when react-dom frames are present but unresolved.
+
+The `react-dev` addon stores dev-build-GATED facts:
+
+- **React Performance Tracks** (`ReactDevFacts`), from the persisted `TimeStamp` events (chrome
+  `--deep`), classified per span window into per-track counts + ms (`classify.ts`). Gated on the
+  `react` addon having detected a `development` build AND entries being present; absent otherwise. The
+  per-component `performance.measure` stream is a separate, richer channel `query spans` already folds,
+  so it is not duplicated.
+
+The facts surface under `query span <label>` in a labeled `React (addon)` block and additively in the
+`--format json` anatomy (`SpanAnatomy.addons`).
 
 ## What is not established yet
 

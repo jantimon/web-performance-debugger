@@ -21,6 +21,7 @@ import type {
   SoftNavRoute,
   SpanAggregation,
   SpanCounts,
+  SpanAddons,
   SpanKind,
   SpanScope,
   StepLcp,
@@ -524,6 +525,13 @@ export interface SpanAnatomy {
   firefoxDirtiedBy?: FirefoxDirtiedByReport;
   /** hot functions within this span's window; null when not reconstructable at this capture-mode/kind */
   hot: SpanHotFunctions | null;
+  /**
+   * Framework-addon facts for this span, keyed by addon name (`react`, `react-dev`). Present only when
+   * a framework addon was active (`--framework auto`) and its factual signals were present for this
+   * span; absent otherwise. Additive: a consumer that ignores it reads the anatomy exactly as before.
+   * See docs/dev/react-attribution.md.
+   */
+  addons?: SpanAddons;
   hints: string[];
 }
 

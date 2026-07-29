@@ -177,6 +177,11 @@ program
     "label this recording's technique (e.g. when one module runs several, switched by an env var), so a diff/cpu-diff --fail-on-regression gate refuses to compare two different variants",
   )
   .option(
+    "--framework <mode>",
+    "framework addons: off | auto (default auto). off runs zero addon code; auto lets factual detection decide. React: detection metadata + per-step commit counts (browser lanes), react-dom server-phase self-time rollup (node lane), and React Performance-Track facts on --deep. Every lane accepts it; an addon no-ops where its signals are absent",
+    "auto",
+  )
+  .option(
     "--group <name>",
     "append this recording to a named run-group manifest (siblings under <name>.group.json), so a two-question flow (record --breakdown, then record --deep) reads as one group. The join refuses a member whose workload/iterations/etc differ (only the capture mode may)",
   )
@@ -187,6 +192,10 @@ program
   .option("--format <fmt>", "on-disk format: json | toon", "json")
   .action(async (module: string | undefined, cmdOpts: any) => {
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
+    // --framework accepts every lane (an addon no-ops where its signals are absent), so it is validated
+    // here for spelling but never rejected on a target.
+    if (!["off", "auto"].includes(cmdOpts.framework))
+      program.error("--framework must be off or auto");
     // One axis: chrome | firefox | node, so a conflicting browser/runtime combination is
     // unrepresentable rather than something to guard against.
     if (!["chrome", "firefox", "node"].includes(cmdOpts.target))
@@ -441,6 +450,8 @@ program
       // so gating and disclosure would disagree.
       variant: cmdOpts.variant?.trim() || undefined,
       group: groupName,
+      // off runs zero addon code; auto (default) lets factual detection decide.
+      framework: cmdOpts.framework === "off" ? "off" : "auto",
     };
     try {
       if (memberModes) await recordMembersAndReport(opts, memberModes);

@@ -1,0 +1,7 @@
+{
+  "name": "react-dom",
+  "version": "0.0.0-fixture",
+  "private": true,
+  "type": "module",
+  "description": "A fake 'react-dom' package for the react-addon node-lane e2e: its nearest package.json name is 'react-dom', so wpd's package resolver attributes these frames to react-dom and the server-phase anchor rollup fires. Not real react-dom; it just carries the anchor NAMES the rollup keys on, so the addon path is exercised end-to-end from a clean checkout with no install."
+}

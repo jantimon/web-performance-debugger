@@ -3,6 +3,7 @@ import type { NormalizedEvent } from "./events.js";
 import type { CpuSlice, CpuJsSlice } from "./cpu.js";
 import type { RecordingMeta } from "./meta.js";
 import type { FrameSideTrack } from "./frames.js";
+import type { SpanAddons } from "./addon.js";
 
 // The model is split across focused domain files by domain; this module keeps the Recording/Span core
 // and RE-EXPORTS the moved types every reader consumes through it, so `../model/recording.js` stays the
@@ -33,6 +34,7 @@ export type {
 export type { SourceMapFailure, SourceMapDiagnostics } from "./sourcemap-meta.js";
 export type { WorkloadIdentity, RecordingMeta } from "./meta.js";
 export type { EngineVersion } from "./engine-version.js";
+export type { FrameworkMode, SpanAddons } from "./addon.js";
 
 export interface TimingEntry {
   name: string;
@@ -691,6 +693,14 @@ export interface Span {
    * recordings. See SpanScope.
    */
   scope?: SpanScope;
+  /**
+   * Optional framework-addon facts for this span, keyed by addon name (`react`, `react-dev`). Populated
+   * ONLY when a framework addon is active (`--framework auto`, default) and its factual signals were
+   * present; absent otherwise, so a recording of an app with no detected framework carries no addon
+   * vocabulary. The core references the fact types only through this slot (see model/addon.ts). See
+   * docs/dev/react-attribution.md.
+   */
+  addons?: SpanAddons;
 }
 
 /** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure). */
