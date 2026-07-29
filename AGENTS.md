@@ -20,6 +20,8 @@ query spans <file>              # overview: one row per span, one shape across c
 - Every verb accepts `latest` in place of `<file>` (a cwd-keyed pointer, never resolved by mtime).
 - Span identity is **kind + label**. A bare label that matches more than one kind is a collision;
   qualify it (`run`, `step:first increment`, `measure:hydrate`).
+- `query spans --label X` with no match is a **filter**: it discloses the empty result and exits 0.
+  `query span X` with no match is a **lookup**: it exits 1. Pick the verb for the branch you want.
 - Other verbs: `query cpu` (hot functions + rollup), `query frame <id>` (one function's callers and
   callees), `query blame --forced` (forced-layout read sites), `query events` (the raw log).
 

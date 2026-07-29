@@ -1,5 +1,6 @@
 import type { CpuModel, FrameSideTrack, Span, SpanKind } from "../model/recording.js";
 import type { CpuOverview, FrameQueryResult } from "../model/query.js";
+import type { FrameFloorMatch } from "../model/frame-floor.js";
 import { num, table, middleEllipsis, LABEL_COL_MAX } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
 import { structuredFormat, emit, type StructuredOutOpts } from "../output/format.js";
@@ -169,6 +170,7 @@ export function printSpanBreakdowns(
   iterations?: number,
   browser?: "chrome" | "firefox",
   showFrames = false,
+  frameFloors?: Map<string, FrameFloorMatch>,
 ): void {
   const bars = spans.filter((span) => span.breakdown);
   if (!bars.length) return;
@@ -180,7 +182,15 @@ export function printSpanBreakdowns(
     // when an outlier iteration 0 makes them diverge.
     const windowLabel = span.kind === "step" ? "iteration-0 window " : "";
     const nav = span.navigation && span.navigation !== "none" ? `, nav: ${span.navigation}` : "";
-    const label = `${middleEllipsis(span.label, LABEL_COL_MAX)} ${dim(`(${span.kind}, ${windowLabel}${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)}${nav})`)}`;
+    // A wall pinned to the frame-cadence floor hides sub-frame work (frame-floor.md). Tag it here so
+    // the overview shows the floor the `query span` detail spells out, without crowding the table.
+    const floor = frameFloors?.get(`${span.kind}:${span.label}`);
+    const floorTag = floor
+      ? floor.multiple === 1
+        ? ", on frame floor"
+        : `, on ${floor.multiple}x frame floor`
+      : "";
+    const label = `${middleEllipsis(span.label, LABEL_COL_MAX)} ${dim(`(${span.kind}, ${windowLabel}${num(wallMs, 1)} ms${aggregationSuffix(span.kind, iterations, span.samples)}${nav}${floorTag})`)}`;
     console.log(`\n${bold(label)}`);
     if (wallMs <= 0) {
       console.log(dim("  (empty window; nothing to tile)"));

@@ -42,7 +42,10 @@ export async function runHarness(arg: HarnessArgs): Promise<HarnessResult> {
 
   const run = pick(fnName, "run") ?? (typeof mod.default === "function" ? mod.default : undefined);
   if (!run) {
-    throw new Error(`Module has no '${fnName}' / 'run' export and no callable default export.`);
+    const alsoTried = fnName && fnName !== "run" ? ` (no \`${fnName}\` export either)` : "";
+    throw new Error(
+      `The module exports no \`run\` function${alsoTried}. Export \`run\` (or a default function): export async function run(ctx) { ... }`,
+    );
   }
   const prepare = pick("prepare", "setup", "beforeAll");
   const cleanup = pick("cleanup", "teardown", "afterAll");

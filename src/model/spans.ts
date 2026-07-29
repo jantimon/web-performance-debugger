@@ -15,6 +15,34 @@ import type {
 import { recordingRuntime } from "./meta.js";
 import type { SpanCountsEntry, SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
 import { gateMeasured, type Measured } from "./measured.js";
+import { matchedFrameFloor, frameFloorDominates, type FrameFloorMatch } from "./frame-floor.js";
+
+/** Whatever a frame-floor check needs off the recording meta (the lane's headless flavour + browser). */
+type FloorMeta = Pick<RecordingMeta, "headless" | "browser">;
+
+/** A bar's idle share of its own tiled window, the wait signal an elevated frame-floor multiple gates
+ * on. null on a zero-width window or a hand-built bar with no `idle` slice (only the diff/assert path,
+ * which passes no meta, hits the latter). */
+function barIdleShare(wallMs: number, idle: { ms: number } | undefined): number | null {
+  return wallMs > 0 && idle != null ? idle.ms / wallMs : null;
+}
+
+/**
+ * The compact frame-floor tag for a `query spans` overview row: the one-frame floor the wall pins to
+ * (within tolerance), gated so a multi-frame wall is tagged only when its window is wait-dominated
+ * (frame-floor.md). `undefined` when the wall is real work, `meta` is absent, or the lane declares no
+ * floor. `query span` carries the same tag on its detail; this puts it on the overview bulk consumers
+ * read, so flooring need not be recomputed from wall + idle.
+ */
+function overviewFrameFloor(
+  wallMs: number | null | undefined,
+  idleShare: number | null,
+  meta: FloorMeta | undefined,
+): FrameFloorMatch | undefined {
+  if (!meta) return undefined;
+  const match = matchedFrameFloor(wallMs, meta);
+  return match && frameFloorDominates(match, idleShare) ? match : undefined;
+}
 
 /**
  * How a span combines the recording's timed iterations. `run` is a TOTAL across every iteration (its
@@ -111,7 +139,10 @@ type BarSpan = Span & { breakdown: NonNullable<Span["breakdown"]> };
 /** Project a stored span onto the bar-less counts row (`query spans` overview when no bar covers it):
  * wall/aggregation/index + Measured counts + INP, no slices. Shared by `buildSpanCounts` (the
  * all-bar-less overview) and `buildSpans` (the bar-less step/measure rows alongside a run bar). */
-function spanCountsEntry(span: Span): SpanCountsEntry {
+function spanCountsEntry(span: Span, meta?: FloorMeta): SpanCountsEntry {
+  // A bar-less row has no idle split, so pass a null wait share: only a sub-frame (single-frame) wall
+  // is tagged, never a multi-frame one (which needs the wait signal only a bar would carry).
+  const frameFloor = overviewFrameFloor(span.wallMs, null, meta);
   return {
     label: span.label,
     kind: span.kind,
@@ -123,10 +154,11 @@ function spanCountsEntry(span: Span): SpanCountsEntry {
     ...(span.navigation ? { navigation: span.navigation } : {}),
     ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
     ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
+    ...(frameFloor ? { frameFloor } : {}),
   };
 }
 
-function entryFromSpan(span: BarSpan, iterations: number): SpanEntry {
+function entryFromSpan(span: BarSpan, iterations: number, meta?: FloorMeta): SpanEntry {
   // A step's HEADLINE wall is the median of its per-iteration samples (`span.wallMs`); its bar tiles
   // iteration 0 ONLY (`span.breakdown.wallMs`), so on an outlier iteration 0 (a retry/backoff inside
   // the timed action) the two diverge, and the median is the honest headline. Carry the bar's own
@@ -135,10 +167,18 @@ function entryFromSpan(span: BarSpan, iterations: number): SpanEntry {
   // occurrence), so those report `breakdown.wallMs` and the slices reconcile to `wallMs` directly. Fall
   // back to the bar window only when a step's median is unpriceable (a navigating step, wallMs null).
   const isStep = span.kind === "step";
+  const wallMs = isStep ? (span.wallMs ?? span.breakdown.wallMs) : span.breakdown.wallMs;
+  // Judge the floor against the headline wall, with the bar's idle share as the wait signal (matching
+  // the `query span` detail).
+  const frameFloor = overviewFrameFloor(
+    wallMs,
+    barIdleShare(span.breakdown.wallMs, span.breakdown.slices.idle),
+    meta,
+  );
   return {
     label: span.label,
     kind: span.kind,
-    wallMs: isStep ? (span.wallMs ?? span.breakdown.wallMs) : span.breakdown.wallMs,
+    wallMs,
     ...(isStep ? { windowMs: span.breakdown.wallMs } : {}),
     // Derived from kind + occurrence count, identical to the `aggregation` buildRecordingSpans stored;
     // deriving here keeps a hand-built bar (no stored aggregation) legible too.
@@ -155,10 +195,20 @@ function entryFromSpan(span: BarSpan, iterations: number): SpanEntry {
     ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
     ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
     ...(span.scope ? { scope: span.scope } : {}),
+    ...(frameFloor ? { frameFloor } : {}),
   };
 }
 
-function runEntryFromCpuBreakdown(cpu: CpuBreakdown, iterations: number): SpanEntry {
+function runEntryFromCpuBreakdown(
+  cpu: CpuBreakdown,
+  iterations: number,
+  meta?: FloorMeta,
+): SpanEntry {
+  const frameFloor = overviewFrameFloor(
+    cpu.wallMs,
+    barIdleShare(cpu.wallMs, cpu.slices.idle),
+    meta,
+  );
   return {
     label: "run",
     kind: "run",
@@ -167,6 +217,7 @@ function runEntryFromCpuBreakdown(cpu: CpuBreakdown, iterations: number): SpanEn
     iterations,
     slices: slicesFromCpuBreakdown(cpu),
     ...(cpu.residualMs != null ? { residualMs: cpu.residualMs } : {}),
+    ...(frameFloor ? { frameFloor } : {}),
   };
 }
 
@@ -183,6 +234,7 @@ export function buildSpans(
   cpuBreakdown: CpuBreakdown | undefined,
   target: string,
   iterations = 1,
+  meta?: FloorMeta,
 ): SpansResult | null {
   // Only spans the capture mode built a reconciling bar for carry slices; a step/run in the default or
   // --deep capture mode has counts but no bar, so it is not a `query spans` entry (the CpuModel run bar is the
@@ -196,19 +248,23 @@ export function buildSpans(
     return {
       target,
       source: "breakdowns",
-      spans: barSpans.map((span) => entryFromSpan(span, iterations)),
+      spans: barSpans.map((span) => entryFromSpan(span, iterations, meta)),
       // A step (or navigating span) with no bar of its own still belongs in the overview; carry it
       // bar-less so the run/steps/measures listing stays complete.
-      ...withBarless(barlessSpans.map(spanCountsEntry)),
+      ...withBarless(barlessSpans.map((span) => spanCountsEntry(span, meta))),
     };
   if (cpuBreakdown)
     return {
       target,
       source: "cpu-model",
-      spans: [runEntryFromCpuBreakdown(cpuBreakdown, iterations)],
+      spans: [runEntryFromCpuBreakdown(cpuBreakdown, iterations, meta)],
       // The synthesized run bar stands in for the stored `run` span (which has no bar in this
       // capture), so drop the run row here; the driver steps have no bar at all and must still show.
-      ...withBarless(barlessSpans.filter((span) => span.kind !== "run").map(spanCountsEntry)),
+      ...withBarless(
+        barlessSpans
+          .filter((span) => span.kind !== "run")
+          .map((span) => spanCountsEntry(span, meta)),
+      ),
     };
   return null;
 }
@@ -241,13 +297,14 @@ export function buildSpanCounts(
   spans: Span[] | undefined,
   target: string,
   iterations: number,
+  meta?: FloorMeta,
 ): SpanCountsOverview | null {
   if (!spans || spans.length === 0) return null;
   return {
     target,
     source: "counts",
     iterations,
-    spans: spans.map(spanCountsEntry),
+    spans: spans.map((span) => spanCountsEntry(span, meta)),
   };
 }
 

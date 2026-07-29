@@ -175,3 +175,21 @@ export function toRawTraceEvents<Element>(
     return parsed as Iterable<Element>;
   return (parsed as { traceEvents?: Element[] }).traceEvents ?? [];
 }
+
+/**
+ * The record-pipeline read boundary over `toRawTraceEvents`: a scanner throw on malformed trace bytes
+ * (or a JSON.parse failure on a bad string) is reframed as a capture fault. wpd produced this trace, so
+ * a parse failure is wpd's to re-record, never the user's input to fix; the mechanical detail is kept.
+ */
+export function* readTraceEvents<Element>(
+  trace: string | Uint8Array | { traceEvents?: Element[] } | Iterable<Element>,
+): Generator<Element> {
+  try {
+    yield* toRawTraceEvents<Element>(trace);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `wpd could not parse the trace it recorded (${detail}); this is a capture fault, not your input. Re-record; if it persists, re-run with WPD_DEBUG=1 and file an issue.`,
+    );
+  }
+}

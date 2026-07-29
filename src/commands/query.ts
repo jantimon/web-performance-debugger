@@ -262,7 +262,7 @@ function buildSpanAnatomy(
 
   // Unified slices: prefer the stored bar; a run span with no stored bar falls back to the sibling
   // CpuModel run bar (the same source rule as `query spans`). null when this capture mode built no bar.
-  const spansResult = buildSpans(rec.spans, model?.breakdown, target, iterations);
+  const spansResult = buildSpans(rec.spans, model?.breakdown, target, iterations, rec.meta);
   const entry = spansResult?.spans.find(
     (candidate) => candidate.label === span.label && candidate.kind === span.kind,
   );
@@ -301,8 +301,13 @@ function buildSpanAnatomy(
     forced = forcedLayouts(windowed, window.startTs).map((group) => {
       const dirtiedBy = dirtiedByReadSite[group.at];
       const scope = scopeByAt.get(group.at);
+      // Structured read-site, the same split `query blame --forced` emits (splitReadSite), so both
+      // verbs report one shape a consumer reads without parsing "file:line:col".
+      const { source, line, column } = splitReadSite(group.at);
       return {
-        at: group.at,
+        source,
+        ...(line != null ? { line } : {}),
+        ...(column != null ? { column } : {}),
         count: group.count,
         durMs: group.durMs,
         ...(group.eventId != null ? { eventId: group.eventId } : {}),
@@ -739,14 +744,14 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     }
   }
   const iterations = rec.meta.iterations ?? 1;
-  const result = buildSpans(rec.spans, cpuBreakdown, recordingLane(rec.meta), iterations);
+  const result = buildSpans(rec.spans, cpuBreakdown, recordingLane(rec.meta), iterations, rec.meta);
   if (!result) {
     // No reconciling bar at this capture (default/--deep) and no CpuModel run bar to
     // fall back on. The recording still carries spans with wall + (on --deep) exact counts, so render
     // THAT overview -- label/kind/wall/aggregation/counts, bars not-measured -- rather than refusing
     // the documented overview -> drill flow on the capture with the richest attribution. Only a
     // spans-less artifact is the true empty case.
-    const counts = buildSpanCounts(rec.spans, recordingLane(rec.meta), iterations);
+    const counts = buildSpanCounts(rec.spans, recordingLane(rec.meta), iterations, rec.meta);
     if (!counts)
       throw new Error(
         `${file} carries no spans. Re-record: every current recording holds at least the run span.`,
@@ -847,7 +852,15 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
         `No spans matched the filter in ${file} (${totalHidden} hidden by --min-wall/--filter).`,
       );
     }
-    if (bars.length) printSpanBreakdowns(bars, iterations, rec.meta.browser, query.frames ?? false);
+    // The frame-floor verdict already computed on each unified entry, keyed for the bar header so the
+    // human overview shows the same flooring the JSON view carries.
+    const frameFloors = new Map(
+      spans
+        .filter((entry) => entry.frameFloor)
+        .map((entry) => [`${entry.kind}:${entry.label}`, entry.frameFloor!] as const),
+    );
+    if (bars.length)
+      printSpanBreakdowns(bars, iterations, rec.meta.browser, query.frames ?? false, frameFloors);
     // A step with no bar of its own lists here, below the bars. In a --breakdown recording the reason
     // is a cross-document navigation (its trace window spans the swap but no bar tiles it), NOT a
     // capture mode that lacks bars, so the hint must not tell a --breakdown user to run --breakdown.
@@ -905,7 +918,10 @@ export async function queryGet(file: string, id: number, opts: OutOpts): Promise
   const rec = await loadEventLogTarget(file, opts);
   requireEventLog(rec, file);
   const event = rec.events.find((candidate) => candidate.id === id);
-  if (!event) throw new Error(`No event with id ${id} in ${file}`);
+  if (!event)
+    throw new Error(
+      `No event with id ${id} in ${file}. List event ids with \`query events ${file}\`.`,
+    );
   emit(event, structuredFormat(opts) ?? "json");
 }
 

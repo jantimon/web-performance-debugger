@@ -82,7 +82,10 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
   };
   const run = pick(opts.fn, "run") ?? (typeof mod.default === "function" ? mod.default : undefined);
   if (!run) {
-    throw new Error(`Module has no '${opts.fn}' / 'run' export and no callable default export.`);
+    const alsoTried = opts.fn && opts.fn !== "run" ? ` (no \`${opts.fn}\` export either)` : "";
+    throw new Error(
+      `${absModule} exports no \`run\` function${alsoTried}. Export \`run\` (or a default function): export async function run(ctx) { ... }`,
+    );
   }
   const prepare = pick("prepare", "setup", "beforeAll");
   const cleanup = pick("cleanup", "teardown", "afterAll");

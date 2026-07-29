@@ -199,6 +199,17 @@ function printSoftNavRoute(softNav: SoftNavRoute): void {
 }
 
 /**
+ * Rejoin a structured read-site (`source` + optional `line`/`column`) into the `file:line:col` cell
+ * the forced table shows. The inverse of `splitReadSite`; an absent line/column simply drops off, and a
+ * column without a line is dropped (it can only follow a line).
+ */
+function readSiteCell(entry: { source: string; line?: number; column?: number }): string {
+  const line = entry.line != null ? `:${entry.line}` : "";
+  const column = entry.line != null && entry.column != null ? `:${entry.column}` : "";
+  return `${entry.source}${line}${column}`;
+}
+
+/**
  * A compact dim suffix naming a forced flush's scope for a blame/forced row's source cell: layout
  * objects relaid out over the document total, elements recalculated, and a contained flush's root.
  * "" when the row carries no scope (the sampled --breakdown/firefox lanes). Chrome --deep only.
@@ -447,7 +458,7 @@ export function printSpanAnatomy(
           entry.eventId == null ? dim("—") : dim(String(entry.eventId)),
           entry.count,
           num(entry.durMs, 2),
-          middleEllipsis(entry.at, SOURCE_COL_MAX) + flushScopeSuffix(entry.scope),
+          middleEllipsis(readSiteCell(entry), SOURCE_COL_MAX) + flushScopeSuffix(entry.scope),
         ]),
       ),
     );
@@ -455,7 +466,7 @@ export function printSpanAnatomy(
     if (withWrites.length) {
       console.log(dim("\n  dirtied-by (the write that forced each read):"));
       for (const entry of withWrites) {
-        console.log(`  ${entry.at}`);
+        console.log(`  ${readSiteCell(entry)}`);
         for (const write of entry.dirtiedBy!)
           console.log(
             `    ${dim("↳ dirtied by")} ${write.at}${write.reason ? dim(` (${write.reason})`) : ""}`,
@@ -622,7 +633,7 @@ export function printGroupSpanStitch(stitch: GroupSpanStitch): void {
           entry.eventId == null ? dim("—") : dim(String(entry.eventId)),
           entry.count,
           num(entry.durMs, 2),
-          middleEllipsis(entry.at, SOURCE_COL_MAX) + flushScopeSuffix(entry.scope),
+          middleEllipsis(readSiteCell(entry), SOURCE_COL_MAX) + flushScopeSuffix(entry.scope),
         ]),
       ),
     );
@@ -718,7 +729,9 @@ export function printBarlessStepRows(spans: SpanCountsEntry[], hint: string): vo
       spans.map((span) => [
         middleEllipsis(span.label, LABEL_COL_MAX) + navMarker(span.navigation),
         span.kind,
-        span.wallMs == null ? "—" : `${num(span.wallMs, 1)} ms`,
+        span.wallMs == null
+          ? "—"
+          : `${num(span.wallMs, 1)} ms${span.frameFloor ? dim(" (frame floor)") : ""}`,
         span.aggregation,
         span.inpMs == null ? "—" : `${num(span.inpMs, 1)} ms`,
       ]),
@@ -776,7 +789,9 @@ export async function printBarlessSpans(
       spans.map((span) => [
         middleEllipsis(span.label, LABEL_COL_MAX) + navMarker(span.navigation),
         span.kind,
-        span.wallMs == null ? "—" : `${num(span.wallMs, 1)} ms`,
+        span.wallMs == null
+          ? "—"
+          : `${num(span.wallMs, 1)} ms${span.frameFloor ? dim(" (frame floor)") : ""}`,
         span.aggregation,
         count(span.counts.layoutCount),
         count(span.counts.styleCount),
