@@ -1080,8 +1080,23 @@ Recordings are self-describing: `meta.schemaVersion` stamps the on-disk schema e
 `"5"`), and a reader **rejects** any artifact from another epoch with a "recorded by an older wpd;
 re-record" message rather than mis-parsing it into silent nulls. Numbers are rounded to 4 decimals on
 disk (the raw `.cpuprofile` stays exact); TOON encodes the same shape, read back auto-detecting the
-format. These root-level types are covered by semver; breaking field changes ship as a schema-epoch
-bump.
+format.
+
+### Stability and versioning
+
+Since 1.0, semver covers the surfaces a pipeline or agent depends on:
+
+- **CLI commands, flags, and exit codes** — a breaking change to any of them is a major release.
+- **The root types and the `--format json|toon` view shapes** — fields may be added in a minor;
+  renamed or removed only in a major.
+- **The schema epoch** — a breaking change to the stored artifact shape bumps `meta.schemaVersion`
+  and ships as a major. Old recordings then refuse to open with a re-record message; re-record
+  stored baselines after such an upgrade.
+- **Removed flags and verbs** keep a hidden stub that names the migration in its error, retired on
+  the sunset policy stated in the contributing docs.
+
+Measured numbers themselves are not semver: a browser or engine update can move a directional
+number; the trust tiers and the comparability warnings say which numbers survive what.
 
 ### What wpd leaves to the caller
 
