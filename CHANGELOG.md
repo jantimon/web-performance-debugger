@@ -1,5 +1,35 @@
 # @jantimon/web-performance-debugger
 
+## 1.0.0
+
+### Major Changes
+
+- [#160](https://github.com/jantimon/web-performance-debugger/pull/160) [`b358b32`](https://github.com/jantimon/web-performance-debugger/commit/b358b32df59c996443b4ded114d9342e886f1bc0) - **Breaking: schema 5.** Recordings from earlier versions refuse to open with a re-record message. Re-record any stored baselines after upgrading. CLI commands and flags are unchanged, and measurement semantics are unchanged.
+
+  Raw-JSON (recording) consumers:
+
+  - The `summary` object is **gone**. The run-level counts, wall, INP, longest-task duration and per-iteration stats now live on the **run span** (`spans[]` with `kind: "run"`); each driver step carries its own on its step span. Read counts from `run.counts`, timing from `run.wallMs`/`run.inpMs`/`run.perIteration`/`run.stats`.
+  - Wall fields are named by clock: a span's page-clock headline stays `wallMs` (with `wallClock: "page" | "trace"` on every span whose wall is set), while the trace-clock window a reconciling bar tiles is `breakdown.wallMs`.
+  - `meta.passes: string[]` is now `meta.capture: string` (the one capture mode).
+  - `meta.driver` and `meta.runtime` are removed; derive them from `meta.workload.lane` (`"driver"`/`"builtin-load"` are driver mode, `"node"` is the node runtime).
+  - `summary.jsSelfMs` moved to `meta.jsSelfMs`; `summary.totalEvents` moved to `meta.totalEvents`.
+
+  `query … --format json` consumers: the step `SpanEntry`/`SpanAnatomy` field `breakdownWallMs` is renamed to `windowMs`; `SpanCounts` gains `paintInvalidations`.
+
+### Minor Changes
+
+- [#164](https://github.com/jantimon/web-performance-debugger/pull/164) [`5c7857b`](https://github.com/jantimon/web-performance-debugger/commit/5c7857b37c82966e04f1699c774aa6f6979ff317) - Dogfood remediation and a CI-gap close:
+
+  - **Cloudflare inline managed challenge** is now detected: its same-origin `/cdn-cgi/challenge-platform/` script, the `window._cf_chl_opt` page global, and a `__cf_chl_rt_tk` document token are strong signals, so a "Just a moment" interstitial no longer measures as the site. An embedded cross-origin Turnstile widget still passes.
+  - **`meta.browserVersion`** stamps the resolved engine build (chrome/firefox `browser.version()`, node `process.version`) as `{ raw, milestone }`, and a new **`browser-version` comparability axis WARNS** (never blocks) when two recordings' milestones differ: exact counts survive a bump, directional numbers do not.
+  - **`meta.botWall`** carries the detection verdict as structured data when `--allow-bot-wall` measured a challenge page anyway.
+  - `query span --format json` gains **`softNavAgreement`** (the classifier-vs-engine soft-nav reconciliation, previously human-report-only); `engineSoftNav` is already emitted.
+  - **Site relation** now tags a `--url` run's resolved remote packages/files (not just unmapped origin buckets), from the script origin they resolved from; a mixed-origin bucket stays untagged.
+  - wpd's own bot-wall probe frame no longer buckets in `query cpu`.
+  - New README "Running wpd in CI" section (cache the pinned browser; when a preinstalled browser is safe). Puppeteer is pinned exactly.
+
+- [#163](https://github.com/jantimon/web-performance-debugger/pull/163) [`6667b93`](https://github.com/jantimon/web-performance-debugger/commit/6667b93aab1ed0823419e0efa6388835e9167814) - Per-soft-step route web vitals (Chrome 151+). When a driver step soft-navigates and Chrome's heuristic fires, the step now carries the route transition's own LCP-equivalent, CLS, and INP in `step.softNav`, keyed by the soft nav's `navigationId` and anchored to the route clock: `routeLcp` (`tag`/`url`/`size`, `routeMs` into the route), `routeCls` (the post-route shifts, spec session-window max), and `routeInpMs`/`routeInteraction` (the worst interaction after the route; the triggering click keeps the pre-nav id and stays in the step's main `inp`). `query span <step>` prints them under the step. Opportunistic and additive: a programmatic or untrusted-click route, older Chrome, and Firefox/node fire no engine entry, so `softNav` is absent, never a fabricated 0. No new flags; schema stays 5.
+
 ## 0.23.0
 
 ### Minor Changes
