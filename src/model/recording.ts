@@ -299,6 +299,69 @@ export interface StepLcp {
   loadTimeMs?: number;
   /** the entry's `startTime`, ms on the document's own clock (the paint time) */
   startTimeMs?: number;
+  /**
+   * Per-iteration LCP render time (ms), in timed-iteration order -- a step that boots a fresh document
+   * every --iteration captures its own entry, so a single LCP that swung run-to-run is visible as the
+   * spread rather than one number that could be either extreme. null where an iteration observed no
+   * usable render time (the headless entry race lost it, no contentful paint, a suppressed anomaly, or
+   * a TAO-gated resource whose renderTime reads 0), never 0. Length 1 on a single-iteration run. The
+   * identity/timing fields above are the lower-median-by-render-time occurrence; `stats` summarises this.
+   */
+  perIteration?: (number | null)[];
+  /**
+   * min/median/mean/max over the non-null `perIteration` render times; null below 2 samples. Same
+   * shape and contract as a step's wall `stats`, so an LCP block reads like the wall block.
+   */
+  stats?: BenchStats | null;
+}
+
+/** A layout-shift source rect: where an element sat before/after it moved (CSS px, page coordinates). */
+export interface LayoutShiftRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** One element the browser blamed for a layout shift, with the rects it moved between. */
+export interface LayoutShiftSource {
+  /** the shifted element as `tag#id.class` (truncated); "(anonymous)" when the node carried no identity */
+  node: string;
+  /**
+   * this element's attributed share of the winning window's score. The layout-shift API scores an
+   * ENTRY, not a source, so an entry's score is split across its sources in proportion to their moved
+   * area: a ranking proxy for "which element shifted most", not a spec quantity.
+   */
+  score: number;
+  /** the element's rect before the shift (from its largest occurrence in the window); absent when the API gave none */
+  previousRect?: LayoutShiftRect;
+  /** the element's rect after the shift; absent when the API gave none (e.g. the element was removed) */
+  currentRect?: LayoutShiftRect;
+}
+
+/**
+ * Cumulative Layout Shift for a driver step (Chrome only), the spec's SESSION-WINDOW MAXIMUM, not a
+ * raw sum: `layout-shift` entries are grouped into session windows (a new window opens when a shift
+ * lands >1s after the previous one or >5s after the window's first), each window is scored by summing
+ * its entries, and `cls` is the largest window's score. Entries flagged `hadRecentInput` are excluded
+ * (a shift within 500ms of a user input does not count, per spec), which is why a click step usually
+ * reports none and the boot/load step is where CLS shows.
+ *
+ * Wall-tier directional (the score derives from paint-time rects on the page's own clock). Chrome
+ * ships the `layout-shift` entry type and Firefox does not (measured: absent from
+ * `supportedEntryTypes`), so a firefox/node step carries none -- absent, never a fabricated 0. From
+ * the FIRST timed iteration, matching the LoAF/counts windowing: the shifting-element attribution is a
+ * distribution of descriptors that cannot be medianed like a scalar.
+ */
+export interface LayoutShift {
+  /** the session-window maximum score (the winning window's summed value) */
+  cls: number;
+  /** how many session windows the observed shifts formed (context for the max) */
+  windowCount: number;
+  /** qualifying shift entries in the winning window */
+  shiftCount: number;
+  /** the elements that shifted most in the winning window, top-K by attributed score */
+  sources: LayoutShiftSource[];
 }
 
 /**
@@ -566,6 +629,13 @@ export interface Span {
    * directional. See StepLcp.
    */
   lcp?: StepLcp;
+  /**
+   * Cumulative Layout Shift for a driver step (Chrome only), the spec session-window maximum with the
+   * shifting elements attributed. Absent on firefox/node steps (no layout-shift entry type), on a step
+   * that observed no qualifying shift, on run/measure spans, and on older recordings. Never a fake 0.
+   * See LayoutShift.
+   */
+  layoutShift?: LayoutShift;
   /**
    * Per-iteration wall samples in run order (a driver step under --iterations, or a bench run). Raw,
    * not just the aggregate: a median hides the bimodality that says "the first iteration was cold".

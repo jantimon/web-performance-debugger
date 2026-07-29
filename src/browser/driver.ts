@@ -13,6 +13,8 @@ import { duplicateLabelError } from "../trace/steps.js";
 import type { DriverStep } from "../model/driver-step.js";
 import type {
   InteractionTiming,
+  LayoutShift,
+  LayoutShiftSource,
   LoafFrame,
   NavigationKind,
   StepLcp,
@@ -246,6 +248,143 @@ export function summarizeLoaf(rawFrames: RawLoafFrame[]): StepLoaf | null {
         })),
     }));
   return { frames, totalDurationMs, totalBlockingMs, observedFrames: rawFrames.length };
+}
+
+/** One layout-shift source rect, as read back out of the page. */
+export interface RawLayoutShiftRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** One `sources` entry of a `layout-shift`, serialized in-page (its `node` is a live element). */
+export interface RawLayoutShiftSource {
+  tag: string;
+  id: string;
+  className: string;
+  previousRect: RawLayoutShiftRect | null;
+  currentRect: RawLayoutShiftRect | null;
+}
+
+/** One `layout-shift` entry, as read back out of the page. */
+export interface RawLayoutShiftEntry {
+  value: number;
+  hadRecentInput: boolean;
+  startTimeMs: number;
+  sources: RawLayoutShiftSource[];
+}
+
+/** A new session window opens when a shift lands more than this (ms) after the PREVIOUS shift. Spec. */
+export const LAYOUT_SHIFT_SESSION_GAP_MS = 1000;
+/** ...or more than this (ms) after the window's FIRST shift, whichever comes first. Spec. */
+export const LAYOUT_SHIFT_SESSION_MAX_MS = 5000;
+/** Keep only the top few shifting elements of the winning window; the rest are a long tail of noise. */
+export const LAYOUT_SHIFT_SOURCE_CAP = 3;
+
+function rectArea(rect: RawLayoutShiftRect | null): number {
+  if (!rect) return 0;
+  return Math.max(0, rect.width) * Math.max(0, rect.height);
+}
+
+/** A shifted element as `tag#id.firstClass`, lower-cased and truncated; "(anonymous)" when it carried
+ * no identity. Built here (not in-page) so the pure function owns the descriptor and stays testable. */
+function describeShiftNode(source: RawLayoutShiftSource): string {
+  const tag = source.tag ? source.tag.toLowerCase() : "";
+  const id = source.id ? `#${source.id}` : "";
+  const firstClass = source.className ? source.className.trim().split(/\s+/)[0] : "";
+  const cls = firstClass ? `.${firstClass}` : "";
+  const label = `${tag}${id}${cls}`;
+  return (label || "(anonymous)").slice(0, 60);
+}
+
+/**
+ * Compute a step's Cumulative Layout Shift from its raw `layout-shift` entries: the spec SESSION-WINDOW
+ * MAXIMUM, not a raw sum. Entries flagged `hadRecentInput` are excluded (a shift within 500ms of a user
+ * input does not count, per spec). The rest are grouped into session windows -- a new window opens when
+ * a shift lands >LAYOUT_SHIFT_SESSION_GAP_MS after the previous shift or >LAYOUT_SHIFT_SESSION_MAX_MS
+ * after the window's first -- each window is scored by summing its entries, and `cls` is the largest
+ * window's score. A raw sum would be a lookalike that overstates the metric.
+ *
+ * The winning window's score is then attributed to elements. The API scores an ENTRY, not a source, so
+ * an entry's value is split across its sources in proportion to their moved area (a ranking proxy for
+ * "which element shifted most", never a spec quantity); each element keeps the rects from its largest
+ * occurrence. Returns null when no qualifying shift was observed (no shift, or every shift excluded, or
+ * no layout-shift support), so the caller stores nothing rather than a fabricated zero.
+ */
+export function computeLayoutShift(entries: RawLayoutShiftEntry[]): LayoutShift | null {
+  const qualifying = entries
+    .filter((entry) => !entry.hadRecentInput && entry.value > 0)
+    .sort((left, right) => left.startTimeMs - right.startTimeMs);
+  if (!qualifying.length) return null;
+
+  const windows: RawLayoutShiftEntry[][] = [];
+  let current: RawLayoutShiftEntry[] = [];
+  let windowStartMs = 0;
+  let previousMs = 0;
+  for (const entry of qualifying) {
+    if (
+      current.length &&
+      (entry.startTimeMs - previousMs > LAYOUT_SHIFT_SESSION_GAP_MS ||
+        entry.startTimeMs - windowStartMs > LAYOUT_SHIFT_SESSION_MAX_MS)
+    ) {
+      windows.push(current);
+      current = [];
+    }
+    if (!current.length) windowStartMs = entry.startTimeMs;
+    current.push(entry);
+    previousMs = entry.startTimeMs;
+  }
+  if (current.length) windows.push(current);
+
+  const scored = windows.map((window) => ({
+    entries: window,
+    score: window.reduce((sum, entry) => sum + entry.value, 0),
+  }));
+  const winning = scored.reduce((best, window) => (window.score > best.score ? window : best));
+
+  interface NodeTally {
+    node: string;
+    score: number;
+    area: number;
+    previousRect?: RawLayoutShiftRect;
+    currentRect?: RawLayoutShiftRect;
+  }
+  const byNode = new Map<string, NodeTally>();
+  for (const entry of winning.entries) {
+    const weights = entry.sources.map((source) =>
+      Math.max(rectArea(source.currentRect), rectArea(source.previousRect)),
+    );
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    entry.sources.forEach((source, at) => {
+      const node = describeShiftNode(source);
+      const share = totalWeight > 0 ? weights[at] / totalWeight : 1 / entry.sources.length;
+      const tally = byNode.get(node) ?? { node, score: 0, area: -1 };
+      tally.score += entry.value * share;
+      // Keep the rects from this element's largest occurrence in the window.
+      if (weights[at] > tally.area) {
+        tally.area = weights[at];
+        if (source.previousRect) tally.previousRect = source.previousRect;
+        if (source.currentRect) tally.currentRect = source.currentRect;
+      }
+      byNode.set(node, tally);
+    });
+  }
+  const sources: LayoutShiftSource[] = [...byNode.values()]
+    .sort((left, right) => right.score - left.score)
+    .slice(0, LAYOUT_SHIFT_SOURCE_CAP)
+    .map((tally) => ({
+      node: tally.node,
+      score: tally.score,
+      ...(tally.previousRect ? { previousRect: tally.previousRect } : {}),
+      ...(tally.currentRect ? { currentRect: tally.currentRect } : {}),
+    }));
+  return {
+    cls: winning.score,
+    windowCount: windows.length,
+    shiftCount: winning.entries.length,
+    sources,
+  };
 }
 
 /** A timed iteration failed partway and --keep-partial salvaged the ones that completed. */
@@ -516,6 +655,50 @@ export async function runDriver(
   await page.evaluateOnNewDocument(installLcpObserver);
   await page.evaluate(installLcpObserver);
 
+  // Observe layout shifts so a step can report CLS (the spec session-window maximum) with the shifting
+  // elements attributed. Same re-arm-on-navigation install as the other observers. Chrome-only:
+  // `supportedEntryTypes` gates it, so on Firefox `win.__cpLs` stays [] and the step stores no CLS
+  // (never a fake zero). A `layout-shift` entry is NOT replayed through `getEntriesByType` (measured:
+  // the performance timeline buffer is empty for it), so the observer is the only way to read it; each
+  // source's `node`/`previousRect`/`currentRect` are read explicitly into a serializable shape.
+  const installLayoutShiftObserver = () => {
+    const win = window as any;
+    win.__cpLs = [];
+    const supported =
+      typeof PerformanceObserver !== "undefined" &&
+      (PerformanceObserver.supportedEntryTypes || []).includes("layout-shift");
+    if (!supported) return;
+    const rect = (domRect: any) =>
+      domRect ? { x: domRect.x, y: domRect.y, width: domRect.width, height: domRect.height } : null;
+    try {
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const shift = entry as any;
+          win.__cpLs.push({
+            value: shift.value || 0,
+            hadRecentInput: !!shift.hadRecentInput,
+            startTimeMs: shift.startTime,
+            sources: (shift.sources || []).map((source: any) => {
+              const node = source.node;
+              return {
+                tag: node && node.tagName ? node.tagName : "",
+                id: node && node.id ? node.id : "",
+                className:
+                  node && typeof node.className === "string" ? node.className.slice(0, 80) : "",
+                previousRect: rect(source.previousRect),
+                currentRect: rect(source.currentRect),
+              };
+            }),
+          });
+        }
+      }).observe({ type: "layout-shift", buffered: true } as any);
+    } catch {
+      /* layout-shift unsupported */
+    }
+  };
+  await page.evaluateOnNewDocument(installLayoutShiftObserver);
+  await page.evaluate(installLayoutShiftObserver);
+
   // Frame-health gate, before any user action. Chrome's built-in headless can come up with a dead
   // compositor BeginFrame source (permanent, browser-wide), which would hang ANY rAF-based wait in
   // the flow -- a settle, or a user `page.waitForFunction` whose default polling is rAF -- to the
@@ -584,6 +767,7 @@ export async function runDriver(
       (window as any).__cpInp = [];
       (window as any).__cpLoaf = [];
       (window as any).__cpLcp = [];
+      (window as any).__cpLs = [];
     });
     const startClock = await stepClock(`wpd:step:${stepMark}:start`);
     // page.url() is CDP-free (Puppeteer reads it off the page handle). Read it at both marks so the
@@ -607,55 +791,69 @@ export async function runDriver(
     // Event-Timing entries: one round trip, both signals settled.
     const flushed = (await page.evaluate(
       (ceilingMs, waitLcp, lcpBudgetMs) =>
-        new Promise<{ inp: RawEventTiming[]; loaf: RawLoafFrame[]; lcp: RawLcpEntry[] }>(
-          (resolve) => {
-            const win = window as any;
-            const drainLcp = () => {
-              if (typeof win.__cpLcpDrain === "function") win.__cpLcpDrain();
-            };
-            const read = () => ({
-              inp: (win.__cpInp as RawEventTiming[]) ?? [],
-              loaf: (win.__cpLoaf as RawLoafFrame[]) ?? [],
-              lcp: (win.__cpLcp as RawLcpEntry[]) ?? [],
-            });
-            let done = false;
-            const finish = () => {
-              if (done) return;
-              done = true;
-              drainLcp();
-              resolve(read());
-            };
-            // The settle already threw on a stalled compositor, so rAF normally fires here; the
-            // ceiling is a backstop that reads whatever landed rather than hanging if it does not.
-            setTimeout(finish, ceilingMs);
-            // Base flush: one frame + a macrotask so INP/LoAF land. On a hard-nav step whose boot LCP
-            // entry has not reached the observer yet (paint races the callback dispatch), drain
-            // takeRecords() and, while still race-empty, wait bounded frames for the entry to queue. A
-            // page with no contentful paint queues nothing, so the wait ends at lcpBudgetMs and absence
-            // stays honest. All of this sits after the end mark, so it never grows the measured window.
-            const canWaitLcp = waitLcp && typeof win.__cpLcpDrain === "function";
-            let lcpWaitStartMs = -1;
-            const settleRead = () => {
-              if (done) return;
-              drainLcp();
-              if (canWaitLcp && (win.__cpLcp as RawLcpEntry[]).length === 0) {
-                if (lcpWaitStartMs < 0) lcpWaitStartMs = performance.now();
-                if (performance.now() - lcpWaitStartMs < lcpBudgetMs) {
-                  requestAnimationFrame(settleRead);
-                  return;
-                }
+        new Promise<{
+          inp: RawEventTiming[];
+          loaf: RawLoafFrame[];
+          lcp: RawLcpEntry[];
+          ls: RawLayoutShiftEntry[];
+        }>((resolve) => {
+          const win = window as any;
+          const drainLcp = () => {
+            if (typeof win.__cpLcpDrain === "function") win.__cpLcpDrain();
+          };
+          const read = () => ({
+            inp: (win.__cpInp as RawEventTiming[]) ?? [],
+            loaf: (win.__cpLoaf as RawLoafFrame[]) ?? [],
+            lcp: (win.__cpLcp as RawLcpEntry[]) ?? [],
+            ls: (win.__cpLs as RawLayoutShiftEntry[]) ?? [],
+          });
+          let done = false;
+          const finish = () => {
+            if (done) return;
+            done = true;
+            drainLcp();
+            resolve(read());
+          };
+          // The settle already threw on a stalled compositor, so rAF normally fires here; the
+          // ceiling is a backstop that reads whatever landed rather than hanging if it does not.
+          setTimeout(finish, ceilingMs);
+          // Base flush: one frame + a macrotask so INP/LoAF land. On a hard-nav step whose boot LCP
+          // entry has not reached the observer yet (paint races the callback dispatch), drain
+          // takeRecords() and, while still race-empty, wait bounded frames for the entry to queue. A
+          // page with no contentful paint queues nothing, so the wait ends at lcpBudgetMs and absence
+          // stays honest. All of this sits after the end mark, so it never grows the measured window.
+          const canWaitLcp = waitLcp && typeof win.__cpLcpDrain === "function";
+          let lcpWaitStartMs = -1;
+          const settleRead = () => {
+            if (done) return;
+            drainLcp();
+            if (canWaitLcp && (win.__cpLcp as RawLcpEntry[]).length === 0) {
+              if (lcpWaitStartMs < 0) lcpWaitStartMs = performance.now();
+              if (performance.now() - lcpWaitStartMs < lcpBudgetMs) {
+                requestAnimationFrame(settleRead);
+                return;
               }
-              finish();
-            };
-            requestAnimationFrame(() => setTimeout(settleRead, 0));
-          },
-        ),
+            }
+            finish();
+          };
+          requestAnimationFrame(() => setTimeout(settleRead, 0));
+        }),
       STALL_CEILING_MS,
       navigation === "hard",
       LCP_ENTRY_WAIT_MS,
-    )) as { inp: RawEventTiming[]; loaf: RawLoafFrame[]; lcp: RawLcpEntry[] };
+    )) as {
+      inp: RawEventTiming[];
+      loaf: RawLoafFrame[];
+      lcp: RawLcpEntry[];
+      ls: RawLayoutShiftEntry[];
+    };
     const observed = flushed.inp;
     const loaf = summarizeLoaf(flushed.loaf);
+    // CLS: the spec session-window maximum over the shifts observed in this step's window, with the
+    // shifting elements attributed. Chrome-only (the observer stays empty on Firefox); a step with no
+    // qualifying shift stores nothing (null), never a fake 0. The boot/load step is where it shows: a
+    // shift within 500ms of a user input is excluded by hadRecentInput, so a click step usually has none.
+    const layoutShift = computeLayoutShift(flushed.ls);
     // LCP attaches ONLY to a step that started a fresh document (a hard navigation, which includes the
     // built-in load step): LCP freezes at the first trusted interaction and never re-fires on a soft
     // navigation, so a per-soft-step LCP would be structurally empty. The last entry is the largest.
@@ -687,6 +885,7 @@ export async function runDriver(
       beforeUrl,
       afterUrl,
       ...(lcp ? { lcp } : {}),
+      ...(layoutShift ? { layoutShift } : {}),
     });
     activeStepLabel = null;
   }

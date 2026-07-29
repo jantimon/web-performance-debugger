@@ -1,6 +1,13 @@
 import type { DriverStep } from "../model/driver-step.js";
 import type { StepWindow } from "./parse.js";
-import type { InteractionTiming, NavigationKind, StepLcp, StepLoaf } from "../model/recording.js";
+import type {
+  BenchStats,
+  InteractionTiming,
+  LayoutShift,
+  NavigationKind,
+  StepLcp,
+  StepLoaf,
+} from "../model/recording.js";
 
 /**
  * A step's trace window keyed by label instead of index. The one pass produces both the step
@@ -52,8 +59,18 @@ export interface MergedStep {
   navigation?: NavigationKind;
   beforeUrl?: string;
   afterUrl?: string;
-  /** boot LCP from the FIRST timed iteration (a hard-navigation step); absent otherwise. See StepLcp. */
+  /**
+   * Boot LCP for a hard-navigation step, grown across the timed iterations: identity from the
+   * lower-median-by-render-time occurrence, `perIteration` the render-time series (null where an
+   * iteration fired no usable entry), `stats` the spread. Absent on a non-LCP step. See mergeLcp/StepLcp.
+   */
   lcp?: StepLcp;
+  /**
+   * CLS (spec session-window max) from the FIRST timed iteration (Chrome only), matching the LoAF/counts
+   * windowing: the shifting-element attribution is a distribution that cannot be medianed. Absent when
+   * no qualifying shift was observed. See LayoutShift.
+   */
+  layoutShift?: LayoutShift;
   startTs: number | null;
   endTs: number | null;
 }
@@ -62,6 +79,60 @@ function median(samples: number[]): number {
   const sorted = [...samples].sort((left, right) => left - right);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** min/median/mean/max over the samples; null below 2. Same contract as summarize.ts's computeStats
+ * (kept local so steps.ts stays dependency-light), so an LCP `stats` block matches a wall `stats` block. */
+function statsOf(samples: number[]): BenchStats | null {
+  if (samples.length < 2) return null;
+  const sorted = [...samples].sort((left, right) => left - right);
+  return {
+    samples: sorted.length,
+    minMs: sorted[0],
+    medianMs: median(sorted),
+    meanMs: sorted.reduce((left, right) => left + right, 0) / sorted.length,
+    maxMs: sorted[sorted.length - 1],
+  };
+}
+
+/** The LCP render time a merged series carries for one iteration: the entry's `renderTimeMs` when it
+ * fired a usable, non-suppressed entry, else null (no entry, a suppressed anomaly, or a TAO-gated
+ * resource with no render time). Never 0 for a miss -- null and 0 must stay distinct. */
+function iterationRenderTime(lcp: StepLcp | undefined): number | null {
+  if (!lcp || lcp.suppressed) return null;
+  return lcp.renderTimeMs ?? null;
+}
+
+/**
+ * Grow a hard-navigation step's LCP across its timed iterations, mirroring how `wall` is merged: each
+ * iteration boots a fresh document and captures its own entry, so a single LCP that swung run-to-run
+ * shows as the spread instead of one number that could be either extreme.
+ *
+ * `perIteration` is the render-time series in iteration order (null where an iteration fired no usable
+ * entry), `stats` summarises the non-null values, and the identity/timing fields are the
+ * lower-median-by-render-time occurrence VERBATIM (a real sample, like mergeSpanOccurrences keeps a
+ * real bar). Returns undefined for a step that carried no LCP at all (soft/none steps), and a bare
+ * `{ suppressed: true }` when every iteration hit the headless clock anomaly (no usable identity).
+ */
+export function mergeLcp(orderedSteps: { lcp?: StepLcp }[]): StepLcp | undefined {
+  const attached = orderedSteps
+    .map((step) => step.lcp)
+    .filter((lcp): lcp is StepLcp => lcp != null);
+  if (!attached.length) return undefined;
+  const perIteration = orderedSteps.map((step) => iterationRenderTime(step.lcp));
+  const shaped = attached.filter((lcp) => !lcp.suppressed);
+  // Every iteration fired but hit the startTime anomaly: no honest identity to report.
+  if (!shaped.length) return { suppressed: true };
+  // Identity/timing from the lower-median-by-render-time occurrence (a real sample). Fall back to the
+  // first shaped occurrence when none carried a render time (all TAO-gated), so identity still lands.
+  const withRender = shaped
+    .filter((lcp) => lcp.renderTimeMs != null)
+    .sort((left, right) => left.renderTimeMs! - right.renderTimeMs!);
+  const chosen = withRender.length
+    ? withRender[Math.floor((withRender.length - 1) / 2)]
+    : shaped[0];
+  const values = perIteration.filter((value): value is number => value != null);
+  return { ...chosen, perIteration, stats: statsOf(values) };
 }
 
 /**
@@ -279,6 +350,7 @@ export function mergeSteps(
           presentationDelayMs: median(measured.map((entry) => entry.presentationDelayMs)),
         }
       : null;
+    const mergedLcp = mergeLcp(ordered);
     const walled = ordered.filter((step) => step.wallMs != null);
     const wallClock = walled.length
       ? walled.every((step) => step.wallClock === "trace")
@@ -300,7 +372,10 @@ export function mergeSteps(
       ...(first.navigation ? { navigation: first.navigation } : {}),
       ...(first.beforeUrl != null ? { beforeUrl: first.beforeUrl } : {}),
       ...(first.afterUrl != null ? { afterUrl: first.afterUrl } : {}),
-      ...(first.lcp ? { lcp: first.lcp } : {}),
+      // LCP grows across iterations (each boots a fresh document, capturing its own entry); CLS comes
+      // from iteration 0, matching LoAF/counts, since its shifting-element attribution cannot be medianed.
+      ...(mergedLcp ? { lcp: mergedLcp } : {}),
+      ...(first.layoutShift ? { layoutShift: first.layoutShift } : {}),
       startTs: window?.startTs ?? null,
       endTs: window?.endTs ?? null,
     });

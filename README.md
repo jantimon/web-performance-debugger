@@ -504,6 +504,21 @@ Frames** it triggered (Chrome), naming the scripts that made a frame slow — th
 cost to source even in the default capture mode, and `query span <step>` prints the blamed scripts
 under the interaction split.
 
+**Synthetic web vitals: boot LCP and per-step CLS.** wpd measures Core Web Vitals **synthetically**
+in headless Chrome — one lab reading of the metric, not field data. A step that boots a fresh document
+carries its **boot LCP** (`step.lcp`): the largest contentful paint's element (`url`/`size`/`tag`),
+frozen at the first interaction. LCP swings run to run, so under `--iterations N` it is **per-iteration
+sampled** — `lcp.perIteration` is the render-time series (an iteration that fired no entry stays
+`null`, never 0) and `lcp.stats` its min/median/max, the same treatment `wall` gets; `query span`
+prints the spread beside the median. A step also carries **CLS** (`step.layoutShift`, Chrome only): the
+spec **session-window maximum** (session windows gap-capped at 1 s, window-capped at 5 s, shifts within
+500 ms of an input excluded), **on the step's own window** — not the page lifetime — with the top
+shifting elements attributed (`tag#id`, the rects they moved). The boot/load step is where CLS shows;
+a page that keeps shifting after the step settles needs an `until` to bring those shifts into a window.
+Firefox has no `layout-shift` entry type, so CLS is absent there rather than a fake 0. **Field / RUM
+data (CrUX, real-user CLS) is out of scope** — that is the calling orchestrator's job; wpd reports the
+synthetic lab number and attributes it to source.
+
 `inp ms` and the CWV split are measured **in-page**, so they describe the page, not the driver. A
 step's `wallMs` is the page's own window too — the trace-clock span between the step's marks under
 `--breakdown`/`--deep`, or the page's `performance.now` delta in the default capture mode — never the
@@ -842,6 +857,8 @@ more signals on top.
 | Forced layout/style blame to source | — | ✓ (sampled) | ✓ (`--deep`) |
 | Dirtied-by write attribution | — | ✓ (first-invalidation, `--deep`) | ✓ (full set, `--deep`) |
 | INP per step | — | ✓ | ✓ |
+| Boot LCP (per-iteration sampled) | — | ✓ | ✓ |
+| CLS per step (session-window max, attributed) | — | — | ✓ |
 | Layout / style / forced-layout counts | — | ~ (Gecko markers) | ✓ (trace) |
 | Paint counts + invalidation rollup + long tasks | — | — | ✓ (trace, `--breakdown`/`--deep`) |
 | `--cpu-throttle` slowdown | — | — | ✓ |

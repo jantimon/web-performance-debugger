@@ -14,6 +14,7 @@ import type {
   FirefoxDirtiedByReport,
   FrameSideTrack,
   InteractionTiming,
+  LayoutShift,
   NavigationKind,
   FlushScope,
   SpanAggregation,
@@ -475,6 +476,9 @@ export interface SpanAnatomy {
   afterUrl?: string;
   /** boot LCP for a step that started a fresh document (a hard-navigation step); absent otherwise */
   lcp?: StepLcp;
+  /** CLS (spec session-window max) with shifting elements attributed, for a driver step (Chrome only);
+   * absent on firefox/node, run/measure spans, and steps that observed no qualifying shift */
+  layoutShift?: LayoutShift;
   /** forced read-sites in this span's window; present only in an event-log capture mode (chrome/firefox --deep) */
   forced?: SpanForced[];
   /** the layout-thrashing rollup for the run window (chrome --deep only, run span) */
@@ -539,6 +543,9 @@ export interface GroupSpanStitch {
   afterUrl?: string;
   /** boot LCP for a hard-navigation step (identical across members); absent otherwise */
   lcp?: StepLcp;
+  /** CLS (spec session-window max) with shifting elements attributed, from whichever member observed it
+   * (Chrome only); absent when no member observed a shift */
+  layoutShift?: LayoutShift;
   /** forced read-sites (from the deep member) */
   forced?: SpanForced[];
   /** the layout-thrashing rollup (chrome --deep member, run span) */
