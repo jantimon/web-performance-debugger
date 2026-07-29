@@ -79,6 +79,10 @@ export interface PassResult {
    * only when it was detected AND --allow-bot-wall let the run continue (an undetected page and a
    * refused run both leave it undefined -- a refusal throws before the pass returns). */
   botWallVerdict?: BotWallVerdict;
+  /** The browser build string this pass launched, verbatim from `browser.version()` (chrome
+   * "Chrome/151.0.7922.47", firefox "Firefox/152.0"). Undefined when the backend could not report it.
+   * buildMeta parses the milestone off it for the comparability axis. */
+  browserVersion?: string;
 }
 
 function toServedUrl(server: StaticServer, root: string, absFile: string): string {
@@ -216,6 +220,9 @@ export async function runPass(
       : undefined,
   });
   let result: PassResult;
+  // The launched browser's build string, for the comparability axis. Best-effort: a backend that
+  // cannot report it leaves the axis unmeasured rather than failing the run.
+  const browserVersion = await browser.version().catch(() => undefined);
   // Bot-wall detection for a wpd-performed navigation. `inspect()` collects + classifies the settled
   // page; on a detected wall with no --allow-bot-wall it screenshots + throws (refusing before any
   // measurement pass), else it stores the verdict so a detected-but-allowed run can note it. Called
@@ -476,6 +483,7 @@ export async function runPass(
       sampledBlame,
       traceDataLoss,
       botWallVerdict,
+      browserVersion,
     };
   } catch (runError) {
     // The run failed. Close the browser (which also flushes a Firefox shutdown dump) so nothing is

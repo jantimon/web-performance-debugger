@@ -200,6 +200,55 @@ function hostCpuMismatch(base: RecordingMeta, current: RecordingMeta): CompatMis
 }
 
 /**
+ * The browser/engine-version axis: did the two recordings run on different engine milestones?
+ *
+ * Exact counts and the frame floor survive a Chrome/Firefox/node bump, but directional numbers
+ * (renderTime, stall rate, slice ms) can shift with the engine. So a milestone difference WARNS,
+ * never blocks -- like host-cpu, it is an environmental observation, not a config wpd applied. Fires
+ * only on a MILESTONE difference (a patch/build bump within one milestone is not comparability
+ * -relevant); when a milestone is missing on one side (older recording, unparsed format) it falls back
+ * to a raw-string comparison so the reader still sees the two builds. Both-absent returns null (silent).
+ */
+function browserVersionMismatch(
+  base: RecordingMeta,
+  current: RecordingMeta,
+): CompatMismatch | null {
+  const baseVersion = base.browserVersion;
+  const currentVersion = current.browserVersion;
+  if (baseVersion == null && currentVersion == null) return null;
+  const label = (version: RecordingMeta["browserVersion"]): string =>
+    version == null
+      ? "unmeasured"
+      : version.milestone != null
+        ? String(version.milestone)
+        : version.raw;
+  if (baseVersion == null || currentVersion == null)
+    return {
+      axis: "browser-version",
+      base: label(baseVersion),
+      current: label(currentVersion),
+      blocksGating: false,
+    };
+  if (baseVersion.milestone != null && currentVersion.milestone != null) {
+    if (baseVersion.milestone === currentVersion.milestone) return null;
+    return {
+      axis: "browser-version",
+      base: String(baseVersion.milestone),
+      current: String(currentVersion.milestone),
+      blocksGating: false,
+    };
+  }
+  // At least one side carries no parsed milestone: compare the raw strings so a difference is still surfaced.
+  if (baseVersion.raw === currentVersion.raw) return null;
+  return {
+    axis: "browser-version",
+    base: baseVersion.raw,
+    current: currentVersion.raw,
+    blocksGating: false,
+  };
+}
+
+/**
  * Which capture axes differ between two recordings, and whether each blocks a regression gate.
  *
  * A diff subtracts fields as if the two captures measured the same thing; they do not when the axis
@@ -226,16 +275,18 @@ function hostCpuMismatch(base: RecordingMeta, current: RecordingMeta): CompatMis
  *     to be the same technique, so it refuses rather than fabricating a pass. Both-absent (the
  *     default, nobody uses variants) matches and never appears here.
  *
- * Two axes only WARN. The sampler interval moves sampling density and steady-state, not the gated
+ * Three axes only WARN. The sampler interval moves sampling density and steady-state, not the gated
  * exact counts. The host-CPU index (hostCpuMismatch) flags that the two ran on materially different
- * hardware, so a self-time delta is host-scaled -- advisory, since it is an environmental observation
- * with its own noise, not a config wpd applied.
+ * hardware, so a self-time delta is host-scaled. The browser version (browserVersionMismatch) flags an
+ * engine-milestone difference, past which directional numbers can shift while exact counts survive.
+ * All three are advisory: environmental observations, not a config wpd applied.
  */
 export function comparabilityMismatches(
   base: RecordingMeta,
   current: RecordingMeta,
 ): CompatMismatch[] {
   const hostCpu = hostCpuMismatch(base, current);
+  const browserVersion = browserVersionMismatch(base, current);
   const axes: CompatMismatch[] = [
     {
       axis: "browser",
@@ -295,6 +346,8 @@ export function comparabilityMismatches(
     // Beyond-threshold or one-side-unmeasured only; within-threshold (and both-absent) is silent, so
     // it is a maybe-entry rather than a fixed axis the final base!==current filter would keep.
     ...(hostCpu ? [hostCpu] : []),
+    // Milestone difference only (or one-side-unmeasured); same-milestone and both-absent are silent.
+    ...(browserVersion ? [browserVersion] : []),
   ];
   return axes.filter((entry) => entry.base !== entry.current);
 }

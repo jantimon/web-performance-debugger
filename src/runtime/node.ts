@@ -23,6 +23,7 @@ import type { RecordOptions } from "../record/options.js";
 import { VERSION, TOOL } from "../version.js";
 import { SCHEMA_VERSION } from "../schema.js";
 import { stableWorkloadPath } from "../model/compat.js";
+import { engineVersion } from "../model/engine-version.js";
 import { measureHostCpuIndex } from "../model/host-cpu.js";
 
 /** Promise wrapper around an inspector Session's callback-style post(). */
@@ -182,6 +183,8 @@ export async function recordNode(opts: RecordOptions): Promise<{
     userDataDir: null,
     lifecycle,
     capture: "node-cpu",
+    // The node lane runs in-process, so its "engine build" is this node runtime.
+    browserVersion: engineVersion(process.version),
     notes: [nodeRuntime()],
   };
 

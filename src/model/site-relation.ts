@@ -68,8 +68,29 @@ export function siteRelation(bucketHost: string, pageUrl: string): SiteRelation 
   return "cross-site";
 }
 
-/** The measured page's URL for the site-relation comparison, or undefined when the recording had no
- * remote page (a bench/module run, or a local-file host): only a `--url` run navigated to a real URL. */
+/** The host (with port) of an http(s) URL, for a site-relation comparison; undefined for a non-http
+ * scheme or an unparseable URL. Pairs with `siteRelation`, which reconstructs `https://${host}`. */
+export function originHost(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+    return parsed.host;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The measured page's URL for the site-relation comparison, or undefined when the recording had no
+ * remote page (a bench/module run, or a local-file host): only a `--url` run navigated to a real URL.
+ *
+ * This is `meta.target` (the `--url` the run measured), the stable anchor for BOTH a bench-mode and a
+ * driver-mode `--url` run. A driver flow that NAVIGATES between steps ends on a different URL, but the
+ * post-navigation URL is not derivable from the CpuModel (it carries no per-sample document URL), so
+ * re-anchoring the relation to a step's final URL is deliberately NOT attempted: a wrong same/cross
+ * tag would be worse than anchoring on the measured entry URL. Same-site work stays same-site across an
+ * in-site route; only a cross-registrable-domain navigation would shift the anchor, which is out of scope.
+ */
 export function measuredPageUrl(meta: RecordingMeta): string | undefined {
   return meta.mode === "url" ? meta.target : undefined;
 }

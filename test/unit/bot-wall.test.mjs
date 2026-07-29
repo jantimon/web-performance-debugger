@@ -14,6 +14,9 @@ const base = () => ({
   interactiveElementCount: 120,
   bodyTextLength: 8000,
   metaRefreshUrl: null,
+  scriptSrcs: [],
+  cfChallengeGlobal: false,
+  documentHasCfChallengeToken: false,
 });
 
 test("Cloudflare 'Just a moment' (challenge iframe + title) is detected via two weak signals", () => {
@@ -54,6 +57,71 @@ test("main document on a Cloudflare challenge URL is a strong signal", () => {
   });
   assert.equal(verdict.detected, true);
   assert.ok(verdict.firedSignals.some((signal) => /challenge marker/.test(signal)));
+});
+
+test("Cloudflare INLINE managed challenge (same-origin challenge-platform script) is a strong signal", () => {
+  // The top document stays on the site's own origin (no __cf_chl in the URL, no dominant iframe), so
+  // only the same-origin /cdn-cgi/challenge-platform/ script names it.
+  const verdict = classifyBotWall({
+    ...base(),
+    mainDocumentUrl: "https://www.ricardo.ch/",
+    title: "Just a moment...",
+    interactiveElementCount: 0,
+    bodyTextLength: 20,
+    scriptSrcs: ["https://www.ricardo.ch/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"],
+  });
+  assert.equal(verdict.detected, true);
+  assert.ok(verdict.firedSignals.some((signal) => /challenge-platform script/.test(signal)));
+});
+
+test("Cloudflare inline challenge via the window._cf_chl_opt page global is a strong signal", () => {
+  const verdict = classifyBotWall({
+    ...base(),
+    mainDocumentUrl: "https://www.example.ch/",
+    title: "",
+    interactiveElementCount: 0,
+    bodyTextLength: 0,
+    cfChallengeGlobal: true,
+  });
+  assert.equal(verdict.detected, true);
+  assert.ok(verdict.firedSignals.some((signal) => /_cf_chl_opt/.test(signal)));
+});
+
+test("Cloudflare inline challenge via a __cf_chl_rt_tk document token is a strong signal", () => {
+  const verdict = classifyBotWall({
+    ...base(),
+    mainDocumentUrl: "https://www.example.ch/",
+    title: "",
+    interactiveElementCount: 0,
+    bodyTextLength: 0,
+    documentHasCfChallengeToken: true,
+  });
+  assert.equal(verdict.detected, true);
+  assert.ok(verdict.firedSignals.some((signal) => /__cf_chl_rt_tk/.test(signal)));
+});
+
+test("FALSE POSITIVE GUARD: a full page with a CROSS-ORIGIN Turnstile widget script does NOT trip", () => {
+  // The widget loads challenges.cloudflare.com/turnstile (cross-origin), never the site's own
+  // /cdn-cgi/challenge-platform/, and sets no _cf_chl_opt global or __cf_chl_rt_tk token.
+  const verdict = classifyBotWall({
+    ...base(),
+    title: "Login — Shop",
+    interactiveElementCount: 30,
+    bodyTextLength: 4000,
+    scriptSrcs: ["https://challenges.cloudflare.com/turnstile/v0/api.js"],
+    iframeSrcs: ["https://challenges.cloudflare.com/turnstile/v0/g/abc/api.js"],
+  });
+  assert.equal(verdict.detected, false, "a cross-origin Turnstile widget carries no inline-challenge tell");
+});
+
+test("FALSE POSITIVE GUARD: a same-path challenge-platform script from a DIFFERENT origin does NOT trip", () => {
+  // /cdn-cgi/challenge-platform/ served from some other host is not the measured site's own runtime.
+  const verdict = classifyBotWall({
+    ...base(),
+    mainDocumentUrl: "https://shop.example/",
+    scriptSrcs: ["https://cdn.other.example/cdn-cgi/challenge-platform/x"],
+  });
+  assert.equal(verdict.detected, false, "the challenge-platform script must be SAME-origin to fire");
 });
 
 test("FALSE POSITIVE GUARD: a full shop page embedding reCAPTCHA does NOT trip", () => {

@@ -68,6 +68,7 @@ import {
 } from "./group.js";
 import { pickMember, type GroupMember, type RunGroup } from "../model/group.js";
 import { matchedFrameFloor, frameFloorDominates } from "../model/frame-floor.js";
+import { classifySoftNavAgreement } from "../model/soft-nav.js";
 import { usToMs } from "../model/time.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
 
@@ -339,6 +340,12 @@ function buildSpanAnatomy(
   // Only suggest `query spans` when this capture mode actually has a bar/CpuModel for it to fold; in the
   // default/--deep capture modes it would error, so a not-available hint would send the reader in a circle.
   if (spansResult) hints.push(`All spans at a glance: wpd query spans ${hintPath}`);
+  // A recording measured past a detected bot wall (--allow-bot-wall) describes the challenge page, not
+  // the site: surface that loudly so a reader does not trust these numbers as the real page.
+  if (rec.meta.botWall?.detected)
+    hints.push(
+      `Bot-challenge page measured (--allow-bot-wall): these numbers describe the interstitial, not the site. Signals: ${rec.meta.botWall.signals.join("; ")}`,
+    );
 
   const residualMs = entry?.residualMs ?? span.breakdown?.residualMs;
 
@@ -391,6 +398,12 @@ function buildSpanAnatomy(
     ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
     ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
     ...(span.engineSoftNav ? { engineSoftNav: span.engineSoftNav } : {}),
+    ...(() => {
+      // The classifier-vs-engine reconciliation the human report prints, now in JSON too. Emitted only
+      // when there is something to reconcile ("none" means neither read a soft nav).
+      const softNavAgreement = classifySoftNavAgreement(span.navigation, span.engineSoftNav);
+      return softNavAgreement.agreement !== "none" ? { softNavAgreement } : {};
+    })(),
     ...(span.softNav ? { softNav: span.softNav } : {}),
     ...(span.lcp ? { lcp: span.lcp } : {}),
     ...(span.layoutShift ? { layoutShift: span.layoutShift } : {}),
@@ -626,6 +639,13 @@ async function buildGroupSpanStitch(
     ...(navAnatomy?.beforeUrl != null ? { beforeUrl: navAnatomy.beforeUrl } : {}),
     ...(navAnatomy?.afterUrl != null ? { afterUrl: navAnatomy.afterUrl } : {}),
     ...(softNavAnatomy?.engineSoftNav ? { engineSoftNav: softNavAnatomy.engineSoftNav } : {}),
+    ...(() => {
+      const softNavAgreement = classifySoftNavAgreement(
+        navAnatomy?.navigation,
+        softNavAnatomy?.engineSoftNav,
+      );
+      return softNavAgreement.agreement !== "none" ? { softNavAgreement } : {};
+    })(),
     ...(routeAnatomy?.softNav ? { softNav: routeAnatomy.softNav } : {}),
     ...(navAnatomy?.lcp ? { lcp: navAnatomy.lcp } : {}),
     // CLS is Chrome-only, so it is sourced from whichever member observed it, not member 0 (which may

@@ -32,6 +32,7 @@ export type {
 } from "./attribution.js";
 export type { SourceMapFailure, SourceMapDiagnostics } from "./sourcemap-meta.js";
 export type { WorkloadIdentity, RecordingMeta } from "./meta.js";
+export type { EngineVersion } from "./engine-version.js";
 
 export interface TimingEntry {
   name: string;

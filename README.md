@@ -799,6 +799,38 @@ Never run two measurement processes at once on the same machine: concurrent runs
 and contaminate self-time and wall alike, so scale a CI matrix across machines, not across cores on one
 ([Lighthouse variability](https://github.com/GoogleChrome/lighthouse/blob/main/docs/variability.md)).
 
+### Running wpd in CI
+
+`wpd` pins the Chrome build it drives (through a pinned Puppeteer), so `npm ci` downloads that exact
+Chrome the first time. The download is small and fast — on a hosted GitHub-Actions runner it is about
+1-2s, not worth caching. On a **slow or bandwidth-limited runner, a self-hosted runner, or a wide
+matrix** where that download repeats, cache it, keyed on the resolved browser build so a Puppeteer
+bump invalidates the cache automatically:
+
+```yaml
+- uses: actions/setup-node@v4
+  with:
+    node-version: 24
+    cache: npm
+# Cache the pinned browser, keyed on the Puppeteer version in the lockfile (its build == wpd's build).
+- id: pptr
+  run: echo "v=$(node -p "require('puppeteer/package.json').version")" >> "$GITHUB_OUTPUT"
+- uses: actions/cache@v4
+  with:
+    path: ~/.cache/puppeteer
+    key: puppeteer-${{ runner.os }}-${{ steps.pptr.outputs.v }}
+- run: npm ci   # installs the pinned Chrome into ~/.cache/puppeteer (a cache hit skips the download)
+```
+
+**A preinstalled browser (`PUPPETEER_EXECUTABLE_PATH`) is for the count-tier gates only.** Pointing
+wpd at the runner's system Chrome (or a container's, via `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium`)
+skips the download entirely, but you own the version then. Exact **counts** (layouts, styles, paints,
+forced-layout) and the frame floor survive a Chrome bump, so a count `assert`/`diff` gate stays valid
+across versions. Directional numbers (renderTime, INP, slice ms) can shift with the engine, so keep the
+**same browser build on both sides** of a `diff`/`cpu-diff`. wpd now stamps the resolved build on every
+recording (`meta.browserVersion`) and the comparability check **warns** — not blocks — when two
+recordings' engine milestones differ, so a cross-version gate is never silently trusted.
+
 ## What one record writes
 
 One `record` writes into `./recordings/` by default (or exactly the `--out` path you name). Every file

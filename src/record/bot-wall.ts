@@ -3,9 +3,13 @@
 // bench host page), so a challenge interstitial is refused BEFORE any measurement pass runs rather
 // than measured as if it were the site. The classifier is deliberately conservative -- it keys on the
 // RENDERED interstitial (title, dominant iframe, near-empty DOM, main-document URL/origin,
-// meta-refresh), NEVER on the mere PRESENCE of a captcha script. A normal shop embedding reCAPTCHA in
-// a form must not trip it: reCAPTCHA's own origin is not in the challenge-host list at all, and a
-// single non-dominant challenge iframe in a full DOM is one weak signal, below the 2-weak threshold.
+// meta-refresh) plus a small set of Cloudflare INLINE-challenge tells (a same-origin
+// challenge-platform script, the _cf_chl_opt page global, a __cf_chl_rt_tk document token), NEVER on
+// the mere presence of a generic captcha SDK. A normal shop embedding reCAPTCHA in a form must not
+// trip it: reCAPTCHA's own origin is not in the challenge-host list at all, a single non-dominant
+// challenge iframe in a full DOM is one weak signal below the 2-weak threshold, and an embedded
+// cross-origin Turnstile widget carries none of the inline-challenge tells (those are the site's own
+// origin serving Cloudflare's interstitial runtime, which a widget-on-a-real-page never does).
 //
 // It claims only what it can see. Naming a challenge vendor is a factual ORIGIN observation (the frame
 // came from that host), never a claim about the site's operator.
@@ -48,6 +52,19 @@ export const CHALLENGE_URL_MARKERS = [
   "/interstitial/",
 ] as const;
 
+/**
+ * Cloudflare's INLINE managed challenge (the "Just a moment" interstitial) keeps the top document on
+ * the site's OWN origin, so the main-URL / dominant-iframe / title signals all miss it. It is instead
+ * identified by three interstitial-specific tells, each a STRONG signal:
+ *   - a SAME-ORIGIN script from `/cdn-cgi/challenge-platform/` (the challenge runtime the site serves),
+ *   - the `window._cf_chl_opt` page global (set only on the interstitial),
+ *   - a `__cf_chl_rt_tk` runtime token in the served document.
+ * None is produced by an embedded Turnstile WIDGET on a real page: that widget loads cross-origin from
+ * `challenges.cloudflare.com` (never the site's own `/cdn-cgi/`) and sets no such global or token. So
+ * these promote the inline challenge to detection while the widget-on-a-full-page guard holds. */
+export const CF_CHALLENGE_PLATFORM_PATH = "/cdn-cgi/challenge-platform/";
+export const CF_CHALLENGE_DOCUMENT_TOKEN = "__cf_chl_rt_tk";
+
 /** Interstitial title patterns (case-insensitive substring), Chrome/DataDome/Cloudflare wording in
  * English and German (the dogfood ran CH/DE ecommerce). A title alone is ONE weak signal. */
 export const CHALLENGE_TITLE_PATTERNS = [
@@ -88,6 +105,16 @@ export interface BotWallSignals {
   bodyTextLength: number;
   /** an http-equiv="refresh" / JS-redirect target, when one names a challenge URL; else null */
   metaRefreshUrl: string | null;
+  /** every `<script src>` in the document (resolved absolute); a SAME-ORIGIN one under
+   * `/cdn-cgi/challenge-platform/` is Cloudflare's inline managed-challenge runtime. Absent on an
+   * older collector => treated as []. */
+  scriptSrcs?: string[];
+  /** `window._cf_chl_opt` was defined on the page: Cloudflare's inline-challenge global, set only on
+   * the interstitial (never by an embedded Turnstile widget). Absent => treated as false. */
+  cfChallengeGlobal?: boolean;
+  /** the served document carried a `__cf_chl_rt_tk` Cloudflare inline-challenge runtime token. Absent
+   * => treated as false. */
+  documentHasCfChallengeToken?: boolean;
 }
 
 /** The classifier's verdict: whether the page is a challenge interstitial, the evidence that fired,
@@ -98,6 +125,16 @@ export interface BotWallVerdict {
   firedSignals: string[];
   /** challenge vendor origins observed, as "host (Vendor)"; empty when none was a known vendor host */
   vendors: string[];
+}
+
+/** Whether `url` (possibly relative) resolves to the same origin as `baseUrl`. Used to keep the inline
+ * Cloudflare-challenge script signal SAME-ORIGIN, so a cross-origin Turnstile widget script does not trip it. */
+function sameOrigin(url: string, baseUrl: string): boolean {
+  try {
+    return new URL(url, baseUrl).origin === new URL(baseUrl).origin;
+  } catch {
+    return false;
+  }
 }
 
 function hostnameOf(url: string | null | undefined): string {
@@ -166,6 +203,22 @@ export function classifyBotWall(signals: BotWallSignals): BotWallVerdict {
   }
   const mainMarker = challengeUrlMarker(signals.mainDocumentUrl);
   if (mainMarker) strong.push(`main document URL carries a challenge marker (${mainMarker})`);
+
+  // Cloudflare's INLINE managed challenge keeps the top document on the site's own origin, so the
+  // signals above miss it. Its three interstitial-specific tells are each STRONG (see the
+  // CF_CHALLENGE_* constants): the false-positive guard is that none appears on a full page that
+  // merely embeds a cross-origin Turnstile widget.
+  const inlineCfScript = (signals.scriptSrcs ?? []).find(
+    (src) => src.includes(CF_CHALLENGE_PLATFORM_PATH) && sameOrigin(src, signals.mainDocumentUrl),
+  );
+  if (inlineCfScript)
+    strong.push("same-origin Cloudflare challenge-platform script (inline managed challenge)");
+  if (signals.cfChallengeGlobal)
+    strong.push("Cloudflare inline-challenge page global (window._cf_chl_opt)");
+  if (signals.documentHasCfChallengeToken)
+    strong.push(
+      `Cloudflare inline-challenge runtime token in the document (${CF_CHALLENGE_DOCUMENT_TOKEN})`,
+    );
 
   const dominant = new Set(signals.dominantIframeSrcs);
   for (const src of signals.dominantIframeSrcs) {

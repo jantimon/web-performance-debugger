@@ -1,6 +1,7 @@
 import type { BlameSemantic } from "./attribution.js";
 import type { SourceMapDiagnostics } from "./sourcemap-meta.js";
 import type { Measured } from "./measured.js";
+import type { EngineVersion } from "./engine-version.js";
 
 /**
  * Which way the run executed the flow:
@@ -98,6 +99,33 @@ export interface RecordingMeta {
   sourcemaps?: SourceMapDiagnostics;
   /** browser backend: "chrome" (default, CDP) or "firefox" (BiDi + Gecko profiler). Absent => chrome. */
   browser?: "chrome" | "firefox";
+  /**
+   * The engine build this run measured on: the resolved browser version (chrome `browser.version()`,
+   * firefox over BiDi) or, on the node lane, `process.version`. Carries the raw string plus the parsed
+   * major milestone. The comparability gate WARNS (never blocks) on a milestone difference: exact
+   * counts and the frame floor survive a browser bump, but directional numbers (renderTime, stall
+   * rate) can shift with the engine. Absent on recordings written before this field. See
+   * model/engine-version.ts and the browser-version axis in model/compat.ts.
+   */
+  browserVersion?: EngineVersion;
+  /**
+   * Bot-challenge detection verdict, stamped ONLY when detection fired AND `--allow-bot-wall` let the
+   * run measure the challenge page anyway (a refusal throws before any recording is written, so a
+   * refused run never reaches here). A machine-readable copy of the loud note, so a consumer reads the
+   * verdict without parsing prose. Absent on every clean run. Display-only (no gate branches on it), so
+   * optional per the gate-field invariant (docs/dev/rendering-counts.md). See record/bot-wall.ts.
+   */
+  botWall?: {
+    detected: boolean;
+    /** the evidence strings that fired (BotWallVerdict.firedSignals) */
+    signals: string[];
+    /** challenge vendor origins observed, as "host (Vendor)"; empty when the challenge was same-origin */
+    vendorOrigins: string[];
+    /** the proof screenshot path, when one was saved beside the recording */
+    screenshot?: string;
+    /** always true here: the field exists only on a detected-but-measured run */
+    measuredAnyway: boolean;
+  };
   /**
    * Which code this run's forced-layout blame names (see BlameSemantic): "flush-site" (the read),
    * comparable at line granularity across both engines. Absent => the run produced no blame

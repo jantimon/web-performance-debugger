@@ -115,7 +115,8 @@ export function makeNodeSourceResolver() {
 
 /**
  * The wpd source files whose `page.evaluate` calls inject wpd's OWN page-side helpers: the driver's
- * step marks / INP observer / settle, and the bench harness runner. Puppeteer stamps an evaluated
+ * step marks / INP observer / settle, the bench harness runner, and the bot-wall signal collector.
+ * Puppeteer stamps an evaluated
  * function's sourceURL as `pptr:<fn>;<encoded call site>`, so a frame from one of these files is
  * wpd's own, not the user's. A driver-mode USER `page.evaluate` callback carries the same `pptr:`
  * scheme but a call site inside the user's module, so it is NOT one of these and must survive.
@@ -124,6 +125,7 @@ const WPD_EVALUATE_SITES = [
   "/browser/driver.",
   "/browser/settle.",
   "/browser/harness.",
+  "/browser/bot-wall.",
   "/record/runpass.",
 ];
 
