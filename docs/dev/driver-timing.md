@@ -178,9 +178,11 @@ to round the parts to whole ms where Chrome does not.
   the last chunk lands ~173 ms in; `waitForStable` resolves after it. It is opt-in, never the default:
   the default settle is the measured trade-off above, and `waitForStable` trades a longer, more
   variable wall (the `quietMs` tail rides on every step) for catching the whole transition. There is
-  no `soft-navigation` performance entry to lean on: it ships only behind Chrome's
-  `SoftNavigationHeuristics` flag (measured: absent from `supportedEntryTypes` by default), and setting
-  an experimental flag would change the browser under test.
+  no portable `soft-navigation` performance entry the default settle can lean on. Chrome ships one
+  default-on from 151 (flag-gated on 150 and earlier), but Firefox has none and it fires only after a
+  trusted interaction, so a settle keyed on it would miss older Chrome, Firefox, and programmatic
+  routes ([navigation-and-lcp.md](./navigation-and-lcp.md#soft-navigations-standards-status)).
+  `waitForStable` stays the engine-agnostic opt-in.
 - **On a re-rendering SPA, drive the action with a plain `page.click('#stable-id')`.** Locator-style
   waits (`page.locator(sel).click()`, or `waitForSelector` then a click) re-resolve the element and
   hit **detached-node timeouts** when the framework replaces the node between the wait and the click.

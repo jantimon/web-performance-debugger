@@ -18,6 +18,7 @@ permalink).
 | --- | --- |
 | [cpu-profiling.md](./cpu-profiling.md) | changing the capture modes, the sampler interval, or how `selfMs` is described |
 | [cpu-attribution.md](./cpu-attribution.md) | changing which spans carry CPU samples, the per-span hot list, or the sourcemap warning |
+| [react-attribution.md](./react-attribution.md) | adding a React-aware surface (a `--framework` flag, a per-component read, a commit-count metric), or claiming what a React app shows wpd today |
 | [allocation-profiling.md](./allocation-profiling.md) | changing the `--alloc` heap sampler config, the GC-inclusion flags, or any allocation-attribution claim |
 | [firefox-cpu.md](./firefox-cpu.md) | changing the `MOZ_PROFILER_*` config, the Gecko interval, or the firefox idle/bar computation |
 | [blame-semantics.md](./blame-semantics.md) | touching `markForced`, the thrash detector, a dirtied-by report, or any blame claim |
@@ -52,6 +53,13 @@ permalink).
 - Why does a navigating flow lose samples in the default capture mode but not `--breakdown`? -> [navigation reset vs continuity](./cpu-attribution.md#the-cdp-samplers-window-resets-on-a-cross-process-navigation-the-default-capture-mode---breakdown-does-not)
 - How does `query span` rank a span's hot functions honestly? -> [per-span hot functions](./cpu-attribution.md#per-span-hot-functions)
 - When can the package rollup be believed, and when must it warn? -> [sourcemap note gating](./cpu-attribution.md#sourcemap-note-gating)
+
+**How a React app appears to wpd** — [react-attribution.md](./react-attribution.md)
+
+- Which trace channels does a React app write to, and which build gates them? -> [the trace channels](./react-attribution.md#the-trace-channels-a-react-app-writes-to-both-dev-gated)
+- Does `--deep` already persist React's TimeStamp tracks? -> [the persisted TimeStamp shape](./react-attribution.md#the-persisted-timestamp-shape-under---deep)
+- When are react-dom's node-lane function names readable (18 vs 19, dev vs prod)? -> [node-lane names by version and build](./react-attribution.md#node-lane-function-names-by-react-version-and-build)
+- What React metadata can a recording stamp factually? -> [the pre-load hook](./react-attribution.md#framework-detection-metadata-the-pre-load-global-hook)
 
 **Allocation attribution (`--alloc`)** — [allocation-profiling.md](./allocation-profiling.md)
 
