@@ -60,6 +60,16 @@ try {
   if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`wpd --version printed ${JSON.stringify(version)}`);
   console.log(`wpd --version -> ${version}`);
 
+  // AGENTS.md must ride the tarball (the `files` list), and `wpd --help` must end with its absolute
+  // path so an installed agent can find and read it. Both fail here if the file drops from the
+  // package or the help epilog stops resolving the package root.
+  const installedAgents = path.join(work, "node_modules", packageName, "AGENTS.md");
+  if (!existsSync(installedAgents)) throw new Error("AGENTS.md is missing from the installed package");
+  const help = capture(bin, ["--help"], { cwd: work });
+  if (!help.includes(installedAgents))
+    throw new Error(`wpd --help did not print the absolute AGENTS.md path (${installedAgents})`);
+  console.log(`wpd --help -> Docs for agents: ${installedAgents}`);
+
   // A real `--target node` record against a tiny fixture module: CPU-only lane, no browser.
   const probeModule = path.join(work, "probe.mjs");
   writeFileSync(

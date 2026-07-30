@@ -15,6 +15,7 @@ import { parseSliceBudgets, SLICE_NAMES, type SliceBudgets } from "./model/spans
 import { cpuDiffCmd } from "./commands/cpudiff.js";
 import { setColorEnabled } from "./output/color.js";
 import { toFloat, toInt, toNonNegativeInt, toPositiveInt } from "./cli-validation.js";
+import { docLinksEpilog } from "./doc-links.js";
 import { VERSION, TOOL } from "./version.js";
 
 /**
@@ -63,7 +64,10 @@ program
   .addHelpText(
     "after",
     "\nQuick start:\n  wpd record --url https://example.com\n  wpd query spans latest\n",
-  );
+  )
+  // Absolute paths to the installed package's docs, so an agent running `wpd --help` can open and
+  // read them. import.meta.url is dist/cli.js; the docs sit at the package root above dist/.
+  .addHelpText("after", docLinksEpilog(import.meta.url));
 
 // Resolve color once before any command runs. Human tables/reports use it; structured
 // (--format) output never calls the color helpers, so it stays plain regardless.
