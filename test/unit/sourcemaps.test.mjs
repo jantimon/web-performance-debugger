@@ -352,6 +352,42 @@ test("SourceMapResolver.resolveFrame: an observed-column frame still maps on a m
   assert.equal(frame.line, 21, "column 6 lands on the second segment's original line");
 });
 
+// B1: when a line-only sample's executing line is ambiguous (a minified bundle), the frame carries the
+// leaf FUNCTION's column-bearing fallback (the same frame the CPU model resolves). The resolver retries
+// there so the read names the forcing function at line granularity, not the bundle line.
+test("SourceMapResolver.resolveFrame: an ambiguous line-only frame falls back to the function's column position", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-fallback-"));
+  const jsPath = path.join(dir, "bundle.js");
+  writeFileSync(jsPath, "var a=1;var b=2;\n//# sourceMappingURL=bundle.js.map");
+  // genCol 0 -> orig line 1, genCol 5 -> orig line 21: line-only is ambiguous, but the fallback column 6
+  // (1-based) -> genCol 5 -> the second segment, resolving the forcing function.
+  const mappings = "AAAA,KAoBA";
+  writeFileSync(
+    path.join(dir, "bundle.js.map"),
+    JSON.stringify({ version: 3, file: "bundle.js", sources: ["src/app.ts"], names: [], mappings }),
+  );
+  const maps = new SourceMapResolver();
+  const frame = { source: jsPath, line: 1, lineOnly: true, fallbackLine: 1, fallbackColumn: 6 };
+  await maps.resolveFrame(frame);
+  assert.match(frame.source, /app\.ts$/, "the fallback resolves the original source, not the bundle");
+  assert.equal(frame.line, 21, "the function's column lands on its original line");
+  assert.equal(frame.column, undefined, "a sampled read reports line granularity, no fabricated column");
+});
+
+// The fallback never overrides a resolvable executing line: an unambiguous line-only frame keeps its
+// precise executing line even when a fallback is present.
+test("SourceMapResolver.resolveFrame: a resolvable line-only frame ignores the fallback", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wpd-fallback-skip-"));
+  const jsPath = path.join(dir, "bundle.js");
+  writeFileSync(jsPath, "function a(){}\n//# sourceMappingURL=bundle.js.map");
+  writeFileSync(path.join(dir, "bundle.js.map"), sourcemapFor("src/App.tsx", "AppRoot"));
+  const maps = new SourceMapResolver();
+  const frame = { source: jsPath, line: 1, lineOnly: true, fallbackLine: 1, fallbackColumn: 99 };
+  await maps.resolveFrame(frame);
+  assert.match(frame.source, /App\.tsx$/, "the unambiguous executing line resolves without the fallback");
+  assert.equal(frame.line, 1, "the executing line's original line, not the fallback's");
+});
+
 // F6: webpack's module-loader runtime (webpack/bootstrap, webpack/runtime/*, (webpack)/buildin/*) is
 // named by the sourcemap's `sources` but has no real file. Left as `app` it inflates the user's own
 // bucket (~20% on a real production boot). It must bucket as (webpack); a genuine mapped module

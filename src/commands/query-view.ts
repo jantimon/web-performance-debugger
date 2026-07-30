@@ -588,8 +588,11 @@ function printSpanAddons(addons: SpanAddons | undefined): void {
   const react = addons.react;
   if (react) {
     const identity: string[] = [];
-    if (react.detected) identity.push("detected");
-    else identity.push("not detected");
+    // Detection is a RUN-level fact (`detected` is a boolean only on the run span's fact). A step span
+    // carries a commit count with no detection result (`detected` undefined), so it must not claim "not
+    // detected" -- that reads as a detection failure when React was plainly detected on the run.
+    if (react.detected === true) identity.push("detected");
+    else if (react.detected === false) identity.push("not detected");
     if (react.version) identity.push(`v${react.version}`);
     if (react.rendererPackageName) identity.push(react.rendererPackageName);
     if (react.build) identity.push(react.build);
@@ -607,10 +610,19 @@ function printSpanAddons(addons: SpanAddons | undefined): void {
   }
   const dev = addons["react-dev"];
   if (dev) {
-    const tracks = dev.tracks.map((bucket) => `${bucket.track} ×${bucket.count}`).join(" · ");
+    const tracks = dev.tracks
+      .map((bucket) =>
+        bucket.ms > 0
+          ? `${bucket.track} ×${bucket.count} ${num(bucket.ms, 1)}ms`
+          : `${bucket.track} ×${bucket.count}`,
+      )
+      .join(" · ");
     console.log(
-      `${bold("React tracks")} ${dim("(react-dev addon, dev build)")}: ${dev.total} entries, ${num(dev.totalMs, 1)} ms  ${dim(tracks)}`,
+      `${bold("React tracks")} ${dim("(react-dev addon, dev build)")}: ${dev.total} entries  ${dim(tracks)}`,
     );
+    // Per-track ms is each track's own sequential busy time; tracks nest (Components ⚛ inside the
+    // Blocking lane's Render), so there is no honest grand total to lead with.
+    console.log(dim("  per-track ms from each entry's start/end; tracks nest, so read per track"));
   }
 }
 

@@ -28,6 +28,16 @@ export interface StackFrame {
    * line is unambiguous. Absent (the usual) means the column was observed and column 0 is real.
    */
   lineOnly?: boolean;
+  /**
+   * A column-bearing fallback position for a `lineOnly` sampled read-site: the leaf FUNCTION's own
+   * callFrame line+column (1-based), the same frame the CPU model resolves. When the executing line
+   * cannot be disambiguated (a minified bundle joins whole modules onto one generated line, so a
+   * column-less lookup is ambiguous), resolveFrame retries at this position and names the forcing
+   * function at line granularity instead of keeping the bundle line. Only the sampled-blame path sets
+   * it; absent everywhere else.
+   */
+  fallbackLine?: number;
+  fallbackColumn?: number;
   /** when source was a bundle with a sourcemap, the pre-map "file:line:col" */
   bundled?: string;
   /** the url is a remote (http) script; its sourcemap is fetched over the network */

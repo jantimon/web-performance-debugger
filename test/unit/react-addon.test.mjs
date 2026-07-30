@@ -20,15 +20,17 @@ const cpuFn = (fn, pkg, selfMs, file) => ({
   totalMs: selfMs,
   ...(file ? { file } : {}),
 });
-// A TimeStamp trace event as parseTrace stores it (kind "other", args.data.track intact). dur in us.
-const timeStamp = (track, trackGroup, ts, durUs) => ({
+// A React TimeStamp trace event as parseTrace stores it (kind "other", args.data.track intact). React
+// emits it as an INSTANT marker (ph "I", dur 0); the phase span is on args.data.start/end (the extended
+// console.timeStamp(label, start, end, ...) arguments), same trace clock (us). `spanUs` is end - start.
+const timeStamp = (track, trackGroup, start, spanUs) => ({
   id: 0,
   name: "TimeStamp",
-  ts,
-  dur: durUs,
-  ph: "X",
+  ts: start + spanUs,
+  dur: 0,
+  ph: "I",
   kind: "other",
-  args: { data: { track, trackGroup } },
+  args: { data: { track, trackGroup, start, end: start + spanUs } },
 });
 
 // --- registry contract: --framework off runs zero addon code -------------
@@ -208,6 +210,27 @@ test("classifyReactTracks: buckets React track events by label, sums duration, i
   assert.equal(facts.tracks[0].count, 2);
   assert.equal(facts.tracks[0].group, "Scheduler ⚛");
   assert.equal(facts.tracks[1].track, "Components ⚛");
+});
+
+// The phase span lives on args.data.start/end, not event.dur (the event is an instant marker). A lane
+// React only declared (start == end) is a genuine 0, kept as a count with no ms.
+test("classifyReactTracks: duration comes from data.start/end, not the instant event's dur", () => {
+  const events = [
+    // Real span (Render phase): start 1000, end 6300 -> 5300us -> 5.3ms. dur:0 on the event.
+    { id: 0, name: "TimeStamp", ts: 6300, dur: 0, ph: "I", kind: "other", args: { data: { track: "Blocking", trackGroup: "Scheduler ⚛", start: 1000, end: 6300 } } },
+    // Lane declaration: start == end -> 0 ms, but still a counted entry.
+    { id: 1, name: "TimeStamp", ts: 200, dur: 0, ph: "I", kind: "other", args: { data: { track: "Idle", trackGroup: "Scheduler ⚛", start: 200, end: 200 } } },
+    // A stray dur on the event must NOT be read (no start/end -> 0 ms).
+    { id: 2, name: "TimeStamp", ts: 300, dur: 9999, ph: "I", kind: "other", args: { data: { track: "Suspense", trackGroup: "Scheduler ⚛" } } },
+  ];
+  const facts = classifyReactTracks(events);
+  assert.equal(facts.total, 3);
+  const blocking = facts.tracks.find((bucket) => bucket.track === "Blocking");
+  assert.equal(blocking.ms, 5.3, "the Render span from start/end");
+  const idle = facts.tracks.find((bucket) => bucket.track === "Idle");
+  assert.equal(idle.ms, 0, "a lane declaration (start == end) is a counted 0, not a fabricated span");
+  const suspense = facts.tracks.find((bucket) => bucket.track === "Suspense");
+  assert.equal(suspense.ms, 0, "the event's own dur is never read");
 });
 
 test("classifyReactTracks: null when no React track event is present (never a fabricated zero)", () => {

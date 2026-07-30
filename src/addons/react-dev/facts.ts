@@ -13,7 +13,12 @@ export interface ReactTrackBucket {
   group: string;
   /** how many TimeStamp entries fell in this bucket */
   count: number;
-  /** summed entry duration, ms (directional, wall-tier); 0 when the entries were instant markers */
+  /**
+   * Summed entry span, ms (directional, wall-tier), from each entry's `args.data.start`/`.end`. Real
+   * per-track timing: a track's entries (a lane's Event/Render/Commit phases, or a component's renders)
+   * run sequentially, so their sum is that track's own busy time. 0 for a lane React only declared (no
+   * phase landed on it). Do NOT sum across tracks: Components ⚛ nests inside the Blocking lane's Render.
+   */
   ms: number;
 }
 
@@ -28,7 +33,9 @@ export interface ReactTrackBucket {
 export interface ReactDevFacts {
   /** total React track TimeStamp entries classified in this span window (>= 1 when present) */
   total: number;
-  /** summed entry duration across those entries, ms (directional) */
+  /** summed entry span across ALL tracks, ms (directional). Tracks nest (Components ⚛ inside the
+   * Blocking lane's Render), so this over-counts the overlap: read the per-track `ms` for the honest
+   * signal, not this aggregate. */
   totalMs: number;
   /** the entries bucketed by track label, descending by count */
   tracks: ReactTrackBucket[];

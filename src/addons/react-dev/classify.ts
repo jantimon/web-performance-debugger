@@ -19,6 +19,24 @@ const REACT_TRACK_MARK = "⚛"; // ⚛
 interface TimeStampData {
   track?: unknown;
   trackGroup?: unknown;
+  /** React passes the phase span as `console.timeStamp(label, start, end, ...)`; Chrome stores it on
+   * the (instant, dur=0) event's `args.data` as start/end in the trace clock (base::TimeTicks us). The
+   * real phase duration lives HERE, not on `event.dur`. */
+  start?: unknown;
+  end?: unknown;
+}
+
+/**
+ * A React track entry's own duration, microseconds. The event is an INSTANT (`ph:"I"`, `dur:0`) marker,
+ * so `event.dur` is always 0; the phase span React measured is on `args.data.start`/`.end` (the extended
+ * `console.timeStamp(label, start, end, ...)` arguments), same trace clock. A lane-declaration marker
+ * carries start==end (0), the honest zero for a lane no phase landed on.
+ */
+function trackEntryDurationUs(data: TimeStampData): number {
+  const start = typeof data.start === "number" ? data.start : null;
+  const end = typeof data.end === "number" ? data.end : null;
+  if (start == null || end == null) return 0;
+  return Math.max(0, end - start);
 }
 
 /** Read `args.data` off a TimeStamp event without trusting its shape (the stored args are opaque). */
@@ -55,7 +73,7 @@ export function classifyReactTracks(windowEvents: NormalizedEvent[]): ReactDevFa
     const data = timeStampData(event)!;
     const track = (typeof data.track === "string" && data.track) || "(untracked)";
     const group = (typeof data.trackGroup === "string" && data.trackGroup) || "";
-    const durationUs = Math.max(0, event.dur);
+    const durationUs = trackEntryDurationUs(data);
     const bucket = byTrack.get(track) ?? { group, count: 0, us: 0 };
     bucket.count += 1;
     bucket.us += durationUs;

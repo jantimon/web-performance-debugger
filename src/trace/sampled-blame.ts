@@ -14,6 +14,13 @@
  * occasional wrong-adjacent-line the firefox lane documents appear, so a sub-interval attribution is
  * marked low-confidence. Forced COUNTS still need `.stack` (`--deep`): a sampled event is
  * `sampled: true` so `summarize` never counts it as a flush.
+ *
+ * A minified bundle joins whole modules onto one generated line, so the executing line alone is
+ * column-less and ambiguous (it maps thousands of original positions). The blame frame therefore also
+ * carries the leaf FUNCTION's callFrame line+column (a real column, the same frame the CPU model
+ * resolves); when the executing line cannot be disambiguated the resolver retries there, so the read
+ * names the forcing function at line granularity instead of a bundle line (`app.jsx:8`, not
+ * `dist/app.js:9`).
  */
 
 import type { NormalizedEvent } from "../model/recording.js";
@@ -24,6 +31,10 @@ import { inWindow } from "./analysis.js";
 export interface CpuSampleStream {
   /** leaf-frame served url per sample node id (from the assembled profile's `nodes[].callFrame.url`) */
   urlByNode: Map<number, string>;
+  /** leaf-frame callFrame line+column per sample node id (0-based CDP convention, as the assembled
+   * profile stores them), the column-bearing fallback the resolver uses when the executing line cannot
+   * be disambiguated. Absent (older assembler) leaves the sampled read with no fallback. */
+  frameByNode?: Map<number, { line: number; column: number }>;
   /** node id per sample, parallel to `timestampsUs`/`lines` (ascending by timestamp) */
   samples: number[];
   /** absolute trace-clock timestamp (us) per sample */
@@ -51,7 +62,7 @@ export function sampledForcedBlameEvents(
   windowStart: number | null,
   thread: { pid: number; tid: number } | null,
 ): NormalizedEvent[] {
-  const { samples, timestampsUs, lines, threads, urlByNode, intervalUs } = stream;
+  const { samples, timestampsUs, lines, threads, urlByNode, frameByNode, intervalUs } = stream;
   if (lines.length === 0 || samples.length === 0) return [];
 
   // The layout/style flushes to blame, main-thread windowed and in ts order so the sample pointer
@@ -72,7 +83,11 @@ export function sampledForcedBlameEvents(
   for (const flush of flushes) {
     const windowEndUs = flush.ts + flush.dur;
     while (lower < timestampsUs.length && timestampsUs[lower] < flush.ts) lower++;
-    let picked: { url: string; line: number } | null = null;
+    let picked: {
+      url: string;
+      line: number;
+      fallback?: { line: number; column: number };
+    } | null = null;
     for (
       let index = lower;
       index < timestampsUs.length && timestampsUs[index] <= windowEndUs;
@@ -91,7 +106,15 @@ export function sampledForcedBlameEvents(
       const url = urlByNode.get(samples[index]) ?? "";
       // A native accessor node (empty url) or a tool/harness frame is not the read site; keep scanning.
       if (!url || isToolFrameUrl(url)) continue;
-      picked = { url, line };
+      // The leaf function's own callFrame position (0-based CDP): the column-bearing fallback the
+      // resolver retries at when the executing line is unresolvable on a minified bundle. +1 to the
+      // 1-based trace-stack convention resolveFrame expects; skip a positionless (-1) frame.
+      const nodeFrame = frameByNode?.get(samples[index]);
+      const fallback =
+        nodeFrame && nodeFrame.line >= 0
+          ? { line: nodeFrame.line + 1, column: nodeFrame.column + 1 }
+          : undefined;
+      picked = { url, line, fallback };
       break;
     }
     if (!picked) continue;
@@ -109,8 +132,20 @@ export function sampledForcedBlameEvents(
           // extractStack reads `stackTrace[].url`/`lineNumber`; attachStacks maps it to local source.
           // `lineOnly`: a sample carries an executing LINE but no column, so the resolver must not map
           // it through generated column 0 (a wrong original line on a minified single-line bundle); it
-          // maps only when the generated line is unambiguous, else keeps the bundle line.
-          stackTrace: [{ url: picked.url, lineNumber: picked.line, lineOnly: true }],
+          // maps only when the generated line is unambiguous. `fallbackLine`/`fallbackColumn` name the
+          // leaf function's column-bearing position, which the resolver retries at (the same frame the
+          // CPU model resolves) so a minified-bundle read still names the forcing function, not a
+          // bundle line.
+          stackTrace: [
+            {
+              url: picked.url,
+              lineNumber: picked.line,
+              lineOnly: true,
+              ...(picked.fallback
+                ? { fallbackLine: picked.fallback.line, fallbackColumn: picked.fallback.column }
+                : {}),
+            },
+          ],
           // A flush narrower than one sampler interval may catch an adjacent line or none, so flag it.
           ...(flush.dur < intervalUs ? { lowConfidence: true } : {}),
         },
