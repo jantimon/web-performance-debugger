@@ -1,5 +1,45 @@
 # @jantimon/web-performance-debugger
 
+## 1.3.0
+
+### Minor Changes
+
+- [#186](https://github.com/jantimon/web-performance-debugger/pull/186) [`52ec7c7`](https://github.com/jantimon/web-performance-debugger/commit/52ec7c767a14b62f14ede0d1406573b95c054319) - The `react` addon now names a hydration mismatch, not just its cost. React's default
+  `onRecoverableError` dispatches a window `error` event; a mismatch fires one. The pre-app hook counts
+  the hydration recoverable errors and stamps `hydrationRecoverableErrors` + the first message on the
+  run span, shown in the `React (addon)` block of `query span run` and in `--format json`. Exact-count
+  tier, build-independent (production fires it). An app that supplies its own `onRecoverableError`
+  suppresses the event, so an absent count is not proof of clean hydration.
+
+### Patch Changes
+
+- [#185](https://github.com/jantimon/web-performance-debugger/pull/185) [`b0f5861`](https://github.com/jantimon/web-performance-debugger/commit/b0f5861c4f0af72791d39fd1f4959ab41829d716) - Docs: AGENTS.md tightened -- same rules, half the words. The counterintuitive-field reference is
+  delegated to the README's Consuming-the-JSON section, and the shape is now a documented decision in
+  `docs/dev/agents-md.md`.
+
+- [#184](https://github.com/jantimon/web-performance-debugger/pull/184) [`4044c14`](https://github.com/jantimon/web-performance-debugger/commit/4044c140b1c80bf8233d397c1f176bf04e3f8b01) - Docs: restructure the README for a first-time reader. Install command and requirements now sit at the
+  top, a Troubleshooting index maps each common failure to the section that fixes it, and cold terms
+  (CLS, TOON, `base::TimeTicks`, the `.stack` trace) are glossed on first use.
+
+- [#181](https://github.com/jantimon/web-performance-debugger/pull/181) [`8b2b478`](https://github.com/jantimon/web-performance-debugger/commit/8b2b478ea205689573abf45c1c8fe2c8cbc8904d) - Release job no longer fails when the current version is already on npm. A push to main with no pending
+  changesets re-attempts the current version; the publish step now treats "already published at this
+  version" as a no-op success and fails only on a genuine publish error.
+
+- [#182](https://github.com/jantimon/web-performance-debugger/pull/182) [`912538e`](https://github.com/jantimon/web-performance-debugger/commit/912538e57ce99a597d6147c8deeebf4b9b7cd011) - Three React-debugging fixes:
+
+  - `query blame --forced` on `--breakdown` now resolves a forcing read to source. A sampled read-site
+    whose executing line falls on a minified bundle line falls back to the leaf function's own column
+    (the frame the CPU model resolves), so a bundled app shows `app.jsx:8`, not `dist/app.js:9`.
+  - `query span <step>` no longer prints "React (addon): not detected" on a step span. Detection is a
+    run-level fact; a step shows its commit count alone. JSON stays honest (detection absent, not fake).
+  - The `react-dev` Performance-Track summary now reports real per-track ms, read from each entry's
+    `start`/`end` (the instant TimeStamp events carry the span there, not on `dur`). Tracks nest, so the
+    timing is per-track, no grand total.
+
+- [#187](https://github.com/jantimon/web-performance-debugger/pull/187) [`d991821`](https://github.com/jantimon/web-performance-debugger/commit/d9918219659079ea268c77aaf0f14d087aa63b58) - README wording: the install line now says it installs the `wpd` command (long form
+  `web-performance-debugger`) instead of "bins", and the "at a glance" contrast names a page score like
+  Lighthouse instead of an unexplained "scorecard".
+
 ## 1.2.0
 
 ### Minor Changes
