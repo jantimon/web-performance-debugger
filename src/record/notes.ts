@@ -156,6 +156,13 @@ export function onrampBuiltinFlow(): string {
   return "Built-in load flow (no module): one step labeled 'load' navigates to the target (meta.target) inside the run window and settles, so the measured window is the page's own boot. INP is null — a page load has no interaction; pass a module that drives one (measureStep) to measure interactions.";
 }
 
+/** The built-in load flow booted but did almost no work (near-zero JS self-time AND near-zero
+ * layout/style/paint counts): the tell of a consent/region interstitial or an app shell measured in
+ * place of the app. Note-tier, never a gate (model/boot-shell.ts looksLikePreAppShell). */
+export function preAppShellSuspected(): string {
+  return "The measured boot did very little work (near-zero JS self-time and near-zero layout/style/paint counts): if this site normally renders an app, the measurement may have captured a consent/region shell or an app shell rather than the app itself. Verify the page rendered what you expect (read the boot LCP element on the 'load' step and the counts); if it did not, drive past the gate with a module (measureStep) or an authenticated --user-data-dir profile.";
+}
+
 /** The initial navigation failed with a transient cross-process error and was retried on a fresh
  * browser; disclose it so a reader knows the numbers are from a later attempt. */
 export function navRetried(retries: number): string {

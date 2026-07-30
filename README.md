@@ -62,7 +62,7 @@ Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use 
   and count behind each -- across Chrome, Firefox, and Node. Forced layout, CPU self-time, allocation,
   and rendering counts, attributed to code, not graded.
 - **How far to trust each number:** every load-bearing figure is measured in both engines, tagged with
-  its provenance, and drift-tested in CI. [How wpd verifies its numbers](docs/verification.md).
+  its provenance, and drift-tested in CI. [How wpd verifies its numbers](https://github.com/jantimon/web-performance-debugger/blob/main/docs/verification.md).
 - **Try it now:** `npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown`
 
 ## Contents
@@ -86,7 +86,7 @@ Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use 
   - [The numbers, and how far to trust them](#the-numbers-and-how-far-to-trust-them)
   - [What each target gives you](#what-each-target-gives-you)
   - [Consuming the JSON](#consuming-the-json)
-- [How wpd verifies its numbers](docs/verification.md) · [Contributing](CONTRIBUTING.md) · [Driving wpd from an agent](AGENTS.md) · [Security](SECURITY.md)
+- [How wpd verifies its numbers](https://github.com/jantimon/web-performance-debugger/blob/main/docs/verification.md) · [Contributing](https://github.com/jantimon/web-performance-debugger/blob/main/CONTRIBUTING.md) · [Driving wpd from an agent](https://github.com/jantimon/web-performance-debugger/blob/main/AGENTS.md) · [Security](https://github.com/jantimon/web-performance-debugger/blob/main/SECURITY.md)
 
 ## Your first run
 
@@ -298,7 +298,7 @@ reporting tiers over that one capture. That pass has no sampler-free counterpart
 fastest capture pays for it: **🐌🐌🐌 Δ ~150%** over a plain Firefox launch, and `--deep` is the same
 capture at the same cost. The tax is reflow-weighted, not flat — each synchronous reflow's marker
 captures a JS cause stack (the blame signal), so the probe's reflow-heavy workload pays ~150% while
-pure-JS work pays ~5% ([details](docs/dev/firefox-cpu.md)). Neither engine offers a sampler-free wall,
+pure-JS work pays ~5% ([details](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/firefox-cpu.md)). Neither engine offers a sampler-free wall,
 so every wall is directional over a real attribution, not a benchmark wall. `--target node` is
 a CPU-only lane with the four-slice bar. See [what each target gives you](#what-each-target-gives-you).
 
@@ -388,7 +388,9 @@ Line 5 is `void el.offsetWidth`: 100 loop reads forcing style + layout, times 5 
 writes that dirtied it named underneath (chrome `--deep` names both ends). Each row's `id` is the
 widest flush at that line: `query get <id>` returns its raw event (stack + args), and `query events`
 browses or filters the whole classified log (`--kind layout`, `--top`). Sampled `--breakdown` blame
-rows carry no id (their events are synthesized), so the column reads `—` there.
+rows carry no id (their events are synthesized), so the column reads `—` there, and their `count` is a
+sampling-frequency signal (how often a sample landed on that read line inside a forced flush), not a
+flush count — never compare it to `--deep`'s exact count; record `--deep` for the flush count.
 `blame --all` lists every attributed line with a `forced` column, so "ran but never forced" is a real
 answer too. `record --deep` also prints the layout-thrashing interleave when it finds one — the
 write→read→write→read signature where each read re-flushes a layout the prior write dirtied:
@@ -568,7 +570,7 @@ built-in headless (full Chrome, ~60 Hz), and about the same on Firefox on a CI o
 whose cadence tracks the display refresh (~60 Hz there, not the 120 Hz a live ProMotion panel shows).
 `wall`/`INP` carry the one-frame ~16.6 ms floor, so a sub-frame re-render reads as the frame time; read
 the counts, the bar, or `interaction.processingMs` for the work itself
-([docs/dev/frame-floor.md](docs/dev/frame-floor.md)).
+([docs/dev/frame-floor.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/frame-floor.md)).
 
 **Streamed / soft navigations.** The default settle resolves the moment the page goes briefly idle,
 which on a streamed SPA route change can be *before* the content lands. Wait on the landed content, or
@@ -712,7 +714,7 @@ steps only under chrome `--breakdown`, measures under chrome `--breakdown` and f
 measures) there is no stored per-span bar, so `query spans` synthesizes the run span from the CPU
 model's sampled window (labeled `sampled window`, JSON `source: "cpu-model"`), whose `wallMs` differs
 from the sum of the timed `run()` samples. See
-[docs/dev/cpu-attribution.md](docs/dev/cpu-attribution.md#which-spans-get-cpu-attribution).
+[docs/dev/cpu-attribution.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/cpu-attribution.md#which-spans-get-cpu-attribution).
 
 ### Framework addons (React)
 
@@ -741,7 +743,7 @@ plainly:
 
 The facts surface under `query span <label>` in a clearly-labeled `React (addon)` block, and additively
 in the `--format json` anatomy under `addons`. See
-[docs/dev/react-attribution.md](docs/dev/react-attribution.md).
+[docs/dev/react-attribution.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/react-attribution.md).
 
 ## Repetition and CI gating
 
@@ -1105,7 +1107,7 @@ comparison reports (including HTML scorecards), question-to-command recommenders
 recipes stay with the caller, who holds the context and the comparability judgment wpd cannot defend.
 In exchange wpd owes a typed, stable JSON/TOON contract, honest refusals (an n/a-FAIL, a comparability
 gate — never a fake zero), provenance on every number, and a non-zero exit on every gate. The standing
-scope boundary and the reasoning behind it: [docs/dev/orchestrator-boundary.md](docs/dev/orchestrator-boundary.md).
+scope boundary and the reasoning behind it: [docs/dev/orchestrator-boundary.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/orchestrator-boundary.md).
 
 ### Compared to the tools you already have
 

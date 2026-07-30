@@ -22,6 +22,7 @@ import type {
 } from "../model/query.js";
 import type { SpanCountsOverview } from "../model/spans.js";
 import { isGeckoCaptureMode } from "../model/capture-mode.js";
+import { looksLikePreAppShell } from "../model/boot-shell.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
 import { bold, cyan, dim } from "../output/color.js";
 import {
@@ -293,6 +294,21 @@ export function printSpanAnatomy(
     const idleTag = idleShareSuffix(span.breakdown.slices.idle.ms, span.breakdown.wallMs);
     if (idleTag) wallTags.push(`${idleTag} (window, not work)`);
   }
+  // The built-in load flow booted but did near-zero work: it may have measured a consent/region shell
+  // in place of the app (the loud meta.notes entry explains). Tag the run line so the reader sees it
+  // where the numbers are, not only in the notes block.
+  if (
+    anatomy.kind === "run" &&
+    looksLikePreAppShell({
+      isBuiltinLoad: meta.workload?.lane === "builtin-load",
+      jsSelfMs: meta.jsSelfMs ?? null,
+      layoutCount: anatomy.counts.layoutCount,
+      styleCount: anatomy.counts.styleCount,
+      paintCount: anatomy.counts.paintCount,
+      iterations: anatomy.iterations,
+    })
+  )
+    wallTags.push("possible pre-app shell (near-zero work; see notes)");
   const wallTail = wallTags.length ? dim(` · ${wallTags.join(" · ")}`) : "";
   console.log(`wall: ${bold(wall)}${spread}${wallTail}`);
   // A wall pinned to a frame-cadence floor hides sub-frame work: libraries whose real re-render is

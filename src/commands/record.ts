@@ -42,6 +42,7 @@ import {
 } from "../record/group.js";
 import { writeFileAtomic, copyFileAtomic } from "../model/atomic-write.js";
 import * as notesCatalog from "../record/notes.js";
+import { looksLikePreAppShell } from "../model/boot-shell.js";
 import { activeAddons } from "../addons/registry.js";
 import {
   addonPageInits,
@@ -1132,6 +1133,20 @@ export async function record(opts: RecordOptions): Promise<{
   const meta = buildMeta(setup, captured, derived);
   const { recording, summary } = buildRecordingObject(setup, captured, derived, meta);
   const cpuModel = await buildCpuArtifacts(setup, captured, derived, meta);
+  // Built-in load flow that booted but did near-zero work: it may have measured a consent/region
+  // shell in place of the app. Checked here, after the CPU model set meta.jsSelfMs and the summary
+  // holds the counts. derived.notes is meta.notes by reference, so the push lands in the artifact.
+  if (
+    looksLikePreAppShell({
+      isBuiltinLoad: setup.isOnramp,
+      jsSelfMs: meta.jsSelfMs ?? null,
+      layoutCount: summary.layoutCount,
+      styleCount: summary.styleCount,
+      paintCount: summary.paintCount,
+      iterations: meta.iterations,
+    })
+  )
+    derived.notes.push(notesCatalog.preAppShellSuspected());
   await buildSpanBars(setup, captured, derived, recording, summary, cpuModel);
   enrichAddons(setup, captured, derived, recording, cpuModel);
   finalizeSourcemapMeta(captured, meta, derived.notes, cpuModel);
