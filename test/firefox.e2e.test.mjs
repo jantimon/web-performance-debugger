@@ -126,7 +126,7 @@ e2e(
 // NOT refused: it is a reporting tier over that same pass. The guard fires before any browser
 // launches, so this runs everywhere (not gated on Firefox).
 test("record --target firefox --breakdown is refused (the gecko pass IS the lane)", () => {
-  const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--breakdown"], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "probes", "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--breakdown"], { encoding: "utf8" });
   assert.notEqual(result.status, 0, "--breakdown exits non-zero");
   assert.match(result.stderr, /unsupported/, "--breakdown explains why it is refused");
 });
@@ -250,7 +250,7 @@ e2e(
   () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
     const out = path.join(dir, "cpu");
-    runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--iterations", "20", "--out", out]);
+    runCli(["record", path.join(examples, "probes", "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--iterations", "20", "--out", out]);
     assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
     assert.ok(existsSync(`${out}.geckoprofile.json`), "raw gecko dump written");
 
@@ -308,7 +308,7 @@ e2e(
   () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
     const out = path.join(dir, "awaits");
-    runCli(["record", path.join(examples, "awaits-only.mjs"), "--bench", "--target", "firefox", "--iterations", "2", "--out", out]);
+    runCli(["record", path.join(examples, "probes", "awaits-only.mjs"), "--bench", "--target", "firefox", "--iterations", "2", "--out", out]);
 
     const model = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
     const breakdown = model.breakdown;

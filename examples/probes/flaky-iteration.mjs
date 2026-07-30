@@ -1,6 +1,6 @@
 // Driver-mode example that FAILS on a chosen iteration, to exercise --keep-partial.
 //
-//   wpd record examples/flaky-iteration.mjs --iterations 3 --keep-partial
+//   wpd record examples/probes/flaky-iteration.mjs --iterations 3 --keep-partial
 //
 // A production journey on a flaky site can time out on one slow iteration. --keep-partial keeps the
 // iterations that completed instead of discarding the whole run; a failure in the FIRST iteration

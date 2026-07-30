@@ -47,7 +47,7 @@ function runCli(args) {
 test("record --target node resolves hot functions to source without a browser", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "nodecpu");
-  runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--target", "node", "--iterations", "3", "--out", out]);
+  runCli(["record", path.join(examples, "probes", "cpu-busywork.mjs"), "--target", "node", "--iterations", "3", "--out", out]);
   assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
   assert.ok(existsSync(`${out}.cpuprofile`), "raw cpuprofile written");
 
@@ -66,7 +66,7 @@ test("record --target node resolves hot functions to source without a browser", 
 // `test` (not the Chrome-gated `e2e`): --target node imports the module in-process, no browser.
 test("node lane: a near-no-op --target node run gates stable under cpu-diff (B-01)", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-node-e2e-"));
-  const probe = path.join(examples, "near-zero.mjs");
+  const probe = path.join(examples, "probes", "near-zero.mjs");
   const base = path.join(dir, "base.json");
   // Record ONCE and self-diff. Recording twice made this flaky: two near-zero captures each land a
   // handful of samples, and sampler quantization jitters jsSelfMs 0.16-1.21ms between them against a

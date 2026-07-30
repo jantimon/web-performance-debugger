@@ -2,7 +2,7 @@
 // DOM and no waiting. Backs the "sub-frame CPU work IS measurable" measurement in
 // docs/dev/cpu-profiling.md: this sub-frame call is invisible to wall/INP (below one display frame)
 // but the CPU sampler prices it, and js self-time reconciles with the --bench wall to ~1-3%.
-// Run: node dist/cli.js record examples/fixed-js-work.mjs --bench --iterations 50
+// Run: node dist/cli.js record examples/probes/fixed-js-work.mjs --bench --iterations 50
 //      node dist/cli.js query cpu latest
 
 const LOOP_ITERATIONS = 1_500_000;

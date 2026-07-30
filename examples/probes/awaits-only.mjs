@@ -4,7 +4,7 @@
 // wall-time advances, and that CPU signal drives the idle slice (Gecko's category axis records no
 // Idle-category samples for a wait). Backs the Firefox-idle-on-the-CPU-axis section in
 // docs/dev/cpu-profiling.md.
-// Run: node dist/cli.js record examples/awaits-only.mjs --bench --iterations 1
+// Run: node dist/cli.js record examples/probes/awaits-only.mjs --bench --iterations 1
 //      node dist/cli.js query cpu latest
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

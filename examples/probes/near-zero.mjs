@@ -3,7 +3,7 @@
 // zero samples at low --iterations (Chrome reads js 0 around iter 10 and only becomes monotonic
 // above ~200 iterations; Firefox's ~1ms floor reports a fixed ~5ms of a handful of samples). Raise
 // --iterations until the number stabilises.
-// Run: node dist/cli.js record examples/near-zero.mjs --bench --iterations 250
+// Run: node dist/cli.js record examples/probes/near-zero.mjs --bench --iterations 250
 //      node dist/cli.js query cpu latest
 
 export function run() {
