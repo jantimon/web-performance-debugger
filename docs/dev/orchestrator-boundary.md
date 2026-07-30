@@ -19,8 +19,9 @@ run-group case the third test below turns on.
 **Sources.** The scope decisions are maintainer choices, not engine probes: the third-party
 classification flag and the doctor/init/compare/HTML-report asks that all stay out. The
 surfaces-evaluated register at the end adds [measured] tooling facts (the pre-commit and knip timings,
-the sandbox/trace deadlock) whose detail lives in the technical home cited there. Stated throughout as
-present-tense scope.
+the sandbox/trace deadlock) whose detail lives in the technical home cited there, plus two addon
+verdicts (Next.js, GTM) backed by capture probes with the load-bearing numbers stated inline. Stated
+throughout as present-tense scope.
 
 ## What wpd is, and what it is not
 
@@ -130,6 +131,24 @@ reopen one needs a new fact, not a re-argument.
   the shared `.git/hooks`, which every parallel worktree of this repo shares, so it would impose a
   local gate on unrelated work. A check-only pre-commit ran ~0.67s but duplicates what CI already
   enforces, so it buys latency, not coverage: evaluated, not adopted.
+- **No Next.js addon.** The capture already covers it. An App Router `Link` click classifies as a soft
+  navigation, Chrome's own engine heuristic agrees, and the React addon composes unchanged (per-step
+  commit counts land on the route change). At file granularity the profiler already separates Next's
+  internals once sourcemaps resolve: RSC payload decode (`react-server-dom` client), hydration
+  (`react-dom-client`), the App Router reducer, and the prefetch/segment cache each resolve to a
+  distinct named file. An addon would only re-group the profiler's own output, and that grouping is
+  caller synthesis. Three constraints stay worth knowing: production Next emits zero
+  `performance.mark`/`measure` (no marks-to-spans shortcut), App Router exposes no router-events
+  emitter, and without served sourcemaps every Next frame is an anonymous chunk line
+  (`productionBrowserSourceMaps` defaults off): evaluated, not adopted.
+- **No Google Tag Manager addon.** Per-tag and per-trigger cost is unreachable from any capture
+  [measured against a production GA4 container]: `gtm.js` is minified with no sourcemap, every tag
+  shares the one `googletagmanager.com` origin bucket, and GTM's push/eval machinery dominates the
+  per-event cost — an event that fires no tag costs the same ~2 ms [measured] as a real tag event. The
+  one reachable remainder, a dataLayer event-name timeline via a `push` wrapper, is a label, not a cost
+  split, and duplicates a named `measureStep`. A genuinely heavy tag already surfaces: an external tag
+  script is named at URL granularity by LoAF and the hot list, and an inline Custom-HTML tag lands in
+  `(native)` with LoAF blaming the dispatching listener: evaluated, not adopted.
 
 **Adopted process gates.**
 
