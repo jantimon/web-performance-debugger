@@ -15,7 +15,7 @@
 · [what wpd stores today: the addon seam](#what-wpd-stores-today-the-addon-seam)
 · [what is not established yet](#what-is-not-established-yet)
 
-**Provenance.** Facts are **[measured]** on Chrome 151 (Puppeteer 25.4.0), react 19.2.8 and react
+**Sources.** Facts are **[measured]** on Chrome 151 (Puppeteer 25.4.0), react 19.2.8 and react
 18.3.1, against a driven counter app (dev and production builds) and `examples/ssr-demo` on the node
 lane, unless tagged **[source]** (read out of the React source or the bippy README, cited inline).
 Where a probe refuted an earlier reading, the measured result is what stands here. Related:

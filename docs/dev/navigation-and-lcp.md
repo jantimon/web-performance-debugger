@@ -22,7 +22,7 @@
 · [the ambiguity family](#the-ambiguity-family)
 · [what wpd records today](#what-wpd-records-today)
 
-**Provenance.** Facts are **[measured]** on Chrome 150 (Puppeteer 25.2.1) and Firefox 152, either
+**Sources.** Facts are **[measured]** on Chrome 150 (Puppeteer 25.2.1) and Firefox 152, either
 against synthetic probes or against one traced four-step journey on **a production Next.js SPA**
 (a heavy, hydrating framework page, named here only as such). The soft-navigation facts are
 **[measured]** on Chrome 151 (Puppeteer 25.4.0), with the version boundary read off Chrome 150

@@ -804,7 +804,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
   // The opt-in variant travels in the structured output as well, so a JSON/TOON consumer sees which
   // technique this recording is without re-reading meta.
   const variantField = rec.meta.variant ? { variant: rec.meta.variant } : {};
-  // A group overview carries its provenance: the bar-bearing member it came from, and the deep member
+  // A group overview carries its source: the bar-bearing member it came from, and the deep member
   // that answers counts/blame -- so a consumer never reads this one member's bar as the whole group.
   const groupField: { group: GroupSpansProvenance } | Record<string, never> = groupCtx
     ? {

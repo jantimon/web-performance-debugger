@@ -35,8 +35,8 @@ export interface AllocGroupStat {
 }
 
 /**
- * The V8 heap sampler configuration this run recorded under, stored so a reader knows the numbers'
- * provenance. Fixed in v1 (not tunable): the byte interval and BOTH GC-inclusion flags are constants,
+ * The V8 heap sampler configuration this run recorded under, stored so a reader knows where the
+ * numbers come from. Fixed in v1 (not tunable): the byte interval and BOTH GC-inclusion flags are constants,
  * because the default live-only sampler reads 0 bytes for pure churn (the wrong signal); recording the
  * config makes an old artifact self-describing if the constants ever change.
  */

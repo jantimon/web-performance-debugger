@@ -211,7 +211,7 @@ test("query span <step>: the JSON headline is the median wall, with the iteratio
   assert.equal(anatomy.windowMs, 2023.43, "the bar's own window is disclosed separately");
 });
 
-test("query span <step>: the human wall line shows the median and the provenance tag describes it truthfully", async () => {
+test("query span <step>: the human wall line shows the median and the source tag describes it truthfully", async () => {
   const file = divergentStepRec("anatomy-step-median-text.json");
   const text = await captureText(() => querySpan(file, "step:add rows", {}));
   assert.match(text, /wall: 16\.03 ms.*median of 3 samples/, "the median rides the wall line, and the tag names it");
@@ -761,9 +761,9 @@ test("query span: firefox forced count discloses it is marker-derived with a sam
     ],
   });
   const text = await captureText(() => querySpan(file, "mount", {}));
-  // Token-level: the `marker-derived` provenance word and the `sampled`/`cheap reads` trust markers
+  // Token-level: the `marker-derived` source word and the `sampled`/`cheap reads` trust markers
   // are the disclosure; the sentence around them is free to change.
-  assert.match(text, /marker-derived/, "discloses the count provenance");
+  assert.match(text, /marker-derived/, "discloses the count source");
   assert.match(text, /sampled estimate.*cheap reads/s, "warns the sampled site can miss cheap reads");
 });
 

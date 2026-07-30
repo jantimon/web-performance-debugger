@@ -172,6 +172,6 @@ Two corollaries worth applying:
   re-read every warning it now reaches.
 
 House rules for these files: every file opens with a "not user documentation" note, an **In this
-file** anchor list, and a **Provenance** line naming the probes; a moved or split section keeps its
+file** anchor list, and a **Sources** line naming the probes; a moved or split section keeps its
 heading text so anchors survive; a load-bearing number cited in more than one file gets a
 [facts.md](./facts.md) ledger row, and the ledger unit test keeps the copies from drifting.

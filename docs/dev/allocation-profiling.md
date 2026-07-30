@@ -13,7 +13,7 @@
 · [allocation inverts the CPU story](#allocation-inverts-the-cpu-story)
 · [trust tiers](#trust-tiers)
 
-**Provenance.** All numbers below are `[measured]` on Node 24.13, macOS/arm64. The sampler-behaviour
+**Sources.** All numbers below are `[measured]` on Node 24.13, macOS/arm64. The sampler-behaviour
 figures (flags, estimator, interval sweep, co-ride contamination) are from the probe scripts
 `q1-churn`..`q5-interval` (a synthetic churn workload for q1/q2, `examples/ssr-demo` for q3/q4/q5); the
 inversion figures are the shipped tool on `examples/ssr-demo` at `--iterations 250`, `NODE_ENV=production`.

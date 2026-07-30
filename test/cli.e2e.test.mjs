@@ -664,7 +664,7 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
   assert.match(spanHuman, /layout objects\s+p50/, "the human anatomy prints the scope distribution");
 });
 
-// The js-slice footer's provenance is bar-conditioned, the chrome mirror of firefox.e2e.test.mjs's
+// The js-slice footer's source is bar-conditioned, the chrome mirror of firefox.e2e.test.mjs's
 // guard. The four-slice CPU-model bar (default capture mode) is sampler self-time, so a forced layout
 // DOES bill to the forcing JS frame -- that sentence must be PRESENT. The reconciling tiled bar
 // (--breakdown) splits the flush into style/layout, so its js is trace scripting self-time and the

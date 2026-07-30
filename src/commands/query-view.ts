@@ -281,7 +281,7 @@ export function printSpanAnatomy(
           ` · ${anatomy.samples} samples, wall ${num(anatomy.wallMinMs, 1)}..${num(anatomy.wallMaxMs, 1)} ms`,
         )
       : "";
-  // Point-of-use provenance on the wall itself, each firing only where the bare number misleads: a
+  // Point-of-use notes on the wall itself, each firing only where the bare number misleads: a
   // step's wall is a MEDIAN (its header aggregation "first" describes the counts/bar window, not this
   // number), and a settle-dominated window's width reads as workload unless its idle share sits beside
   // it. The idle tag rides ONLY a span whose wall IS the tiled bar window (idleShareSuffix's contract):

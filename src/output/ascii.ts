@@ -77,7 +77,7 @@ export function idleShareSuffix(idleMs: number, wallMs: number): string {
   return `~${Math.round(share * 100)}% idle`;
 }
 
-/** Point-of-use provenance for a span's WALL number, or "". A step's wall is the MEDIAN of its
+/** Point-of-use note on where a span's WALL number comes from, or "". A step's wall is the MEDIAN of its
  * samples while the span's `aggregation` is "first" (its counts/bar window to iteration 0), so the
  * header aggregation does not describe the wall; name the median where the number is. A single sample
  * needs nothing, and run (sum) / a merged measure (its own spread line) are already self-describing. */

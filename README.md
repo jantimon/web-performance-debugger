@@ -19,12 +19,12 @@
     width="900">
 </p>
 
-`wpd` measures where a page's time actually goes and names the source line responsible; every number
-carries its provenance. It drives real Chrome or Firefox (or pure Node)
+`wpd` measures where a page's time goes and names the source line responsible. Every number says how
+it was measured and how far to trust it. It drives real Chrome or Firefox (or pure Node)
 and attributes **layout, paint, style, and invalidation work — plus CPU self-time — back to the source
 line that caused it**. It **finds and
 investigates**; it does not grade, rank, or recommend. So it is not Lighthouse and not a
-website-comparison tool: it hands you exact, provenance-stamped numbers and the JSON to act on them,
+website-comparison tool: it hands you exact, measurement-tagged numbers and the JSON to act on them,
 and the judgment stays with you.
 
 <p align="center">
@@ -57,7 +57,7 @@ dominate; on a typical interaction most of the wall is `idle` (the frame wait) a
 
 ```bash
 npm i -g @jantimon/web-performance-debugger   # installs the `wpd` command (long form: `web-performance-debugger`)
-# or run without installing, against your dev server (5173 is Vite's default port):
+# or run without installing:
 npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown
 ```
 
@@ -73,7 +73,7 @@ Firefox is optional. The pnpm caveats and how to point wpd at your own browser a
   count behind each -- across Chrome, Firefox, and Node. Forced layout, CPU self-time, allocation, and
   rendering counts, attributed to code, not graded.
 - **How far to trust each number:** every load-bearing figure is measured in both engines, tagged with
-  its provenance, and drift-tested in CI. [How wpd verifies its numbers](https://github.com/jantimon/web-performance-debugger/blob/main/docs/verification.md).
+  its source and trust tier, and drift-tested in CI. [How wpd verifies its numbers](https://github.com/jantimon/web-performance-debugger/blob/main/docs/verification.md).
 - **Try it now:** `npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown`
 
 ## Contents
@@ -919,8 +919,7 @@ bugs.
 
 ### Requirements
 
-- **Node 24+.** wpd builds on Node 24's built-ins — the in-process profiler lane today, `node:sqlite`
-  for the deep event log in the next major — rather than carrying compatibility shims for older runtimes.
+- **Node 24+** (the current LTS).
 - **Chrome** is downloaded automatically by Puppeteer on install. To skip the browser entirely, use
   the `--target node` lane (CPU profiling only, no DOM/layout/paint).
 - **chrome-headless-shell is dead weight.** wpd runs full Chrome (built-in headless or `--no-headless`),
@@ -1142,7 +1141,7 @@ wpd finds and investigates; it does not grade, rank, or guide. Synthesis, N-way 
 comparison reports (including graded HTML summaries), question-to-command recommenders, and orchestration
 recipes stay with the caller, who holds the context and the comparability judgment wpd cannot defend.
 In exchange wpd owes a typed, stable JSON/TOON contract, honest refusals (an n/a-FAIL, a comparability
-gate — never a fake zero), provenance on every number, and a non-zero exit on every gate. The standing
+gate — never a fake zero), a source and trust tier on every number, and a non-zero exit on every gate. The standing
 scope boundary and the reasoning behind it: [docs/dev/orchestrator-boundary.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/orchestrator-boundary.md).
 
 ### Compared to the tools you already have

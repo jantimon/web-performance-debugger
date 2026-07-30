@@ -197,7 +197,7 @@ the count is scoped to the selected main thread (the same thread the breakdown b
 layout/style counts window), which puts it in the top-process scope layout/style share -- an OOPIF's
 own-process paints are filtered out, never summed in. Within that scope it is exact and reproducible
 (N+1, zero variance), so `assert --max-paints` / `diff` gate it; the tier is earned by
-reproducibility, not by a CDP provenance it does not have.
+reproducibility, not by a CDP source it does not have.
 
 ## Why `PAINT` is only `{Paint}`
 

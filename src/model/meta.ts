@@ -99,7 +99,7 @@ export interface RecordingMeta {
   /**
    * The resolved framework-addon mode this run selected (`--framework off|auto`, default `auto`), so a
    * consumer distinguishes a deliberate `off` from an `auto` run that detected no framework (both carry
-   * no `Span.addons`). Core provenance, not addon output: it records the choice regardless of whether
+   * no `Span.addons`). A core fact, not addon output: it records the choice regardless of whether
    * any addon contributed. Display-only (no gate branches on it), so optional per the gate-field
    * invariant. Absent only on recordings written before this field. See model/addon.ts.
    */

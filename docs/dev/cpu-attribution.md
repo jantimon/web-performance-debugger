@@ -10,7 +10,7 @@
 · [per-span hot functions](#per-span-hot-functions)
 · [when the package rollup can be believed](#sourcemap-note-gating)
 
-**Provenance.** As in [cpu-profiling.md](./cpu-profiling.md), which also holds the sampler physics
+**Sources.** As in [cpu-profiling.md](./cpu-profiling.md), which also holds the sampler physics
 (capture modes, contamination, interval) these attribution rules sit on.
 
 ## Which spans get CPU attribution
