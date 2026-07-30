@@ -1,5 +1,54 @@
 # @jantimon/web-performance-debugger
 
+## 1.2.0
+
+### Minor Changes
+
+- [#174](https://github.com/jantimon/web-performance-debugger/pull/174) [`8a2497f`](https://github.com/jantimon/web-performance-debugger/commit/8a2497f87aeeefb294d0084035b93a10478146fe) - `diff` gains `--format json|toon` (and the hidden `--json` alias): the same field-by-field
+  comparison, comparability warnings, gated regressions and per-span slice deltas as the human report,
+  serialized as a `DiffView` (a `GroupDiffView` for a run-group diff). Human output and
+  `--fail-on-regression` exit codes are unchanged. New exported types: `DiffView`, `DiffMetricRow`,
+  `GroupDiffView`, `DiffOutput`.
+
+  CLI help polish: the top-level tagline names all three targets and CPU self-time; `--help` and
+  `record --help` gain quick-start epilogs; `query events --kind` lists the missing `gc`; `query get`
+  accepts the shared `--json` alias; `--breakdown`/`--deep` help notes their mutual exclusivity and
+  where to read the result.
+
+- [#176](https://github.com/jantimon/web-performance-debugger/pull/176) [`20e64af`](https://github.com/jantimon/web-performance-debugger/commit/20e64af249b9d1c8df05565cbeb7e5b4fc593cc9) - Surface framework facts without drilling:
+
+  - `query spans` overview rows now carry a compact `addons.react` (`version` + `build`), so a bulk consumer reads framework identity off the overview instead of opening each span. The full per-span facts (commit counts, server phases) stay on `query span`.
+  - Recordings now stamp `meta.framework` (`"off" | "auto"`), so a deliberate `--framework off` run is distinguishable from an `auto` run that detected no framework (both carry no `Span.addons`).
+
+- [#177](https://github.com/jantimon/web-performance-debugger/pull/177) [`1bb07a4`](https://github.com/jantimon/web-performance-debugger/commit/1bb07a4345bf26945764d09ad29c90fe5e5c4702) - Three polish fixes: README links to non-shipped repo files (AGENTS.md, docs/, ...) are now absolute
+  GitHub URLs, so they resolve on the npm page and in an installed package. The blame docs now state
+  that a sampled `--breakdown` forced-blame `count` is a sampling-frequency signal, never comparable to
+  `--deep`'s exact flush count. The built-in `--url` load flow stamps a `meta.notes` entry (and tags the
+  `query span` run line) when the boot did near-zero work, the tell of a consent/region shell measured
+  in place of the app; note-tier only, never a gate.
+
+- [#172](https://github.com/jantimon/web-performance-debugger/pull/172) [`dc97fda`](https://github.com/jantimon/web-performance-debugger/commit/dc97fdae62a91037fb24cc83a0ef6c6e58697676) - Complete the public type surface so every type named inside an exported type is itself importable (no more hand-rolling a shape the package already describes). New root exports include `CaptureMode`, `TargetLane`, `WorkloadLane`, `Measured`, `CpuBreakdown`/`CpuSlice`/`CpuJsSlice`, `LayoutShift`(+`Source`/`Rect`), `EngineSoftNav`, `SoftNavRoute`(+`Lcp`)/`SoftNavVerdict`/`SoftNavAgreement`, `ThrashReport`/`ThrashStep`/`DirtiedByWrite`/`DirtiedByWriteRollup`/`FirefoxDirtiedByReport`, `WorkloadIdentity`, `SourceMapDiagnostics`/`SourceMapFailure`, `FrameFloor`/`WallMultipleFloor`/`WorkSignalFloor`, `SpanCountsEntry`, `RawProfileNode`/`RawCallFrame`/`GeckoSlice`, and the driver `StepOpts`/`Until`.
+
+  Narrowed the closed-union output fields from `string` to their real unions: `RecordingMeta.capture` and `GroupSpanMember.mode` to the capture-mode union, and `SpansResult`/`SpanAnatomy`/`GroupSpanStitch` `target` to `"chrome" | "firefox" | "node"`. Reading these fields now yields the exact literal type instead of a bare string.
+
+- [#175](https://github.com/jantimon/web-performance-debugger/pull/175) [`11173d5`](https://github.com/jantimon/web-performance-debugger/commit/11173d59cf34e1151e518156c974d9326892da8f) - Label floored trusted-click driver steps on `--breakdown`. A trusted `page.click` carries ~8ms of
+  input dispatch inside the step window, so a floored cheap step's wall (~41ms) lands off any exact
+  frame multiple and the old wall-multiple check missed it. `query span`/`query spans` now read a
+  step's flooring off its reconciling bar (sub-frame real work in an idle-dominated window), so a
+  sub-frame interaction is no longer read as real work.
+
+  The `frameFloor` JSON field carries a `basis` discriminator: `{ basis: "wall-multiple", floorMs,
+multiple }` for a bench/in-page/measure wall and INP, or `{ basis: "work-signal", floorMs, workMs }`
+  for a driver step. Exported as `FrameFloor` (union) with `WallMultipleFloor`/`WorkSignalFloor`.
+
+### Patch Changes
+
+- [#170](https://github.com/jantimon/web-performance-debugger/pull/170) [`8ab7390`](https://github.com/jantimon/web-performance-debugger/commit/8ab7390ebcd943609234e227f3bce22d4f73428d) - Driver reliability fixes:
+
+  - **INP no longer under-reports on a slow environment.** The end-of-step flush now drains every in-page observer's `takeRecords()` (INP, LoAF, layout-shift, LCP, soft-nav) before reading, and waits (bounded) for the Event Timing entry on a step that dispatched a trusted interaction. An entry queued-but-undispatched at the read instant was silently lost, reading INP lower and letting a real regression slip past `assert --max-inp`.
+  - **A mid-step hard navigation no longer hard-fails the record.** When a step's action triggers a navigation that commits during the default settle, the settle re-attaches to the new document instead of dying with "Execution context was destroyed".
+  - **SIGINT/SIGTERM/SIGHUP now clean up.** A killed run SIGKILLs its Chrome process and unlinks its temp files instead of orphaning them, then re-raises the signal.
+
 ## 1.1.0
 
 ### Minor Changes
