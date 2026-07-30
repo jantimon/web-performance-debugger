@@ -42,7 +42,7 @@
     "test:e2e:firefox": "WPD_E2E_FIREFOX_REQUIRED=1 node --test test/firefox.e2e.test.mjs",
     "changeset": "changeset",
     "version": "changeset version && npm install --package-lock-only",
-    "release": "npm run build && changeset publish",
+    "release": "npm run build && node scripts/release.mjs",
     "prepublishOnly": "npm run build",
     "start": "node dist/cli.js"
   },
