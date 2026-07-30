@@ -144,6 +144,15 @@ it as a flush (the count needs `.stack`). Where `--deep` gives the exact count p
 (dirtied-by, thrash), `--breakdown` gives the sampled read plus the reconciling bar; a run group
 (`--members breakdown,deep`) records both and stitches them.
 
+**A sampled blame row's `count` is a sampling-frequency signal, never a flush count.** The `count` on a
+`--breakdown` `query blame --forced` row is the number of CPU samples that landed on that read line
+during a forced flush, so it scales with flush DURATION times the sampler rate, not with the number of
+flushes: a single wide flush contributes many samples, a sub-interval flush often contributes one or
+none. It is not comparable to `--deep`'s exact flush count and must not be diffed against it (a
+sampled `count` of 24 against a `--deep` count of 2 is two different quantities, not a 12x over-count).
+Read the flush COUNT from `--deep` (or firefox markers); read a `--breakdown` `count` only as "this
+line was sampled inside forced flushes this often", a rough proxy for how much forced time it owns.
+
 ## Chrome's write side: dirtied-by + the thrash detector (`--deep`)
 
 Chrome's `.stack` names the **read** that forced a flush; Chrome's `invalidationTracking` records name
