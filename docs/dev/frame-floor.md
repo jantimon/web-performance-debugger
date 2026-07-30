@@ -96,6 +96,15 @@ that is the reading CI and an idle-panel dev machine produce, and it is exactly 
 value is the driven-panel reading only, not a firefox property; stamping it would read 2x too low on
 every host wpd actually runs on.
 
+**[source]** The mechanism behind the display-tracking is Gecko's vsync source selection
+(`layout.frame_rate`, Firefox Source Docs "Silk"): the default `-1` uses hardware vsync (macOS
+`CVDisplayLink`, Windows DWM timing), falling back to **software vsync at 60 Hz** when no hardware
+source drives it -- which is exactly the measured idle-panel/CI behavior above. Setting
+`layout.frame_rate = 60` would pin software vsync host-independently (the Gecko analogue of
+Chromium's synthetic BeginFrame). wpd does not set it: the lane stamps the reading the environment
+produces rather than reshaping the browser under test, and the measured 16.6 ms default already
+matches the stamp on every host wpd runs on.
+
 ## Why the floor is deterministic and cross-machine consistent
 
 **[measured]** On this 120 Hz ProMotion Mac with the panel idle, headless Chrome reads 16.7 ms / 60
