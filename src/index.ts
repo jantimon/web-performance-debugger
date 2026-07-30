@@ -105,7 +105,18 @@ export type {
   CpuPackageDelta,
   CpuFunctionDelta,
   CpuDiffResult,
+  DiffMetricKey,
+  DiffMetricRow,
+  DiffComparabilityAxis,
+  DiffView,
+  GroupDiffMember,
+  GroupDiffView,
+  DiffOutput,
 } from "./model/query.js";
+
+// The advisory per-span slice-delta shapes DiffView carries (declared alongside the slice-budget
+// helpers in model/spans.ts).
+export type { SliceName, SliceDelta, SpanSliceDiff } from "./model/spans.js";
 
 // The run-group manifest artifact (`<base>.group.json`): the N-capture-of-one-workload shape and its
 // members. `query spans`/`span` on a group emit GroupSpansResult / GroupSpanStitch (above).

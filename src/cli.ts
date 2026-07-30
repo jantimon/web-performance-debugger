@@ -56,10 +56,14 @@ const program = new Command();
 program
   .name(TOOL)
   .description(
-    "Drive Chrome (Puppeteer) to attribute layout/paint/invalidation work to source, one capture mode per run.",
+    "Attribute rendering work (layout/paint/style/invalidation) and CPU self-time back to source lines. Drives Chrome, Firefox, or Node (--target); one capture mode per run.",
   )
   .version(VERSION)
-  .option("--color <when>", "colorize human output: auto | always | never", "auto");
+  .option("--color <when>", "colorize human output: auto | always | never", "auto")
+  .addHelpText(
+    "after",
+    "\nQuick start:\n  wpd record --url https://example.com\n  wpd query spans latest\n",
+  );
 
 // Resolve color once before any command runs. Human tables/reports use it; structured
 // (--format) output never calls the color helpers, so it stays plain regardless.
@@ -154,11 +158,11 @@ program
   // invocation is exactly ONE pass.
   .option(
     "--breakdown",
-    "chrome capture mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span, plus exact layout/style/paint counts. Cannot report forced-layout counts or blame (they need the `.stack` category, which --deep captures)",
+    "chrome capture mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span, plus exact layout/style/paint counts. Cannot report forced-layout counts or blame (they need the `.stack` category, which --deep captures). Mutually exclusive with --deep; for both, record a run group via --members. Read it with `query spans`",
   )
   .option(
     "--deep",
-    "attribution-report capture mode. Chrome: ONE full-trace pass (.stack + invalidationTracking), sampler OFF -- exact forced-layout blame, dirtied-by writes, invalidation rollup, exact counts, long tasks; slice durations suppressed (the trace distorts them), no CPU model. Firefox: the SAME gecko pass, adding a dirtied-by (first-invalidation-only) write report from Gecko's cause stacks (no exact-count parity, no forced-by, no thrash detector)",
+    "attribution-report capture mode. Chrome: ONE full-trace pass (.stack + invalidationTracking), sampler OFF -- exact forced-layout blame, dirtied-by writes, invalidation rollup, exact counts, long tasks; slice durations suppressed (the trace distorts them), no CPU model. Firefox: the SAME gecko pass, adding a dirtied-by (first-invalidation-only) write report from Gecko's cause stacks (no exact-count parity, no forced-by, no thrash detector). Mutually exclusive with --breakdown; for both, record a run group via --members. Read it with `query blame --forced`",
   )
   .option(
     "--alloc",
@@ -190,6 +194,10 @@ program
     `record several capture modes back-to-back into ONE --group (${GROUP_MEMBER_MODES.join(",")}; comma-separated, e.g. --members breakdown,deep). Runs N browser launches, applies all other flags identically. chrome only; needs --group`,
   )
   .option("--format <fmt>", "on-disk format: json | toon", "json")
+  .addHelpText(
+    "after",
+    "\nAfter recording, read it with: wpd query spans latest (then: query span / query cpu / query blame)\n",
+  )
   .action(async (module: string | undefined, cmdOpts: any) => {
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
     // --framework accepts every lane (an addon no-ops where its signals are absent), so it is validated
@@ -544,7 +552,7 @@ fmtOpts(
     .description("filter/sort the classified event log")
     .option(
       "--kind <kind>",
-      "layout|style|paint|composite|invalidation|scripting|task|usertiming|other",
+      "layout|style|paint|composite|invalidation|scripting|gc|task|usertiming|other",
     )
     .option("--name <substr>", "case-insensitive name filter")
     .option("--forced", "only forced (synchronous) layout/style")
@@ -556,7 +564,7 @@ fmtOpts(
     .command("blame <file>")
     .description("aggregate source-attributed events by location (file may be 'latest')")
     .option("--kind <kind>", "restrict to one event kind")
-    .option("--forced", "only forced (synchronous) layout/style — layout thrashing")
+    .option("--forced", "only forced (synchronous) layout/style -- layout thrashing")
     .option("--all", "every attributed line with a 'forced' column (shows ran-but-forced-0)")
     .option(
       "--dirtied",
@@ -564,11 +572,9 @@ fmtOpts(
     )
     .option("--top <n>", "limit to first n locations", toPositiveInt),
 ).action((file, opts) => run(queryBlame(file, opts)));
-query
-  .command("get <file> <id>")
-  .description("fetch one event (full stack + args) by id")
-  .option("--format <fmt>", "structured output: json | toon")
-  .action((file, id, opts) => run(queryGet(file, toPositionalId(id, "id"), opts)));
+fmtOpts(
+  query.command("get <file> <id>").description("fetch one event (full stack + args) by id"),
+).action((file, id, opts) => run(queryGet(file, toPositionalId(id, "id"), opts)));
 fmtOpts(
   query
     .command("cpu <file>")
@@ -638,19 +644,24 @@ program
     });
   });
 
-program
-  .command("diff <baseline> <current>")
-  .description("compare two recordings field-by-field (counts/INP/wall)")
-  .option(
-    "--fail-on-regression",
-    "exit 1 if a gated exact count increased (INP and other wall-tier numbers stay advisory)",
-  )
-  .action((baseline, current, opts) =>
-    diffCmd(baseline, current, { failOnRegression: !!opts.failOnRegression }).catch((error) => {
-      emitFailure(error.message, error);
-      process.exitCode = 1;
-    }),
-  );
+fmtOpts(
+  program
+    .command("diff <baseline> <current>")
+    .description("compare two recordings field-by-field (counts/INP/wall)")
+    .option(
+      "--fail-on-regression",
+      "exit 1 if a gated exact count increased (INP and other wall-tier numbers stay advisory)",
+    ),
+).action((baseline, current, opts) =>
+  diffCmd(baseline, current, {
+    failOnRegression: !!opts.failOnRegression,
+    json: opts.json,
+    format: opts.format,
+  }).catch((error) => {
+    emitFailure(error.message, error);
+    process.exitCode = 1;
+  }),
+);
 
 program
   .command("cpu-diff <baseline> <current>")
