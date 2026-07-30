@@ -89,15 +89,24 @@ test("every type referenced by a public export is itself exported from the packa
   }
   assert.ok(exportedNames.size >= 40, `expected the full public surface, saw ${exportedNames.size}`);
 
-  // Worklist over every reachable OWN type declaration, starting from the exported types. Each missing
-  // reference is recorded once (by name); traversal continues through it so one run is complete.
-  const worklist = [...exportedTargets].filter(declaresType);
-  const visited = new Set(worklist);
+  // Worklist over every reachable OWN type declaration. The SEED is every export's declarations, not
+  // just the type-declaring ones: a value export's signature (`export declare function waitForStable(
+  // options: WaitForStableOptions): ...`) references types that a consumer must be able to name, so its
+  // parameter/return/annotation type nodes are roots too. Walking only type-declaring exports would
+  // miss a type reachable ONLY through a function signature (WaitForStableOptions passes today by luck
+  // of a manual re-export, not because the walk reaches it). Each missing reference is recorded once
+  // (by name); traversal continues through it so one run is complete.
+  //
+  // The extension is proven to bite: with WaitForStableOptions removed from the export set, the OLD
+  // type-only seed does NOT reach it (would pass), while this all-exports seed DOES flag it missing --
+  // reached through `waitForStable(options: WaitForStableOptions)`'s parameter type.
+  const exportedTypeTargets = [...exportedTargets].filter(declaresType);
+  const worklist = [];
+  const visited = new Set(exportedTypeTargets);
   const missing = new Map();
 
-  while (worklist.length > 0) {
-    const symbol = worklist.pop();
-    for (const declaration of symbol.declarations ?? []) {
+  function walkDeclarations(declarations) {
+    for (const declaration of declarations ?? []) {
       const referenced = [];
       collectReferencedNames(declaration, referenced);
       for (const entityName of referenced) {
@@ -118,6 +127,11 @@ test("every type referenced by a public export is itself exported from the packa
       }
     }
   }
+
+  // Seed from EVERY export (value + type); the exported types are pre-visited so their bodies walk
+  // exactly once here and are never redundantly re-drained.
+  for (const exportedTarget of exportedTargets) walkDeclarations(exportedTarget.declarations);
+  while (worklist.length > 0) walkDeclarations(worklist.pop().declarations);
 
   assert.deepEqual(
     [...missing.values()].sort(),

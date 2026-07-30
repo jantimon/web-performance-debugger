@@ -10,6 +10,7 @@ import {
   IDLE_DOMINANT_SHARE,
   MAX_FRAME_FLOOR_MULTIPLE,
 } from "../../dist/model/frame-floor.js";
+import { barFrameFloor } from "../../dist/model/spans.js";
 
 // The one-frame floor that pins wall/INP on sub-frame work. matchedFrameFloor decides which whole
 // multiple of the cadence a median "sits on"; frameFloorDominates gates an elevated multiple on the
@@ -114,4 +115,52 @@ test("workSignalFloor: a busy control (26ms work, idle 0.55) is rejected", () =>
 test("workSignalFloor: no bar (idleShare null) and no deterministic floor (headed) both decline", () => {
   assert.equal(workSignalFloor({ headless: true }, 0.63, null), null, "no idle signal to judge");
   assert.equal(workSignalFloor({ headless: false }, 0.63, 0.95), null, "headed declares no floor");
+});
+
+// barFrameFloor (model/spans.ts) is the kind DISPATCH over the two floor bases: a driver STEP is judged
+// by its bar's work signal (its wall carries ~8ms of trusted-click input dispatch, so it lands off any
+// exact n*floor), a run/measure span by its wall value's multiple. These two cases pin that routing so a
+// mutant swapping the arms is caught: each fixture is built so the OTHER arm returns undefined on it.
+
+const bar = (wallMs, { js = 0, style = 0, layout = 0, paint = 0, gc = 0, other = 0, idle = 0 }) => ({
+  wallMs,
+  slices: {
+    js: { ms: js },
+    style: { ms: style },
+    layout: { ms: layout },
+    paint: { ms: paint },
+    gc: { ms: gc },
+    other: { ms: other },
+    idle: { ms: idle },
+  },
+});
+
+test("barFrameFloor: a floored driver STEP routes to the bar's work signal (basis work-signal)", () => {
+  const chrome = { headless: true };
+  // A cheap trusted-click step: sub-frame work (0.63ms) in an idle-dominated 41ms window. Its wall
+  // (41ms) sits off any exact n*floor, so the wall-multiple arm would MISS it -- proving the dispatch.
+  const stepBar = bar(41, { js: 0.63, idle: 39 });
+  assert.deepEqual(barFrameFloor("step", 41, stepBar, chrome), {
+    basis: "work-signal",
+    floorMs: 16.6,
+    workMs: 0.63,
+  });
+  // The wall value alone does NOT floor at 41ms: only the bar's work signal proves the step floored, so
+  // routing a step to the wall-multiple arm (the swapped mutant) would return undefined here.
+  assert.equal(matchedFrameFloor(41, chrome), null);
+});
+
+test("barFrameFloor: a run span routes to the wall-multiple arm (basis wall-multiple)", () => {
+  const chrome = { headless: true };
+  // A one-frame run window whose bar is BUSY (16.6ms of work, 0 idle): the work-signal arm rejects it
+  // (work over a frame, not idle-dominated), so the swapped mutant (run -> work signal) returns
+  // undefined. The correct wall-multiple arm reads its 16.6ms wall as one frame.
+  const runBar = bar(16.6, { js: 16.6, idle: 0 });
+  assert.deepEqual(barFrameFloor("run", 16.6, runBar, chrome), {
+    basis: "wall-multiple",
+    floorMs: 16.6,
+    multiple: 1,
+  });
+  // Confirm the other arm would decline this fixture, so the assertion above pins the routing.
+  assert.equal(workSignalFloor(chrome, 16.6, 0), null, "the work-signal arm rejects a busy run bar");
 });

@@ -655,10 +655,33 @@ test("page-serialized mark literals match the canonical constants (the serializa
   assert.ok(driver.includes(`\`${stepBase}:end\``), "driver's step end edge is the canonical base");
 });
 
+// The Value cell's distinctive magnitude token: prefer a unit-bearing token (`21%`, `16.6ms`,
+// `9-30ms`, `24.5%`), falling back to the first bare number (`N+1` -> `1`, `18 = 6 + 12` -> `6`).
+// Whitespace is stripped so `200 us` reads as `200us`. Returns null for a prose Value with no digit
+// (those facts carry no number to drift). Mirrors the extraction the value-coupling assertion runs on.
+function ledgerValueToken(value) {
+  const magnitude = /\d+(?:\.\d+)?(?:\s?[-–/]\s?\d+(?:\.\d+)?)?\s?(%|x|pp|ms|us|KB|MB|Hz)?/g;
+  let first = null;
+  let withUnit = null;
+  for (const match of value.matchAll(magnitude)) {
+    const token = match[0].replace(/\s+/g, "");
+    if (first == null) first = token;
+    if (match[1] && withUnit == null) withUnit = token;
+  }
+  return withUnit ?? first;
+}
+
 // The docs/dev/facts.md ledger pins each load-bearing measured number to the files that cite it.
 // This reads the table and asserts every listed file still contains the fact's distinctive string,
 // so changing a number in one place and not the others fails here. Match distinctive strings scoped
 // to the listed files, which catches drift without spurious failures.
+//
+// It ALSO couples the Value column to the Test string, so the human-readable magnitude cannot drift
+// from the file-checked one: each Value's distinctive token (ledgerValueToken) must appear either in
+// the row's Test string OR in one of its cited files. The Test string is the truth (already asserted
+// present in every cited file); a Value whose number no cited source agrees with is stale. So mutating
+// a Value (21% -> 42%) without touching the Test string or the docs fails here, because 42% then
+// appears in neither. A prose Value with no numeric token is exempt (no magnitude to drift).
 test("facts.md ledger: every cited file still agrees with the ledger value", async () => {
   const ledger = await readFile(new URL("../../docs/dev/facts.md", import.meta.url), "utf8");
   const rows = ledger
@@ -679,22 +702,39 @@ test("facts.md ledger: every cited file still agrees with the ledger value", asy
     return fileCache.get(relPath);
   };
 
+  let coupledValues = 0;
   for (const cells of rows) {
     const fact = cells[1];
+    const value = cells[2];
     const testString = cells[3].replace(/`/g, "");
     const citedIn = cells[5]
       .split(",")
       .map((path) => path.replace(/`/g, "").trim())
       .filter(Boolean);
     assert.ok(citedIn.length > 0, `fact "${fact}" lists no cited files`);
-    for (const relPath of citedIn) {
-      const source = await readCited(relPath);
+    const sources = await Promise.all(citedIn.map((relPath) => readCited(relPath)));
+    for (const [index, relPath] of citedIn.entries())
       assert.ok(
-        source.includes(testString),
+        sources[index].includes(testString),
         `fact "${fact}": ${relPath} no longer contains "${testString}" (ledger and code disagree)`,
       );
-    }
+
+    // Couple the Value column: its magnitude token must be corroborated by the Test string or a
+    // cited file (whitespace-insensitive). A prose Value (no numeric token) is exempt.
+    const token = ledgerValueToken(value);
+    if (token == null) continue;
+    coupledValues += 1;
+    const inTestString = testString.replace(/\s+/g, "").includes(token);
+    const inCitedFile = sources.some((source) => source.replace(/\s+/g, "").includes(token));
+    assert.ok(
+      inTestString || inCitedFile,
+      `fact "${fact}": the Value's token "${token}" is in neither the Test string ("${testString}") ` +
+        `nor any cited file -- the Value column has drifted from the file-checked magnitude`,
+    );
   }
+  // Guard the coupling itself: if the extractor silently stopped matching, every row would exempt and
+  // the assertion above would pass vacuously. Most rows carry a magnitude, so demand a healthy floor.
+  assert.ok(coupledValues >= 40, `expected most facts to couple a numeric Value, coupled ${coupledValues}`);
 });
 
 test("stableWorkloadPath: spelling and cwd variants of one module join as one workload", () => {
