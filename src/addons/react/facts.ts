@@ -44,6 +44,18 @@ export interface ReactFacts {
    * (node) or a window that committed nothing.
    */
   commitCount?: number;
+  /**
+   * React hydration recoverable errors that reached wpd's window `error` listener during the run.
+   * React's DEFAULT `onRecoverableError` routes through `reportError`, which dispatches a window `error`
+   * event; a hydration mismatch fires one. Exact count when present, build-independent (production fires
+   * it too). Absent is NOT proof of clean hydration: an app that supplies its own `onRecoverableError`
+   * (or `hydrateRoot` option) replaces the default and suppresses the event, so wpd sees nothing.
+   * Browser lanes only (rides the run span). See docs/dev/react-attribution.md.
+   */
+  hydrationRecoverableErrors?: number;
+  /** The first hydration recoverable error's message (truncated); present only alongside
+   * `hydrationRecoverableErrors`, to identify the mismatch. */
+  firstHydrationError?: string;
   /** node lane: react-dom server-render self-time by phase anchor; absent when no anchor resolved */
   phases?: ReactPhaseRollup;
 }

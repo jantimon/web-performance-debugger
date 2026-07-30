@@ -599,6 +599,13 @@ function printSpanAddons(addons: SpanAddons | undefined): void {
     if (react.commitCount != null)
       identity.push(`${react.commitCount} commit${react.commitCount === 1 ? "" : "s"}`);
     console.log(`\n${bold("React")} ${dim("(addon)")}: ${identity.join(" · ")}`);
+    if (react.hydrationRecoverableErrors != null) {
+      const plural = react.hydrationRecoverableErrors === 1 ? "" : "s";
+      const firstLine = react.firstHydrationError?.split("\n")[0].slice(0, 100);
+      console.log(
+        `  ${bold(`hydration mismatch: ${react.hydrationRecoverableErrors} recoverable error${plural}`)}${firstLine ? dim(`  ${firstLine}`) : ""}`,
+      );
+    }
     if (react.phases) {
       const anchors = react.phases.anchors
         .map((anchor) => `${anchor.name} ${num(anchor.selfMs, 1)}`)
