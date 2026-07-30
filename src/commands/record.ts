@@ -394,6 +394,9 @@ async function runCapturePass(setup: RecordSetup): Promise<CapturedPass> {
     try {
       await copyFileAtomic(pass.geckoDumpPath, cpuProfilePath);
     } finally {
+      // Drop the temp's signal-cleanup guard before removing it, so a completed run leaves nothing
+      // registered (disposers.ts); runpass handed the release over on PassResult with the path.
+      pass.geckoDumpRelease?.();
       await fs.rm(pass.geckoDumpPath, { force: true }).catch(() => {});
     }
   }

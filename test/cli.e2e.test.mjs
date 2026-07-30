@@ -2322,3 +2322,67 @@ e2e("record --url refuses a bot-wall interstitial with a screenshot, and --allow
     server.close();
   }
 });
+
+// The end-of-step flush drains EVERY observer's takeRecords() and, on a step that dispatched a trusted
+// interaction, waits (bounded) for its Event Timing entry. A 45ms handler crosses the 16ms spec floor,
+// so the step MUST carry a non-null INP: an entry queued-but-undispatched at the read would read INP
+// null and could pass a --max-inp gate on a real regression.
+e2e("record (driver): a trusted interaction's INP survives the entry-delivery race", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const html = path.join(repoRoot, "test", "fixtures", "slow-handler.html");
+  assert.ok(existsSync(html), "slow-handler.html is committed, so this test cannot silently skip");
+  const flow = path.join(dir, "inp-flow.mjs");
+  writeFileSync(
+    flow,
+    `export async function run({ page, measureStep }) {
+       await page.waitForSelector("#inc");
+       await measureStep("slow-click", () => page.click("#inc"));
+     }`,
+  );
+  const out = path.join(dir, "inp");
+  runCli(["record", flow, "--url", html, "--out", out]);
+  const rec = JSON.parse(readFileSync(out, "utf8"));
+  const step = rec.spans.find((span) => span.kind === "step" && span.label === "slow-click");
+  assert.ok(step, "the slow-click step span exists");
+  assert.ok(step.inpMs != null, "the trusted click's INP is captured, not lost to the race (null)");
+  assert.ok(step.inpMs >= 40, `the 45ms handler's INP crosses the frame, got ${step.inpMs}`);
+  assert.ok(step.interaction, "and the interaction's input/processing/presentation split is present");
+  assert.ok(
+    step.interaction.processingMs >= 40,
+    `processing recovers the 45ms handler, got ${step.interaction?.processingMs}`,
+  );
+});
+
+// The default settle (no `until`) survives a HARD navigation the step's action triggers mid-settle. The
+// action schedules a reload ~10ms out and returns; the reload commits while the settle's page.evaluate
+// is in flight, destroying its context ("Execution context was destroyed", which isTransientNavError
+// does NOT match). Without the re-attach the record hard-fails; with it, the settle re-runs on the
+// reloaded document and the step completes as a hard navigation. The reload is scheduled from the
+// ACTION, not the page's own script, so the reloaded document does not schedule another (no loop).
+e2e("record (driver): the default settle re-attaches when a hard navigation commits mid-settle", { timeout: TIMEOUT_MS }, () => {
+  const server = startOnrampServer(
+    "<!doctype html><meta charset=utf-8><title>reloader</title><h1 id=hero>reload me</h1>",
+  );
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  try {
+    const flow = path.join(dir, "reload-flow.mjs");
+    writeFileSync(
+      flow,
+      `export async function run({ page, measureStep }) {
+         await measureStep("reload-mid-settle", () =>
+           page.evaluate(() => { setTimeout(() => window.location.reload(), 10); }),
+         );
+       }`,
+    );
+    const out = path.join(dir, "reload");
+    // runCli throws on a non-zero exit, so completing IS the assertion: the destroyed-context family is
+    // caught and the settle re-attaches. The hard classification confirms the reload actually committed.
+    runCli(["record", flow, "--url", server.url, "--iterations", "1", "--out", out]);
+    const rec = JSON.parse(readFileSync(out, "utf8"));
+    const step = rec.spans.find((span) => span.kind === "step" && span.label === "reload-mid-settle");
+    assert.ok(step, "the reloading step completed instead of failing the record");
+    assert.equal(step.navigation, "hard", "the reload is classified as a hard navigation");
+  } finally {
+    server.close();
+  }
+});

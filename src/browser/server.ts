@@ -2,6 +2,7 @@ import http from "node:http";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
+import { registerDisposer } from "./disposers.js";
 
 const MIME: Record<string, string> = {
   ".js": "text/javascript",
@@ -128,9 +129,25 @@ export async function startStaticServer(
   });
   const port = (server.address() as AddressInfo).port;
 
+  // On a fatal signal, drop the listening socket + any keep-alive connection synchronously so the
+  // port is not held past the run; the normal close() deregisters this. The process re-raises and
+  // exits either way, so this is belt to the re-raise's braces (disposers.ts).
+  const release = registerDisposer(() => {
+    try {
+      server.closeAllConnections?.();
+      server.close();
+    } catch {
+      /* best-effort */
+    }
+  });
+
   return {
     url: `http://127.0.0.1:${port}`,
     port,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () =>
+      new Promise<void>((resolve) => {
+        release();
+        server.close(() => resolve());
+      }),
   };
 }
