@@ -369,8 +369,13 @@ export async function runMembers(
   modes: GroupMemberMode[],
 ): Promise<RunMembersOutcome> {
   const name = baseOpts.group!;
-  const dir = baseOpts.out ? path.dirname(path.resolve(baseOpts.out)) : path.resolve("recordings");
-  const manifestPath = groupManifestPathFor(dir, name, baseOpts.format);
+  // --out locates the whole family: its DIRECTORY holds every member + the manifest, and its BASENAME
+  // stem names them (a single --out file cannot be one of N members, so honor it as the shared stem
+  // rather than drop it). No --out: the stem falls back to the group name under ./recordings.
+  const outPath = baseOpts.out ? path.resolve(baseOpts.out) : undefined;
+  const dir = outPath ? path.dirname(outPath) : path.resolve("recordings");
+  const fileStem = outPath ? path.basename(outPath, path.extname(outPath)) : name;
+  const manifestPath = groupManifestPathFor(dir, fileStem, baseOpts.format);
   // Validate the WHOLE requested set against any existing manifest before the first browser launches:
   // a name-identity mismatch or a duplicate member refuses here, so a re-run of a complete group never
   // overwrites a member artifact or touches the `latest` pointer (D1).
@@ -390,7 +395,10 @@ export async function runMembers(
       // Thread the full requested set so each append derives partial status structurally (a later
       // member's failure leaves the correct "N of M, missing X" note without a separate annotate step).
       groupRequested: modes,
-      out: memberOutPath(dir, name, mode, baseOpts.format),
+      // Every member names its files + the shared manifest from this ONE stem, so the per-member append
+      // (resolveSetup) lands on the same manifest the preflight above checked.
+      groupFileStem: fileStem,
+      out: memberOutPath(dir, fileStem, mode, baseOpts.format),
     };
     try {
       await recordOne(memberOpts);

@@ -928,9 +928,13 @@ bugs.
   your project carrying `{ "chrome-headless-shell": { "skipDownload": true } }`.
 - **pnpm users:** pnpm blocks Puppeteer's browser-download postinstall by default, so you must allow
   it or no Chrome lands. **pnpm 10:** `{ "pnpm": { "onlyBuiltDependencies": ["puppeteer"] } }` in
-  `package.json`. **pnpm 11:** that field is gone (an install exits 1, `ERR_PNPM_IGNORED_BUILDS`);
-  allow the build in `pnpm-workspace.yaml` with the map form (`allowBuilds:` → `puppeteer: true`; the
-  list form `- puppeteer` mis-parses). pnpm 11 also holds back very fresh releases (`minimumReleaseAge`);
+  `package.json`. **pnpm 11:** that field is gone (an install exits 1, `ERR_PNPM_IGNORED_BUILDS`, since
+  `strictDepBuilds` now defaults on); allow the build in `pnpm-workspace.yaml` with the map form
+  (`allowBuilds:` → `puppeteer: true`; the list form `- puppeteer` mis-parses), or run `pnpm
+  approve-builds puppeteer`, which writes that entry for you. That exit-1 is an install-time failure, so
+  it blocks the browserless `--target node` lane too: the install never finishes, so `wpd` never runs
+  (a missing Chrome alone would only stop the browser lanes). pnpm 11 also holds back very fresh
+  releases (`minimumReleaseAge`);
   if it skips a just-published wpd, wait it out or lower that setting. To supply your own browser, set
   `PUPPETEER_EXECUTABLE_PATH`, or run `npx puppeteer browsers install chrome`.
 - **Firefox** is optional (`--target firefox`): `npx puppeteer browsers install firefox`.
