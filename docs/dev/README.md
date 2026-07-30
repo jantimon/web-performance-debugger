@@ -29,6 +29,7 @@ permalink).
 | [rendering-counts.md](./rendering-counts.md) | adding a name to `trace/classify.ts`, gating a count in `diff.ts`/`assert.ts`, or calling a count "exact" |
 | [navigation-and-lcp.md](./navigation-and-lcp.md) | wiring an LCP number into a span, or deriving a static/hard/soft navigation label for a step |
 | [trace-buffer.md](./trace-buffer.md) | changing `trace/tracing.ts`, the trace buffer size, or claiming a `--deep` count is exact on a heavy page |
+| [deep-log-storage.md](./deep-log-storage.md) | designing or building the schema-6 event-log sidecar (issue #173): the measured node:sqlite-vs-NDJSON numbers at 4-10 GB that force the store choice |
 | [facts.md](./facts.md) | changing any load-bearing measured number (a ledger of them + the files that must agree, checked by a unit test) |
 | [core-features.md](./core-features.md) | writing user-facing copy, prioritizing features, or claiming a capability is unique. The one file here whose evidence is market research (competitor docs and issue threads, link-verified and dated) rather than engine probes |
 | [orchestrator-boundary.md](./orchestrator-boundary.md) | answering a feature request that asks wpd to grade, compare, recommend, or scaffold — the standing scope boundary, why each capability stays with the caller, and the register of surfaces already evaluated (present and absent) |
