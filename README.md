@@ -256,7 +256,7 @@ question with different instrumentation, and wanting two answers means running `
   refused early with a clear message (drop to `--iterations 1`, scope the flow, or use `--breakdown`).
 
 **Speed** is the median wall-time overhead each mode adds over the no-measurement baseline, on a
-mid-size mixed JS + layout workload (`examples/capture-mode-speed.mjs`). It is directional and
+mid-size mixed JS + layout workload (`examples/probes/capture-mode-speed.mjs`). It is directional and
 machine-dependent: the ordering holds, the exact percentages will not, and the trace-based modes cost
 more the more the page renders.
 

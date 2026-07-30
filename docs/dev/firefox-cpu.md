@@ -13,7 +13,7 @@
 
 **Provenance.** As in [cpu-profiling.md](./cpu-profiling.md): interleaved warmed runs of the probes
 named per section, Firefox 152. The overhead-split section is 8 rounds x 20 iterations, interleaved,
-of `examples/gecko-overhead.mjs`. Related: [gecko-profile-format.md](./gecko-profile-format.md) (the
+of `examples/probes/gecko-overhead.mjs`. Related: [gecko-profile-format.md](./gecko-profile-format.md) (the
 raw dump schemas these facts are read out of), [engine-mapping.md](./engine-mapping.md) (what the
 Gecko names mean against Blink's), [cpu-profiling.md](./cpu-profiling.md) (the Chrome sampler
 physics this lane is measured against).
@@ -69,7 +69,7 @@ consumed since the previous sample). A descheduled thread reads ~0 there while w
 That column is present only when the profiler runs with the `cpu` feature. An explicit
 `MOZ_PROFILER_STARTUP_FEATURES` string REPLACES the default set, so `js` alone leaves the column
 **0% populated**; `js,cpu` populates it **100%**. Probe:
-`examples/awaits-only.mjs`, a `run()` that only awaits (`setTimeout` 20ms x 20, `--bench`), a
+`examples/probes/awaits-only.mjs`, a `run()` that only awaits (`setTimeout` 20ms x 20, `--bench`), a
 ~pure-wait window:
 
 | lane | window | idle reported |
@@ -99,7 +99,7 @@ only ~0 cycles reads idle -- the sound direction.
 
 ## The Firefox sampler config: `js,cpu`, 1 ms, and what not to chase
 
-**[measured]** `examples/cpu-busywork.mjs --bench --target firefox`, interleaved arms, RAW dumps.
+**[measured]** `examples/probes/cpu-busywork.mjs --bench --target firefox`, interleaved arms, RAW dumps.
 
 - **The 1 ms floor is a measured choice, not the OS limit.** Requesting 0.5 ms *is* delivered on
   macOS — achieved **0.50 ms** median (0.499-0.50 raw over 5 runs), so the `usleep()` floor does
@@ -132,7 +132,7 @@ window, where Chrome's sampler costs ~4-7% on the same work. That cost is **work
 standing sampler tax**: it is the per-reflow marker capture, and it collapses to a few percent when
 the page does not reflow.
 
-Probe: `examples/gecko-overhead.mjs`, one page-clock window over a MIXED workload (a ~7 ms integer
+Probe: `examples/probes/gecko-overhead.mjs`, one page-clock window over a MIXED workload (a ~7 ms integer
 loop plus a read-after-write thrash, ~550 forced reflows) and a PURE-JS workload (the same integer
 loop, zero layout), each against its own plain-Firefox baseline. Firefox clamps `performance.now()`
 to 1 ms, so the pooled MEAN over 160 samples is the small-effect read and the median the
@@ -191,4 +191,4 @@ sampler-free counterpart to buy it back (the gecko profiler is a whole-lifetime 
 Chrome offers none either: neither engine has a sampler-free wall, because the sampled wall is
 directional and the attribution is the product. Directional and machine-dependent — the ordering and
 the per-reflow-vs-per-sample split are the load-bearing part, not the exact percent. Refresh with
-`npm run build && node examples/gecko-overhead.mjs`.
+`npm run build && node examples/probes/gecko-overhead.mjs`.

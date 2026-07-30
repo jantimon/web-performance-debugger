@@ -352,7 +352,7 @@ e2e("record --deep detects layout thrashing and dual-annotates read + dirtied-by
 e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "cpu");
-  runCli(["record", path.join(examples, "cpu-busywork.mjs"), "--bench", "--iterations", "3", "--out", out]);
+  runCli(["record", path.join(examples, "probes", "cpu-busywork.mjs"), "--bench", "--iterations", "3", "--out", out]);
   assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
   assert.ok(existsSync(`${out}.cpuprofile`), "raw cpuprofile written");
 
@@ -1232,7 +1232,7 @@ e2e("record --breakdown: a waiting-dominated span is mostly idle and still close
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "bd-idle");
   runCli([
-    "record", path.join(examples, "awaits-only.mjs"),
+    "record", path.join(examples, "probes", "awaits-only.mjs"),
     "--bench", "--breakdown", "--iterations", "3", "--out", out,
   ]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
@@ -1910,10 +1910,10 @@ e2e("the two-capture assert workflow gates each metric on the capture mode that 
 });
 
 // --keep-partial: a flaky production site can fail one iteration. The flag keeps the iterations that
-// completed instead of discarding the whole run; examples/flaky-iteration.mjs throws partway through
+// completed instead of discarding the whole run; examples/probes/flaky-iteration.mjs throws partway through
 // the iteration named by FAIL_AT (1-based). run() imports once in Node, so its counter survives.
 const recordFlaky = (args, failAt) =>
-  spawnSync(process.execPath, [cli, "record", path.join(examples, "flaky-iteration.mjs"), ...args], {
+  spawnSync(process.execPath, [cli, "record", path.join(examples, "probes", "flaky-iteration.mjs"), ...args], {
     cwd: repoRoot,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
@@ -1982,7 +1982,7 @@ e2e("query spans --min-wall and --filter narrow the overview and disclose the hi
 e2e("query spans --min-wall hides a divergent step by its median in json and human alike", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "spans");
-  runCli(["record", path.join(examples, "divergent-iteration-wall.mjs"), "--breakdown", "--iterations", "3", "--out", out]);
+  runCli(["record", path.join(examples, "probes", "divergent-iteration-wall.mjs"), "--breakdown", "--iterations", "3", "--out", out]);
 
   // Unfiltered, the step is present and its iteration-0 window dwarfs its median headline.
   const all = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));

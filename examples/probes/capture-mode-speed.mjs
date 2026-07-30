@@ -19,9 +19,9 @@
 //
 // Requires a build first (imports the real category/trace helpers from dist/):
 //   npm run build
-//   node examples/capture-mode-speed.mjs                 # full run (medians the README/docs cite)
-//   WPD_SPEED_ROUNDS=2 WPD_SPEED_ITERATIONS=8 node examples/capture-mode-speed.mjs   # quick check
-//   WPD_SPEED_ENGINES=chrome node examples/capture-mode-speed.mjs   # skip Firefox
+//   node examples/probes/capture-mode-speed.mjs                 # full run (medians the README/docs cite)
+//   WPD_SPEED_ROUNDS=2 WPD_SPEED_ITERATIONS=8 node examples/probes/capture-mode-speed.mjs   # quick check
+//   WPD_SPEED_ENGINES=chrome node examples/probes/capture-mode-speed.mjs   # skip Firefox
 
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

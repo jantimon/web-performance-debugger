@@ -3,7 +3,7 @@
 // flags on, the heap sampler attributes those bytes to the functions below, under the "app" package
 // (this module is outside node_modules). Deliberately dependency-free so it runs from a clean checkout.
 //
-// Run:  node dist/cli.js record examples/allocates.mjs --target node --alloc --iterations 20
+// Run:  node dist/cli.js record examples/probes/allocates.mjs --target node --alloc --iterations 20
 //       node dist/cli.js query alloc latest
 
 function buildStrings(count) {

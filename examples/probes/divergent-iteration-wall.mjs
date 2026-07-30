@@ -4,7 +4,7 @@
 // --min-wall` must hide by the MEDIAN in both json and human output, never showing a step in one and
 // hiding it in the other.
 //
-//   wpd record examples/divergent-iteration-wall.mjs --breakdown --iterations 3
+//   wpd record examples/probes/divergent-iteration-wall.mjs --breakdown --iterations 3
 //   wpd query spans latest --min-wall 150   # the step is hidden by its median, not its iter-0 window
 
 let iterationCount = 0;

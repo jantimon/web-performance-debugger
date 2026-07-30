@@ -23,8 +23,8 @@ names and semantics), [gecko-profile-format.md](./gecko-profile-format.md) (raw 
 
 **Provenance.** Capture-mode numbers are 5 interleaved runs per arm, after a discarded warmup, of
 `examples/forces-layout.mjs --bench` on chrome 150 / firefox 152; interval numbers are 3 runs per arm
-of `examples/cpu-busywork.mjs --target node`; the per-mode wall-overhead table is 3 interleaved runs
-of `examples/capture-mode-speed.mjs` (8 rounds x 20 iterations each). First-run numbers are cold-start outliers by a wide
+of `examples/probes/cpu-busywork.mjs --target node`; the per-mode wall-overhead table is 3 interleaved runs
+of `examples/probes/capture-mode-speed.mjs` (8 rounds x 20 iterations each). First-run numbers are cold-start outliers by a wide
 margin (a single un-warmed run reads 18ms against a 7ms median, enough to "prove" the wrong
 conclusion): **always warm up and interleave** before believing a capture-mode A/B.
 
@@ -105,7 +105,7 @@ now excludes.
 ### The cpu-diff resolving floor
 
 **[measured]** Even with the prefix windowed out, a near-zero workload lands only a handful of samples,
-and where they fall is quantization. On the `examples/near-zero.mjs` probe (a `console.log`, `--target
+and where they fall is quantization. On the `examples/probes/near-zero.mjs` probe (a `console.log`, `--target
 node`), `jsSelfMs` jitters **0.16-1.21ms** run to run on identical code. The `cpu-diff
 --fail-on-regression` noise floor is 0.5ms (~2.5 samples at the 200us interval), narrower than that
 jitter, so two identical runs could net a delta above the floor and trip the gate ~3% of the time --
@@ -305,7 +305,7 @@ the product.
 
 **[measured]** The whole-mode wall cost, not just the sampler's slice: what each capture mode adds
 over a NO-MEASUREMENT baseline (a plain browser launch, no trace, no sampler, no Gecko profiler),
-timed on ONE mixed mid-size workload (`examples/capture-mode-speed.mjs`: a ~7 ms integer loop plus a
+timed on ONE mixed mid-size workload (`examples/probes/capture-mode-speed.mjs`: a ~7 ms integer loop plus a
 ~7 ms read-after-write layout/style thrash over 25 boxes, ~14 ms baseline, ~550 forced reflows). One
 page-clock window (`performance.now` inside the page) times the SAME workload in every cell, so
 node-side dispatch and the trace start/stop calls stay outside the window; cells interleave across
@@ -347,7 +347,7 @@ tighter numbers stated elsewhere in this file:
   is a directional wall over a real attribution, never a benchmark wall.
 
 Directional and machine-dependent — the ordering is the load-bearing part, not the exact percent.
-Refresh with `npm run build && node examples/capture-mode-speed.mjs`.
+Refresh with `npm run build && node examples/probes/capture-mode-speed.mjs`.
 
 ### What `--deep`'s two extra categories each cost
 
@@ -372,7 +372,7 @@ drops both) stays cheap regardless, and why a run group that needs the write sid
 **[measured]** `50us` — **20x more aggressive than V8's own 1000us** — is where most of the
 timing-fold's wall cost comes from.
 
-Tuned against `examples/cpu-busywork.mjs` (**~2.2 seconds** of real JS), *not* the layout probe. A
+Tuned against `examples/probes/cpu-busywork.mjs` (**~2.2 seconds** of real JS), *not* the layout probe. A
 layout probe is the wrong workload for tuning a JS sampler: it has ~8ms of JS, so any coarsening
 starves it and looks catastrophic. Measuring on the probe suggests 200us "collapses" resolution from
 7 functions to 3; on a real JS workload that effect does not exist.
@@ -404,7 +404,7 @@ lane, import the constant.
 
 **[measured]** `wall`/`INP` cannot resolve below one display frame ([frame-floor.md](./frame-floor.md)),
 but CPU self-time can, in both engines, and reconciles with the independent `--bench` wall (the
-summed timed `run()` samples) to ~1% on JS-bound work. Probe: `examples/fixed-js-work.mjs`, a fixed
+summed timed `run()` samples) to ~1% on JS-bound work. Probe: `examples/probes/fixed-js-work.mjs`, a fixed
 ~1.5ms JS loop, `--bench`.
 
 | lane | iter=1 | iter=50 | reconciles with bench wall | resolution floor |
@@ -414,7 +414,7 @@ summed timed `run()` samples) to ~1% on JS-bound work. Probe: `examples/fixed-js
 
 The sampler interval sets the floor: Chrome at 200us prices a single sub-millisecond call (though
 at `--iterations 1` a sub-ms call can land 0 samples — the near-zero `console.log` probe
-`examples/near-zero.mjs` reads js 0 at iter 10 and only becomes monotonic above ~200 iterations);
+`examples/probes/near-zero.mjs` reads js 0 at iter 10 and only becomes monotonic above ~200 iterations);
 Firefox is pinned to Gecko's ~1ms floor
 (`GECKO_MIN_INTERVAL_MS`), so a near-zero window reads a fixed ~5ms of a handful of samples and needs
 higher `--iterations` before the number is trustworthy. Both prove the point: the work axis reports
@@ -430,9 +430,9 @@ device emulator ([measurement-ecosystem.md](./measurement-ecosystem.md#lighthous
 This section prices what a 4x arm does to each tier, so a throttled number is read for what it is.
 
 Chrome only (the throttle is CDP, absent on firefox/node). Probes, 1x/4x arms interleaved after a
-warmup: `examples/throttle-mix.mjs --bench` (a pure-JS loop and a forced-layout thrash competing for
+warmup: `examples/probes/throttle-mix.mjs --bench` (a pure-JS loop and a forced-layout thrash competing for
 one CPU 100%, 6 reps x 10 iterations), `examples/forces-layout.mjs --deep`/`--breakdown` (counts, 5/3
-reps x 1 iteration), `examples/fixed-js-work.mjs --bench` (pure-JS wall, 4 reps x 50 iterations).
+reps x 1 iteration), `examples/probes/fixed-js-work.mjs --bench` (pure-JS wall, 4 reps x 50 iterations).
 
 ### Counts are invariant (exact tier)
 

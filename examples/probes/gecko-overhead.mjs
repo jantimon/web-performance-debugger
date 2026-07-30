@@ -8,7 +8,7 @@
 //   ring buffer: ENTRIES 1M vs 16M.
 //   feature marginal: js vs js,cpu.
 //
-// Method mirrors examples/capture-mode-speed.mjs: ONE page-clock window (performance.now INSIDE the
+// Method mirrors examples/probes/capture-mode-speed.mjs: ONE page-clock window (performance.now INSIDE the
 // page) times the SAME workload in every cell, so node-side dispatch stays outside the window; a
 // fresh Firefox launches per cell per round (the Gecko profiler is a launch-time startup feature,
 // no per-iteration toggle); cells interleave (rotated order) per round so drift spreads. Baseline
@@ -16,8 +16,8 @@
 // 1 ms, so the MEAN over the pooled samples is the small-effect read and the median the robustness
 // cross-check. Requires a build first (imports parseGecko from dist/ for the signal-loss check):
 //   npm run build
-//   node examples/gecko-overhead.mjs
-//   WPD_ROUNDS=8 WPD_ITER=20 node examples/gecko-overhead.mjs   # the defaults the docs cite
+//   node examples/probes/gecko-overhead.mjs
+//   WPD_ROUNDS=8 WPD_ITER=20 node examples/probes/gecko-overhead.mjs   # the defaults the docs cite
 
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -36,7 +36,7 @@ const WARMUP = Number(process.env.WPD_WARMUP ?? 4);
 const GECKO_ENTRIES = 16_000_000; // GECKO_PROFILER_ENTRIES (src/browser/launch.ts)
 
 // MIXED: ~7 ms integer loop + a read-after-write thrash over 25 boxes (22 rounds => ~550 forced
-// reflows). Verbatim from examples/capture-mode-speed.mjs so the two probes share a workload.
+// reflows). Verbatim from examples/probes/capture-mode-speed.mjs so the two probes share a workload.
 function mixedWorkload() {
   let host = document.getElementById("wpd-probe-host");
   if (!host) {

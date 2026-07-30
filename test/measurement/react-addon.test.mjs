@@ -81,7 +81,7 @@ test("--framework auto is honest on a non-React workload: no addons slot", () =>
   const out = path.join(dir, "rec.json");
   runCli([
     "record",
-    path.join(examples, "cpu-busywork.mjs"),
+    path.join(examples, "probes", "cpu-busywork.mjs"),
     "--target",
     "node",
     "--iterations",
