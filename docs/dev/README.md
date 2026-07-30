@@ -5,8 +5,9 @@
 > These files record empirically-verified facts that the code depends on but cannot state itself,
 > so that whoever touches that code next does not have to re-derive them from a browser.
 
-Everything here is **measured, not read off vendor docs** (with two flagged exceptions, the
-market-research and measurement-ecosystem files below, whose evidence is other tools' code and docs).
+Everything here is **measured, not read off vendor docs** (with three flagged exceptions below, the
+market-research, measurement-ecosystem, and agents-md files, whose evidence is other tools' or agent
+vendors' docs rather than engine probes).
 Both engines' public docs are silent or wrong on most of this. Claims
 are marked **[measured]** (reproduced locally, usually against `examples/forces-layout.mjs` in
 both engines) or **[source]** (read out of mozilla-central / chromium at tip-of-tree, with a
@@ -34,6 +35,7 @@ permalink).
 | [core-features.md](./core-features.md) | writing user-facing copy, prioritizing features, or claiming a capability is unique. The one file here whose evidence is market research (competitor docs and issue threads, link-verified and dated) rather than engine probes |
 | [orchestrator-boundary.md](./orchestrator-boundary.md) | answering a feature request that asks wpd to grade, compare, recommend, or scaffold — the standing scope boundary, why each capability stays with the caller, and the register of surfaces already evaluated (present and absent) |
 | [measurement-ecosystem.md](./measurement-ecosystem.md) | placing a headless/throttling/frame-cadence/variance choice against what the major tools do. The second file here (with core-features.md) whose evidence is other tools' code and docs, link-verified, rather than engine probes |
+| [agents-md.md](./agents-md.md) | changing AGENTS.md's length, structure, or what it delegates to the README: the evidence and length findings behind its shape, and the standing would-removing-this-cause-mistakes test for any addition. The third non-probe file here, its evidence agent-vendor docs and repo-corpus analysis |
 
 ## Find it by question
 
