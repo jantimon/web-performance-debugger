@@ -1,5 +1,33 @@
 # @jantimon/web-performance-debugger
 
+## 1.3.1
+
+### Patch Changes
+
+- [#188](https://github.com/jantimon/web-performance-debugger/pull/188) [`fa8f1b5`](https://github.com/jantimon/web-performance-debugger/commit/fa8f1b541e4b5e6d0e9899e2c6e0d7d97499b4cd) - AGENTS.md now ships in the npm package, so it lands at
+  `node_modules/@jantimon/web-performance-debugger/AGENTS.md` for a consumer to read. `wpd --help` ends
+  with the absolute paths to the installed AGENTS.md and README.md, so an agent can find and open them.
+
+- [#192](https://github.com/jantimon/web-performance-debugger/pull/192) [`9b79528`](https://github.com/jantimon/web-performance-debugger/commit/9b79528047cb2ce50958901ca3685e751027d39d) - Reorganized `examples/`: the demos a newcomer runs stay at the top level, and the measurement/
+  calibration fixtures move to `examples/probes/`. No example was renamed; the top-level `README.md`
+  now maps each demo to the question it answers. Docs and tests point at the new probe paths.
+
+- [#193](https://github.com/jantimon/web-performance-debugger/pull/193) [`49636ad`](https://github.com/jantimon/web-performance-debugger/commit/49636ad861f68553408f0b102c41cfcdb7f06dcc) - `record --members ... --out <path>` now names the group's manifest and member recordings from `--out`'s
+  basename (before, only its directory was used and the basename was silently dropped), so a path a caller
+  derives from `--out` exists. The group's identity still comes from `--group` (`meta.name`), so `latest`
+  and the group name resolve unchanged.
+
+  README: the pnpm caveat now covers pnpm 11 blocking the bin. The ignored-build install error exits 1
+  before `wpd` runs, stopping even the browserless `--target node` lane; unblock with `pnpm approve-builds
+puppeteer`.
+
+- [#190](https://github.com/jantimon/web-performance-debugger/pull/190) [`c9df5b3`](https://github.com/jantimon/web-performance-debugger/commit/c9df5b34f1d9c6d3e47c8fccd0b575014e7256fd) - README: a plainer opening line, a reason for the Node 24+ requirement, and a gloss on the `5173`
+  port. The package description now matches the repo and covers rendering counts and allocation, so all
+  three storefronts read the same. Adds an `examples/` map pointing newcomers at the three main demos.
+
+- [#191](https://github.com/jantimon/web-performance-debugger/pull/191) [`2af855f`](https://github.com/jantimon/web-performance-debugger/commit/2af855fc7f4adfcbf47c7cfe1482a9d6fead0442) - README/docs wording: plain words replace "provenance"; the Node and install lines lose their
+  explanations.
+
 ## 1.3.0
 
 ### Minor Changes
