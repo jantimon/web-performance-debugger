@@ -6,6 +6,7 @@
 
 import type {
   Breakdown,
+  BreakdownSlices,
   CpuBreakdown,
   RecordingMeta,
   Span,
@@ -16,7 +17,13 @@ import type {
 import { recordingRuntime } from "./meta.js";
 import type { SpanCountsEntry, SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
 import { gateMeasured, type Measured } from "./measured.js";
-import { matchedFrameFloor, frameFloorDominates, type FrameFloorMatch } from "./frame-floor.js";
+import {
+  matchedFrameFloor,
+  frameFloorDominates,
+  workSignalFloor,
+  type FrameFloor,
+  type WallMultipleFloor,
+} from "./frame-floor.js";
 
 /** Whatever a frame-floor check needs off the recording meta (the lane's headless flavour + browser). */
 type FloorMeta = Pick<RecordingMeta, "headless" | "browser">;
@@ -29,20 +36,49 @@ function barIdleShare(wallMs: number, idle: { ms: number } | undefined): number 
 }
 
 /**
- * The compact frame-floor tag for a `query spans` overview row: the one-frame floor the wall pins to
- * (within tolerance), gated so a multi-frame wall is tagged only when its window is wait-dominated
+ * The wall-multiple frame-floor tag for a `query spans` row: the one-frame floor the wall value pins
+ * to (within tolerance), gated so a multi-frame wall is tagged only when its window is wait-dominated
  * (frame-floor.md). `undefined` when the wall is real work, `meta` is absent, or the lane declares no
- * floor. `query span` carries the same tag on its detail; this puts it on the overview bulk consumers
- * read, so flooring need not be recomputed from wall + idle.
+ * floor. The detector for a bench/in-page/measure wall and a bar-less row; a driver STEP with a bar
+ * goes through `barFrameFloor` instead (its wall carries input dispatch, so the bar's work signal, not
+ * the wall value, is the honest test).
  */
 function overviewFrameFloor(
   wallMs: number | null | undefined,
   idleShare: number | null,
   meta: FloorMeta | undefined,
-): FrameFloorMatch | undefined {
+): WallMultipleFloor | undefined {
   if (!meta) return undefined;
   const match = matchedFrameFloor(wallMs, meta);
   return match && frameFloorDominates(match, idleShare) ? match : undefined;
+}
+
+/**
+ * The summed main-thread real-work slices (js+style+layout+paint+gc), skipping a not-measured slice
+ * (firefox paint is off-main-thread). The sub-frame work signal a driver step's frame floor reads.
+ */
+function workSliceSumMs(slices: BreakdownSlices): number {
+  return slices.js.ms + slices.style.ms + slices.layout.ms + (slices.paint?.ms ?? 0) + slices.gc.ms;
+}
+
+/**
+ * The frame floor a span carrying a reconciling bar sits on, or `undefined`. A driver STEP is judged
+ * by its bar's work signal (its wall carries ~8ms of trusted-click input dispatch, so it lands off any
+ * exact n*floor; docs/dev/driver-timing.md); a run/measure span is timed in-page with no such offset,
+ * so its wall-multiple reading is correct and stays. INP and bar-less rows are judged by
+ * `matchedFrameFloor` directly (they carry no bar).
+ */
+export function barFrameFloor(
+  kind: SpanKind,
+  wallMs: number | null | undefined,
+  breakdown: Breakdown,
+  meta: FloorMeta | undefined,
+): FrameFloor | undefined {
+  if (!meta) return undefined;
+  const idleShare = barIdleShare(breakdown.wallMs, breakdown.slices.idle);
+  if (kind === "step")
+    return workSignalFloor(meta, workSliceSumMs(breakdown.slices), idleShare) ?? undefined;
+  return overviewFrameFloor(wallMs, idleShare, meta);
 }
 
 /**
@@ -169,13 +205,9 @@ function entryFromSpan(span: BarSpan, iterations: number, meta?: FloorMeta): Spa
   // back to the bar window only when a step's median is unpriceable (a navigating step, wallMs null).
   const isStep = span.kind === "step";
   const wallMs = isStep ? (span.wallMs ?? span.breakdown.wallMs) : span.breakdown.wallMs;
-  // Judge the floor against the headline wall, with the bar's idle share as the wait signal (matching
-  // the `query span` detail).
-  const frameFloor = overviewFrameFloor(
-    wallMs,
-    barIdleShare(span.breakdown.wallMs, span.breakdown.slices.idle),
-    meta,
-  );
+  // Judge the floor off the bar: a step by its work signal (its wall carries input dispatch), a
+  // run/measure by its wall value against the bar's idle share (matching the `query span` detail).
+  const frameFloor = barFrameFloor(span.kind, wallMs, span.breakdown, meta);
   return {
     label: span.label,
     kind: span.kind,

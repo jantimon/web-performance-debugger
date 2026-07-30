@@ -1,6 +1,6 @@
 import type { CpuModel, FrameSideTrack, Span, SpanKind } from "../model/recording.js";
 import type { CpuOverview, FrameQueryResult } from "../model/query.js";
-import type { FrameFloorMatch } from "../model/frame-floor.js";
+import type { FrameFloor } from "../model/frame-floor.js";
 import { num, table, middleEllipsis, LABEL_COL_MAX } from "../output/ascii.js";
 import { bold, cyan, dim, red, yellow } from "../output/color.js";
 import { structuredFormat, emit, type StructuredOutOpts } from "../output/format.js";
@@ -170,7 +170,7 @@ export function printSpanBreakdowns(
   iterations?: number,
   browser?: "chrome" | "firefox",
   showFrames = false,
-  frameFloors?: Map<string, FrameFloorMatch>,
+  frameFloors?: Map<string, FrameFloor>,
 ): void {
   const bars = spans.filter((span) => span.breakdown);
   if (!bars.length) return;
@@ -186,7 +186,7 @@ export function printSpanBreakdowns(
     // the overview shows the floor the `query span` detail spells out, without crowding the table.
     const floor = frameFloors?.get(`${span.kind}:${span.label}`);
     const floorTag = floor
-      ? floor.multiple === 1
+      ? floor.basis === "work-signal" || floor.multiple === 1
         ? ", on frame floor"
         : `, on ${floor.multiple}x frame floor`
       : "";

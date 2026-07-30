@@ -595,8 +595,8 @@ test("query span: a wait-dominated wall at 2x the floor (33.2ms) is annotated an
   const anatomy = await captureJson(() => querySpan(file, "measure:wait", { format: "json" }));
   assert.deepEqual(
     anatomy.frameFloor,
-    { floorMs: 16.6, multiple: 2 },
-    "the JSON exposes {floorMs, multiple} so a consumer can detect flooring at 2x",
+    { basis: "wall-multiple", floorMs: 16.6, multiple: 2 },
+    "the JSON exposes the wall-multiple basis + {floorMs, multiple} so a consumer can detect flooring at 2x",
   );
   const text = await captureText(() => querySpan(file, "measure:wait", {}));
   assert.match(text, /wall sits on ~2x the 16\.6 ms frame floor \(33\.2 ms\)/, "the human note names 2x");
@@ -613,11 +613,84 @@ test("query span: a busy wall near 2x the floor (real work, low idle) is NOT flo
 test("query span --format json: frameFloor is {floorMs, multiple} at 1x, absent for real work", async () => {
   const floored = floorRec("anatomy-floor-json-1x.json", 16.6, breakdown);
   const flooredAnatomy = await captureJson(() => querySpan(floored, "measure:wait", { format: "json" }));
-  assert.deepEqual(flooredAnatomy.frameFloor, { floorMs: 16.6, multiple: 1 }, "one-frame floor exposed structurally");
+  assert.deepEqual(flooredAnatomy.frameFloor, { basis: "wall-multiple", floorMs: 16.6, multiple: 1 }, "one-frame floor exposed structurally");
 
   const real = floorRec("anatomy-floor-json-work.json", 25, breakdown);
   const realAnatomy = await captureJson(() => querySpan(real, "measure:wait", { format: "json" }));
   assert.equal(realAnatomy.frameFloor, undefined, "25ms is real work: no frameFloor field");
+});
+
+// A driver STEP is judged by its BAR's work signal, not its wall value: a trusted page.click carries
+// ~8ms of input dispatch inside the step window, so a floored cheap step's wall (~41ms) lands between
+// 2x=33.2 and 3x=49.8 and the wall-multiple detector misses it (docs/dev/frame-floor.md).
+
+// A floored cheap step: [measured] work-sum 0.63ms, idle share ~0.89, wall ~41.3 (off any multiple).
+// The ~4ms `other` slice is the trusted-click input-dispatch task the frame wait absorbs.
+const cheapStepBar = (wallMs) => ({
+  wallMs,
+  slices: {
+    js: jsSlice(0.4, { app: 0.4 }),
+    style: slice(0.1),
+    layout: slice(0.08),
+    paint: slice(0.03),
+    gc: slice(0.02),
+    other: slice(4.0),
+    idle: slice(wallMs - 4.63),
+  },
+});
+
+// A busy step: 26ms of real work, over one frame, so it is NOT floored whatever the idle.
+const busyStepBar = (wallMs) => ({
+  wallMs,
+  slices: {
+    js: jsSlice(26, { app: 26 }),
+    style: slice(0.1),
+    layout: slice(0.1),
+    paint: slice(0.1),
+    gc: slice(0.1),
+    other: slice(0.5),
+    idle: slice(wallMs - 26.9),
+  },
+});
+
+function stepRec(name, wallMs, bar) {
+  return writeRec(name, {
+    meta: { schemaVersion: "5", target: "chrome", iterations: 5, capture: "breakdown", headless: true, headlessMode: "new" },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      { label: "run", kind: "run", aggregation: "sum", wallMs: 100, counts: nullCounts },
+      {
+        label: "click",
+        kind: "step",
+        index: 0,
+        aggregation: "first",
+        wallMs,
+        counts: nullCounts,
+        breakdown: bar(wallMs),
+      },
+    ],
+  });
+}
+
+test("query span: a floored cheap driver step (sub-frame work, ~41ms wall off any multiple) is work-signal floored", async () => {
+  const file = stepRec("anatomy-step-workfloor.json", 41.3, cheapStepBar);
+  const anatomy = await captureJson(() => querySpan(file, "step:click", { format: "json" }));
+  assert.deepEqual(
+    anatomy.frameFloor,
+    { basis: "work-signal", floorMs: 16.6, workMs: 0.63 },
+    "the JSON carries the work-signal basis + workMs, detected off the bar despite the wall missing an exact multiple",
+  );
+  const text = await captureText(() => querySpan(file, "step:click", {}));
+  assert.match(text, /wall sits on the ~16\.6 ms frame floor/, "the human note reads the work-signal floor as one frame");
+});
+
+test("query span: a busy driver step (26ms real work) is NOT floored", async () => {
+  const file = stepRec("anatomy-step-busy.json", 30, busyStepBar);
+  const anatomy = await captureJson(() => querySpan(file, "step:click", { format: "json" }));
+  assert.equal(anatomy.frameFloor, undefined, "26ms of work is over one frame: real work, not a floor");
+  const text = await captureText(() => querySpan(file, "step:click", {}));
+  assert.doesNotMatch(text, /frame floor/, "no floor note on a genuinely busy step");
 });
 
 // --- presentation: firefox forced count carries the marker-derived / sampled-site caveat ---

@@ -36,12 +36,39 @@ export const MAX_FRAME_FLOOR_MULTIPLE = 4;
  */
 export const IDLE_DOMINANT_SHARE = 0.8;
 
-/** A wall/INP value that pins to a whole number of frames: the one-frame floor it sits on and which
- * multiple. `multiple` 1 = one frame, 2 = two frames, up to MAX_FRAME_FLOOR_MULTIPLE. */
-export interface FrameFloorMatch {
+/**
+ * A wall/INP pinned to a whole number of frames because its VALUE lands within tolerance of n*floor.
+ * The correct detector for a bench/in-page/measure wall and for INP, none of which carry a driver
+ * input-dispatch offset, so their value sits on the boundary. `multiple` 1 = one frame, up to
+ * MAX_FRAME_FLOOR_MULTIPLE.
+ */
+export interface WallMultipleFloor {
+  basis: "wall-multiple";
   floorMs: number;
   multiple: number;
 }
+
+/**
+ * A driver STEP flagged floored by its reconciling BAR rather than its wall value. A trusted
+ * `page.click` carries ~8ms of input-dispatch latency inside the step window (docs/dev/driver-timing.md),
+ * so a floored cheap step's wall lands off any exact n*floor (matchedFrameFloor misses it: a 41ms wall
+ * sits between 2x=33.2 and 3x=49.8). The bar still proves the case: the summed real-work slices
+ * (js+style+layout+paint+gc) are sub-frame and the window is idle-dominated, so the step did sub-frame
+ * work and waited out the frame. `workMs` is that sub-frame work sum.
+ */
+export interface WorkSignalFloor {
+  basis: "work-signal";
+  floorMs: number;
+  workMs: number;
+}
+
+/**
+ * How a span's wall/INP was found to sit on the one-frame cadence floor: by its value landing on a
+ * whole multiple of the floor (`wall-multiple`), or by its bar showing sub-frame work in an
+ * idle-dominated window (`work-signal`, a driver step whose wall carries input dispatch). Consumers
+ * narrow on `basis`.
+ */
+export type FrameFloor = WallMultipleFloor | WorkSignalFloor;
 
 type FloorMeta = Pick<RecordingMeta, "headless" | "browser">;
 
@@ -67,12 +94,12 @@ export function frameFloorsMs(meta: FloorMeta): number[] {
 export function matchedFrameFloor(
   ms: number | null | undefined,
   meta: FloorMeta,
-): FrameFloorMatch | null {
+): WallMultipleFloor | null {
   if (ms == null) return null;
   for (const floor of frameFloorsMs(meta))
     for (let multiple = 1; multiple <= MAX_FRAME_FLOOR_MULTIPLE; multiple++)
       if (Math.abs(ms - floor * multiple) <= FRAME_FLOOR_TOLERANCE_MS)
-        return { floorMs: floor, multiple };
+        return { basis: "wall-multiple", floorMs: floor, multiple };
   return null;
 }
 
@@ -84,7 +111,30 @@ export function matchedFrameFloor(
  * not mislabeled. `waitShare` null (no breakdown/interaction split to judge) declines an elevated
  * multiple rather than claim one it cannot justify.
  */
-export function frameFloorDominates(match: FrameFloorMatch, waitShare: number | null): boolean {
+export function frameFloorDominates(match: WallMultipleFloor, waitShare: number | null): boolean {
   if (match.multiple === 1) return true;
   return waitShare != null && waitShare >= IDLE_DOMINANT_SHARE;
+}
+
+/**
+ * A driver step's frame floor read off its reconciling BAR (the `work-signal` basis), or null. Fires
+ * when the summed real-work slices (`workMs`) are under one frame AND the window is idle-dominated
+ * (`idleShare >= IDLE_DOMINANT_SHARE`): the step did sub-frame work and waited out the frame, whatever
+ * its wall landed on (a trusted-click ~8ms of input dispatch lands in the idle share, off any exact
+ * n*floor, so `matchedFrameFloor` cannot see it). [measured, docs/dev/frame-floor.md] a floored cheap
+ * step reads work 0.63ms / idle share 0.90 -> flagged; a busy control reads work ~26ms / idle 0.55 ->
+ * rejected (work over the frame). `idleShare` null (no bar to judge) declines, as does a lane with no
+ * deterministic floor (headed).
+ */
+export function workSignalFloor(
+  meta: FloorMeta,
+  workMs: number,
+  idleShare: number | null,
+): WorkSignalFloor | null {
+  if (idleShare == null || idleShare < IDLE_DOMINANT_SHARE) return null;
+  const floors = frameFloorsMs(meta);
+  if (floors.length === 0) return null;
+  const floorMs = floors[0];
+  if (workMs >= floorMs) return null;
+  return { basis: "work-signal", floorMs, workMs };
 }

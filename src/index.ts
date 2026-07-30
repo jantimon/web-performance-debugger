@@ -126,7 +126,7 @@ export type { RunGroup, GroupMeta, GroupMember } from "./model/group.js";
 // classifier-vs-engine soft-nav verdict a step anatomy carries, and the frame-cadence floor a floored
 // wall/INP pins to.
 export type { SoftNavVerdict, SoftNavAgreement } from "./model/soft-nav.js";
-export type { FrameFloorMatch } from "./model/frame-floor.js";
+export type { FrameFloor, WallMultipleFloor, WorkSignalFloor } from "./model/frame-floor.js";
 
 // Raw V8 sampling profile (the .cpuprofile file, DevTools/Speedscope format) and its node/frame shapes.
 export type { RawCpuProfile, RawProfileNode, RawCallFrame, GeckoSlice } from "./profile/raw.js";
