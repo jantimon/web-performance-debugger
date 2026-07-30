@@ -36,7 +36,7 @@ interface DiffCmdOpts extends StructuredOutOpts {
 // same as being a count:
 //
 //   - layout/style come from CDP counters, forced layout from trace stacks, and paint from
-//     main-thread `Paint` events. Provenance is not the test; reproducibility is, and all four are
+//     main-thread `Paint` events. Where a count comes from is not the test; reproducibility is, and all four are
 //     [measured] bit-identical across repeated runs of the same flow (layout 41, style 42, forced
 //     80 on 5 runs; paint exactly N+1 for N dirtied regions on 40). Those gate. Do not widen paint
 //     to raster/compositor events: their counts track the scheduler rather than the page and would

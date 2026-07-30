@@ -369,7 +369,7 @@ export interface SpansResult {
 }
 
 /**
- * The provenance block `query spans` adds when the target is a RUN-GROUP: which member the overview
+ * The source block `query spans` adds when the target is a RUN-GROUP: which member the overview
  * bar came from, and which members answer the counts/blame axes a single bar cannot. Its presence is
  * what distinguishes a `GroupSpansResult` from a plain `SpansResult` -- a consumer reads the bar as one
  * member's real sample, never as the whole group's, and knows where to drill for the rest.
@@ -387,7 +387,7 @@ export interface GroupSpansProvenance {
   notes: string[];
 }
 
-/** `query spans` on a run-group: a `SpansResult` plus the `group` provenance block. */
+/** `query spans` on a run-group: a `SpansResult` plus the `group` source block. */
 export interface GroupSpansResult extends SpansResult {
   group: GroupSpansProvenance;
 }
@@ -580,7 +580,7 @@ export interface GroupSpanMember {
   iterations: number;
 }
 
-/** Which member each stitched panel was drawn from, so every number carries its provenance. */
+/** Which member each stitched panel was drawn from, so every number carries its source and trust tier. */
 export interface GroupSpanSources {
   slices?: string;
   counts?: string;

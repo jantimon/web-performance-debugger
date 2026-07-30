@@ -21,7 +21,7 @@ the 1 ms floor), [cpu-attribution.md](./cpu-attribution.md) (which spans get sam
 functions, sourcemap trust). Related: [engine-mapping.md](./engine-mapping.md) (Gecko <-> Blink
 names and semantics), [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas).
 
-**Provenance.** Capture-mode numbers are 5 interleaved runs per arm, after a discarded warmup, of
+**Sources.** Capture-mode numbers are 5 interleaved runs per arm, after a discarded warmup, of
 `examples/forces-layout.mjs --bench` on chrome 150 / firefox 152; interval numbers are 3 runs per arm
 of `examples/cpu-busywork.mjs --target node`; the per-mode wall-overhead table is 3 interleaved runs
 of `examples/capture-mode-speed.mjs` (8 rounds x 20 iterations each). First-run numbers are cold-start outliers by a wide

@@ -16,7 +16,7 @@ run-group case the third test below turns on.
 - [What wpd owes in exchange](#what-wpd-owes-in-exchange)
 - [Why each evaluated surface stands where it does](#why-each-evaluated-surface-stands-where-it-does)
 
-**Provenance.** The scope decisions are maintainer choices, not engine probes: the third-party
+**Sources.** The scope decisions are maintainer choices, not engine probes: the third-party
 classification flag and the doctor/init/compare/HTML-report asks that all stay out. The
 surfaces-evaluated register at the end adds [measured] tooling facts (the pre-commit and knip timings,
 the sandbox/trace deadlock) whose detail lives in the technical home cited there. Stated throughout as
@@ -30,7 +30,7 @@ line that forced the layout, the package that owns the milliseconds, the count t
 **does not grade, rank, or guide.**
 
 So it is not a compare library, not a comparison-website engine, not Lighthouse. Those tools score a
-site against a rubric and tell you what to do next. wpd hands you exact, provenance-stamped numbers
+site against a rubric and tell you what to do next. wpd hands you exact, measurement-tagged numbers
 and the JSON to act on them. The judgment — is this good, is it better, what should change — belongs
 to the caller, who holds context wpd does not.
 
@@ -47,7 +47,7 @@ Every proposed feature passes three questions before it earns a flag:
    manifest that stitches the members back together.
 
 Correctness and honesty fixes to existing surface are never "features" under this test.
-An n/a-FAIL that should have fired, a fake zero, a broken provenance stamp: those are defects, and a
+An n/a-FAIL that should have fired, a fake zero, a broken measurement tag: those are defects, and a
 defect outranks any feature on this page.
 
 ## What the orchestrator owns
@@ -83,7 +83,7 @@ The boundary is honest, not lazy, only because wpd holds up its side. It owes th
 - a **typed, stable JSON/TOON contract** for every artifact and every structured output;
 - **honest refusals** — an n/a-FAIL, a comparability gate — never a fake zero or fake cross-engine
   parity;
-- **provenance on every number**: capture mode, member, and trust tier;
+- **how every number was measured**: capture mode, member, and trust tier;
 - **primitives that survive real pages**: redirects, cross-document navigations, bot protection;
 - **machine-detectable failure**: a non-zero exit on every gate the orchestrator can branch on.
 

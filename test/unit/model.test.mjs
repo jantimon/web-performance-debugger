@@ -78,7 +78,7 @@ test("published types declare the documented public shapes", () => {
   }
 });
 
-// --- Count provenance (the same number means different things per target) ---
+// --- Count source (the same number means different things per target) ---
 
 test("countProvenance distinguishes exact trace counts, Gecko markers, and a capture mode that measured none", () => {
   const recording = (metaOverrides, runValues = {}) => ({
@@ -267,7 +267,7 @@ test("diff: a structured-vs-absent pair WARNS but does not block (T02)", async (
   const old = writeRecMeta("t02-mixed-old.json", { target: "host.html" }, { layoutCount: 1 });
   const { code, logs } = await runDiffCapture(structured, old, { failOnRegression: true });
   assert.ok(logs.some((line) => /workload-identity: .* → pre-identity\(host\.html\)/.test(line)), "the unverifiable identity is disclosed honestly");
-  assert.ok(!logs.some((line) => /Refusing to gate/.test(line)), "a pre-upgrade baseline is not blocked on a provenance technicality");
+  assert.ok(!logs.some((line) => /Refusing to gate/.test(line)), "a pre-upgrade baseline is not blocked on a measurement-tag technicality");
   assert.equal(code, undefined, "the mixed pair warns but still compares");
 });
 

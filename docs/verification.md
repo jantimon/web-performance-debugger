@@ -1,7 +1,7 @@
 # How wpd verifies its numbers
 
 A performance tool is only worth its trust tier. This page shows how `wpd` earns one: every
-load-bearing number is measured, tagged with its provenance, checked against drift, and refused rather
+load-bearing number is measured, tagged with its source and trust tier, checked against drift, and refused rather
 than faked when the ground for it is missing. For the engine-level detail behind each point, the links
 lead into `docs/dev/`.
 

@@ -255,7 +255,7 @@ function browserVersionMismatch(
  * below differs. An axis `blocksGating` when a delta on it is provably the config talking, not the
  * code:
  *
- *   - browser/runtime/capture-mode: different count provenance entirely (Gecko markers vs trace, a
+ *   - browser/runtime/capture-mode: a different count source entirely (Gecko markers vs trace, a
  *     --deep exact count vs a --breakdown null).
  *   - workload: a different lane, host page, or module was recorded (workloadMismatch), so the two
  *     are not the same flow. A mixed pair (one side predates the structured identity) warns under

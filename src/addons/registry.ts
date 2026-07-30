@@ -2,7 +2,7 @@
 // calls addons only through `activeAddons()` + the `Addon` interface (model/addon.ts); it imports no
 // addon internals. This list is the sole coupling -- clearing it (or `--framework off`) makes no addon
 // code run and no addon facts enter any recording (the `Span.addons` slot stays absent); `meta.framework`
-// still records the resolved mode as core provenance.
+// still records the resolved mode as a core fact.
 
 import type { Addon, FrameworkMode } from "../model/addon.js";
 import { reactAddon } from "./react/index.js";

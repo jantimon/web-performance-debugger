@@ -13,7 +13,7 @@
 · [Chrome's dirtied-by + thrash detector](#chromes-write-side-dirtied-by--the-thrash-detector---deep)
 · [Firefox's first-invalidation dirtied-by](#firefoxs-write-side-partial-dirtied-by-first-invalidation-only---deep)
 
-**Provenance.** As in [engine-mapping.md](./engine-mapping.md): facts are **[measured]** against
+**Sources.** As in [engine-mapping.md](./engine-mapping.md): facts are **[measured]** against
 `examples/forces-layout.mjs` in both engines, or **[source]** with a permalink. Related:
 [engine-mapping.md](./engine-mapping.md) (what the engine vocabularies mean),
 [gecko-profile-format.md](./gecko-profile-format.md) (how the cause stack is encoded in the dump),

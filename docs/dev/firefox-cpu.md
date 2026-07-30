@@ -11,7 +11,7 @@
 · [the `js,cpu` / 1 ms config](#the-firefox-sampler-config-jscpu-1-ms-and-what-not-to-chase)
 · [where the ~150% overhead comes from](#where-the-150-gecko-overhead-comes-from)
 
-**Provenance.** As in [cpu-profiling.md](./cpu-profiling.md): interleaved warmed runs of the probes
+**Sources.** As in [cpu-profiling.md](./cpu-profiling.md): interleaved warmed runs of the probes
 named per section, Firefox 152. The overhead-split section is 8 rounds x 20 iterations, interleaved,
 of `examples/gecko-overhead.mjs`. Related: [gecko-profile-format.md](./gecko-profile-format.md) (the
 raw dump schemas these facts are read out of), [engine-mapping.md](./engine-mapping.md) (what the

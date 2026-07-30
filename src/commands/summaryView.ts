@@ -12,7 +12,7 @@ import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
 /**
  * Where the count column came from, which differs by capture mode/lane and must not be asserted blindly.
  *
- * Provenance is not what makes a count trustworthy; reproducibility is (see diff.ts). Chrome counts
+ * Where a count comes from is not what makes it trustworthy; reproducibility is (see diff.ts). Chrome counts
  * come from the trace, main-thread windowed, and are exact (bit-identical across repeated runs) --
  * but only a --breakdown/--deep capture has a trace; the default mode has none, so its counts read
  * as not-measured (—). Firefox counts Gecko Reflow/Styles markers instead: real, but batched by a

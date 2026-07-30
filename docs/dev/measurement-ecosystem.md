@@ -18,7 +18,7 @@ came from; when one moves, re-read it before trusting the sentence.
 - [What Lighthouse names as its variance sources](#what-lighthouse-names-as-its-variance-sources)
 - [What this settles for wpd](#what-this-settles-for-wpd)
 
-**Provenance.** Sources are GoogleChrome/chrome-launcher and GoogleChrome/lighthouse at tip-of-tree,
+**Sources.** GoogleChrome/chrome-launcher and GoogleChrome/lighthouse at tip-of-tree,
 read 2026-07. Nothing here is a wpd measurement; it is the surrounding field, cited so wpd's own
 [measured] positions can be placed against it.
 

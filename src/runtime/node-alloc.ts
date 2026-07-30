@@ -173,7 +173,7 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     lifecycle,
     capture: "node-alloc",
     // The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
-    // nothing. Core provenance; always stamped.
+    // nothing. A core fact; always stamped.
     framework: opts.framework ?? "auto",
     notes: [nodeAllocRuntime()],
   };

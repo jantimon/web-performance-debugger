@@ -20,7 +20,7 @@ vs DevTools' rule, the dirtied-by reports and the thrash detector). Related:
 [gecko-profile-format.md](./gecko-profile-format.md) (raw dump schemas),
 [cpu-profiling.md](./cpu-profiling.md) (the capture modes, sampler contamination, what self-time includes).
 
-**Provenance.** Facts below are either (a) reproduced locally against `examples/forces-layout.mjs`
+**Sources.** Facts below are either (a) reproduced locally against `examples/forces-layout.mjs`
 in both engines, marked **[measured]**, or (b) read out of mozilla-central / chromium at
 tip-of-tree in 2026-07, marked **[source]** with a permalink. Nothing here is from vendor docs
 alone: both engines' user-facing docs are silent or wrong on most of this.
