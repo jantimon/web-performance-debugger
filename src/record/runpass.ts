@@ -251,12 +251,16 @@ export async function runPass(
   const browserVersion = await browser.version().catch(() => undefined);
   // Bot-wall detection for a wpd-performed navigation. `inspect()` collects + classifies the settled
   // page; on a detected wall with no --allow-bot-wall it screenshots + throws (refusing before any
-  // measurement pass), else it stores the verdict so a detected-but-allowed run can note it. Called
-  // for the onramp (after the load step, via the driver hook) and for a --url/--html host pre-navigation
+  // measurement pass), else it stores the verdict so a detected-but-allowed run can note it. Called for
+  // the onramp (after the load step, via the driver hook), for a --url/--html host pre-navigation, and
+  // for each hard navigation a driver module performs (via runDriver's onHardNavigation). A driver can
+  // inspect several navigations, so keep the FIRST detected verdict rather than letting a later clean
+  // navigation overwrite it (the loud note still fires under --allow-bot-wall)
   let botWallVerdict: BotWallVerdict | undefined;
   const inspect = botWall
     ? async () => {
-        botWallVerdict = await inspectBotWall(page, botWall);
+        const verdict = await inspectBotWall(page, botWall);
+        if (!botWallVerdict?.detected) botWallVerdict = verdict;
       }
     : undefined;
   try {
@@ -334,6 +338,10 @@ export async function runPass(
         { iterations: opts.iterations, warmup: opts.warmup, keepPartial: opts.keepPartial },
         onramp ? { navigateUrl: onrampNavigateUrl!, afterFirstLoad: inspect } : undefined,
         startProfiler,
+        // A user driver module's own page.goto is not covered by the onramp hook, so inspect each hard
+        // navigation it performs. Only for a real module (the onramp's single load step is inspected by
+        // afterFirstLoad above; passing both would double-inspect it)
+        onramp ? undefined : inspect,
       );
       driverSteps = driverResult.steps;
       partial = driverResult.partial;

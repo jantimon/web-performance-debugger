@@ -2360,6 +2360,64 @@ e2e("record --url refuses a bot-wall interstitial with a screenshot, and --allow
   }
 });
 
+// Driver mode: a user page.goto that lands on a bot-challenge interstitial gets the SAME refusal as
+// the built-in --url load flow. The module navigates to the fixture inside a measureStep (a hard
+// navigation), which wpd inspects; a wall exits non-zero with the evidence + a screenshot and writes
+// no artifact, and --allow-bot-wall measures it anyway with the loud note. The gap this closes: the
+// wall detector used to run only on wpd's OWN navigation, so a driver's page.goto bypassed it entirely
+e2e("record (driver): a page.goto onto a bot-wall is refused, and --allow-bot-wall overrides", { timeout: TIMEOUT_MS }, () => {
+  const server = startOnrampServer(BOT_WALL_FIXTURE);
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-botwall-driver-"));
+  const flow = path.join(dir, "nav-flow.mjs");
+  writeFileSync(
+    flow,
+    `export async function run({ page, measureStep }) {
+       await measureStep("load", () => page.goto(${JSON.stringify(server.url)}, { waitUntil: "load" }));
+     }`,
+  );
+  try {
+    // 1. Refusal: a driver navigation onto the wall exits 1 with the evidence + screenshot, no artifact
+    const out = path.join(dir, "botwall");
+    const refusal = spawnSync(process.execPath, [cli, "record", flow, "--out", out], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: CLI_KILL_MS,
+      killSignal: "SIGKILL",
+      env: process.env,
+    });
+    assert.equal(refusal.status, 1, `a driver bot-wall must exit 1:\n${refusal.stdout}\n${refusal.stderr}`);
+    const stderr = refusal.stderr ?? "";
+    assert.match(stderr, /bot-challenge/i, "the error names the bot-challenge class");
+    assert.match(stderr, /challenge-platform|challenge path|challenge marker/i, "the error lists the signal that fired");
+    assert.match(stderr, /--allow-bot-wall/, "the error points at the skip flag");
+    const screenshot = `${out}.wall.png`;
+    assert.ok(existsSync(screenshot), "a screenshot is saved as proof");
+    assert.ok(statSync(screenshot).size > 0, "the screenshot is non-empty");
+    assert.ok(!existsSync(out), "no recording is written for a refused driver run");
+
+    // 2. Override: --allow-bot-wall measures the navigated page anyway and stamps the loud note
+    const allowed = path.join(dir, "allowed.json");
+    const ok = spawnSync(process.execPath, [cli, "record", flow, "--allow-bot-wall", "--out", allowed], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: CLI_KILL_MS,
+      killSignal: "SIGKILL",
+      env: process.env,
+    });
+    assert.equal(ok.status, 0, `--allow-bot-wall records the driver page:\n${ok.stdout}\n${ok.stderr}`);
+    assert.ok(existsSync(allowed), "a recording is written under --allow-bot-wall");
+    const recording = JSON.parse(readFileSync(allowed, "utf8"));
+    assert.ok(
+      recording.meta.notes.some((note) => /bot-challenge interstitial signals/.test(note) && /--allow-bot-wall/.test(note)),
+      "the driver recording carries the loud note that the numbers describe the challenge page",
+    );
+  } finally {
+    server.close();
+  }
+});
+
 // The end-of-step flush drains EVERY observer's takeRecords() and, on a step that dispatched a trusted
 // interaction, waits (bounded) for its Event Timing entry. A 45ms handler crosses the 16ms spec floor,
 // so the step MUST carry a non-null INP: an entry queued-but-undispatched at the read would read INP

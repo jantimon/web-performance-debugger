@@ -143,6 +143,8 @@ saved as proof — rather than reporting the challenge page's numbers as the sit
 conservative (it keys on the rendered interstitial, never on a captcha script a normal form embeds).
 wpd never bypasses, waits out, or solves a challenge. To measure the challenge page itself on purpose,
 pass `--allow-bot-wall`; the recording then carries a loud note that its numbers describe that page.
+The same check runs on a `page.goto` your own driver module performs, so a hand-authored flow that
+navigates onto a wall is refused exactly like the built-in flow, not measured as the site.
 
 A page load has no interaction, so `INP` stays null there. To measure a click, a re-render, or SSR
 you write a small `run` function and pick a **lane** by where the code runs, then a **capture** by

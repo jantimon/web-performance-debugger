@@ -10,6 +10,7 @@ import {
 import { frameStallError } from "./launch.js";
 import { waitForStable, isDestroyedContextError } from "./until.js";
 import { duplicateLabelError } from "../trace/steps.js";
+import { BotWallError } from "../record/bot-wall.js";
 import type { DriverStep } from "../model/driver-step.js";
 import type {
   EngineSoftNav,
@@ -630,7 +631,11 @@ export interface OnrampFlow {
  *
  * Each step is wrapped in wpd:step:N marks, settled (or awaited via
  * `until`), and assigned a per-step INP. Per-step rendering counts come from the trace window this
- * pass captures (--breakdown/--deep), not from CDP: there is one pass, and the counters are gone
+ * pass captures (--breakdown/--deep), not from CDP: there is one pass, and the counters are gone.
+ *
+ * `onHardNavigation` (module driver only) runs after each settled hard navigation the module performs,
+ * deduped by destination URL: the bot-wall inspection the built-in load flow gets, extended to a
+ * driver's own page.goto so a challenge interstitial is refused instead of measured as the site
  */
 export async function runDriver(
   page: Page,
@@ -639,6 +644,7 @@ export async function runDriver(
   options: DriverOptions = { iterations: 1, warmup: 0 },
   onramp?: OnrampFlow,
   beforeRunWindow?: () => Promise<void>,
+  onHardNavigation?: () => Promise<void>,
 ): Promise<DriverResult> {
   let run: (arg: any) => unknown;
   let prepare: ((arg: any) => unknown) | undefined;
@@ -996,6 +1002,10 @@ export async function runDriver(
   }
 
   const steps: DriverStep[] = [];
+  // Destination URLs whose completed hard navigation onHardNavigation already inspected for a bot
+  // wall. A driver step repeats every iteration, so a repeated navigation to the same URL is checked
+  // once, not once per iteration: the interstitial a wall serves does not change between visits
+  const inspectedNavUrls = new Set<string>();
   // Labels must be unique within ONE iteration, not within the run: a repeated flow measures
   // "mount" once per iteration, and those are the samples, not a collision. Reset per iteration
   let usedLabels = new Set<string>();
@@ -1065,6 +1075,15 @@ export async function runDriver(
     const endClock = await stepClock(`wpd:step:${stepMark}:end`);
     const afterUrl = page.url();
     const navigation = classifyNavigation(beforeUrl, afterUrl, startClock.origin, endClock.origin);
+    // A user page.goto that landed on a bot-challenge interstitial would be measured as if it were the
+    // site. Inspect a settled HARD navigation (a fresh document) the same way the built-in load flow
+    // does, deduped by destination URL. A wall throws a BotWallError that propagates out to refuse the
+    // record with no artifact; under --allow-bot-wall the inspector stores the verdict for a loud note
+    // instead of throwing. Skipped for the built-in on-ramp, whose one load step inspectOnrampOnce covers
+    if (navigation === "hard" && onHardNavigation && !inspectedNavUrls.has(afterUrl)) {
+      inspectedNavUrls.add(afterUrl);
+      await onHardNavigation();
+    }
     // The page's own view of [start mark, end mark]. Null across a navigation (the two marks are on
     // documents with different timeOrigins, so their performance.now() delta is not one interval);
     // record.ts upgrades this to the trace-clock window when a trace was captured
@@ -1307,6 +1326,9 @@ export async function runDriver(
     try {
       await run(driverArg);
     } catch (error) {
+      // A bot-wall refusal is never a partial to salvage: rethrow it even under --keep-partial so a
+      // wall a driver navigated into aborts the record with no artifact, on any iteration
+      if (error instanceof BotWallError) throw error;
       // A flow that never completed a full iteration (iteration 0 failed, or --keep-partial was not
       // set) has nothing honest to salvage: rethrow so a broken flow is a hard error, not a quietly
       // empty recording. When --keep-partial is set and an earlier iteration DID complete, keep those
