@@ -37,7 +37,7 @@ test("matchedFrameFloor: a median at the one-frame boundary matches multiple 1",
   assert.deepEqual(matchedFrameFloor(16.7, chrome), { basis: "wall-multiple", floorMs: 16.6, multiple: 1 });
   const firefox = { headless: true, browser: "firefox" };
   assert.deepEqual(matchedFrameFloor(16.66, firefox), { basis: "wall-multiple", floorMs: 16.6, multiple: 1 });
-  // The old 8.3ms firefox reading is no longer the floor: an 8.0 firefox median is real sub-frame work.
+  // An 8.0 firefox median is real sub-frame work, not a frame-floor multiple.
   assert.equal(matchedFrameFloor(8.0, firefox), null);
 });
 

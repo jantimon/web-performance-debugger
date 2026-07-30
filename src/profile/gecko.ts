@@ -196,7 +196,7 @@ function runWindow(thread: GeckoThread): { startMs: number | null; endMs: number
 
 /**
  * Locate the content thread that ran the module (the one carrying the wpd:run marks) and
- * compute the shared context. Selecting by marker, not by processType, is robust across the
+ * compute the shared context. Selecting by marker, not by processType, holds across the
  * several content processes Firefox spawns (see docs/dev/gecko-profile-format.md).
  */
 export function parseGecko(profile: GeckoContainer): GeckoContext {
