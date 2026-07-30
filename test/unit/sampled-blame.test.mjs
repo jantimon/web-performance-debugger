@@ -43,6 +43,30 @@ test("sampledForcedBlameEvents: exact executing line on a flush wider than one i
   assert.ok(!("lowConfidence" in event.args.data), "a wide flush is not low-confidence");
 });
 
+test("sampledForcedBlameEvents: emits the leaf function's callFrame fallback (1-based) when frameByNode is present", () => {
+  const events = [flush("layout", 1000, 500)];
+  const stream = {
+    ...streamOf([{ node: 1, ts: 1100, line: 42 }], 150, { 1: APP }),
+    // 0-based CDP callFrame position; the join shifts it +1 to the trace-stack convention.
+    frameByNode: new Map([[1, { line: 7, column: 28454 }]]),
+  };
+  const out = sampledForcedBlameEvents(events, stream, null, null);
+  const frame = out[0].args.data.stackTrace[0];
+  assert.equal(frame.lineOnly, true);
+  assert.equal(frame.fallbackLine, 8, "leaf callFrame line, shifted 0-based -> 1-based");
+  assert.equal(frame.fallbackColumn, 28455, "leaf callFrame column, shifted 0-based -> 1-based");
+});
+
+test("sampledForcedBlameEvents: no fallback fields when a positionless (-1) leaf frame", () => {
+  const events = [flush("layout", 1000, 500)];
+  const stream = {
+    ...streamOf([{ node: 1, ts: 1100, line: 42 }], 150, { 1: APP }),
+    frameByNode: new Map([[1, { line: -1, column: -1 }]]),
+  };
+  const frame = sampledForcedBlameEvents(events, stream, null, null)[0].args.data.stackTrace[0];
+  assert.ok(!("fallbackLine" in frame), "a positionless leaf frame carries no fallback");
+});
+
 test("sampledForcedBlameEvents: style flush emits a RecalcStyles event", () => {
   const events = [flush("style", 1000, 500)];
   const stream = streamOf([{ node: 1, ts: 1100, line: 7 }], 150, { 1: APP });

@@ -11,6 +11,9 @@ interface RawFrame {
   columnNumber?: number;
   /** the frame carries a line but no observed column (a sampled read-site); see StackFrame.lineOnly */
   lineOnly?: boolean;
+  /** column-bearing fallback position for a lineOnly sampled read-site; see StackFrame.fallbackLine */
+  fallbackLine?: number;
+  fallbackColumn?: number;
 }
 
 /**
@@ -47,8 +50,11 @@ export function extractStack(args: unknown): StackFrame[] | undefined {
       line: typeof frame.lineNumber === "number" ? frame.lineNumber : undefined,
       column: typeof frame.columnNumber === "number" ? frame.columnNumber : undefined,
       // A sampled read-site carries a line but no column; carry the flag so the resolver never assumes
-      // generated column 0 for it (a wrong original line on a minified single-line bundle).
+      // generated column 0 for it (a wrong original line on a minified single-line bundle), plus the
+      // leaf function's column-bearing fallback position for when the executing line is unresolvable.
       ...(frame.lineOnly ? { lineOnly: true } : {}),
+      ...(typeof frame.fallbackLine === "number" ? { fallbackLine: frame.fallbackLine } : {}),
+      ...(typeof frame.fallbackColumn === "number" ? { fallbackColumn: frame.fallbackColumn } : {}),
     }));
 }
 

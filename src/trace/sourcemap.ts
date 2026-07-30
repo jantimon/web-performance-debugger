@@ -544,30 +544,49 @@ export class SourceMapResolver {
     }
     const map = await this.loadMap(target);
     if (!map) return;
+    const positions = this.positionCounts.get(target) ?? { misses: 0, hits: 0 };
     // A line-only frame (a CPU sample carries an executing LINE but no column) must not be mapped as
     // though generated column 0 were observed: on a minified single-line bundle every such lookup
     // resolves through bundle:line:0 to whatever segment starts the line, an unrelated original
     // location. Map it only when its generated line is UNAMBIGUOUS (every mapped segment on that line
-    // shares one original source+line, so no column could change the answer); otherwise leave the frame
-    // on its bundle line, so `at` is never a wrong original line (a sampled read may miss, never lie).
+    // shares one original source+line, so no column could change the answer); otherwise the executing
+    // line is unresolvable here. trace stack lines are 1-based; trace-mapping wants 1-based line,
+    // 0-based column.
     const lookupColumn = frame.lineOnly
       ? unambiguousLineColumn(map, frame.line)
       : Math.max(0, (frame.column ?? 1) - 1);
-    const positions = this.positionCounts.get(target) ?? { misses: 0, hits: 0 };
-    if (lookupColumn == null) {
-      positions.misses++;
-      this.positionCounts.set(target, positions);
-      return;
+    let pos =
+      lookupColumn == null
+        ? null
+        : originalPositionFor(map, { line: frame.line, column: lookupColumn });
+    // A line-only sample observed no column, so report line precision (no fabricated original column);
+    // an observed-column frame keeps its mapped column.
+    let reportColumn = !frame.lineOnly;
+    if (
+      (pos == null || pos.source == null || pos.line == null) &&
+      frame.fallbackLine != null &&
+      frame.fallbackLine >= 1
+    ) {
+      // The executing line could not be disambiguated, but the leaf FUNCTION's own callFrame carries a
+      // real column (the same frame the CPU model resolves). Retry there so a minified-bundle sampled
+      // read names the forcing function at line granularity rather than keeping the bundle line.
+      // trace-mapping THROWS on a line < 1, so the >= 1 guard mirrors the primary lookup's.
+      const fallbackColumn = Math.max(0, (frame.fallbackColumn ?? 1) - 1);
+      const fallbackPos = originalPositionFor(map, {
+        line: frame.fallbackLine,
+        column: fallbackColumn,
+      });
+      if (fallbackPos.source != null && fallbackPos.line != null) {
+        pos = fallbackPos;
+        // The fallback names the function, not the exact read statement, so keep line granularity.
+        reportColumn = false;
+        frame.line = frame.fallbackLine;
+      }
     }
-    // trace stack lines are 1-based; trace-mapping wants 1-based line, 0-based column.
-    const pos = originalPositionFor(map, {
-      line: frame.line,
-      column: lookupColumn,
-    });
-    if (pos.source == null || pos.line == null) {
-      // The map loaded but has no mapping for this line/col: the frame keeps its minified/remote
-      // identity and buckets by origin. `outcomes` records only LOAD failures, so count the miss
-      // here or the leak stays invisible.
+    if (pos == null || pos.source == null || pos.line == null) {
+      // The map loaded but has no mapping (an ambiguous line-only lookup, or no segment for this
+      // line/col): the frame keeps its minified/remote identity and buckets by origin. `outcomes`
+      // records only LOAD failures, so count the miss here or the leak stays invisible.
       positions.misses++;
       this.positionCounts.set(target, positions);
       return;
@@ -579,9 +598,7 @@ export class SourceMapResolver {
       ? cleanRemoteSource(pos.source)
       : resolveOriginalSource(path.dirname(target), pos.source);
     frame.line = pos.line;
-    // A line-only sample observed no column, so report line precision (no fabricated original column);
-    // an observed-column frame keeps its mapped column.
-    frame.column = frame.lineOnly ? undefined : (pos.column ?? undefined);
+    frame.column = reportColumn ? (pos.column ?? undefined) : undefined;
     // the map's original identifier, when present (best-effort; absent on many segments)
     if (pos.name) frame.originalName = pos.name;
   }

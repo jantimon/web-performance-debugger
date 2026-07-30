@@ -451,10 +451,23 @@ export async function runPass(
             const urlByNode = new Map(
               assembled.profile.nodes.map((node) => [node.id, node.callFrame.url ?? ""]),
             );
+            // The leaf function's callFrame line+column (0-based CDP) per node: the resolver's
+            // column-bearing fallback when a sample's executing line cannot be disambiguated on a
+            // minified bundle, so the read still names the forcing function (the CPU-model frame).
+            const frameByNode = new Map(
+              assembled.profile.nodes.map((node) => [
+                node.id,
+                {
+                  line: node.callFrame.lineNumber ?? -1,
+                  column: node.callFrame.columnNumber ?? -1,
+                },
+              ]),
+            );
             const blame = sampledForcedBlameEvents(
               events,
               {
                 urlByNode,
+                frameByNode,
                 samples: assembled.profile.samples,
                 timestampsUs: assembled.profile.sampleTimestampsUs ?? [],
                 lines: assembled.sampleLines,

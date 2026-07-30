@@ -69,6 +69,17 @@ field wpd already stores** (`args.data.track.trackGroup == "Scheduler ⚛"` on t
 events), not a capture change. It is dev-build-only for the reason above, and Firefox parity is
 unverified (the gecko lane's React tracks are not probed).
 
+**The phase span is on `args.data.start`/`.end`, not `event.dur`.** React emits each track entry as an
+INSTANT event (`ph: "I"`, `dur: 0`) and passes the span as the extended `console.timeStamp(label,
+start, end, ...)` arguments, which Chrome stores as `args.data.start`/`.end` in the trace clock
+(base::TimeTicks us). **[measured]** on the dev counter (5 clicks, 46 entries): the Blocking lane sums
+**68.7 ms** (its Event/Render/Commit/Remaining-Effects phases), the `Components ⚛` track **17.8 ms**
+(the per-commit App renders); the Transition/Suspense/Idle lanes carry entries but 0 ms (React only
+declares the lane, no phase lands on it). So `react-dev` reads the duration from start/end per entry.
+The per-track sum is a real signal because a track's entries run sequentially; **tracks nest** (the
+`Components ⚛` render sits inside the Blocking lane's Render phase), so there is no honest grand total
+to lead with -- the timing is per-track.
+
 ## Node-lane function names by React version and build
 
 The node SSR lane (`--target node`) resolves react-dom's server-render frames, and how readable those
@@ -158,15 +169,56 @@ The `react-dev` addon stores dev-build-GATED facts:
 The facts surface under `query span <label>` in a labeled `React (addon)` block and additively in the
 `--format json` anatomy (`SpanAnatomy.addons`).
 
+## Measured React interaction, hydration, and streaming facts
+
+What a React app's own patterns look like through the capture wpd already has, each **[measured]** on
+react 19.2.8 (fixtures built with esbuild, sourcemaps on, `NODE_ENV=production` unless noted):
+
+- **INP handler recovery under root event delegation.** React 19 attaches ONE delegated listener at
+  the root, yet CPU/blame attribution does not stop at react-dom: the V8 sampler walks through the
+  delegated dispatcher into the user handler. On a `<button onClick>` whose handler runs a ~120 ms busy
+  loop, both `query cpu --by function` (run window) and `query span` (per-step, `--breakdown`) name the
+  exact handler function+line -- `computeExpensiveResult (app.jsx:7)` at 80.1% (cpu) / 77.5%
+  (per-span), `handleExpensiveClick (app.jsx:20)`. INP is billed honestly: 120 ms on the step span
+  (input delay 0.2, processing 119.8). The one seam: **LoAF names only the delegated root listener at
+  script granularity** (`DIV#root.onclick` -> react-dom's minified dispatcher, at the `app.js` url, no
+  source line); the source line is one hop away in `query cpu` / the per-span hot list. Every React app
+  hits this, so it is the common case, not an edge.
+- **Concurrent-mode INP: the honest signal is INP attribution, not the bar.** A `setState` and the same
+  state change wrapped in `startTransition` produce near-identical reconciling bars (js ~17-18 ms,
+  layout ~13 ms both). The difference is INP: the sync interaction is billed **36 ms**; the transition
+  interaction reports **no INP** -- `startTransition` keeps the click responsive and its deferred
+  render is correctly not counted as interaction latency. A reader comparing only the `--breakdown`
+  bars would conclude "the transition did not help"; the win lives in INP alone. (Genuine multi-task
+  fragmentation -- many short deferred frames -- was not forced at this workload, so the
+  fragmentation-visibility question stays open.)
+- **A hydration mismatch is priced and diffable, but never named.** A cold `--url` boot of a page whose
+  client tree disagrees with the server HTML raises the exact counts a `diff` gate catches: **paint
+  5 -> 15 (3x)**, layout 5 -> 10, style 10 -> 15, JS self +10.8 ms, react render self-time +27%, the
+  layout slice 49.1 -> 79.2 ms. `wpd diff` surfaces all of it as a count/paint regression. **But no
+  capture identifies it AS a hydration mismatch** -- wpd reads no console/onRecoverableError channel,
+  stamps no hydration fact -- so a reader who does not already suspect hydration sees the cost without
+  the cause.
+- **Streaming SSR is ~1.7x renderToString on the node lane, and the extra cost is the encoder, not
+  rendering.** On one ~2400-cell tree, `renderToString` reads **59.6 ms** JS self-time (react-dom
+  79.5%) and `renderToPipeableStream` (to a byte-counting sink) **101.0 ms** (react-dom 70.1%). The
+  ~41 ms delta is dominated by stream-writing/encoding, not reconcile: `writeChunk` **19.8 ms**,
+  `encodeInto` (native + node) **~12 ms**, `byteLengthOfChunk` **2.8 ms** sum to ~35 ms, while the
+  render functions (`renderElement`/`renderNode`/`pushStartInstance`) are essentially unchanged between
+  arms. `query cpu --by function` names each line because React 19 ships unmangled production server
+  builds (above), so no sourcemap is needed. The named lines are react-dom internal, so this is a
+  build/API choice (skip streaming when you do not need progressive flush), not a line to edit.
+
 ## What is not established yet
 
 Stated so a reader does not assume parity wpd has not probed. These are open, not claims:
 
 - **Firefox / gecko-lane React tracks** are unverified; the trace-channel facts above are Chrome-only.
-- **Stream-writing vs rendering magnitude** on `renderToPipeableStream` (whether node stream cost
-  dominates react-dom render cost) is unmeasured on wpd's node lane.
-- **INP handler recovery under React's root event delegation**, **concurrent-mode LoAF fragmentation**,
-  and **hydration-mismatch doubling** are unprobed; none has a measured wpd reading, so none is a claim
-  here.
+- **Concurrent-mode LoAF fragmentation**: whether many short deferred transition frames show as
+  fragmentation is unforced (the transition probe above stayed under the 50 ms long-task line).
+- **Async action continuation at scale**: a form action's synchronous body lands on its step span
+  (`slowServerLikeWork (app.jsx:4)` at 77.5% [measured]), but a real post-`await` continuation (network
+  wait + a later commit) can land outside the step window, the same deferral transitions show; unprobed
+  at scale.
 - **Bundled browser production names**: a bundler's terser pass re-mangles react-dom even on 19, so the
   unmangled-19 fact is a node-lane property (direct `require`), not a guarantee for a browser bundle.

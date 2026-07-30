@@ -135,6 +135,47 @@ test("query span run: the reconciling bar is present, and hot functions come fro
   assert.equal(anatomy.hot.functions[0].fn, "render");
 });
 
+// --- the React addon block: detection is a run-level fact, never claimed on a step (B2) ---
+
+// A step span carries a commit count with NO detection result. The addon block must not read "not
+// detected" there (a detection failure to a reader) when React was plainly detected on the run.
+test("query span: a step's React block shows the commit count, never 'not detected'", async () => {
+  const file = writeRec("anatomy-react-addon.json", {
+    meta: { schemaVersion: "5", target: "chrome", iterations: 1, capture: "breakdown" },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      {
+        label: "run",
+        kind: "run",
+        aggregation: "sum",
+        wallMs: 7,
+        counts: measuredCounts,
+        breakdown: breakdown(7),
+        addons: { react: { detected: true, version: "19.2.8", rendererPackageName: "react-dom", build: "production", commitCount: 9 } },
+      },
+      {
+        label: "expensive click",
+        kind: "step",
+        index: 0,
+        aggregation: "first",
+        wallMs: 3,
+        counts: measuredCounts,
+        breakdown: breakdown(3),
+        addons: { react: { commitCount: 1 } },
+      },
+    ],
+  });
+  const runText = await captureText(() => querySpan(file, "run", {}));
+  assert.match(runText, /React \(addon\): detected · v19\.2\.8 · react-dom · production · 9 commits/);
+  const stepText = await captureText(() => querySpan(file, "step:expensive click", {}));
+  assert.match(stepText, /React \(addon\): 1 commit/);
+  assert.doesNotMatch(stepText, /not detected/, "a step never claims detection failed");
+  // JSON stays honest: the step's stored fact carries only the commit count, detection absent (not fake).
+  const stepJson = await captureJson(() => querySpan(file, "step:expensive click", { format: "json" }));
+  assert.deepEqual(stepJson.addons.react, { commitCount: 1 });
+});
+
 // --- a step's headline wall is the median, the bar's own window is the iteration-0 window ---
 
 // The bar tiles iteration 0 only; on an outlier iteration 0 (a retry inside the timed action) that
