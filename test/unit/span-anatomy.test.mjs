@@ -166,12 +166,72 @@ test("query span: a step's React block shows the commit count, never 'not detect
   });
   const runText = await captureText(() => querySpan(file, "run", {}));
   assert.match(runText, /React \(addon\): detected · v19\.2\.8 · react-dom · production · 9 commits/);
+  // The run block carries the full identity, so it does NOT point elsewhere for version/build
+  assert.doesNotMatch(runText, /version\/build\/renderer are on the run span/);
   const stepText = await captureText(() => querySpan(file, "step:expensive click", {}));
   assert.match(stepText, /React \(addon\): 1 commit/);
   assert.doesNotMatch(stepText, /not detected/, "a step never claims detection failed");
+  // The commit-only step block points a reader at where the detected version/build live (the run span),
+  // so it does not read as the whole of what React detection found
+  assert.match(stepText, /version\/build\/renderer are on the run span/);
   // JSON stays honest: the step's stored fact carries only the commit count, detection absent (not fake)
   const stepJson = await captureJson(() => querySpan(file, "step:expensive click", { format: "json" }));
   assert.deepEqual(stepJson.addons.react, { commitCount: 1 });
+});
+
+
+// A navigation/boot step is where CLS is a headline metric, so an ABSENT value needs a reason: the
+// observer ran but nothing qualified, or the browser has no layout-shift entry type. A bare absence
+// must not read as "not wired". A step that DID observe a shift prints the real CLS, not the status;
+// an interaction step (navigation "none") stays silent, since it has no boot CLS to explain
+function stepClsRec(name, browser, stepOverrides) {
+  return writeRec(name, {
+    meta: { schemaVersion: "5", target: browser, browser, iterations: 1, capture: "breakdown" },
+    window: { startTs: 0, endTs: 100 },
+    events: [],
+    spans: [
+      { label: "run", kind: "run", aggregation: "sum", wallMs: 7, counts: measuredCounts, breakdown: breakdown(7) },
+      {
+        label: "load",
+        kind: "step",
+        index: 0,
+        aggregation: "first",
+        wallMs: 3,
+        counts: measuredCounts,
+        breakdown: breakdown(3),
+        ...stepOverrides,
+      },
+    ],
+  });
+}
+
+test("query span: a chrome navigation step with no layout shift explains the absent CLS", async () => {
+  const file = stepClsRec("cls-absent-chrome.json", "chrome", { navigation: "hard" });
+  const text = await captureText(() => querySpan(file, "step:load", {}));
+  assert.match(text, /CLS \(boot\): no qualifying layout shift in this window/);
+  assert.doesNotMatch(text, /Firefox/, "chrome names the no-shift reason, not the firefox one");
+});
+
+test("query span: a firefox navigation step names the missing layout-shift entry type", async () => {
+  const file = stepClsRec("cls-absent-firefox.json", "firefox", { navigation: "hard" });
+  const text = await captureText(() => querySpan(file, "step:load", {}));
+  assert.match(text, /CLS \(boot\): not measured \(Firefox exposes no layout-shift entry type\)/);
+});
+
+test("query span: a step that observed a shift prints the real CLS, not the absence status", async () => {
+  const file = stepClsRec("cls-present.json", "chrome", {
+    navigation: "hard",
+    layoutShift: { cls: 0.042, windowCount: 1, shiftCount: 2, sources: [] },
+  });
+  const text = await captureText(() => querySpan(file, "step:load", {}));
+  assert.match(text, /CLS \(boot, spec session-window max/);
+  assert.doesNotMatch(text, /no qualifying layout shift/, "a measured CLS never shows the absence status");
+});
+
+test("query span: an interaction step (no navigation) stays silent on boot CLS", async () => {
+  const file = stepClsRec("cls-interaction.json", "chrome", { navigation: "none" });
+  const text = await captureText(() => querySpan(file, "step:load", {}));
+  assert.doesNotMatch(text, /CLS/, "a non-navigation step has no boot CLS to explain");
 });
 
 

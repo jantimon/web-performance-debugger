@@ -342,6 +342,26 @@ export function printSpanAnatomy(
   );
   if (anatomy.lcp) printStepLcp(anatomy.lcp);
   if (anatomy.layoutShift) printLayoutShift(anatomy.layoutShift);
+  else if (
+    anatomy.kind === "step" &&
+    (anatomy.navigation === "hard" ||
+      anatomy.navigation === "soft" ||
+      anatomy.navigation === "soft-hash")
+  ) {
+    // A navigation/boot step is where CLS is a headline metric, so an absent value needs a reason:
+    // the observer ran but nothing qualified (a stable boot, or every shift followed recent input),
+    // or the browser has no layout-shift entry type. Say which, so a bare absence is not read as
+    // unwired. An interaction step (navigation "none") has no boot CLS to explain, so this branch
+    // stays scoped to a real navigation
+    if (meta.browser === "firefox")
+      console.log(dim("\nCLS (boot): not measured (Firefox exposes no layout-shift entry type)"));
+    else
+      console.log(
+        dim(
+          "\nCLS (boot): no qualifying layout shift in this window (a stable boot, or every shift followed user input within 500ms)",
+        ),
+      );
+  }
   if (anatomy.softNav) printSoftNavRoute(anatomy.softNav);
 
   // The reconciling bar, when the capture mode built one. A stored bar prints the seven-slice per-span
@@ -599,6 +619,22 @@ function printSpanAddons(addons: SpanAddons | undefined): void {
     if (react.commitCount != null)
       identity.push(`${react.commitCount} commit${react.commitCount === 1 ? "" : "s"}`);
     console.log(`\n${bold("React")} ${dim("(addon)")}: ${identity.join(" · ")}`);
+    // A step span stores its own per-step commit count and nothing else: the detected version, build,
+    // and renderer are RUN-level facts. Point a reader who drilled straight to a step at where they live,
+    // so the commit-only block does not read as the whole of what React detection found
+    const commitOnly =
+      react.detected == null &&
+      react.version == null &&
+      react.rendererPackageName == null &&
+      react.build == null &&
+      react.phases == null &&
+      react.commitCount != null;
+    if (commitOnly)
+      console.log(
+        dim(
+          "  version/build/renderer are on the run span (query span <recording> run) and query spans",
+        ),
+      );
     if (react.hydrationRecoverableErrors != null) {
       const plural = react.hydrationRecoverableErrors === 1 ? "" : "s";
       const firstLine = react.firstHydrationError?.split("\n")[0].slice(0, 100);
