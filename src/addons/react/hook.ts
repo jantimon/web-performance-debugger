@@ -39,6 +39,33 @@ export function installReactHook(): void {
   const store = (win.__wpdAddons = win.__wpdAddons || {});
   if (!store.react) store.react = { detected: false };
 
+  // Hydration-mismatch signal. React's DEFAULT onRecoverableError routes through reportError, which
+  // dispatches a window `error` event; a hydration mismatch fires one. Capture React-authored error
+  // messages (they always link to react.dev) so enrich can classify the hydration ones; a non-React
+  // error is never stored. A user-supplied onRecoverableError replaces the default and suppresses the
+  // event, so this listener sees nothing then (absence is not proof of clean hydration).
+  const REACT_ERROR_MARK = "react.dev/";
+  const MAX_STORED_ERRORS = 25;
+  const MAX_ERROR_LENGTH = 512;
+  try {
+    const errorStore = (win.__wpdAddons = win.__wpdAddons || {});
+    const errorFacts = (errorStore.react = errorStore.react || { detected: false });
+    errorFacts.hydrationErrorMessages = errorFacts.hydrationErrorMessages || [];
+    win.addEventListener("error", (event: any) => {
+      try {
+        const source = event && event.error && event.error.message;
+        const message = String(source != null ? source : (event && event.message) || "");
+        if (message.indexOf(REACT_ERROR_MARK) === -1) return;
+        const list = errorFacts.hydrationErrorMessages;
+        if (list.length < MAX_STORED_ERRORS) list.push(message.slice(0, MAX_ERROR_LENGTH));
+      } catch (error) {
+        void error;
+      }
+    });
+  } catch (error) {
+    void error;
+  }
+
   // A commit bumps BOTH the resettable per-step counter (window channel) and the cumulative run-level
   // count carried on the detection fact, so the run span reports total commits and each step its own.
   const bumpCommit = (): void => {

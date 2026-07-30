@@ -8,6 +8,7 @@ import type { Addon, AddonEnrichContext, AddonPageInit } from "../../model/addon
 import type { Span } from "../../model/recording.js";
 import { installReactHook } from "./hook.js";
 import { reactServerPhaseRollup } from "./phases.js";
+import { isReactHydrationError } from "./hydration.js";
 import type { ReactFacts } from "./facts.js";
 
 const ADDON_NAME = "react";
@@ -26,6 +27,9 @@ interface ReactPageData {
   rendererPackageName?: unknown;
   build?: unknown;
   commitCount?: unknown;
+  /** React-authored window `error` messages the page hook captured (react.dev-linked); classified to
+   * the hydration ones here. */
+  hydrationErrorMessages?: unknown;
 }
 
 /** Shape the raw page payload into the detection facts, keeping only fields it actually carried. */
@@ -36,6 +40,18 @@ function shapeDetection(raw: ReactPageData): ReactFacts {
     facts.rendererPackageName = raw.rendererPackageName;
   if (raw.build === "development" || raw.build === "production") facts.build = raw.build;
   if (typeof raw.commitCount === "number") facts.commitCount = raw.commitCount;
+  // Count only the hydration recoverable errors among the captured React errors, and only when at least
+  // one landed: an absent count is honest (no hydration error reached the default window channel), never
+  // a fabricated 0 that would read as "hydration was clean".
+  if (Array.isArray(raw.hydrationErrorMessages)) {
+    const hydrationErrors = raw.hydrationErrorMessages.filter(
+      (message): message is string => typeof message === "string" && isReactHydrationError(message),
+    );
+    if (hydrationErrors.length > 0) {
+      facts.hydrationRecoverableErrors = hydrationErrors.length;
+      facts.firstHydrationError = hydrationErrors[0];
+    }
+  }
   return facts;
 }
 

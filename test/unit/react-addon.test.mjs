@@ -5,6 +5,7 @@ import { addonPageInits, runEnrich } from "../../dist/model/addon.js";
 import { reactAddon } from "../../dist/addons/react/index.js";
 import { reactDevAddon } from "../../dist/addons/react-dev/index.js";
 import { reactServerPhaseRollup } from "../../dist/addons/react/phases.js";
+import { isReactHydrationError } from "../../dist/addons/react/hydration.js";
 import { classifyReactTracks } from "../../dist/addons/react-dev/classify.js";
 
 // --- helpers --------------------------------------------------------------
@@ -116,6 +117,68 @@ test("react enrich: per-step commit count lands on the matching step span", () =
   assert.equal(spans[1].addons.react.commitCount, 2);
   // Production build is carried honestly, no fabricated dev fields.
   assert.equal(spans[0].addons.react.build, "production");
+});
+
+// --- hydration-mismatch signal -------------------------------------------
+
+// The pure classifier: matches React's hydration recoverable errors (either build) via the react.dev
+// marker, and nothing else. [measured] react 19.2 fires #418 in production and the hydration-mismatch
+// link in development.
+test("isReactHydrationError: matches production code and dev link, rejects other errors", () => {
+  // production minified form (measured)
+  assert.equal(
+    isReactHydrationError("Minified React error #418; visit https://react.dev/errors/418?args[]=text"),
+    true,
+  );
+  // development full text (measured)
+  assert.equal(
+    isReactHydrationError("Hydration failed because the server rendered text didn't match the client. https://react.dev/link/hydration-mismatch"),
+    true,
+  );
+  assert.equal(isReactHydrationError("Minified React error #425; visit https://react.dev/errors/425"), true);
+  // a NON-hydration React error must not count
+  assert.equal(isReactHydrationError("Minified React error #300; visit https://react.dev/errors/300"), false);
+  // an arbitrary app error is never React's
+  assert.equal(isReactHydrationError("TypeError: Cannot read properties of undefined"), false);
+  assert.equal(isReactHydrationError(""), false);
+});
+
+test("react enrich: a hydration recoverable error surfaces as a run-span fact, non-hydration errors do not", () => {
+  const spans = [runSpan()];
+  reactAddon.enrich({
+    meta: {},
+    spans,
+    spanWindows: [],
+    pageData: {
+      react: {
+        detected: true,
+        build: "production",
+        hydrationErrorMessages: [
+          "Minified React error #300; visit https://react.dev/errors/300", // not hydration: ignored
+          "Minified React error #418; visit https://react.dev/errors/418?args[]=text", // hydration
+        ],
+      },
+    },
+    stepData: new Map(),
+    cpuModel: undefined,
+    events: [],
+  });
+  assert.equal(spans[0].addons.react.hydrationRecoverableErrors, 1, "only the #418 hydration error counts");
+  assert.match(spans[0].addons.react.firstHydrationError, /#418/);
+});
+
+test("react enrich: no hydration fact when none was observed (absent, never a fabricated 0)", () => {
+  const spans = [runSpan()];
+  reactAddon.enrich({
+    meta: {},
+    spans,
+    spanWindows: [],
+    pageData: { react: { detected: true, build: "production", hydrationErrorMessages: [] } },
+    stepData: new Map(),
+    cpuModel: undefined,
+    events: [],
+  });
+  assert.ok(!("hydrationRecoverableErrors" in spans[0].addons.react), "absent, not 0 (absence is not proof of clean hydration)");
 });
 
 test("react enrich: detected:false attaches no React vocabulary, and no phases off a browser lane", () => {

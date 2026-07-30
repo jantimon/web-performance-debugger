@@ -154,6 +154,12 @@ The `react` addon stores build-INDEPENDENT facts:
 - **Commit count** (`ReactFacts.commitCount`), from `onCommitFiberRoot`: exact-count tier,
   build-independent. Cumulative on the run span; per-step on each driver step (its own window, read
   through the driver's per-step channel, iteration 0).
+- **Hydration recoverable errors** (`ReactFacts.hydrationRecoverableErrors` + `firstHydrationError`),
+  from a pre-app window `error` listener that captures React-authored errors (react.dev-linked) and
+  counts the hydration ones (`hydration.ts` `isReactHydrationError`: the `hydration-mismatch` dev link
+  or a production hydration error code). Rides the run span, browser lanes, build-independent. ABSENT
+  when none was observed -- honestly, since a user-supplied `onRecoverableError` suppresses the window
+  event, so absence is never a "hydration was clean" claim.
 - **Server phases** (`ReactFacts.phases`), node lane only: react-dom self-time rolled onto the minimal
   server-phase anchor allowlist (`phases.ts`). Absent when no anchor resolves (React 18 production is
   mangled), with a run-level note when react-dom frames are present but unresolved.
@@ -192,13 +198,17 @@ react 19.2.8 (fixtures built with esbuild, sourcemaps on, `NODE_ENV=production` 
   bars would conclude "the transition did not help"; the win lives in INP alone. (Genuine multi-task
   fragmentation -- many short deferred frames -- was not forced at this workload, so the
   fragmentation-visibility question stays open.)
-- **A hydration mismatch is priced and diffable, but never named.** A cold `--url` boot of a page whose
-  client tree disagrees with the server HTML raises the exact counts a `diff` gate catches: **paint
-  5 -> 15 (3x)**, layout 5 -> 10, style 10 -> 15, JS self +10.8 ms, react render self-time +27%, the
-  layout slice 49.1 -> 79.2 ms. `wpd diff` surfaces all of it as a count/paint regression. **But no
-  capture identifies it AS a hydration mismatch** -- wpd reads no console/onRecoverableError channel,
-  stamps no hydration fact -- so a reader who does not already suspect hydration sees the cost without
-  the cause.
+- **A hydration mismatch is priced, diffable, AND named.** A cold `--url` boot of a page whose client
+  tree disagrees with the server HTML raises the exact counts a `diff` gate catches: **paint 5 -> 15
+  (3x)**, layout 5 -> 10, style 10 -> 15, JS self +10.8 ms, react render self-time +27%, the layout
+  slice 49.1 -> 79.2 ms. On top of the cost, the `react` addon **names it**: React's DEFAULT
+  `onRecoverableError` routes through `reportError`, which dispatches a window `error` event, and a
+  mismatch fires one (**[measured]** react 19.2 production: error **#418** on the text mismatch, the
+  match control fires none). The addon's pre-app hook counts the hydration recoverable errors and
+  stamps `hydrationRecoverableErrors` + the first message on the run span (`query span run` /
+  `--format json`). **Build-independent** (production fires it). **Limitation [measured]:** an app that
+  supplies its own `onRecoverableError` (or `hydrateRoot` option) replaces the default and suppresses
+  the window event, so wpd sees nothing then -- absence of the fact is not proof of clean hydration.
 - **Streaming SSR is ~1.7x renderToString on the node lane, and the extra cost is the encoder, not
   rendering.** On one ~2400-cell tree, `renderToString` reads **59.6 ms** JS self-time (react-dom
   79.5%) and `renderToPipeableStream` (to a byte-counting sink) **101.0 ms** (react-dom 70.1%). The
