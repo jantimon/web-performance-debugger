@@ -1,6 +1,6 @@
 # Driving wpd from an agent
 
-For an agent consuming `wpd`. It finds and investigates; it does not grade, rank, or recommend. It
+For an agent consuming `wpd`. wpd finds and investigates; it does not grade, rank, or recommend. It
 hands you typed, provenance-stamped numbers and a clean exit code; the judgment stays with you.
 
 ## The loop
