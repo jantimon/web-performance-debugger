@@ -1,7 +1,8 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { launchBrowser, GECKO_MIN_INTERVAL_MS } from "../browser/launch.js";
+import { registerDisposer } from "../browser/disposers.js";
 import { capsFor, type BrowserName } from "../browser/backend.js";
 import type { StaticServer } from "../browser/server.js";
 import {
@@ -64,6 +65,10 @@ export interface PassResult {
    * .geckoprofile.json artifact and removed. Kept as a path, not a string: the dump can be
    * hundreds of MB and holding it would pin that for the rest of the run. */
   geckoDumpPath?: string;
+  /** Firefox: deregister the signal-cleanup disposer for `geckoDumpPath`. record.ts calls it once it
+   * has removed the temp (after the atomic copy), so a completed run leaves nothing registered; until
+   * then a fatal signal unlinks the temp synchronously rather than orphaning it (disposers.ts). */
+  geckoDumpRelease?: () => void;
   /** interval the CPU sampler actually ran at, read back from the profile itself */
   cpuSampleIntervalUs?: number;
   /** --breakdown only: the sampled read-site forced-layout blame log (step/measure edge marks + the
@@ -217,7 +222,20 @@ export async function runPass(
         `wpd-gecko-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
       )
     : undefined;
-  const { browser, page, client } = await launchBrowser({
+  // On a fatal signal, unlink the gecko temp synchronously so a multi-hundred-MB dump is not left on
+  // disk. Firefox writes it during browser.close(), so it may not exist yet when a signal lands; the
+  // unlink is best-effort either way. Deregistered wherever the temp is removed the normal way; on the
+  // success handoff the release travels to record.ts on PassResult (disposers.ts).
+  const releaseGeckoDump = geckoDumpPath
+    ? registerDisposer(() => {
+        try {
+          unlinkSync(geckoDumpPath);
+        } catch {
+          /* best-effort: the dump may not have been written, or already removed */
+        }
+      })
+    : () => {};
+  const { browser, page, client, release } = await launchBrowser({
     browser: browserName,
     headless: opts.headless,
     userDataDir: opts.userDataDir,
@@ -523,7 +541,11 @@ export async function runPass(
     } catch (closeError) {
       attachTeardownFailure(runError, closeError);
     }
-    if (geckoDumpPath) await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
+    release();
+    if (geckoDumpPath) {
+      releaseGeckoDump();
+      await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
+    }
     throw runError;
   }
 
@@ -531,8 +553,13 @@ export async function runPass(
   // runs after this. A close failure here is the only error, so it surfaces; drop any orphaned dump.
   try {
     await browser.close();
+    release();
   } catch (closeError) {
-    if (geckoDumpPath) await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
+    release();
+    if (geckoDumpPath) {
+      releaseGeckoDump();
+      await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
+    }
     throw closeError;
   }
 
@@ -542,10 +569,18 @@ export async function runPass(
   if (spec.gecko && geckoDumpPath) {
     // Parse from a scoped string so the dump (potentially hundreds of MB) is collectable once
     // the model is built; the artifact is copied straight from the file by the caller. readGeckoDump
-    // removes the temp dump if the wait/parse fails.
-    const geckoContext = await readGeckoDump(geckoDumpPath);
+    // removes the temp dump if the wait/parse fails, so drop its signal guard on that failure too.
+    let geckoContext: GeckoContext;
+    try {
+      geckoContext = await readGeckoDump(geckoDumpPath);
+    } catch (readError) {
+      releaseGeckoDump();
+      throw readError;
+    }
     try {
       result.geckoDumpPath = geckoDumpPath;
+      // The temp now travels to record.ts (it copies then removes it); hand off the release with it.
+      result.geckoDumpRelease = releaseGeckoDump;
       result.cpuProfile = geckoToRawCpuProfile(geckoContext);
       // The interval the sampler actually ran at, not what we asked for.
       result.cpuSampleIntervalUs = msToUs(geckoContext.intervalMs);
@@ -569,6 +604,7 @@ export async function runPass(
     } catch (geckoError) {
       // The converter or source resolution failed before the dump was handed to the caller for the
       // copy: remove the temp so a failure past the parse leaks nothing.
+      releaseGeckoDump();
       await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
       throw geckoError;
     }

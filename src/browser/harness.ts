@@ -56,7 +56,7 @@ export async function runHarness(arg: HarnessArgs): Promise<HarnessResult> {
   if (cleanup) lifecycle.push("cleanup");
 
   // Shared context object passed to every hook, persisted across phases (page global).
-  const store = ((globalThis as any).__cpHarness ??= {});
+  const store = ((globalThis as any).__wpdHarness ??= {});
   const ctx: Record<string, unknown> = (store.ctx ??= {});
 
   if (phase === "setup") {

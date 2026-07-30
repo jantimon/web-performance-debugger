@@ -2,12 +2,31 @@ import puppeteer from "puppeteer";
 import type { Browser, CDPSession, Page } from "puppeteer";
 import type { BrowserName } from "./backend.js";
 import { attachTeardownFailure } from "../model/teardown.js";
+import { registerDisposer } from "./disposers.js";
 
 export interface BrowserHandle {
   browser: Browser;
   page: Page;
   /** null on Firefox: WebDriver BiDi has no CDP session (guard every CDP call with the caps). */
   client: CDPSession | null;
+  /**
+   * Deregister the signal-cleanup disposer for this browser's process. Call it right after a clean
+   * `browser.close()` so a completed run leaves nothing registered; until then a SIGINT/SIGTERM/SIGHUP
+   * SIGKILLs the child process rather than orphaning it (disposers.ts).
+   */
+  release: () => void;
+}
+
+/** Register the browser's process for signal-cleanup: on a fatal signal, SIGKILL it synchronously so
+ * it cannot outlive the run. Returned deregister is called on clean close. */
+function guardBrowserProcess(browser: Browser): () => void {
+  return registerDisposer(() => {
+    try {
+      browser.process()?.kill("SIGKILL");
+    } catch {
+      /* best-effort: the process may already be gone */
+    }
+  });
 }
 
 /** Gecko's sampling floor: asking for less just yields this. Also the default when the caller
@@ -220,12 +239,19 @@ async function launchOrThrow(opts: {
       protocolTimeout: opts.protocolTimeoutMs,
       env: opts.gecko ? geckoEnv(process.env, opts.gecko) : process.env,
     });
-    return finishLaunchOrClose(browser, async () => {
-      const page = await browser.newPage();
-      await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
-      // No CDP over BiDi; the caps object keeps every CDP call site guarded.
-      return { browser, page, client: null };
-    });
+    const release = guardBrowserProcess(browser);
+    try {
+      return await finishLaunchOrClose(browser, async () => {
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+        // No CDP over BiDi; the caps object keeps every CDP call site guarded.
+        return { browser, page, client: null, release };
+      });
+    } catch (error) {
+      // finishLaunchOrClose already closed the half-launched browser; drop its signal guard too.
+      release();
+      throw error;
+    }
   }
 
   // headless: true is Chrome's built-in headless (full Chrome, windowless); false is --no-headless.
@@ -283,10 +309,17 @@ async function launchChrome(
       throw sandboxLaunchError(error as Error);
     throw error;
   }
-  return finishLaunchOrClose(browser, async () => {
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
-    const client = await page.createCDPSession();
-    return { browser, page, client };
-  });
+  const release = guardBrowserProcess(browser);
+  try {
+    return await finishLaunchOrClose(browser, async () => {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+      const client = await page.createCDPSession();
+      return { browser, page, client, release };
+    });
+  } catch (error) {
+    // finishLaunchOrClose already closed the half-launched browser; drop its signal guard too.
+    release();
+    throw error;
+  }
 }

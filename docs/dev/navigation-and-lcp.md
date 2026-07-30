@@ -133,6 +133,20 @@ The wait arms only on a **hard** navigation (which includes the built-in load st
 on a fresh document, so there is no boot entry to race for on a soft or static step, and the flush skips
 the wait there.
 
+**The same race hits every per-step observer, so the drain covers all of them.** INP (Event Timing),
+LoAF, layout-shift, LCP and soft-nav each register a `takeRecords()` drain in one in-page registry
+(`win.__wpdDrains`), and the flush drains ALL of them before it reads — an entry queued-but-undispatched
+at the read instant is otherwise silently lost. For **INP** this is not cosmetic: a lost Event Timing
+entry reads INP **lower**, so a `--max-inp` gate could pass a regression. So beside the LCP wait the
+flush also waits (bounded, `INP_ENTRY_WAIT_MS`, 250 ms — the same family, tighter) for the Event Timing
+entry, but only on a step that dispatched a **trusted** interaction. That arm signal is a per-step
+capture-phase listener flag (`win.__wpdSawInteraction`, set on a trusted `pointerup`/`click`/`keydown`/
+`keyup`): a synthetic `page.evaluate(() => el.click())` is untrusted and observed by nothing, so it
+leaves the flag false and arms no wait (absence stays absence). A trusted interaction that stayed under
+the spec's 16 ms floor produces no entry at all, so its flush waits the whole budget and ends empty —
+bounded, and (like the LCP wait) entirely **after the step's end mark**, so it never grows a measured
+number.
+
 ## LCP is per-iteration sampled
 
 A boot LCP is a paint timestamp on the page's own clock, so it sits in the wall tier: it varies
