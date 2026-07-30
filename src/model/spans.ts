@@ -12,10 +12,12 @@ import type {
   Span,
   SpanAddons,
   SpanAggregation,
+  SpanCounts,
   SpanKind,
   TargetLane,
 } from "./recording.js";
 import { recordingRuntime } from "./meta.js";
+import { notMeasuredSpanCounts } from "./span.js";
 import type {
   SpanCountsEntry,
   SpanEntry,
@@ -244,6 +246,11 @@ function entryFromSpan(span: BarSpan, iterations: number, meta?: FloorMeta): Spa
     // deriving here keeps a hand-built bar (no stored aggregation) legible too.
     aggregation: spanAggregation(span.kind, span.samples),
     iterations,
+    // A bar-carrying span still measured its exact rendering counts (chrome --breakdown windows
+    // layout/style/paint; firefox measure spans window what the gecko markers gave): project them onto
+    // the overview verbatim so `null` keeps meaning not-measured, never not-projected. The counts a
+    // consumer would otherwise have to drill each span for.
+    counts: span.counts,
     slices: slicesFromBreakdown(span.breakdown),
     ...(span.frames ? { frames: span.frames } : {}),
     ...(span.breakdown.residualMs != null ? { residualMs: span.breakdown.residualMs } : {}),
@@ -265,6 +272,7 @@ function runEntryFromCpuBreakdown(
   iterations: number,
   meta?: FloorMeta,
   addons?: SpanAddons,
+  counts?: SpanCounts,
 ): SpanEntry {
   const frameFloor = overviewFrameFloor(
     cpu.wallMs,
@@ -278,6 +286,11 @@ function runEntryFromCpuBreakdown(
     wallMs: cpu.wallMs,
     aggregation: spanAggregation("run"),
     iterations,
+    // The stored run span's counts, threaded through the synthesized entry so the overview reports
+    // what the recording measured (firefox layout/style marker counts) rather than dropping them with
+    // the run row. Default-chrome and node have no trace here, so those stay not-measured (null),
+    // never a fabricated 0.
+    counts: counts ?? notMeasuredSpanCounts(),
     slices: slicesFromCpuBreakdown(cpu),
     ...(cpu.residualMs != null ? { residualMs: cpu.residualMs } : {}),
     ...(frameFloor ? { frameFloor } : {}),
@@ -317,19 +330,21 @@ export function buildSpans(
       // bar-less so the run/steps/measures listing stays complete.
       ...withBarless(barlessSpans.map((span) => spanCountsEntry(span, meta))),
     };
+  // The synthesized run entry carries no stored span of its own, so lift the stored run span's addon
+  // facts (React detection rides the run span) AND its exact counts onto it, so a default/node/firefox
+  // overview still surfaces framework identity and whatever counts the recording measured.
+  const runStored = (spans ?? []).find((span) => span.kind === "run");
   if (cpuBreakdown)
     return {
       target,
       source: "cpu-model",
-      // The synthesized run entry carries no stored span, so pass the stored run span's addon facts
-      // (React detection rides the run span) through so a default/node/firefox overview still surfaces
-      // framework identity.
       spans: [
         runEntryFromCpuBreakdown(
           cpuBreakdown,
           iterations,
           meta,
-          (spans ?? []).find((span) => span.kind === "run")?.addons,
+          runStored?.addons,
+          runStored?.counts,
         ),
       ],
       // The synthesized run bar stands in for the stored `run` span (which has no bar in this

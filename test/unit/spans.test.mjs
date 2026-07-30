@@ -126,6 +126,53 @@ test("buildSpans: chrome breakdowns yield the superset shape, all slices measure
   assert.ok(inp.frames, "the frame side track survives the adapter");
 });
 
+// --- Counts projection: the overview carries the exact counts a recording measured, not just the drill ---
+
+// A chrome --breakdown run span: layout/style/paint counts measured (exact, trace-derived); the forced
+// count + invalidations are not-measured on --breakdown (it drops the .stack + invalidationTracking
+// categories), so those stay null. A measured 0 (longTaskCount) stays 0, distinct from not-measured.
+const measuredBreakdownCounts = {
+  layoutCount: 10,
+  styleCount: 10,
+  paintCount: 2,
+  forcedLayoutCount: null,
+  layoutInvalidations: null,
+  paintInvalidations: null,
+  styleInvalidations: null,
+  longTaskCount: 0,
+};
+
+test("buildSpans: a bar-bearing --breakdown row carries its exact counts onto the overview (null stays not-measured)", () => {
+  const bars = [
+    { label: "run", kind: "run", breakdown: chromeBreakdown(7), counts: measuredBreakdownCounts },
+  ];
+  const run = buildSpans(bars, undefined, "chrome").spans.find((span) => span.kind === "run");
+  assert.deepEqual(
+    run.counts,
+    measuredBreakdownCounts,
+    "the counts the recording measured project onto the overview verbatim (projection gap closed)",
+  );
+  assert.equal(run.counts.paintCount, 2, "a measured count is projected, not dropped");
+  assert.equal(run.counts.longTaskCount, 0, "measured 0 stays 0, distinct from not-measured");
+  assert.equal(
+    run.counts.forcedLayoutCount,
+    null,
+    "a count --breakdown could not observe stays null: not-projected must not read as not-measured",
+  );
+});
+
+test("buildSpans: the CpuModel-synthesized run entry keeps the stored run span's counts (default capture => null, never a fake 0)", () => {
+  const result = buildSpans(defaultDriverSpans, firefoxCpu, "chrome", 1);
+  assert.equal(result.source, "cpu-model");
+  const run = result.spans[0];
+  assert.deepEqual(
+    run.counts,
+    notMeasuredCounts,
+    "the stored run span's not-measured counts thread through the synthesized bar, still null",
+  );
+  assert.equal(run.counts.layoutCount, null, "default-capture run counts stay not-measured, never 0");
+});
+
 // The aggregation contract: a recording mixes span kinds with different iteration semantics, so
 // every entry must self-declare what its numbers represent. run = a total over the loop ("sum");
 // step/measure = one iteration ("first"). iterations is stamped from the recording meta.

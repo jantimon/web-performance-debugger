@@ -662,6 +662,25 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
   assert.deepEqual(anatomy.scope, runSpan.scope, "query span JSON carries the span scope");
   const spanHuman = runCli(["query", "span", out, "run"]);
   assert.match(spanHuman, /layout objects\s+p50/, "the human anatomy prints the scope distribution");
+
+  // The `query spans` OVERVIEW (what an agent reads first) carries the exact counts this recording
+  // measured, identical to the drill -- so `null` reads as not-measured, never as not-projected.
+  const overview = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
+  assert.equal(overview.source, "breakdowns", "a --breakdown recording overviews from its stored bars");
+  const overviewRun = overview.spans.find((span) => span.kind === "run");
+  assert.ok(overviewRun.counts, "the overview run row carries a counts object, not undefined");
+  assert.deepEqual(
+    overviewRun.counts,
+    anatomy.counts,
+    "the overview counts equal the query-span drill's counts (no projection gap)",
+  );
+  assert.ok(overviewRun.counts.layoutCount > 0, "the measured layout count surfaces on the overview");
+  assert.ok(overviewRun.counts.styleCount > 0, "the measured style count surfaces on the overview");
+  assert.equal(
+    overviewRun.counts.forcedLayoutCount,
+    null,
+    "the forced count --breakdown cannot observe stays null on the overview too",
+  );
 });
 
 // The js-slice footer's source is bar-conditioned, the chrome mirror of firefox.e2e.test.mjs's
