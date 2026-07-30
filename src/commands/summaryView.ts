@@ -302,6 +302,12 @@ export function printSummary(rec: Recording): void {
   const steps = stepSpans(rec);
   if (steps.length) {
     const stepIter = (step: Span): number[] => step.perIteration ?? [];
+    // A driver step whose wall the capture mode never priced (default mode: the navigating step resets
+    // the page clock and there is no trace to span it) has no median, no sample, and no wallMs. Resolve
+    // that to NaN so num() prints the not-measured placeholder: a literal 0 in a column of real numbers
+    // reads as "instant", not "unknown", contradicting the driver-step-wall-unmeasured note
+    const stepWall = (step: Span): number =>
+      step.stats?.medianMs ?? stepIter(step)[0] ?? step.wallMs ?? Number.NaN;
     const repeated = steps.some((step) => stepIter(step).length > 1);
     if (repeated) {
       console.log(
@@ -312,9 +318,9 @@ export function printSummary(rec: Recording): void {
           ["step", "median ms", "min", "max", "samples"],
           steps.map((step) => [
             step.label,
-            num(step.stats?.medianMs ?? stepIter(step)[0] ?? step.wallMs ?? 0, 3),
-            num(step.stats?.minMs ?? stepIter(step)[0] ?? step.wallMs ?? 0, 3),
-            num(step.stats?.maxMs ?? stepIter(step)[0] ?? step.wallMs ?? 0, 3),
+            num(stepWall(step), 3),
+            num(step.stats?.minMs ?? stepWall(step), 3),
+            num(step.stats?.maxMs ?? stepWall(step), 3),
             stepIter(step).length,
           ]),
         ),
@@ -326,7 +332,7 @@ export function printSummary(rec: Recording): void {
       console.log(
         table(
           ["step", "wall ms"],
-          steps.map((step) => [step.label, num(stepIter(step)[0] ?? step.wallMs ?? 0, 3)]),
+          steps.map((step) => [step.label, num(stepWall(step), 3)]),
         ),
       );
     }
