@@ -316,7 +316,8 @@ Framework support (React today) is an **optional addon, never core**. All addon 
 (`{ name, pageInit?, enrich? }`), wired in `src/addons/registry.ts` `activeAddons(mode)`. The core
 (`record`/`query`/`driver`) calls addons only through that interface + `addonPageInits`/`runEnrich`; it
 imports no addon internals. `--framework off|auto` (default auto; `RecordOptions.framework`): `off`
-resolves to no addons, so no addon code runs and the recording is byte-identical to a pre-addon one.
+resolves to no addons, so no addon code runs and no addon facts enter the recording (the `Span.addons`
+slot stays absent); `meta.framework` records the resolved mode as core provenance either way.
 An addon READS what the capture recorded and attaches facts to `Span.addons` (`{ react?: ReactFacts;
 "react-dev"?: ReactDevFacts }`, fact types exported BY the addon modules, referenced from core only
 through the slot); it never changes what is captured. `pageInit` installs a browser-lane in-page probe

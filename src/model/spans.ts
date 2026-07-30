@@ -10,12 +10,19 @@ import type {
   CpuBreakdown,
   RecordingMeta,
   Span,
+  SpanAddons,
   SpanAggregation,
   SpanKind,
   TargetLane,
 } from "./recording.js";
 import { recordingRuntime } from "./meta.js";
-import type { SpanCountsEntry, SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
+import type {
+  SpanCountsEntry,
+  SpanEntry,
+  SpanOverviewAddons,
+  SpansResult,
+  UnifiedSlices,
+} from "./query.js";
 import { gateMeasured, type Measured } from "./measured.js";
 import {
   matchedFrameFloor,
@@ -173,6 +180,23 @@ function slicesFromCpuBreakdown(cpu: CpuBreakdown): UnifiedSlices {
 /** A stored span that carries a reconciling bar (its `breakdown` is present). */
 type BarSpan = Span & { breakdown: NonNullable<Span["breakdown"]> };
 
+/**
+ * Lift the compact framework-addon presence (React version + build) off a stored span for a `query
+ * spans` overview row. Only the identity facts a bulk consumer reads without drilling; commitCount and
+ * the server-phase rollup stay in the `query span` drill (SpanAnatomy.addons). `undefined` when the
+ * span carried no react facts or neither identity field resolved, so a non-React overview row stays
+ * addon-free.
+ */
+function overviewAddons(addons: SpanAddons | undefined): SpanOverviewAddons | undefined {
+  const react = addons?.react;
+  if (!react) return undefined;
+  const compact: NonNullable<SpanOverviewAddons["react"]> = {};
+  if (react.version != null) compact.version = react.version;
+  if (react.build != null) compact.build = react.build;
+  if (compact.version == null && compact.build == null) return undefined;
+  return { react: compact };
+}
+
 /** Project a stored span onto the bar-less counts row (`query spans` overview when no bar covers it):
  * wall/aggregation/index + Measured counts + INP, no slices. Shared by `buildSpanCounts` (the
  * all-bar-less overview) and `buildSpans` (the bar-less step/measure rows alongside a run bar). */
@@ -180,6 +204,7 @@ function spanCountsEntry(span: Span, meta?: FloorMeta): SpanCountsEntry {
   // A bar-less row has no idle split, so pass a null wait share: only a sub-frame (single-frame) wall
   // is tagged, never a multi-frame one (which needs the wait signal only a bar would carry).
   const frameFloor = overviewFrameFloor(span.wallMs, null, meta);
+  const addons = overviewAddons(span.addons);
   return {
     label: span.label,
     kind: span.kind,
@@ -192,6 +217,7 @@ function spanCountsEntry(span: Span, meta?: FloorMeta): SpanCountsEntry {
     ...(span.beforeUrl != null ? { beforeUrl: span.beforeUrl } : {}),
     ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
     ...(frameFloor ? { frameFloor } : {}),
+    ...(addons ? { addons } : {}),
   };
 }
 
@@ -208,6 +234,7 @@ function entryFromSpan(span: BarSpan, iterations: number, meta?: FloorMeta): Spa
   // Judge the floor off the bar: a step by its work signal (its wall carries input dispatch), a
   // run/measure by its wall value against the bar's idle share (matching the `query span` detail).
   const frameFloor = barFrameFloor(span.kind, wallMs, span.breakdown, meta);
+  const addons = overviewAddons(span.addons);
   return {
     label: span.label,
     kind: span.kind,
@@ -229,6 +256,7 @@ function entryFromSpan(span: BarSpan, iterations: number, meta?: FloorMeta): Spa
     ...(span.afterUrl != null ? { afterUrl: span.afterUrl } : {}),
     ...(span.scope ? { scope: span.scope } : {}),
     ...(frameFloor ? { frameFloor } : {}),
+    ...(addons ? { addons } : {}),
   };
 }
 
@@ -236,12 +264,14 @@ function runEntryFromCpuBreakdown(
   cpu: CpuBreakdown,
   iterations: number,
   meta?: FloorMeta,
+  addons?: SpanAddons,
 ): SpanEntry {
   const frameFloor = overviewFrameFloor(
     cpu.wallMs,
     barIdleShare(cpu.wallMs, cpu.slices.idle),
     meta,
   );
+  const overview = overviewAddons(addons);
   return {
     label: "run",
     kind: "run",
@@ -251,6 +281,7 @@ function runEntryFromCpuBreakdown(
     slices: slicesFromCpuBreakdown(cpu),
     ...(cpu.residualMs != null ? { residualMs: cpu.residualMs } : {}),
     ...(frameFloor ? { frameFloor } : {}),
+    ...(overview ? { addons: overview } : {}),
   };
 }
 
@@ -290,7 +321,17 @@ export function buildSpans(
     return {
       target,
       source: "cpu-model",
-      spans: [runEntryFromCpuBreakdown(cpuBreakdown, iterations, meta)],
+      // The synthesized run entry carries no stored span, so pass the stored run span's addon facts
+      // (React detection rides the run span) through so a default/node/firefox overview still surfaces
+      // framework identity.
+      spans: [
+        runEntryFromCpuBreakdown(
+          cpuBreakdown,
+          iterations,
+          meta,
+          (spans ?? []).find((span) => span.kind === "run")?.addons,
+        ),
+      ],
       // The synthesized run bar stands in for the stored `run` span (which has no bar in this
       // capture), so drop the run row here; the driver steps have no bar at all and must still show.
       ...withBarless(

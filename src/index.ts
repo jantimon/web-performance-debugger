@@ -92,6 +92,7 @@ export type {
   UnifiedSlices,
   SpanEntry,
   SpanCountsEntry,
+  SpanOverviewAddons,
   SpansResult,
   SpanForced,
   SpanHotFunctions,

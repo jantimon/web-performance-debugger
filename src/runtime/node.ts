@@ -188,6 +188,9 @@ export async function recordNode(opts: RecordOptions): Promise<{
     userDataDir: null,
     lifecycle,
     capture: "node-cpu",
+    // The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
+    // nothing. Core provenance; always stamped.
+    framework: opts.framework ?? "auto",
     // The node lane runs in-process, so its "engine build" is this node runtime.
     browserVersion: engineVersion(process.version),
     notes: [nodeRuntime()],

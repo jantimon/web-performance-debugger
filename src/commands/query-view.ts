@@ -17,6 +17,7 @@ import type {
   GroupSpanStitch,
   SpanAnatomy,
   SpanCountsEntry,
+  SpanOverviewAddons,
   UnifiedSlices,
 } from "../model/query.js";
 import type { SpanCountsOverview } from "../model/spans.js";
@@ -266,8 +267,11 @@ export function printSpanAnatomy(
 ): void {
   const count = (value: Measured<number>): string =>
     formatMeasured(value, (measured) => String(measured));
+  // Name the framework mode only when it was turned OFF: that is why no React block appears below, even
+  // on a React app. `auto` is the default and the addon block speaks for itself, so it stays unnamed.
+  const frameworkTag = meta.framework === "off" ? " · framework off" : "";
   console.log(
-    `\nspan ${bold(middleEllipsis(anatomy.label, LABEL_COL_MAX))} ${dim(`(${anatomy.kind} · ${anatomy.target} · ${anatomy.aggregation} of ${anatomy.iterations} iteration(s))`)}`,
+    `\nspan ${bold(middleEllipsis(anatomy.label, LABEL_COL_MAX))} ${dim(`(${anatomy.kind} · ${anatomy.target} · ${anatomy.aggregation} of ${anatomy.iterations} iteration(s)${frameworkTag})`)}`,
   );
   const wall = anatomy.wallMs == null ? "—" : `${num(anatomy.wallMs)} ms`;
   const spread =
@@ -756,6 +760,20 @@ export function printSpanFilterNote(hidden: number): void {
 }
 
 /**
+ * One subtle line naming the framework identity the overview detected (React version + build), so a
+ * bulk `query spans` reader sees it without drilling. Silent when no row carries addon facts. The full
+ * per-span facts (commit counts, server phases) live in `query span`.
+ */
+export function printSpansReactMarker(entries: { addons?: SpanOverviewAddons }[]): void {
+  const react = entries.map((entry) => entry.addons?.react).find((fact) => fact != null);
+  if (!react) return;
+  const parts = [react.version ? `v${react.version}` : null, react.build].filter(Boolean);
+  console.log(
+    `\n${bold("React")} ${dim(`(addon): ${parts.join(" · ")} · drill with query span <label>`)}`,
+  );
+}
+
+/**
  * The bar-less span rows that sit BELOW a bar in a mixed overview: driver steps a sampler-only capture
  * (default) built no per-span bar for, or a step that navigated cross-document in a
  * --breakdown recording. Listed by wall + INP rather than dropped from the overview; slices/counts are
@@ -843,6 +861,7 @@ export async function printBarlessSpans(
     ),
   );
   printSpanFilterNote(hidden);
+  printSpansReactMarker(spans);
   console.log(
     dim(
       isDeep

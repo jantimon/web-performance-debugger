@@ -197,6 +197,23 @@ export interface UnifiedSlices {
 }
 
 /**
+ * Compact framework-addon presence for a `query spans` overview row: the identity facts a bulk
+ * consumer needs WITHOUT drilling each span (React version + build), never the whole per-span fact
+ * object. The full facts -- commitCount, the node-lane server-phase rollup -- stay on the `query span`
+ * drill (SpanAnatomy.addons). Present only where the stored span carried the addon's facts (detection
+ * rides the run span); a version/build the lane did not observe is absent, never a fabricated value.
+ * See docs/dev/react-attribution.md.
+ */
+export interface SpanOverviewAddons {
+  react?: {
+    /** the reconciler's React version (e.g. "19.2.0"); absent when detection saw none */
+    version?: string;
+    /** dev vs prod build from the reconciler's bundleType; absent when detection saw none */
+    build?: "development" | "production";
+  };
+}
+
+/**
  * One span in `query spans` output: the run window, a driver step, or a user `performance.measure`.
  * `Σ measured slices + idle` reconciles to the tiled window (up to on-disk rounding dust or a
  * `residualMs`), the same closure the stored breakdowns promise: on a run/measure span that window IS
@@ -277,6 +294,13 @@ export interface SpanEntry {
    * surfaced on the overview so a consumer reads flooring off the row instead of recomputing it.
    */
   frameFloor?: FrameFloor;
+  /**
+   * Compact framework-addon presence (React version + build) lifted onto the overview row, so a bulk
+   * `query spans` consumer reads framework identity without drilling each span. Present only where the
+   * stored span carried addon facts (detection rides the run span); absent otherwise. The full
+   * per-span facts (commitCount, server phases) stay on SpanAnatomy.addons. See SpanOverviewAddons.
+   */
+  addons?: SpanOverviewAddons;
 }
 
 /**
@@ -310,6 +334,9 @@ export interface SpanCountsEntry {
    * needs the wait signal a bar would carry.
    */
   frameFloor?: WallMultipleFloor;
+  /** Compact framework-addon presence (React version + build); see SpanEntry.addons. Present only
+   * where the stored span carried addon facts (detection rides the run span), absent otherwise. */
+  addons?: SpanOverviewAddons;
 }
 
 /**
