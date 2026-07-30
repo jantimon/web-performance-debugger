@@ -91,10 +91,9 @@ server.listen(0, "127.0.0.1", () => writeFileSync(${JSON.stringify(portFile)}, S
   return { url: `http://127.0.0.1:${port}/`, close: () => child.kill() };
 }
 
-// Regression: a plain `--target firefox` run used to need --cpu-profile to measure anything, and
-// silently reported every rendering count as 0 without it. The gecko pass is no longer opt-in, so
-// the bare invocation must now carry real detail. This test exists to keep that footgun from
-// returning: assert on the counts, not just on the pass list.
+// A bare `--target firefox` run must carry real rendering detail: the gecko pass is not opt-in, so it
+// is the lane's only source of counts, and without it every rendering count would read a fake 0.
+// Assert on the counts, not just the pass list, so a regression to an opt-in profiler can't slip through.
 e2e(
   "record --target firefox yields rendering detail with no extra flag",
   { timeout: TIMEOUT_MS },
