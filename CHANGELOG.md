@@ -1,5 +1,14 @@
 # @jantimon/web-performance-debugger
 
+## 1.3.2
+
+### Patch Changes
+
+- [#195](https://github.com/jantimon/web-performance-debugger/pull/195) [`62a4bac`](https://github.com/jantimon/web-performance-debugger/commit/62a4bac9d2a0d21c5e8df0c687984d0e2130bd4e) - `query spans` overview now carries the exact rendering counts a recording measured, on every row
+  including the bar-bearing ones (chrome `--breakdown`, firefox measure). `null` keeps meaning
+  not-measured, never not-projected, so the overview no longer reads as "not-measured" for a count the
+  drill (`query span`) shows measured.
+
 ## 1.3.1
 
 ### Patch Changes
