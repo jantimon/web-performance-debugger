@@ -5,9 +5,11 @@ import type { RecordingMeta } from "./meta.js";
 import type { FrameSideTrack } from "./frames.js";
 import type { SpanAddons } from "./addon.js";
 
-// The model is split across focused domain files by domain; this module keeps the Recording/Span core
-// and RE-EXPORTS the moved types every reader consumes through it, so `../model/recording.js` stays the
-// one import path.
+/**
+ * The model is split across focused domain files by domain; this module keeps the Recording/Span core
+ * and RE-EXPORTS the moved types every reader consumes through it, so `../model/recording.js` stays the
+ * one import path
+ */
 export type { Measured } from "./measured.js";
 export type { EventKind, StackFrame, NormalizedEvent, InvalidationRecord } from "./events.js";
 export type {
@@ -42,7 +44,7 @@ export interface TimingEntry {
   duration?: number;
 }
 
-/** Timing is coarse (Chrome clamps performance.now); these are directional, not precise. */
+/** Timing is coarse (Chrome clamps performance.now); these are directional, not precise */
 export interface BenchStats {
   samples: number;
   minMs: number;
@@ -79,7 +81,7 @@ export interface RecordingWindow {
  * Grouped by `interactionId` per the web-vitals algorithm. Chrome emits the whole pointer sequence
  * (pointerover, mouseover, ...) sharing one duration, but only the interaction's own events carry a
  * non-zero interactionId; picking by duration alone would tie and could read `processing` off
- * `pointerover`, which does nothing (measured: 0.10 vs the click's 45.20).
+ * `pointerover`, which does nothing (measured: 0.10 vs the click's 45.20)
  */
 export interface InteractionTiming {
   /** input arrival -> handler start: the main thread was busy with something else */
@@ -98,7 +100,7 @@ export interface InteractionTiming {
  * `sourceURL` is the SERVED script url, not rewritten to a local source path: LoAF gives a
  * character offset (`sourceCharPosition`, not stored) rather than a line, so a line-level rewrite
  * would be a guess. Read it as "this script", cross-referenced with the hot-function list for the
- * source line. Chrome-only: no Firefox equivalent ships today, so a firefox recording carries none.
+ * source line. Chrome-only: no Firefox equivalent ships today, so a firefox recording carries none
  */
 export interface LoafScript {
   /** what invoked the script, e.g. "BUTTON#btn.onclick" or a classic script url */
@@ -117,7 +119,7 @@ export interface LoafScript {
 
 /**
  * One long animation frame (a `long-animation-frame` entry): a frame that ran over the 50ms budget,
- * with the scripts the browser blamed for it.
+ * with the scripts the browser blamed for it
  */
 export interface LoafFrame {
   /** the frame's total duration, ms */
@@ -133,7 +135,7 @@ export interface LoafFrame {
  * that made a frame slow, so it attributes a step's cost to source EVEN in capture modes with no CPU
  * sampler and no trace: the in-page `long-animation-frame` observer is ungated by any capture cap. Chrome
  * ships the API today and Firefox does not, so a firefox/node step carries none (absent, never a
- * fabricated zero). See browser/driver.ts.
+ * fabricated zero). See browser/driver.ts
  */
 export interface StepLoaf {
   /** the observed long animation frames, worst-first, capped */
@@ -163,7 +165,7 @@ export interface StepLoaf {
  *
  * A query-only change (`?q=`) stays plain "soft": a URL diff cannot know an in-page filter from a
  * route, and the URLs are stored for the reader to judge. A change-then-revert within one step reads
- * as "none" (a before/after diff cannot see the excursion); a documented blind spot.
+ * as "none" (a before/after diff cannot see the excursion); a documented blind spot
  */
 export type NavigationKind = "none" | "hard" | "soft" | "soft-hash";
 
@@ -181,13 +183,13 @@ export type NavigationKind = "none" | "hard" | "soft" | "soft-hash";
  * time; the spec gates it behind `Timing-Allow-Origin` for a cross-origin resource, but current Chrome
  * populates it for cross-origin images more often than that rule implies. When it is absent (a
  * genuinely TAO-gated resource) the entry reads 0 by spec and `loadTimeMs` is the timing left, so both
- * are surfaced.
+ * are surfaced
  */
 export interface StepLcp {
   /**
    * The entry was dropped as an implausible outlier and carries no timing: Chrome's built-in headless
    * intermittently reports a grossly inflated `startTime` (~60s on a page that finished in ~40ms). When
-   * set, no other field is present -- a suppressed marker, never a fabricated 60s LCP printed as fact.
+   * set, no other field is present -- a suppressed marker, never a fabricated 60s LCP printed as fact
    */
   suppressed?: boolean;
   /** the LCP resource url (an image); absent for a text LCP, which has none */
@@ -212,17 +214,17 @@ export interface StepLcp {
    * spread rather than one number that could be either extreme. null where an iteration observed no
    * usable render time (the headless entry race lost it, no contentful paint, a suppressed anomaly, or
    * a TAO-gated resource whose renderTime reads 0), never 0. Length 1 on a single-iteration run. The
-   * identity/timing fields above are the lower-median-by-render-time occurrence; `stats` summarises this.
+   * identity/timing fields above are the lower-median-by-render-time occurrence; `stats` summarises this
    */
   perIteration?: (number | null)[];
   /**
    * min/median/mean/max over the non-null `perIteration` render times; null below 2 samples. Same
-   * shape and contract as a step's wall `stats`, so an LCP block reads like the wall block.
+   * shape and contract as a step's wall `stats`, so an LCP block reads like the wall block
    */
   stats?: BenchStats | null;
 }
 
-/** A layout-shift source rect: where an element sat before/after it moved (CSS px, page coordinates). */
+/** A layout-shift source rect: where an element sat before/after it moved (CSS px, page coordinates) */
 export interface LayoutShiftRect {
   x: number;
   y: number;
@@ -230,14 +232,14 @@ export interface LayoutShiftRect {
   height: number;
 }
 
-/** One element the browser blamed for a layout shift, with the rects it moved between. */
+/** One element the browser blamed for a layout shift, with the rects it moved between */
 export interface LayoutShiftSource {
   /** the shifted element as `tag#id.class` (truncated); "(anonymous)" when the node carried no identity */
   node: string;
   /**
    * this element's attributed share of the winning window's score. The layout-shift API scores an
    * ENTRY, not a source, so an entry's score is split across its sources in proportion to their moved
-   * area: a ranking proxy for "which element shifted most", not a spec quantity.
+   * area: a ranking proxy for "which element shifted most", not a spec quantity
    */
   score: number;
   /** the element's rect before the shift (from its largest occurrence in the window); absent when the API gave none */
@@ -258,7 +260,7 @@ export interface LayoutShiftSource {
  * ships the `layout-shift` entry type and Firefox does not (measured: absent from
  * `supportedEntryTypes`), so a firefox/node step carries none -- absent, never a fabricated 0. From
  * the FIRST timed iteration, matching the LoAF/counts windowing: the shifting-element attribution is a
- * distribution of descriptors that cannot be medianed like a scalar.
+ * distribution of descriptors that cannot be medianed like a scalar
  */
 export interface LayoutShift {
   /** the session-window maximum score (the winning window's summed value) */
@@ -281,7 +283,7 @@ export interface LayoutShift {
  * never forces `--enable-features` to obtain it. The engine detects a soft navigation only from a
  * trusted interaction + a same-document history change + a contentful paint, so a programmatic history
  * change or an untrusted synthetic click fires none even when the URL moved. See
- * docs/dev/navigation-and-lcp.md and model/soft-nav.ts (the classifier-vs-engine agreement).
+ * docs/dev/navigation-and-lcp.md and model/soft-nav.ts (the classifier-vs-engine agreement)
  */
 export interface EngineSoftNav {
   /** soft-navigation entries the engine fired in the step window (>= 1 when present) */
@@ -289,10 +291,10 @@ export interface EngineSoftNav {
   /** each entry's `navigationType` ("push"/"replace"): the history op the engine attributed */
   navigationTypes: string[];
   /** each entry's numeric `navigationId` (Chrome 151); the id per-soft-step metrics slice by. Absent
-   * on a build that did not populate it. */
+   * on a build that did not populate it */
   navigationIds?: number[];
   /** each entry's `interactionId`: the trusted interaction the engine tied the route to. Absent on a
-   * build that did not populate it. */
+   * build that did not populate it */
   interactionIds?: number[];
 }
 
@@ -301,13 +303,13 @@ export interface EngineSoftNav {
  * off the soft-nav entry's `getLargestInteractionContentfulPaint().largestContentfulPaint` (the engine's
  * own largest selection for the route, so no manual max over ICP entries). Wall-tier directional, same
  * trust tier as boot LCP. The identifiers to trust across a production build are `url` + `size` + `tag`
- * (an SVG-image hero and a text paint have no `url`). See SoftNavRoute and docs/dev/navigation-and-lcp.md.
+ * (an SVG-image hero and a text paint have no `url`). See SoftNavRoute and docs/dev/navigation-and-lcp.md
  */
 export interface SoftNavRouteLcp {
   /**
    * The route's largest contentful paint time, ms measured FROM the soft nav's `startTime` (the ROUTE
    * clock, not the document time origin), so it reads as "this far into the route". Absent when the
-   * paint carried no usable render time (a genuinely TAO-gated resource reads 0 by spec, or no paint).
+   * paint carried no usable render time (a genuinely TAO-gated resource reads 0 by spec, or no paint)
    */
   routeMs?: number;
   /** the paint element's tag (e.g. "IMG", "P"); the identifier that survives a production build */
@@ -327,7 +329,7 @@ export interface SoftNavRouteLcp {
  * is a THIRD fact beside `navigation` (the classifier) and `engineSoftNav` (the raw verdict), never in
  * place of either. Every metric here is on the ROUTE clock (anchored to the soft nav's `startTime`),
  * NOT the boot clock. When more than one soft nav fired in the step, the FIRST is reported and the rest
- * counted in `additionalSoftNavs` rather than aggregated. See docs/dev/navigation-and-lcp.md.
+ * counted in `additionalSoftNavs` rather than aggregated. See docs/dev/navigation-and-lcp.md
  */
 export interface SoftNavRoute {
   /** the soft nav's numeric `navigationId`, the key every route metric below is sliced by */
@@ -342,19 +344,19 @@ export interface SoftNavRoute {
   /**
    * The route's CLS: the `layout-shift` entries carrying this `navigationId` (the shifts AFTER the route
    * change), scored by the same spec session-window maximum as boot CLS (`computeLayoutShift`). Absent
-   * when no qualifying post-route shift was observed. See LayoutShift.
+   * when no qualifying post-route shift was observed. See LayoutShift
    */
   routeCls?: LayoutShift;
   /**
    * The worst interaction AFTER the route change: the `event`-timing entries carrying this `navigationId`
    * only. The interaction that TRIGGERED the soft nav carries the PRE-nav id, so it stays in the step's
-   * main `inpMs` and is excluded here. Absent when no post-route interaction crossed the 16ms floor.
+   * main `inpMs` and is excluded here. Absent when no post-route interaction crossed the 16ms floor
    */
   routeInpMs?: number;
   /** in-page CWV split of `routeInpMs`; absent when no post-route interaction was observed */
   routeInteraction?: InteractionTiming;
   /** further soft navs the engine fired in the same step, counted not aggregated (the FIRST is reported
-   * above). Absent when the step had exactly one. */
+   * above). Absent when the step had exactly one */
   additionalSoftNavs?: number;
 }
 
@@ -362,7 +364,7 @@ export interface SoftNavRoute {
  * The seven work slices of a span, plus idle. Every slice is main-thread self-time from the TRACE
  * (children subtracted from parents), so they never overlap; `idle` is the window remainder. The
  * `js` slice alone is subdivided by package, from the CPU samples that landed inside its self-time
- * regions (proportions only -- sampled ms are never added to trace ms). See trace/breakdown.ts.
+ * regions (proportions only -- sampled ms are never added to trace ms). See trace/breakdown.ts
  */
 export interface BreakdownSlices {
   /** scripting self-time, split by owning package (same buckets as packageRollup) */
@@ -374,7 +376,7 @@ export interface BreakdownSlices {
   /**
    * Main-thread paint record. `Measured` (model/measured.ts): a chrome seven-slice bar always
    * measures it; null on firefox, where paint is off-main-thread (a compositor side track, never
-   * summed into the wall), so the bar says not-measured rather than a fake 0.
+   * summed into the wall), so the bar says not-measured rather than a fake 0
    */
   paint: Measured<CpuSlice>;
   /** garbage collection (MinorGC/MajorGC) */
@@ -393,7 +395,7 @@ export interface BreakdownSlices {
  * Durations come from the trace (disjoint main-thread self-time), so the sum is exact by
  * construction, not a proportional allocation against an external wall. The one honesty valve is
  * `residualMs`: if the tiling ever fails to close (lost events, clock skew), the gap is carried
- * here rather than rescaling a slice to force the sum. It is absent/0 in the normal case.
+ * here rather than rescaling a slice to force the sum. It is absent/0 in the normal case
  */
 export interface Breakdown {
   /** the span's trace window span, ms (endTs - startTs) */
@@ -405,13 +407,13 @@ export interface Breakdown {
 
 /** A per-span hot-function reference: joins to the sibling `CpuModel.functions[]` by `id` (the run's
  * frame rank by self time), so a reader resolves the name/source/package from the model rather than
- * duplicating them per span (~35B/entry keeps the artifact digest-sized). */
+ * duplicating them per span (~35B/entry keeps the artifact digest-sized) */
 export interface SpanHotRef {
   /** index into the sibling CpuModel.functions[] */
   id: number;
   /** pooled ranked-JS samples attributed to this function in the span's window(s) */
   samples: number;
-  /** samples * sampler interval, ms. Informational: the SHARE of `pooledSamples` is the primary unit. */
+  /** samples * sampler interval, ms. Informational: the SHARE of `pooledSamples` is the primary unit */
   selfMs: number;
 }
 
@@ -427,7 +429,7 @@ export interface SpanHotRef {
  * so the model IS the run window). Pooling is MEASURE-only: a `measure` label pools samples across
  * all its occurrences (`occurrences` > 1), a step tallies its single iteration-0 window. Below
  * ~10 pooled samples the ranking is suppressed (`suppressed: true`, no `functions`) rather than
- * fabricating a top-N from noise; the reader raises --iterations. Per-function >= 3-sample floor.
+ * fabricating a top-N from noise; the reader raises --iterations. Per-function >= 3-sample floor
  */
 export interface SpanHot {
   scope: "step-window" | "measure-pooled";
@@ -441,7 +443,7 @@ export interface SpanHot {
   functions?: SpanHotRef[];
 }
 
-/** Which kind of span a breakdown describes. */
+/** Which kind of span a breakdown describes */
 export type SpanKind = "run" | "step" | "measure";
 
 /**
@@ -451,7 +453,7 @@ export type SpanKind = "run" | "step" | "measure";
  * `--iterations`), or a `performance.measure` seen once. `"median"`: a `performance.measure` that
  * recurred, reported as the lower-median-by-wall occurrence (a real reconciling sample, not per-slice
  * averages). The one value both the stored bars (`model/spans.ts` `spanAggregation`) and the span
- * model speak in.
+ * model speak in
  */
 export type SpanAggregation = "first" | "sum" | "median";
 
@@ -461,7 +463,7 @@ export type SpanAggregation = "first" | "sum" | "median";
  * count reports null, never a fake 0 (the default mode has no trace; --breakdown drops the `.stack`
  * category forced detection needs). A forced flush is already inside `layoutCount`/`styleCount`
  * (`forcedLayoutCount` re-reports the JS-triggered SUBSET), so a reader must never sum forced onto
- * layout + style.
+ * layout + style
  */
 export interface SpanCounts {
   layoutCount: Measured<number>;
@@ -481,7 +483,7 @@ export interface SpanCounts {
  * line relaid out or recalculated. A COUNT-tier fact, read from the flush event's trace `args` at read
  * time; shown BESIDE the ms, never as a proxy for it (per-object cost ranges ~30x, so the object count
  * does not rank flushes by time). A row that mixes a layout and a style flush at one line carries both
- * fields; layout and style have DIFFERENT denominators and are never merged into one figure.
+ * fields; layout and style have DIFFERENT denominators and are never merged into one figure
  */
 export interface FlushScope {
   /**
@@ -489,26 +491,26 @@ export interface FlushScope {
    * `totalObjects` denominator (e.g. `801/2006`). NOT DOM nodes: anonymous boxes split one element
    * into several ([measured] `dirtyObjects` = N+1 LayoutObjects for N dirtied boxes). Absent on a
    * style-only line and on traces predating the scope fields. Chrome only (Gecko Reflow markers carry
-   * no scope).
+   * no scope)
    */
   layoutObjects?: { dirty: number; total: number };
   /**
    * elements recalculated by the widest UpdateLayoutTree flush at this line (`elementCount`, [measured]
    * exact). A different denominator from `layoutObjects`, never merged. Absent on a layout-only line.
-   * Chrome; the Gecko analog is `elementsStyled` (compares within an engine only).
+   * Chrome; the Gecko analog is `elementsStyled` (compares within an engine only)
    */
   elementsStyled?: number;
   /**
    * a subtree-contained flush at this line (`partialLayout` true): the container root `nodeName` (e.g.
    * "DIALOG"). Absent when every flush was whole-document (the near-constant case on a framework app).
-   * Chrome only.
+   * Chrome only
    */
   containedRoot?: string;
 }
 
 /** A p50/max distribution over a set of flushes. A DISTRIBUTION, never a sum: a thrash loop re-dirties
  * the same nodes every flush, so summing double-counts them. `flushes` is how many the distribution
- * covers. */
+ * covers */
 export interface ScopeStats {
   /** median flush size across the window */
   p50: number;
@@ -522,27 +524,27 @@ export interface ScopeStats {
  * Per-span layout/style SCOPE distribution across a span window's main-thread flushes (chrome
  * --breakdown; firefox style only). A COUNT-tier fact, computed at record time like the counts and
  * shown BESIDE the reconciling bar's ms, never as a proxy for it. Aggregated as a DISTRIBUTION
- * (p50/max), NEVER a sum. Layout scope and style scope have different denominators and stay separate.
+ * (p50/max), NEVER a sum. Layout scope and style scope have different denominators and stay separate
  */
 export interface SpanScope {
   /**
    * `dirtyObjects` (render-tree LayoutObjects, not DOM nodes) across the window's Layout flushes.
    * Chrome only -- Gecko Reflow markers carry no scope, so the field stays absent on firefox rather
-   * than a fake zero. Absent when the window laid out nothing.
+   * than a fake zero. Absent when the window laid out nothing
    */
   layoutObjects?: ScopeStats;
   /**
    * `elementCount` (elements recalculated) across the window's UpdateLayoutTree flushes. Chrome, and
    * firefox from the `Styles` markers' `elementsStyled`. Same DEFINITION across engines but a ~2x
    * cross-engine batching gap, so it ranks flushes WITHIN one engine only. Absent when the window
-   * recalculated no style.
+   * recalculated no style
    */
   elementsStyled?: ScopeStats;
   /**
    * subtree-contained flushes (`partialLayout` true) in the window: how many, and one container root
    * `nodeName` as a sample. `partialLayout` is near-constant whole-document on a framework app, so this
    * is a per-window fact ("this flush was contained"), not a per-span metric. Absent when every flush
-   * was whole-document. Chrome only.
+   * was whole-document. Chrome only
    */
   contained?: { flushes: number; sampleRoot?: string };
 }
@@ -556,7 +558,7 @@ export interface SpanScope {
  * populated by what the capture mode measured: `breakdown` (the reconciling seven-slice bar) only under
  * --breakdown / firefox / node; `counts` exactly under --breakdown/--deep/firefox and not-measured in
  * the default mode; INP/interaction only on a driver step that observed one. Not-measured is an
- * explicit null, never a fabricated 0.
+ * explicit null, never a fabricated 0
  */
 export interface Span {
   label: string;
@@ -566,7 +568,7 @@ export interface Span {
    * is aggregated PER FIELD, not uniformly: `wallMs` and `inpMs`/`interaction` are the MEDIAN of the
    * step's `--iterations` samples (with `perIteration`/`stats` the raw spread), while `counts` and
    * `breakdown` come from the FIRST timed iteration (counts never scale with --iterations). So a step
-   * reports a median latency over iteration-0 counts, disclosed here rather than implied.
+   * reports a median latency over iteration-0 counts, disclosed here rather than implied
    */
   aggregation: SpanAggregation;
   /** a step's position within its iteration; absent on run/measure spans */
@@ -580,30 +582,31 @@ export interface Span {
    *     priced on the clock `wallClock` names (the trace window between its marks, else the page's
    *     performance.now delta).
    *   - measure: the merged occurrence's own window (a `performance.measure`, page clock).
+   *
    * Null only when there is genuinely no such wall (a driver run, or a step that navigated in a
    * no-trace capture). The trace-clock window a reconciling bar TILES is `breakdown.wallMs`, a distinct
    * quantity that can diverge from this headline (a step's median vs its iteration-0 window, or a bench
-   * run's summed samples vs the profiler's whole-loop window). See docs/dev/driver-timing.md.
+   * run's summed samples vs the profiler's whole-loop window). See docs/dev/driver-timing.md
    */
   wallMs: number | null;
   /**
    * The clock `wallMs` is priced on: "trace" (a trace-clock window; on a step it reconciles with the
    * bar's `breakdown.wallMs` when they cover the same iteration) or "page" (a performance.now delta or
    * the summed timed samples). Present on every span whose `wallMs` is non-null, so the headline never
-   * leaves its clock ambiguous; absent when `wallMs` is null.
+   * leaves its clock ambiguous; absent when `wallMs` is null
    */
   wallClock?: "trace" | "page";
   /**
    * The reconciling seven-slice bar (`Σ slices + idle = wallMs`), when the capture mode built one
    * (--breakdown / firefox / node). Absent in the default and --deep capture modes, which report identities
    * and counts but no bar. When `aggregation` is `"median"` this is the lower-median-by-wall
-   * occurrence VERBATIM (a real reconciling sample, not per-slice averages).
+   * occurrence VERBATIM (a real reconciling sample, not per-slice averages)
    */
   breakdown?: Breakdown;
   /** exact rendering counts windowed to this span's representative occurrence; Measured throughout */
   counts: SpanCounts;
   /** the longest task (>=50ms) in this span's window, ms; `Measured` (wall-tier, light trace only,
-   * null where the capture measured no task duration). Present on the run span; absent elsewhere. */
+   * null where the capture measured no task duration). Present on the run span; absent elsewhere */
   longestTaskMs?: Measured<number>;
   /** worst-interaction INP (ms) for a driver step; null when no interaction crossed the 16ms floor */
   inpMs?: number | null;
@@ -613,7 +616,7 @@ export interface Span {
    * Long Animation Frames observed in a driver step's window, with the scripts the browser blamed
    * (Chrome only; absent on firefox/node steps, run/measure spans, and older recordings). This
    * attributes a step's cost to source even in capture modes the CPU sampler cannot reach (the in-page
-   * observer is ungated by any capture cap). See StepLoaf.
+   * observer is ungated by any capture cap). See StepLoaf
    */
   loaf?: StepLoaf;
   /**
@@ -621,32 +624,32 @@ export interface Span {
    * step's own before/after `page.url()` + `timeOrigin` reads (see NavigationKind). Present on a driver
    * step span; absent on run/measure spans and older recordings. A merged step reports iteration 0's
    * classification (iterations replay the same flow). Chrome and Firefox alike (both reads are
-   * lane-independent).
+   * lane-independent)
    */
   navigation?: NavigationKind;
   /** the URL the step started on (`page.url()` at the start mark); present on a driver step span */
   beforeUrl?: string;
   /** the URL the step ended on (`page.url()` at the end mark). Never assume it is the next step's
-   * beforeUrl: a replaceState can fire between steps, so each step's pair is self-contained. */
+   * beforeUrl: a replaceState can fire between steps, so each step's pair is self-contained */
   afterUrl?: string;
   /**
    * Chrome's own soft-navigation verdict for this step (default-on Chrome 151), read opportunistically
    * beside `navigation`. Absent on a browser without the entry type (older Chrome, Firefox/node steps),
    * on a step the engine fired no entry for, on run/measure spans, and on older recordings. Never a
-   * fake 0. See EngineSoftNav and model/soft-nav.ts.
+   * fake 0. See EngineSoftNav and model/soft-nav.ts
    */
   engineSoftNav?: EngineSoftNav;
   /**
    * Boot LCP for a step that started a fresh document (the built-in load step, or a HARD-navigation
    * step); absent on soft/none steps, where LCP is structurally frozen (never a fake 0). Wall-tier
-   * directional. See StepLcp.
+   * directional. See StepLcp
    */
   lcp?: StepLcp;
   /**
    * Cumulative Layout Shift for a driver step (Chrome only), the spec session-window maximum with the
    * shifting elements attributed. Absent on firefox/node steps (no layout-shift entry type), on a step
    * that observed no qualifying shift, on run/measure spans, and on older recordings. Never a fake 0.
-   * See LayoutShift.
+   * See LayoutShift
    */
   layoutShift?: LayoutShift;
   /**
@@ -654,13 +657,13 @@ export interface Span {
    * on Chrome 151+, keyed by the engine soft nav's `navigationId`. Present only where Chrome's own
    * heuristic fired an entry (a trusted-interaction route); absent on a step with no engine soft-nav
    * (a programmatic or untrusted navigation, older Chrome, Firefox/node), run/measure spans, and older
-   * recordings. Never a fake 0. Distinct from `engineSoftNav` (the raw verdict). See SoftNavRoute.
+   * recordings. Never a fake 0. Distinct from `engineSoftNav` (the raw verdict). See SoftNavRoute
    */
   softNav?: SoftNavRoute;
   /**
    * Per-iteration wall samples in run order (a driver step under --iterations, or a bench run). Raw,
    * not just the aggregate: a median hides the bimodality that says "the first iteration was cold".
-   * Absent for a single-sample span.
+   * Absent for a single-sample span
    */
   perIteration?: number[];
   /** min/median/mean/max over `perIteration`; null below 2 samples */
@@ -668,7 +671,7 @@ export interface Span {
   /**
    * How many real occurrences were merged into `breakdown` (a `measure` label recurring once per
    * --iteration, and/or within one). Absent means a single occurrence -- the run, a step, an
-   * unrepeated measure. When present (> 1), `aggregation` is `"median"`.
+   * unrepeated measure. When present (> 1), `aggregation` is `"median"`
    */
   samples?: number;
   /** wall (ms) of the shortest merged occurrence; disclosed with `samples` (`wallMinMs <= wallMs <= wallMaxMs`) */
@@ -677,20 +680,20 @@ export interface Span {
   wallMaxMs?: number;
   /**
    * Off-thread compositor frame side track for this span (Chrome --breakdown only). DISPLAY-ONLY:
-   * never summed into `breakdown`, never gated (its counts are scheduler noise). See FrameSideTrack.
+   * never summed into `breakdown`, never gated (its counts are scheduler noise). See FrameSideTrack
    */
   frames?: FrameSideTrack;
   /**
    * Per-span hot functions on the CPU-sampler scripting axis (--breakdown chrome step/measure, firefox
    * measure). Absent on the run span (read from the CpuModel at query time), in capture modes with no
-   * sampler, and on older recordings. Refs join to the sibling CpuModel.functions[]. See SpanHot.
+   * sampler, and on older recordings. Refs join to the sibling CpuModel.functions[]. See SpanHot
    */
   hot?: SpanHot;
   /**
    * Per-span layout/style scope distribution (chrome --breakdown run/step/measure; firefox style only).
    * A count-tier distribution shown beside the bar's ms, never a proxy for it. Absent in capture modes
    * that store no per-span bar (default/--deep), on windows with no flush, and on older
-   * recordings. See SpanScope.
+   * recordings. See SpanScope
    */
   scope?: SpanScope;
   /**
@@ -698,12 +701,12 @@ export interface Span {
    * ONLY when a framework addon is active (`--framework auto`, default) and its factual signals were
    * present; absent otherwise, so a recording of an app with no detected framework carries no addon
    * vocabulary. The core references the fact types only through this slot (see model/addon.ts). See
-   * docs/dev/react-attribution.md.
+   * docs/dev/react-attribution.md
    */
   addons?: SpanAddons;
 }
 
-/** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure). */
+/** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure) */
 export interface SpanBreakdown {
   label: string;
   kind: SpanKind;
@@ -711,7 +714,7 @@ export interface SpanBreakdown {
   /**
    * Off-thread compositor frame side track for this span (Chrome --breakdown only; absent
    * otherwise, and on spans whose window caught no frame). DISPLAY-ONLY: never summed into
-   * `breakdown`, never gated. See FrameSideTrack.
+   * `breakdown`, never gated. See FrameSideTrack
    */
   frames?: FrameSideTrack;
   /**
@@ -720,24 +723,24 @@ export interface SpanBreakdown {
    * single occurrence -- the run span, a step, or an unrepeated measure -- so old recordings and
    * unrepeated flows carry nothing extra. When present (> 1), `breakdown` is the lower-median-by-wall
    * occurrence VERBATIM (a real reconciling sample, not per-slice averages), and the aggregation is
-   * `"median"`.
+   * `"median"`
    */
   samples?: number;
-  /** wall (ms) of the shortest merged occurrence; disclosed with `samples`, so a reader sees the spread. */
+  /** wall (ms) of the shortest merged occurrence; disclosed with `samples`, so a reader sees the spread */
   wallMinMs?: number;
-  /** wall (ms) of the longest merged occurrence; disclosed with `samples`. */
+  /** wall (ms) of the longest merged occurrence; disclosed with `samples` */
   wallMaxMs?: number;
   /**
    * Per-span hot functions on the CPU-sampler scripting axis (--breakdown chrome step/measure, firefox
    * measure); absent on the run span and in capture modes with no sampler. Copied onto the stored `Span.hot`. See
    * SpanHot. When a measure merged occurrences, this is POOLED across all of them (not the kept bar's
-   * single occurrence), so the list has a firmer sample footing than the bar's lower-median sample.
+   * single occurrence), so the list has a firmer sample footing than the bar's lower-median sample
    */
   hot?: SpanHot;
   /**
    * Per-span layout/style scope distribution (chrome --breakdown; firefox style only), copied onto the
    * stored `Span.scope`. When a measure merged occurrences this is the KEPT occurrence's window
-   * verbatim (like the bar and frames), not pooled. Absent on a window with no flush. See SpanScope.
+   * verbatim (like the bar and frames), not pooled. Absent on a window with no flush. See SpanScope
    */
   scope?: SpanScope;
 }
@@ -749,7 +752,7 @@ export interface SpanBreakdown {
  * `kind: "step"` span. The raw `.cpuprofile` and the resolved `.cpu.json` model are separate siblings;
  * the `events[]` DEEP EVENT LOG is written into this file ONLY under --deep (chrome) and firefox, where
  * blame/`query get`/`query events` read it -- every other capture mode leaves it empty, which keeps the
- * default artifact digest-sized.
+ * default artifact digest-sized
  */
 export interface Recording {
   meta: RecordingMeta;
@@ -758,14 +761,14 @@ export interface Recording {
   /**
    * The deep event log: resolved trace events with `.stack` frames and invalidation records. Present
    * only in a capture mode that captured one (--deep, firefox); an EMPTY array in the default and
-   * --breakdown capture modes, where `query events`/`get`/`blame` report "not captured in this capture mode".
+   * --breakdown capture modes, where `query events`/`get`/`blame` report "not captured in this capture mode"
    */
   events: NormalizedEvent[];
   /**
    * Every labelled unit of measured work AND the sole count/timing store: the run window (`kind: "run"`,
    * carrying the run-level counts/wall/INP/stats), each driver step (`kind: "step"`), and every user
    * `performance.measure` (`kind: "measure"`). Always present (at least the run span). The one artifact
-   * carries them all; a step is read as an anatomy by `query span <label>`.
+   * carries them all; a step is read as an anatomy by `query span <label>`
    */
   spans: Span[];
 }
@@ -773,7 +776,7 @@ export interface Recording {
 /**
  * One step of a stepped (driver) run, projected from its `kind: "step"` span. Feeds the per-step
  * `assert` targets and the `query span <step-label>` anatomy; carries no per-step file pointers,
- * since the whole run is one recording.
+ * since the whole run is one recording
  */
 export interface StepIndexEntry {
   index: number;

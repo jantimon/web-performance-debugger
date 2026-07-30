@@ -56,41 +56,41 @@ export interface PassResult {
   /**
    * Which clock priced the driver steps' walls: "trace" (t1-t0 on the trace clock between the step
    * marks, --breakdown/--deep), "page" (the page's own performance.now() delta, the no-trace default
-   * capture mode), or "none" (driver ran but no step produced a wall). Absent on non-driver passes.
+   * capture mode), or "none" (driver ran but no step produced a wall). Absent on non-driver passes
    */
   stepWallClock?: "trace" | "page" | "none";
   /** raw V8 CPU sampling profile (only on the cpu pass) */
   cpuProfile?: RawCpuProfile;
   /** Firefox: temp path of the raw Gecko shutdown dump, copied verbatim to the
    * .geckoprofile.json artifact and removed. Kept as a path, not a string: the dump can be
-   * hundreds of MB and holding it would pin that for the rest of the run. */
+   * hundreds of MB and holding it would pin that for the rest of the run */
   geckoDumpPath?: string;
   /** Firefox: deregister the signal-cleanup disposer for `geckoDumpPath`. record.ts calls it once it
    * has removed the temp (after the atomic copy), so a completed run leaves nothing registered; until
-   * then a fatal signal unlinks the temp synchronously rather than orphaning it (disposers.ts). */
+   * then a fatal signal unlinks the temp synchronously rather than orphaning it (disposers.ts) */
   geckoDumpRelease?: () => void;
   /** interval the CPU sampler actually ran at, read back from the profile itself */
   cpuSampleIntervalUs?: number;
   /** --breakdown only: the sampled read-site forced-layout blame log (step/measure edge marks + the
    * sampled Layout/RecalcStyles blame events, source-resolved and `forced`), stored as the recording's
    * event log so `query blame --forced` answers. Undefined when the trace carried no per-sample lines
-   * (older Chrome), so the caller reports blame unavailable rather than empty-as-clean. */
+   * (older Chrome), so the caller reports blame unavailable rather than empty-as-clean */
   sampledBlame?: NormalizedEvent[];
   /** Firefox: user `performance.measure` windows (profiler µs clock) for the mark-bridge spans */
   geckoMeasures?: GeckoMeasureWindow[];
-  /** Chrome reported the trace buffer dropped events (overflow). Drives a loud not-silent note. */
+  /** Chrome reported the trace buffer dropped events (overflow). Drives a loud not-silent note */
   traceDataLoss?: boolean;
   /** Bot-wall detection verdict for a wpd-performed navigation (onramp / --url host page). Present
    * only when it was detected AND --allow-bot-wall let the run continue (an undetected page and a
-   * refused run both leave it undefined -- a refusal throws before the pass returns). */
+   * refused run both leave it undefined -- a refusal throws before the pass returns) */
   botWallVerdict?: BotWallVerdict;
   /** The browser build string this pass launched, verbatim from `browser.version()` (chrome
    * "Chrome/151.0.7922.47", firefox "Firefox/152.0"). Undefined when the backend could not report it.
-   * buildMeta parses the milestone off it for the comparability axis. */
+   * buildMeta parses the milestone off it for the comparability axis */
   browserVersion?: string;
   /** The run-level framework-addon probe payload read off `window.__wpdAddons` at the end of the run
    * (keyed by addon name); undefined when no addon installed a page probe (--framework off) or the read
-   * failed. An addon's enrich shapes it into `Span.addons`. Browser lanes only (node has no page). */
+   * failed. An addon's enrich shapes it into `Span.addons`. Browser lanes only (node has no page) */
   addonPageData?: Record<string, unknown>;
 }
 
@@ -107,18 +107,18 @@ function toServedUrl(server: StaticServer, root: string, absFile: string): strin
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** How long to wait for Firefox to flush its shutdown dump before giving up. Generous: a large
- * ring buffer serializes to a multi-hundred-MB file on a slow disk. */
+ * ring buffer serializes to a multi-hundred-MB file on a slow disk */
 const GECKO_DUMP_TIMEOUT_MS = 15_000;
 /** Poll cadence while waiting for the dump. The dump is complete when `browser.close()` resolves
  * (puppeteer waits for process exit, and MOZ_PROFILER_SHUTDOWN writes during shutdown), so the poll
- * only confirms the file is on disk and settled; a tight cadence confirms that in a few reads. */
+ * only confirms the file is on disk and settled; a tight cadence confirms that in a few reads */
 const GECKO_DUMP_POLL_MS = 20;
 /** Consecutive equal sizes that count as "done growing", guarding a slow-disk write that lands after
- * the first stat (the file exists but is still being flushed on a very large dump). */
+ * the first stat (the file exists but is still being flushed on a very large dump) */
 const GECKO_DUMP_STABLE_READS = 3;
 
 /** The Gecko sampling interval for this run: the interval option is expressed in microseconds (the
- * V8 unit) and Gecko takes milliseconds, clamped up to its ~1ms floor by geckoEnv. Unset => the floor. */
+ * V8 unit) and Gecko takes milliseconds, clamped up to its ~1ms floor by geckoEnv. Unset => the floor */
 function geckoIntervalMs(opts: RecordOptions): number {
   return opts.cpuIntervalUs != null
     ? Math.max(GECKO_MIN_INTERVAL_MS, usToMs(opts.cpuIntervalUs))
@@ -127,7 +127,7 @@ function geckoIntervalMs(opts: RecordOptions): number {
 
 /** Firefox flushes the Gecko shutdown dump during `browser.close()`, so by the time this runs the
  * file is written; the poll confirms it exists AND has stopped growing (stable across reads) before
- * parsing, which only matters when a very large dump is still landing on a slow disk. */
+ * parsing, which only matters when a very large dump is still landing on a slow disk */
 async function waitForGeckoDump(
   dumpPath: string,
   timeoutMs = GECKO_DUMP_TIMEOUT_MS,
@@ -159,7 +159,7 @@ async function waitForGeckoDump(
  * Wait for the Gecko shutdown dump, then parse it. If the wait or parse fails (a dump that never
  * lands, truncated JSON, a profile missing the JavaScript category) remove the temp dump before
  * re-throwing, so a broken dump leaves no orphaned 16MB+ file behind. On success the file is kept for
- * the caller to copy to the artifact.
+ * the caller to copy to the artifact
  */
 export async function readGeckoDump(dumpPath: string): Promise<GeckoContext> {
   try {
@@ -174,7 +174,7 @@ export async function readGeckoDump(dumpPath: string): Promise<GeckoContext> {
  * Upgrade each driver step's wall to the trace-clock window between its marks: `t1 - t0` on the
  * trace clock, which spans navigation and reconciles with the breakdown bar. Keyed by markIndex (the
  * step's `wpd:step:N` marks), the same join `labelWindows` uses. A step with no closed trace window
- * keeps whatever wall it had (its page-clock value). Mutates the steps in place.
+ * keeps whatever wall it had (its page-clock value). Mutates the steps in place
  */
 function applyTraceWall(driverSteps: DriverStep[], stepTraceWindows: StepWindow[]): void {
   const windowByMark = new Map(stepTraceWindows.map((window) => [window.index, window]));
@@ -189,7 +189,7 @@ function applyTraceWall(driverSteps: DriverStep[], stepTraceWindows: StepWindow[
   }
 }
 
-/** Whether any step carries a wall (a page-clock value, or a trace upgrade); "none" earns the note. */
+/** Whether any step carries a wall (a page-clock value, or a trace upgrade); "none" earns the note */
 function stepWallClockFor(driverSteps: DriverStep[], traced: boolean): "trace" | "page" | "none" {
   if (traced) return "trace";
   return driverSteps.some((step) => step.wallMs != null) ? "page" : "none";
@@ -206,16 +206,16 @@ export async function runPass(
   botWall?: { allow: boolean; screenshotPath: string },
   /** self-contained in-page install functions from the active framework addons; installed via
    * evaluateOnNewDocument BEFORE any navigation so a probe (e.g. the React hook) is present before app
-   * code runs on every document. Empty when --framework off. */
+   * code runs on every document. Empty when --framework off */
   addonPageInits: (() => void)[] = [],
 ): Promise<PassResult> {
   const browserName: BrowserName = opts.browser ?? "chrome";
   // No module = the built-in on-ramp flow (driver mode only). It skips the host-page pre-navigation
-  // and instead navigates to the target INSIDE a "load" step, so the boot lands in the run window.
+  // and instead navigates to the target INSIDE a "load" step, so the boot lands in the run window
   const onramp = opts.driver && absModule == null;
   const caps = capsFor(browserName);
   // Firefox: the Gecko pass profiles for its whole lifetime and dumps on exit; a fresh temp
-  // file per pass keeps concurrent/retried runs from colliding.
+  // file per pass keeps concurrent/retried runs from colliding
   const geckoDumpPath = spec.gecko
     ? path.join(
         os.tmpdir(),
@@ -225,7 +225,7 @@ export async function runPass(
   // On a fatal signal, unlink the gecko temp synchronously so a multi-hundred-MB dump is not left on
   // disk. Firefox writes it during browser.close(), so it may not exist yet when a signal lands; the
   // unlink is best-effort either way. Deregistered wherever the temp is removed the normal way; on the
-  // success handoff the release travels to record.ts on PassResult (disposers.ts).
+  // success handoff the release travels to record.ts on PassResult (disposers.ts)
   const releaseGeckoDump = geckoDumpPath
     ? registerDisposer(() => {
         try {
@@ -247,12 +247,12 @@ export async function runPass(
   });
   let result: PassResult;
   // The launched browser's build string, for the comparability axis. Best-effort: a backend that
-  // cannot report it leaves the axis unmeasured rather than failing the run.
+  // cannot report it leaves the axis unmeasured rather than failing the run
   const browserVersion = await browser.version().catch(() => undefined);
   // Bot-wall detection for a wpd-performed navigation. `inspect()` collects + classifies the settled
   // page; on a detected wall with no --allow-bot-wall it screenshots + throws (refusing before any
   // measurement pass), else it stores the verdict so a detected-but-allowed run can note it. Called
-  // for the onramp (after the load step, via the driver hook) and for a --url/--html host pre-navigation.
+  // for the onramp (after the load step, via the driver hook) and for a --url/--html host pre-navigation
   let botWallVerdict: BotWallVerdict | undefined;
   const inspect = botWall
     ? async () => {
@@ -264,7 +264,7 @@ export async function runPass(
     // React detection hook) is present before app code runs on every document (evaluateOnNewDocument
     // re-arms on each navigation). Best-effort per addon: a backend that cannot preload a script must
     // not fail the run (detection stays honestly absent instead). Also install on the current blank
-    // document. See docs/dev/react-attribution.md.
+    // document. See docs/dev/react-attribution.md
     for (const install of addonPageInits) {
       await page.evaluateOnNewDocument(install).catch(() => {});
       await page.evaluate(install).catch(() => {});
@@ -274,7 +274,7 @@ export async function runPass(
       await applyCpuThrottle(client, opts.cpuThrottle);
 
     // The target the built-in "load" step navigates to (on-ramp only): the live --url as-is, or the
-    // served local HTML file. Computed before the pre-navigation so the same served-url check applies.
+    // served local HTML file. Computed before the pre-navigation so the same served-url check applies
     const onrampNavigateUrl = onramp
       ? mode === "url"
         ? opts.url!
@@ -283,20 +283,20 @@ export async function runPass(
 
     if (onramp) {
       // Start blank; the "load" step navigates to the target inside the run window, so the measured
-      // window is the page's own cold boot rather than a host page loaded before it (module mode).
+      // window is the page's own cold boot rather than a host page loaded before it (module mode)
       await page.goto(`${server.url}/__wpd_blank__`, { waitUntil: "load" });
     } else if (mode === "html") {
       await page.goto(toServedUrl(server, root, path.resolve(opts.html!)), {
         waitUntil: "load",
         timeout: 30000,
       });
-      // The host page is a wpd navigation, so inspect it (a --url pointed at a wall drives a wall).
+      // The host page is a wpd navigation, so inspect it (a --url pointed at a wall drives a wall)
       if (inspect) await inspect();
     } else if (mode === "url") {
       await page.goto(opts.url!, { waitUntil: "load", timeout: 30000 });
       if (inspect) await inspect();
     } else {
-      // Same-origin blank page so the module import() below is not cross-origin.
+      // Same-origin blank page so the module import() below is not cross-origin
       await page.goto(`${server.url}/__wpd_blank__`, { waitUntil: "load" });
     }
 
@@ -304,16 +304,16 @@ export async function runPass(
     let lifecycle: string[];
     let driverSteps: DriverStep[] | undefined;
     let partial: PartialRun | undefined;
-    // Teardown is deferred until after tracing stops, so it never inflates the measured counts.
+    // Teardown is deferred until after tracing stops, so it never inflates the measured counts
     let runCleanup: (() => unknown | Promise<unknown>) | undefined;
     let cpuProfile: RawCpuProfile | undefined;
     // The interval the samples actually ran at, for the CPU model. In the trace-sourced --breakdown
     // capture mode it is read back from the ProfileChunk stream (a fixed rate we do not set); on the CDP
-    // sampler it is what we requested.
+    // sampler it is what we requested
     let cpuSampleIntervalUs: number | undefined;
     const cpuIntervalUs = opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US;
     // The --breakdown capture mode sources CPU samples from the trace's v8.cpu_profiler stream, so the CDP
-    // profiler must NOT also run (one profiler at a time); the samples are assembled after stopTrace.
+    // profiler must NOT also run (one profiler at a time); the samples are assembled after stopTrace
     const cdpSampler = spec.cpu && spec.cpuSource === "cdp" && client != null && caps.cpuProfile;
 
     if (opts.driver) {
@@ -321,12 +321,12 @@ export async function runPass(
       // The CPU sampler opens right before the run mark, from inside runDriver (after prepare and
       // warmup), NOT here: it is not windowed after the fact, so starting it before prepare bills
       // setup's page-side JS to the run. The trace, which IS windowed to the run marks, may start
-      // earlier. See runDriver's beforeRunWindow. The trace-sourced capture mode starts no CDP profiler.
+      // earlier. See runDriver's beforeRunWindow. The trace-sourced capture mode starts no CDP profiler
       const startProfiler =
         cdpSampler && client ? () => startCpuProfile(client, cpuIntervalUs) : undefined;
       // absModule is import()ed in Node, so it may live anywhere. A driver module outside root
       // just won't resolve through makeSourceResolver (which keys off the served-url prefix),
-      // so its own frames stay unresolved; the page's frames are unaffected.
+      // so its own frames stay unresolved; the page's frames are unaffected
       const driverResult = await runDriver(
         page,
         absModule,
@@ -339,31 +339,31 @@ export async function runPass(
       partial = driverResult.partial;
       lifecycle = driverResult.lifecycle;
       // Driver pass-level perIteration is unused (record.ts sums step samples instead), but keep it
-      // a clean number[]: an unpriced (navigated) step contributes no sample.
+      // a clean number[]: an unpriced (navigated) step contributes no sample
       perIteration = driverResult.steps
         .map((step) => step.wallMs)
         .filter((wallMs): wallMs is number => wallMs != null);
       runCleanup = driverResult.cleanup;
     } else {
       // Bench mode always has a module (the on-ramp is driver-only; the CLI rejects --bench with no
-      // module), so absModule is defined here; narrow it for toServedUrl.
+      // module), so absModule is defined here; narrow it for toServedUrl
       if (!absModule) throw new Error("Bench mode needs a module to import inside the page.");
       const harnessArg = {
-        // Bench mode only: the module is import()ed INSIDE the page, so it must be servable.
-        // Driver mode imports it in Node (see runDriver above) and needs no url.
+        // Bench mode only: the module is import()ed INSIDE the page, so it must be servable
+        // Driver mode imports it in Node (see runDriver above) and needs no url
         moduleUrl: toServedUrl(server, root, absModule),
         fnName: opts.fn,
         iterations: opts.iterations,
         warmup: opts.warmup,
       };
       // prepare() + warmup run BEFORE tracing so their layout/style work isn't folded into the
-      // window-scoped forced/paint counts (warmup especially would inflate them).
+      // window-scoped forced/paint counts (warmup especially would inflate them)
       const setup = await page.evaluate(runHarness, { ...harnessArg, phase: "setup" as const });
       lifecycle = setup.lifecycle;
       if (spec.categories && caps.trace && client) await startTrace(client, spec.categories);
       if (cdpSampler && client) await startCpuProfile(client, cpuIntervalUs);
       // One timed page.evaluate over the whole loop: with no CDP counter bracket to close mid-loop,
-      // there is nothing to split. Bench wall is the sum of these timed samples (record.ts).
+      // there is nothing to split. Bench wall is the sum of these timed samples (record.ts)
       const timed = await page.evaluate(runHarness, {
         ...harnessArg,
         phase: "timed" as const,
@@ -375,7 +375,7 @@ export async function runPass(
     // Read the run-level framework-addon probe payload off the final document before the browser
     // closes (detection metadata + cumulative commit count). Best-effort: a page that navigated away or
     // a failed read leaves it undefined, so detection stays honestly absent. Only when an addon
-    // installed a probe.
+    // installed a probe
     let addonPageData: Record<string, unknown> | undefined;
     if (addonPageInits.length) {
       const raw = await page.evaluate(() => (window as any).__wpdAddons ?? null).catch(() => null);
@@ -388,7 +388,7 @@ export async function runPass(
     // counted only if the settle outlasts it -- ~50 ms catches a double-rAF/~30 ms tail, ~200 ms
     // catches a ~100 ms-deferred paint; drop the settle and those paints vanish from the counts. It
     // runs ONCE after the whole flow (not per iteration), so its cost is a fixed per-run tail. INP is
-    // unaffected: the driver's per-step settle already finalizes the interaction before the step ends.
+    // unaffected: the driver's per-step settle already finalizes the interaction before the step ends
     await sleep(opts.settleMs);
 
     if (cdpSampler && client) cpuProfile = await stopCpuProfile(client);
@@ -401,7 +401,7 @@ export async function runPass(
     let traceDataLoss = false;
     // --breakdown only: the sampled read-site forced-layout blame log (the step/measure marks so a span
     // can window it, plus the sampled blame events). Undefined when the trace carried no per-sample
-    // lines, so the caller can disclose that blame is unavailable rather than reading empty as "clean".
+    // lines, so the caller can disclose that blame is unavailable rather than reading empty as "clean"
     let sampledBlame: NormalizedEvent[] | undefined;
     if (spec.categories && caps.trace && client) {
       const trace = await stopTrace(client);
@@ -410,19 +410,19 @@ export async function runPass(
       // a --deep trace too heavy for its stored event log to serialize is refused HERE, before the
       // parse (which OOMs on a heavier trace at the default heap) can run. The writeRecording guard
       // stays the backstop. --breakdown stores no full event log, so it is not gated and parses past
-      // the ceiling by design (docs/dev/trace-buffer.md).
+      // the ceiling by design (docs/dev/trace-buffer.md)
       if (deepEventLogWouldOverflow(spec.mode, trace.bytes.length))
         throw deepEventLogOverflowError(trace.bytes.length);
       // Parse the trace one event at a time straight from the raw bytes (scanTraceEvents), so a heavy
       // --deep trace past the ~512MB single-string ceiling still parses and peak heap tracks the events
       // kept, not the whole raw array. --deep runs only this scan; --breakdown scans a second time below
-      // for the CPU stream (a lighter trace, so the re-walk is cheap).
+      // for the CPU stream (a lighter trace, so the re-walk is cheap)
       events = parseTrace(trace.bytes, {
         keepThreadIds: spec.keepThreadIds,
       });
-      // Rewrite trace stack urls back to local source files for blame/source lookup.
+      // Rewrite trace stack urls back to local source files for blame/source lookup
       await attachStacks(events, server.url, root, maps);
-      // Flag forced (synchronous) layout/style: the layout-thrashing signal.
+      // Flag forced (synchronous) layout/style: the layout-thrashing signal
       markForced(events);
       const runWindow = findWindow(events);
       windowStart = runWindow.startTs;
@@ -433,7 +433,7 @@ export async function runPass(
       // the same run-mark scope the CDP sampler opens at in the other capture modes (bench starts the trace
       // after setup, so the filter is a no-op there). Null means the browser emitted no chunk stream:
       // leave cpuProfile undefined so the caller falls back to honest not-covered reporting, never a
-      // fabricated zero profile.
+      // fabricated zero profile
       if (spec.cpu && spec.cpuSource === "trace") {
         const assembled = assembleTraceCpuProfile(trace.bytes);
         if (assembled) {
@@ -446,14 +446,14 @@ export async function runPass(
           // carried them. The light trace has no `.stack`, so this is the ONLY read-site source here;
           // the samples keep sampling through a synchronous forced layout, so a flush window's sample
           // names the forcing line (docs/dev/blame-semantics.md). Absent sampleLines => leave
-          // sampledBlame undefined so the caller reports blame unavailable, never empty-as-clean.
+          // sampledBlame undefined so the caller reports blame unavailable, never empty-as-clean
           if (assembled.sampleLines) {
             const urlByNode = new Map(
               assembled.profile.nodes.map((node) => [node.id, node.callFrame.url ?? ""]),
             );
             // The leaf function's callFrame line+column (0-based CDP) per node: the resolver's
             // column-bearing fallback when a sample's executing line cannot be disambiguated on a
-            // minified bundle, so the read still names the forcing function (the CPU-model frame).
+            // minified bundle, so the read still names the forcing function (the CPU-model frame)
             const frameByNode = new Map(
               assembled.profile.nodes.map((node) => [
                 node.id,
@@ -478,12 +478,12 @@ export async function runPass(
               mainThread(events),
             );
             // Resolve the sampled frame to local source (event.at) and mark it forced, the same path
-            // the trace/gecko events take, so `query blame --forced` reads it identically.
+            // the trace/gecko events take, so `query blame --forced` reads it identically
             await attachStacks(blame, server.url, root, maps);
             markForced(blame);
             // Store the run/step edge marks alongside so `query span <step>` can window the blame to a
             // step; a shallow copy keeps `events`' own ids intact. Ids are reassigned in ts order for
-            // stable `query get <id>` addressing (parseTrace/gecko do the same).
+            // stable `query get <id>` addressing (parseTrace/gecko do the same)
             const marks = events
               .filter((event) => event.kind === "usertiming")
               .map((event) => ({ ...event }));
@@ -495,9 +495,9 @@ export async function runPass(
           }
         }
       }
-      // Re-key this pass's step windows from index to label; both sides come from this one pass.
+      // Re-key this pass's step windows from index to label; both sides come from this one pass
       // The trace clock also prices each step's wall (t1-t0 between its marks): the honest window,
-      // in place of the page-clock value the driver captured.
+      // in place of the page-clock value the driver captured
       if (opts.driver && driverSteps) {
         const stepTraceWindows = findSteps(events);
         applyTraceWall(driverSteps, stepTraceWindows);
@@ -505,11 +505,11 @@ export async function runPass(
         stepWallClock = stepWallClockFor(driverSteps, true);
       }
     } else if (opts.driver && driverSteps) {
-      // No trace in this capture mode: the step wall stays the page-clock delta the driver measured.
+      // No trace in this capture mode: the step wall stays the page-clock delta the driver measured
       stepWallClock = stepWallClockFor(driverSteps, false);
     }
 
-    // Teardown now; tracing is stopped, so cleanup work stays out of the measured window.
+    // Teardown now; tracing is stopped, so cleanup work stays out of the measured window
     if (runCleanup) await runCleanup();
 
     const entries = (await page.evaluate(() => {
@@ -547,8 +547,8 @@ export async function runPass(
     };
   } catch (runError) {
     // The run failed. Close the browser (which also flushes a Firefox shutdown dump) so nothing is
-    // left running, but never let a close failure replace the run error: attach it as the cause.
-    // Then remove the now-orphaned Gecko dump, since the parse below is skipped, and re-throw.
+    // left running, but never let a close failure replace the run error: attach it as the cause
+    // Then remove the now-orphaned Gecko dump, since the parse below is skipped, and re-throw
     try {
       await browser.close();
     } catch (closeError) {
@@ -563,7 +563,7 @@ export async function runPass(
   }
 
   // The run succeeded. Close the browser, which flushes a Firefox shutdown dump, so the parse below
-  // runs after this. A close failure here is the only error, so it surfaces; drop any orphaned dump.
+  // runs after this. A close failure here is the only error, so it surfaces; drop any orphaned dump
   try {
     await browser.close();
     release();
@@ -578,11 +578,11 @@ export async function runPass(
 
   // Firefox: parse the shutdown dump into the same shapes the Chrome path produces. One gecko
   // pass yields BOTH the CPU samples (RawCpuProfile) and layout/style blame events (from Reflow/
-  // Styles markers). The run window comes from the wpd:run UserTiming marks inside the profile.
+  // Styles markers). The run window comes from the wpd:run UserTiming marks inside the profile
   if (spec.gecko && geckoDumpPath) {
     // Parse from a scoped string so the dump (potentially hundreds of MB) is collectable once
     // the model is built; the artifact is copied straight from the file by the caller. readGeckoDump
-    // removes the temp dump if the wait/parse fails, so drop its signal guard on that failure too.
+    // removes the temp dump if the wait/parse fails, so drop its signal guard on that failure too
     let geckoContext: GeckoContext;
     try {
       geckoContext = await readGeckoDump(geckoDumpPath);
@@ -592,12 +592,12 @@ export async function runPass(
     }
     try {
       result.geckoDumpPath = geckoDumpPath;
-      // The temp now travels to record.ts (it copies then removes it); hand off the release with it.
+      // The temp now travels to record.ts (it copies then removes it); hand off the release with it
       result.geckoDumpRelease = releaseGeckoDump;
       result.cpuProfile = geckoToRawCpuProfile(geckoContext);
-      // The interval the sampler actually ran at, not what we asked for.
+      // The interval the sampler actually ran at, not what we asked for
       result.cpuSampleIntervalUs = msToUs(geckoContext.intervalMs);
-      // User performance.measure spans, for the mark-bridge per-span breakdowns (record.ts builds them).
+      // User performance.measure spans, for the mark-bridge per-span breakdowns (record.ts builds them)
       result.geckoMeasures = geckoUserMeasures(geckoContext);
       const renderingEvents = geckoToRenderingEvents(geckoContext);
       await attachStacks(renderingEvents, server.url, root, maps);
@@ -607,7 +607,7 @@ export async function runPass(
       result.windowStart = geckoWindow.startTs;
       result.windowEnd = geckoWindow.endTs;
       // Gecko's Reflow/Styles markers carry the wpd:step windows too, on the profiler clock; price the
-      // step walls off them, the same trace-clock upgrade the Chrome branch applies.
+      // step walls off them, the same trace-clock upgrade the Chrome branch applies
       if (opts.driver && result.driverSteps) {
         const stepTraceWindows = findSteps(renderingEvents);
         applyTraceWall(result.driverSteps, stepTraceWindows);
@@ -616,7 +616,7 @@ export async function runPass(
       }
     } catch (geckoError) {
       // The converter or source resolution failed before the dump was handed to the caller for the
-      // copy: remove the temp so a failure past the parse leaks nothing.
+      // copy: remove the temp so a failure past the parse leaks nothing
       releaseGeckoDump();
       await fs.rm(geckoDumpPath, { force: true }).catch(() => {});
       throw geckoError;

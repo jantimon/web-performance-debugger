@@ -26,7 +26,7 @@ test("public entrypoint exposes the schema version anchor", () => {
 });
 
 // Write-first (§17.13.9 item 5): an artifact stamped with an older schema epoch is REJECTED, loudly,
-// with the re-record message -- never mis-parsed against a shape it was not written to.
+// with the re-record message -- never mis-parsed against a shape it was not written to
 test("schema reject: an artifact recorded by an older wpd is refused with the re-record message", () => {
   assert.throws(
     () => assertSchemaVersion("2", "/tmp/old.json"),
@@ -34,12 +34,12 @@ test("schema reject: an artifact recorded by an older wpd is refused with the re
     "a schema-2 artifact is rejected, not silently read as the current shape",
   );
   assert.throws(() => assertSchemaVersion(undefined, "/tmp/nometa.json"), /re-record/);
-  // The current epoch passes through untouched.
+  // The current epoch passes through untouched
   assert.doesNotThrow(() => assertSchemaVersion(SCHEMA_VERSION, "/tmp/current.json"));
 });
 
 // The reject reaches through the verbs, not only the pure guard: `assert` on a schema-2 recording
-// refuses rather than gating a mis-parsed (all-null) summary green.
+// refuses rather than gating a mis-parsed (all-null) summary green
 test("schema reject: `assert` on an older-schema recording refuses instead of mis-gating", async () => {
   const old = writeSchemaArtifact("assert-old-schema.json", "2", { forcedLayoutCount: 0 });
   await assert.rejects(() => assertCmd(old, { forced: 0 }), /re-record with this version/);
@@ -57,7 +57,7 @@ test("package exports map points at files that exist", () => {
 
 // S09: `changeset version` bumps package.json, but `npm ci` never rewrites the lockfile, so the
 // lock's own version field drifts behind the manifest until someone runs a plain `npm install`. A
-// published tarball whose lock says an old version is confusing at best. Guard the two together.
+// published tarball whose lock says an old version is confusing at best. Guard the two together
 test("package-lock version tracks package.json version", () => {
   const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
   const lock = JSON.parse(readFileSync(new URL("../../package-lock.json", import.meta.url), "utf8"));
@@ -72,13 +72,12 @@ test("package-lock version tracks package.json version", () => {
 test("published types declare the documented public shapes", () => {
   const dts = readFileSync(new URL("../../dist/index.d.ts", import.meta.url), "utf8");
   // Span is the schema-5 count/timing store: without it a consumer cannot name the run/step/measure
-  // shape without importing from dist/model/, which this package calls internal.
+  // shape without importing from dist/model/, which this package calls internal
   for (const name of ["CpuModel", "CpuOverview", "BlameEntry", "CpuDiffResult", "RawCpuProfile", "LastPointer", "Span"]) {
     assert.match(dts, new RegExp(`\\b${name}\\b`), `index.d.ts should re-export ${name}`);
   }
 });
 
-// --- Count source (the same number means different things per target) ---
 
 test("countProvenance distinguishes exact trace counts, Gecko markers, and a capture mode that measured none", () => {
   const recording = (metaOverrides, runValues = {}) => ({
@@ -86,24 +85,24 @@ test("countProvenance distinguishes exact trace counts, Gecko markers, and a cap
     spans: [runSpanFixture(runValues)],
   });
 
-  // Chrome with a trace (breakdown/deep): counts come from the trace, main-thread windowed, exact.
+  // Chrome with a trace (breakdown/deep): counts come from the trace, main-thread windowed, exact
   const exact = countProvenance(recording({ capture: "deep" }, { layoutCount: 5 }));
   assert.match(exact, /exact/);
   assert.doesNotMatch(exact, /NOT measured/);
 
   // Firefox + gecko pass: counts from Reflow/Styles markers -- real, but batched by a different
-  // engine, so they must not read as comparable to Chrome.
+  // engine, so they must not read as comparable to Chrome
   const gecko = countProvenance(recording({ browser: "firefox", capture: "gecko" }, { layoutCount: 3 }));
   assert.match(gecko, /Gecko markers/);
   assert.match(gecko, /not comparable to Chrome/);
 
-  // The default capture mode captures no trace: layoutCount is null, so the header says NOT measured, never 0.
+  // The default capture mode captures no trace: layoutCount is null, so the header says NOT measured, never 0
   const none = countProvenance(recording({ capture: "default" }, { layoutCount: null }));
   assert.match(none, /NOT measured/);
 });
 
 // F26/F27: a lost run:end mark leaves the bar silently absent, and a lost step:end mark left counts
-// running to trace end while the bar stopped at the run end. Both now push a disclosing note.
+// running to trace end while the bar stopped at the run end. Both now push a disclosing note
 test("notes: a lost run-end / step-end mark is disclosed, not silent (F26/F27)", () => {
   const runEnd = notesCatalog.runEndMarkLost();
   assert.match(runEnd, /wpd:run:end was lost/);
@@ -118,21 +117,21 @@ test("notes: a lost run-end / step-end mark is disclosed, not silent (F26/F27)",
 
 // F4: on a no-trace --url boot, --iterations produces no wall and no median (the navigating load step
 // resets the page clock, and the capture mode has no trace clock to span it). The note must say so plainly and
-// point to --breakdown, rather than the warm/cold note promising a median (`stats`) that is not there.
+// point to --breakdown, rather than the warm/cold note promising a median (`stats`) that is not there
 test("notes: the no-median on-ramp note names iterations and steers to --breakdown (F4)", () => {
   const note = notesCatalog.onrampIterationsNoMedian(3);
   assert.match(note, /--iterations 3/);
   assert.match(note, /no per-iteration wall or median/);
   assert.match(note, /--breakdown/);
   // The warm/cold note, by contrast, DOES describe a wall median, so it must only fire where a wall
-  // exists -- the two are mutually exclusive by capture mode (record.ts picks by pass.stepWallClock).
+  // exists -- the two are mutually exclusive by capture mode (record.ts picks by pass.stepWallClock)
   assert.match(notesCatalog.onrampWarmVsCold(3), /median/);
 });
 
-// F31: a diff across incompatible captures subtracts numbers that do not describe the same thing.
-// Write recordings with explicit meta (browser/passes/iterations) to exercise the comparability gate.
+// F31: a diff across incompatible captures subtracts numbers that do not describe the same thing
+// Write recordings with explicit meta (browser/passes/iterations) to exercise the comparability gate
 function writeRecMeta(name, metaOverrides = {}, runOverrides = {}) {
-  const { passes, driver, runtime, ...restMeta } = metaOverrides;
+  const { passes, driver: _driver, runtime: _runtime, ...restMeta } = metaOverrides;
   const meta = {
     schemaVersion: "5",
     capture: passes ? passes[0] : "deep",
@@ -146,7 +145,7 @@ function writeRecMeta(name, metaOverrides = {}, runOverrides = {}) {
   return file;
 }
 
-// Run diffCmd capturing BOTH its exit code and its console output (captureExitCode silences logs).
+// Run diffCmd capturing BOTH its exit code and its console output (captureExitCode silences logs)
 async function runDiffCapture(base, current, opts) {
   const priorExit = process.exitCode;
   const priorLog = console.log;
@@ -172,7 +171,7 @@ test("diff: matched captures compare cleanly and gate a real count regression (F
 
 // R04: run counts TOTAL across iterations (one pass runs every iteration), so iters 1 vs 5 makes
 // every count differ by the iteration factor. Gating across that fabricates "regressions", so an
-// iterations mismatch now REFUSES the gate rather than warning-and-comparing.
+// iterations mismatch now REFUSES the gate rather than warning-and-comparing
 test("diff: an iterations mismatch REFUSES the gate (R04)", async () => {
   const base = writeRecMeta("r04-iter-base.json", { iterations: 5 }, { layoutCount: 1 });
   const current = writeRecMeta("r04-iter-cur.json", { iterations: 50 }, { layoutCount: 1 });
@@ -183,7 +182,7 @@ test("diff: an iterations mismatch REFUSES the gate (R04)", async () => {
 });
 
 // R05: the compat signature also covers workload (the recorded module/page), headless flavour, and
-// cpu-throttle, all of which shift the numbers the gate reads.
+// cpu-throttle, all of which shift the numbers the gate reads
 test("diff: a workload (target) mismatch REFUSES the gate (R05)", async () => {
   const base = writeRecMeta("r05-work-base.json", { target: "a.mjs" }, { layoutCount: 1 });
   const current = writeRecMeta("r05-work-cur.json", { target: "b.mjs" }, { layoutCount: 1 });
@@ -195,7 +194,7 @@ test("diff: a workload (target) mismatch REFUSES the gate (R05)", async () => {
 
 // T02: `target` collapses host and module (a host page overwrites the module), so a structured
 // workload identity {lane,host,module} is the axis the gate compares. Different flow = different
-// workload, even against the same host page.
+// workload, even against the same host page
 const workload = (lane, host, module) => ({ workload: { lane, host, module } });
 
 test("diff: the built-in load flow and a driver module on ONE host REFUSE the gate (T02)", async () => {
@@ -253,7 +252,7 @@ test("diff: the SAME structured workload gates a real regression, not the worklo
 
 // T02 backward compat: two pre-identity recordings (no `workload`) still compare on `target`; a
 // structured-vs-absent pair cannot verify the flow, so it WARNS under "workload-identity" rather than
-// blocking (refusing every gate against a pre-upgrade baseline would be heavier than the risk).
+// blocking (refusing every gate against a pre-upgrade baseline would be heavier than the risk)
 test("diff: two pre-identity recordings fall back to the target comparison (T02)", async () => {
   const base = writeRecMeta("t02-old-a.json", { target: "a.mjs" }, { layoutCount: 1 });
   const current = writeRecMeta("t02-old-b.json", { target: "b.mjs" }, { layoutCount: 1 });
@@ -273,7 +272,7 @@ test("diff: a structured-vs-absent pair WARNS but does not block (T02)", async (
 
 // A bench-style consumer serves the SAME logical page on a fresh `listen(0)` port each run, so the
 // loopback host differs only by an ephemeral port. That is one workload, not two, so the gate must
-// not refuse; the raw ports are disclosed non-blocking so a reader sees why they matched.
+// not refuse; the raw ports are disclosed non-blocking so a reader sees why they matched
 test("diff: a loopback ephemeral-port difference does NOT refuse the gate (loopback identity)", async () => {
   const base = writeRecMeta("lb-eph-base.json", { target: "host.html", driver: false, ...workload("bench", "http://127.0.0.1:54927/app", "flow.mjs") }, { layoutCount: 1 });
   const current = writeRecMeta("lb-eph-cur.json", { target: "host.html", driver: false, ...workload("bench", "http://127.0.0.1:61003/app", "flow.mjs") }, { layoutCount: 1 });
@@ -293,7 +292,7 @@ test("diff: an identical loopback ephemeral host raises no workload note at all"
 // The `localhost` hostname folds its ephemeral port exactly as the 127.0.0.1 dotted-quad does: the
 // same page served on a fresh `listen(0)` port each run is ONE workload. The 127.0.0.1 case exercises
 // the numeric-IP branch; a differing-port `localhost` pair is the only thing that pins the
-// `host === "localhost"` branch (an exact-host match folds regardless of that branch).
+// `host === "localhost"` branch (an exact-host match folds regardless of that branch)
 test("diff: a `localhost` ephemeral-port difference does NOT refuse the gate", async () => {
   const base = writeRecMeta("lb-localhost-base.json", { target: "host.html", driver: false, ...workload("bench", "http://localhost:54927/app", "flow.mjs") }, { layoutCount: 1 });
   const current = writeRecMeta("lb-localhost-cur.json", { target: "host.html", driver: false, ...workload("bench", "http://localhost:61003/app", "flow.mjs") }, { layoutCount: 1 });
@@ -304,7 +303,7 @@ test("diff: a `localhost` ephemeral-port difference does NOT refuse the gate", a
 });
 
 // A registered port names a service the user runs on purpose, and a non-loopback host is a real
-// remote: both keep their port, so a port difference there is a genuine workload difference.
+// remote: both keep their port, so a port difference there is a genuine workload difference
 test("diff: a loopback REGISTERED-port difference still refuses the gate", async () => {
   const base = writeRecMeta("lb-reg-base.json", { target: "host.html", driver: false, ...workload("bench", "http://127.0.0.1:8080/app", "flow.mjs") }, { layoutCount: 1 });
   const current = writeRecMeta("lb-reg-cur.json", { target: "host.html", driver: false, ...workload("bench", "http://127.0.0.1:9090/app", "flow.mjs") }, { layoutCount: 1 });
@@ -323,7 +322,7 @@ test("diff: a NON-loopback ephemeral-port difference still refuses the gate", as
 // --variant labels a technique behind ONE module path (env-switched), which `workload` cannot tell
 // apart. A different (or present-vs-absent) variant is a different technique, so the gate refuses;
 // identical or both-absent variants pass. Decision: present-vs-absent REFUSES, because the absent
-// side's technique cannot be verified to match the labelled one.
+// side's technique cannot be verified to match the labelled one
 test("diff: differing --variant labels REFUSE the gate", async () => {
   const base = writeRecMeta("var-a.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "fast" }, { layoutCount: 1 });
   const current = writeRecMeta("var-b.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs"), variant: "slow" }, { layoutCount: 1 });
@@ -347,7 +346,7 @@ test("diff: an identical --variant gates a real regression, not the variant", as
   const regression = await runDiffCapture(base, regressed, { failOnRegression: true });
   assert.ok(!regression.logs.some((line) => /variant:/.test(line)), "no variant note when the labels match");
   assert.equal(regression.code, 1, "a real regression on the same variant still gates");
-  // Both-absent is the default and must never surface a variant axis.
+  // Both-absent is the default and must never surface a variant axis
   const plainBase = writeRecMeta("var-none-base.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs") }, { layoutCount: 1 });
   const plainClean = writeRecMeta("var-none-cur.json", { target: "flow.mjs", ...workload("bench", "http://127.0.0.1:5000/a", "flow.mjs") }, { layoutCount: 1 });
   const pass = await runDiffCapture(plainBase, plainClean, { failOnRegression: true });
@@ -371,7 +370,7 @@ test("diff: headless-flavour and cpu-throttle mismatches REFUSE the gate (R05)",
 
 // T03: warmup carries workload state (cache priming, JIT tiers, first-render code). Moving a call
 // across the warmup boundary changes which counts land in the timed window, so a --warmup change
-// alone can read as a count regression. It REFUSES the gate.
+// alone can read as a count regression. It REFUSES the gate
 test("diff: a warmup mismatch REFUSES the gate (T03)", async () => {
   const warmupBase = writeRecMeta("r05-warm-base.json", { warmup: 0 }, { layoutCount: 1 });
   const warmupCur = writeRecMeta("r05-warm-cur.json", { warmup: 3 }, { layoutCount: 1 });
@@ -382,7 +381,7 @@ test("diff: a warmup mismatch REFUSES the gate (T03)", async () => {
 });
 
 // R05: the sampler interval moves sampling density / steady-state, not the gated exact counts, so it
-// WARNS but still compares.
+// WARNS but still compares
 test("diff: a sampler-interval mismatch WARNS but still compares (R05)", async () => {
   const intervalBase = writeRecMeta("r05-int-base.json", { cpuIntervalUs: 200 }, { layoutCount: 1 });
   const intervalCur = writeRecMeta("r05-int-cur.json", { cpuIntervalUs: 50 }, { layoutCount: 1 });
@@ -393,7 +392,7 @@ test("diff: a sampler-interval mismatch WARNS but still compares (R05)", async (
 
 // Host-CPU: self-time ms are host-relative, so two recordings whose host-CPU indices differ beyond the
 // ~25% threshold warn (self-time is host-scaled) but do NOT refuse the gate -- it is an environmental
-// observation, not a config wpd applied. Within threshold (and absent-one-side) follow suit below.
+// observation, not a config wpd applied. Within threshold (and absent-one-side) follow suit below
 test("diff: a materially different host-CPU index WARNS but still compares", async () => {
   const base = writeRecMeta("hc-diff-base.json", { hostCpuIndex: 1800 }, { layoutCount: 1 });
   const current = writeRecMeta("hc-diff-cur.json", { hostCpuIndex: 650 }, { layoutCount: 1 });
@@ -435,7 +434,7 @@ test("diff: --fail-on-regression REFUSES across a mismatched capture-mode/browse
 
 // R05: cpu-diff had NO comparability check. It joins per-function self-time across two models as if
 // they measured the same JS; a workload/lane mismatch makes that a fabricated delta. It now warns
-// always and REFUSES a --fail-on-regression gate across browser/runtime/workload.
+// always and REFUSES a --fail-on-regression gate across browser/runtime/workload
 function writeCpuModel(name, metaOverrides = {}, jsSelfMs) {
   const { passes, runtime, ...restMeta } = metaOverrides;
   const meta = {
@@ -504,7 +503,7 @@ test("cpu-diff: a structured-vs-absent pair WARNS but does not block (T02)", asy
 
 // cpu-diff is the tool for comparing JS cost across bench/loopback runs, so the ephemeral-port fold
 // must reach it too: the workload axis stays in CPU_DIFF_BLOCKING_AXES but the gate honours its
-// blocksGating, so a folded loopback port does not refuse a cpu-diff any more than a diff.
+// blocksGating, so a folded loopback port does not refuse a cpu-diff any more than a diff
 test("cpu-diff: a loopback ephemeral-port difference does NOT refuse the gate", async () => {
   const base = writeCpuModel("cpudiff-lb-base.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:54927/app", "flow.mjs") }, 10);
   const current = writeCpuModel("cpudiff-lb-cur.cpu.json", { target: "host.html", ...workload("bench", "http://127.0.0.1:61003/app", "flow.mjs") }, 10);
@@ -530,7 +529,7 @@ test("cpu-diff: differing --variant labels REFUSE the gate", async () => {
 
 // Host-CPU on cpu-diff: this is the command the axis matters most for (self-time joined across two
 // hosts is host-scaled). It NAMES both indices and warns, but does not block -- host difference is
-// environmental, not a config wpd applied, so a same-machine gate that thermally drifted is not refused.
+// environmental, not a config wpd applied, so a same-machine gate that thermally drifted is not refused
 test("cpu-diff: a materially different host-CPU index names both values and WARNS, does not block", async () => {
   const base = writeCpuModel("cpudiff-hc-base.cpu.json", { hostCpuIndex: 1800 }, 10);
   const current = writeCpuModel("cpudiff-hc-cur.cpu.json", { hostCpuIndex: 620 }, 10);
@@ -558,7 +557,7 @@ test("cpu-diff: a capture-mode mismatch WARNS but still compares (not a cpu-diff
 
 // F02: CPU self-time TOTALS across every sampled iteration and STRETCHES under cpu-throttle, so a
 // same-workload pair differing only on those axes would fabricate a self-time "regression". Both
-// must REFUSE a cpu-diff gate, not merely warn.
+// must REFUSE a cpu-diff gate, not merely warn
 test("cpu-diff: an iterations mismatch REFUSES the gate (F02)", async () => {
   const base = writeCpuModel("cpudiff-iter-base.cpu.json", { iterations: 1 }, 58);
   const current = writeCpuModel("cpudiff-iter-cur.cpu.json", { iterations: 4 }, 165);
@@ -579,7 +578,7 @@ test("cpu-diff: a cpu-throttle mismatch REFUSES the gate (F02)", async () => {
 
 // T03: warmup moves the workload's first-call state (JIT tiers, caches, first-render code) into or
 // out of the sampled window, so an expensive first call lands under --warmup 0 and not under
-// --warmup 1 though the code is identical. It must REFUSE a cpu-diff gate, not merely warn.
+// --warmup 1 though the code is identical. It must REFUSE a cpu-diff gate, not merely warn
 test("cpu-diff: a warmup mismatch REFUSES the gate (T03)", async () => {
   const base = writeCpuModel("cpudiff-warm-base.cpu.json", { warmup: 1 }, 26);
   const current = writeCpuModel("cpudiff-warm-cur.cpu.json", { warmup: 0 }, 257);
@@ -625,7 +624,7 @@ test("assert: a satisfied threshold on a measured metric passes", async () => {
 });
 
 // --breakdown reports forced as null (not measured). A gate on it must FAIL loudly, exactly like
-// --max-inp on a run with no interaction, never silently pass on a fake 0.
+// --max-inp on a run with no interaction, never silently pass on a fake 0
 test("assert: --max-forced on a breakdown recording (forced null) FAILS, not silently passes", async () => {
   const rec = writeRecording("assert-null-forced.json", { forcedLayoutCount: null });
   const code = await captureExitCode(() => assertCmd(rec, { forced: 0 }));
@@ -635,30 +634,30 @@ test("assert: --max-forced on a breakdown recording (forced null) FAILS, not sil
 // browser/harness.ts and browser/driver.ts serialize into page.evaluate and run in the browser, so
 // they CANNOT import model/marks.ts -- nothing from Node's module graph exists there. Their wpd:*
 // literals are duplicated out of necessity; this pins those copies to the canonical constants, so a
-// rename of a constant fails here until the serialized literals follow.
+// rename of a constant fails here until the serialized literals follow
 test("page-serialized mark literals match the canonical constants (the serialization boundary forces the copy)", async () => {
   const marks = await import("../../dist/model/marks.js");
   const harness = await readFile(new URL("../../src/browser/harness.ts", import.meta.url), "utf8");
   const driver = await readFile(new URL("../../src/browser/driver.ts", import.meta.url), "utf8");
 
-  // Run-level marks: both serialized files emit them verbatim.
+  // Run-level marks: both serialized files emit them verbatim
   for (const [name, source] of [["harness", harness], ["driver", driver]]) {
     assert.ok(source.includes(`"${marks.RUN_START_MARK}"`), `${name} emits ${marks.RUN_START_MARK}`);
     assert.ok(source.includes(`"${marks.RUN_END_MARK}"`), `${name} emits ${marks.RUN_END_MARK}`);
   }
-  // The run measure spans [start,end] and lives in the harness.
+  // The run measure spans [start,end] and lives in the harness
   assert.ok(harness.includes(`"${marks.RUN_MEASURE}"`), "harness measures the run window");
 
-  // Step edge marks: the driver builds them off the canonical wpd:step: base (stepMark(index)).
+  // Step edge marks: the driver builds them off the canonical wpd:step: base (stepMark(index))
   const stepBase = marks.stepMark("${stepMark}"); // "wpd:step:${stepMark}", the driver's template
   assert.ok(driver.includes(`\`${stepBase}:start\``), "driver's step start edge is the canonical base");
   assert.ok(driver.includes(`\`${stepBase}:end\``), "driver's step end edge is the canonical base");
 });
 
 // The Value cell's distinctive magnitude token: prefer a unit-bearing token (`21%`, `16.6ms`,
-// `9-30ms`, `24.5%`), falling back to the first bare number (`N+1` -> `1`, `18 = 6 + 12` -> `6`).
+// `9-30ms`, `24.5%`), falling back to the first bare number (`N+1` -> `1`, `18 = 6 + 12` -> `6`)
 // Whitespace is stripped so `200 us` reads as `200us`. Returns null for a prose Value with no digit
-// (those facts carry no number to drift). Mirrors the extraction the value-coupling assertion runs on.
+// (those facts carry no number to drift). Mirrors the extraction the value-coupling assertion runs on
 function ledgerValueToken(value) {
   const magnitude = /\d+(?:\.\d+)?(?:\s?[-–/]\s?\d+(?:\.\d+)?)?\s?(%|x|pp|ms|us|KB|MB|Hz)?/g;
   let first = null;
@@ -671,17 +670,17 @@ function ledgerValueToken(value) {
   return withUnit ?? first;
 }
 
-// The docs/dev/facts.md ledger pins each load-bearing measured number to the files that cite it.
+// The docs/dev/facts.md ledger pins each load-bearing measured number to the files that cite it
 // This reads the table and asserts every listed file still contains the fact's distinctive string,
 // so changing a number in one place and not the others fails here. Match distinctive strings scoped
-// to the listed files, which catches drift without spurious failures.
+// to the listed files, which catches drift without spurious failures
 //
 // It ALSO couples the Value column to the Test string, so the human-readable magnitude cannot drift
 // from the file-checked one: each Value's distinctive token (ledgerValueToken) must appear either in
 // the row's Test string OR in one of its cited files. The Test string is the truth (already asserted
 // present in every cited file); a Value whose number no cited source agrees with is stale. So mutating
 // a Value (21% -> 42%) without touching the Test string or the docs fails here, because 42% then
-// appears in neither. A prose Value with no numeric token is exempt (no magnitude to drift).
+// appears in neither. A prose Value with no numeric token is exempt (no magnitude to drift)
 test("facts.md ledger: every cited file still agrees with the ledger value", async () => {
   const ledger = await readFile(new URL("../../docs/dev/facts.md", import.meta.url), "utf8");
   const rows = ledger
@@ -720,7 +719,7 @@ test("facts.md ledger: every cited file still agrees with the ledger value", asy
       );
 
     // Couple the Value column: its magnitude token must be corroborated by the Test string or a
-    // cited file (whitespace-insensitive). A prose Value (no numeric token) is exempt.
+    // cited file (whitespace-insensitive). A prose Value (no numeric token) is exempt
     const token = ledgerValueToken(value);
     if (token == null) continue;
     coupledValues += 1;
@@ -733,7 +732,7 @@ test("facts.md ledger: every cited file still agrees with the ledger value", asy
     );
   }
   // Guard the coupling itself: if the extractor silently stopped matching, every row would exempt and
-  // the assertion above would pass vacuously. Most rows carry a magnitude, so demand a healthy floor.
+  // the assertion above would pass vacuously. Most rows carry a magnitude, so demand a healthy floor
   assert.ok(coupledValues >= 40, `expected most facts to couple a numeric Value, coupled ${coupledValues}`);
 });
 

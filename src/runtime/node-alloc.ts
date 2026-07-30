@@ -31,7 +31,7 @@ import { measureHostCpuIndex } from "../model/host-cpu.js";
  * 58 MB churn. The 32 KB interval is fixed too: the per-package split is interval-INDEPENDENT
  * (identical at 512 KB and 32 KB, spread 4.3pp -> 0.6pp), so the exact value does not move the answer;
  * 32 KB lands enough samples for per-function resolution while keeping the sampling overhead ~10%.
- * Never drop the flags without re-measuring (docs/dev/allocation-profiling.md).
+ * Never drop the flags without re-measuring (docs/dev/allocation-profiling.md)
  */
 const ALLOC_SAMPLING: AllocSamplingConfig = {
   samplingIntervalBytes: 32 * 1024,
@@ -39,7 +39,7 @@ const ALLOC_SAMPLING: AllocSamplingConfig = {
   includeMinorGC: true,
 };
 
-/** Promise wrapper around an inspector Session's callback-style post(). */
+/** Promise wrapper around an inspector Session's callback-style post() */
 function heapSession() {
   const session = new Session();
   session.connect();
@@ -57,7 +57,7 @@ function heapSession() {
  * SAMPLING profiler (`HeapProfiler.startSampling`), attributing allocated bytes to source/package.
  * This is a DEDICATED capture mode with the CPU sampler OFF, so CPU self-time / a CpuModel are
  * NOT-MEASURED here (absent, never a perturbed-but-disclosed number): [measured] the heap sampler at
- * 32 KB inflates co-riding CPU self-time +11.3%, so wpd refuses to fuse the two.
+ * 32 KB inflates co-riding CPU self-time +11.3%, so wpd refuses to fuse the two
  */
 export async function recordAllocNode(opts: RecordOptions): Promise<{
   recording: Recording;
@@ -97,10 +97,10 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
 
   const ctx: Record<string, unknown> = {};
 
-  // Price the host CPU before the sampled loop, so it prices the HOST and never rides the window.
+  // Price the host CPU before the sampled loop, so it prices the HOST and never rides the window
   const hostCpuIndex = measureHostCpuIndex();
 
-  // prepare + warmup run BEFORE sampling starts, so their allocation does not land in the profile.
+  // prepare + warmup run BEFORE sampling starts, so their allocation does not land in the profile
   if (prepare) await prepare(ctx);
   for (let iteration = 0; iteration < opts.warmup; iteration++) await run(ctx);
 
@@ -113,7 +113,7 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
   });
 
   // The per-iteration wall under allocation sampling: honest as "time under allocation sampling"
-  // (systematic overhead ~+10% at 32 KB), comparable alloc-vs-alloc, never a bare benchmark wall.
+  // (systematic overhead ~+10% at 32 KB), comparable alloc-vs-alloc, never a bare benchmark wall
   const perIteration: number[] = [];
   let rawProfile: RawHeapProfile | undefined;
   let runError: unknown;
@@ -129,7 +129,7 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     runError = error;
   }
   // Teardown after the run, whether it succeeded or threw: stop sampling, drop the session, run the
-  // user's cleanup so external resources are released.
+  // user's cleanup so external resources are released
   const stopped = await post("HeapProfiler.stopSampling").catch(() => undefined);
   rawProfile = stopped?.profile as RawHeapProfile | undefined;
   await post("HeapProfiler.disable").catch(() => {});
@@ -173,7 +173,7 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     lifecycle,
     capture: "node-alloc",
     // The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
-    // nothing. A core fact; always stamped.
+    // nothing. A core fact; always stamped
     framework: opts.framework ?? "auto",
     notes: [nodeAllocRuntime()],
   };
@@ -196,7 +196,7 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     inpMs: null,
     detailEvents: [],
     detailWindowStart: null,
-    // No DOM and no CPU sampler: every rendering count AND jsSelfMs is not-measured (null), never 0.
+    // No DOM and no CPU sampler: every rendering count AND jsSelfMs is not-measured (null), never 0
     capabilities: NO_RENDERING_CAPTURE,
     jsSelfMs: null,
   });
@@ -207,7 +207,7 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     marks: [],
     events: [],
     // One run span; no reconciling bar (allocation has no ms-tiled window), so query spans reports it
-    // barless. The allocation attribution lives on the sibling AllocModel, read by `query alloc`.
+    // barless. The allocation attribution lives on the sibling AllocModel, read by `query alloc`
     spans: buildRecordingSpans({
       summary,
       detailEvents: [],

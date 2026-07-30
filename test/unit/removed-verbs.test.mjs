@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 // The removed `query digest` / `query index` verbs must exit 1 with a message naming the
 // replacement (`spans` / `span <label>`), not commander's bare "unknown command" and not a stack
-// trace. Browser-free: the stub errors before any recording is read, so this stays a unit test.
+// trace. Browser-free: the stub errors before any recording is read, so this stays a unit test
 const cli = path.join(fileURLToPath(new URL("../..", import.meta.url)), "dist", "cli.js");
 
 function runCli(args) {
@@ -21,7 +21,7 @@ for (const [removed, replacement] of [
     const result = runCli(["query", removed, "latest", "--format", "json"]);
     assert.equal(result.status, 1, `query ${removed} exits non-zero`);
     // The notice must go to STDERR with an empty STDOUT: a script that captures stdout and pipes it
-    // to JSON.parse then gets clean-empty + a real exit code, not a prose line that parses as garbage.
+    // to JSON.parse then gets clean-empty + a real exit code, not a prose line that parses as garbage
     assert.equal(result.stdout, "", `query ${removed} writes nothing to stdout`);
     assert.match(
       result.stderr,

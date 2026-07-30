@@ -30,23 +30,23 @@ import { mainThread } from "./main-thread.js";
  * (a synchronous DOM detach stamps the record at mutation time; [measured] byte-stable, and pure
  * removeChild emits no style-kind write at all, so this is its only write signal). Every other
  * layout-kind reason ("Added to layout", "Style changed") stamps at the forced recalc and names the
- * READ, so trusting those would mis-label the write as the read. docs/dev/blame-semantics.md.
+ * READ, so trusting those would mis-label the write as the read. docs/dev/blame-semantics.md
  */
 
-/** N: a run at/over this many thrash steps earns the "layout thrashed Nx" headline. A named constant. */
+/** N: a run at/over this many thrash steps earns the "layout thrashed Nx" headline. A named constant */
 export const THRASH_HEADLINE_MIN = 3;
 
-/** How many interleave steps the rollup keeps; the rest collapse into `omitted` (size cap). */
+/** How many interleave steps the rollup keeps; the rest collapse into `omitted` (size cap) */
 export const THRASH_SEQUENCE_CAP = 12;
 
-/** The full detector result over a window: the rollup plus dirtied-by writes keyed by read-site. */
+/** The full detector result over a window: the rollup plus dirtied-by writes keyed by read-site */
 export interface ThrashAnalysis {
   report: ThrashReport;
-  /** dirtied-by writes per forced read-site (source line), the dual annotation for blame and the span anatomy. */
+  /** dirtied-by writes per forced read-site (source line), the dual annotation for blame and the span anatomy */
   dirtiedByReadSite: Record<string, DirtiedByWrite[]>;
 }
 
-/** Layout or style if `event` is a layout/style invalidation write; null otherwise. */
+/** Layout or style if `event` is a layout/style invalidation write; null otherwise */
 function writeKindOf(event: NormalizedEvent): "layout" | "style" | null {
   if (event.kind !== "invalidation") return null;
   const kind = invalidationKind(event.name);
@@ -54,10 +54,10 @@ function writeKindOf(event: NormalizedEvent): "layout" | "style" | null {
 }
 
 /** The one layout-kind invalidation reason whose stack names the write (a synchronous DOM detach);
- * all other layout-kind reasons stamp at the forced recalc and name the read. */
+ * all other layout-kind reasons stamp at the forced recalc and name the read */
 const LAYOUT_WRITE_REASON = "Removed from layout";
 
-/** The invalidation reason string a record carried, if any. */
+/** The invalidation reason string a record carried, if any */
 function reasonOf(event: NormalizedEvent): string | undefined {
   const reason = (event.args as { data?: { reason?: unknown } } | undefined)?.data?.reason;
   return typeof reason === "string" ? reason : undefined;
@@ -66,7 +66,7 @@ function reasonOf(event: NormalizedEvent): string | undefined {
 /**
  * Top-level tasks on the (already ts-ordered) main-thread stream: a `RunTask` not fully nested inside
  * a longer one. The interleave is walked per task so "since the previous flush" never crosses a task
- * boundary. On the probe the whole interaction is one task; the rule generalizes without change.
+ * boundary. On the probe the whole interaction is one task; the rule generalizes without change
  */
 function topLevelTasks(ordered: NormalizedEvent[]): NormalizedEvent[] {
   const tasks = ordered.filter((event) => event.kind === "task");
@@ -103,7 +103,7 @@ function dedupeWrites(writes: DirtiedByWrite[]): DirtiedByWrite[] {
  * gap resets at EVERY flush (in-window or not: a flush still cleans the geometry), while only
  * in-window flushes are reported, since the run window is what scopes the span. A forced flush
  * outside any top-level task is not walked and so never counts as a thrash step; on the renderer
- * main thread every layout/style flush nests under a task, so nothing real is dropped.
+ * main thread every layout/style flush nests under a task, so nothing real is dropped
  */
 function annotateForcedFlushes(events: NormalizedEvent[], start: number | null): FlushAnnotation[] {
   const picked = mainThread(events);
@@ -138,7 +138,7 @@ function annotateForcedFlushes(events: NormalizedEvent[], start: number | null):
           // "Removed from layout" entry whose `at` equals this flush's read-site is not a write: it
           // is the recalc-time stamp of a display:none removal, named at the read line. Drop it; a
           // genuine removeChild names a distinct write line and stays. The thrash count is read from
-          // gapLayoutWrites above and untouched. See docs/dev/blame-semantics.md.
+          // gapLayoutWrites above and untouched. See docs/dev/blame-semantics.md
           const dirtiedBy = dedupeWrites(gapDirtiedBy).filter(
             (write) => !(write.reason === LAYOUT_WRITE_REASON && write.at === event.at),
           );
@@ -161,7 +161,7 @@ function annotateForcedFlushes(events: NormalizedEvent[], start: number | null):
 /**
  * Run the detector over a window's events. `start` is the run-window start (null = whole trace).
  * Empty result (count 0, no dirtied-by) on a log with no invalidation records, which is how every
- * non-`--deep` lane reads: not-available, never a fabricated thrash.
+ * non-`--deep` lane reads: not-available, never a fabricated thrash
  */
 export function analyzeThrash(
   events: NormalizedEvent[],
@@ -192,10 +192,10 @@ export function analyzeThrash(
   };
 }
 
-/** Distinct writes named per rendered step; a gap dirtying more lines says "+N more". */
+/** Distinct writes named per rendered step; a gap dirtying more lines says "+N more" */
 const WRITES_PER_STEP_CAP = 4;
 
-/** Render one thrash step as `write(at) → read(at)`, the interleave the thrash report surfaces. */
+/** Render one thrash step as `write(at) → read(at)`, the interleave the thrash report surfaces */
 export function renderThrashStep(step: ThrashStep): string {
   const read = `read ${step.read ?? "?"} (${step.kind})`;
   if (!step.dirtiedBy.length) return read;

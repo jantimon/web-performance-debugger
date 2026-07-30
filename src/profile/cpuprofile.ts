@@ -26,8 +26,10 @@ import {
 } from "./raw.js";
 import { computeGeckoCpuBreakdown } from "./gecko-breakdown.js";
 
-// Re-exported so existing importers keep reading the raw-profile surface from `./cpuprofile.js`
-// (including the unit-test deep dist paths); the definitions live in `./raw.js`.
+/**
+ * Re-exported so existing importers keep reading the raw-profile surface from `./cpuprofile.js`
+ * (including the unit-test deep dist paths); the definitions live in `./raw.js`
+ */
 export type { RawCpuProfile, RawCallFrame, RawProfileNode } from "./raw.js";
 export { functionIdByNode } from "./raw.js";
 import { usToMs, msToUs } from "../model/time.js";
@@ -44,10 +46,10 @@ import {
 } from "../model/site-relation.js";
 import { resolveTarget } from "../commands/resolve.js";
 
-/** Edges below this carry no signal; dropped to keep the model bounded. */
+/** Edges below this carry no signal; dropped to keep the model bounded */
 const EDGE_THRESHOLD_MS = 0.05;
 
-/** Joins the two endpoint keys of an edge; frame keys never contain newlines. */
+/** Joins the two endpoint keys of an edge; frame keys never contain newlines */
 const EDGE_SEPARATOR = "\n";
 
 /** Trim a pseudo-URL for display: inline data:/blob: payloads can be tens of KB, so keep
@@ -99,7 +101,7 @@ function classifyPseudoUrl(url: string | undefined): { package: string; label: s
  * `webpack://app/./node_modules/react/index.js` to `node_modules/react/index.js` -- neither begins
  * with the runtime markers, so both resolve to their real owner. Accepts both the raw scheme URL and
  * the already-cleaned source (cleanRemoteSource strips the scheme+host), so it matches at either call
- * site.
+ * site
  */
 function classifyWebpackRuntime(url: string): { package: string; label: string } | null {
   const withoutScheme = url.replace(/^webpack(-internal)?:\/\/[^/]*\//i, "").replace(/^\.?\//, "");
@@ -114,7 +116,7 @@ function classifyWebpackRuntime(url: string): { package: string; label: string }
 /**
  * Default sampler interval for EVERY lane (CDP and node's inspector). One definition: a lane that
  * declares its own can drift silently, since nothing type-checks two constants into agreement. A
- * unit test asserts no lane redeclares it. See docs/dev/cpu-profiling.md for why 200.
+ * unit test asserts no lane redeclares it. See docs/dev/cpu-profiling.md for why 200
  */
 export const DEFAULT_CPU_INTERVAL_US = 200;
 
@@ -127,7 +129,7 @@ export const DEFAULT_CPU_INTERVAL_US = 200;
  * (they are the model's per-sample self-time, not a continuous timeline). Fix both for the on-disk
  * file only: recompute the deltas from the absolute timestamps so the timeline is faithful, and parent
  * the process roots under one synthetic super-root. wpd's own model keeps the multi-root form and the
- * per-sample deltas (it windows by `sampleTimestampsUs` directly), so nothing here touches the numbers.
+ * per-sample deltas (it windows by `sampleTimestampsUs` directly), so nothing here touches the numbers
  */
 export function toDevtoolsCpuProfile(raw: RawCpuProfile): RawCpuProfile {
   const timestamps = raw.sampleTimestampsUs;
@@ -154,7 +156,7 @@ export function toDevtoolsCpuProfile(raw: RawCpuProfile): RawCpuProfile {
  * sample's absolute timestamp, clip its interval to `[windowStartUs, windowEndUs]`, and keep only the
  * in-window portion, so the start prefix and any post-`run()` tail contribute to no function, package,
  * or gate. `totalMs` then equals the window width, reconciling with the summed timed `run()` samples.
- * A sample whose in-window portion is empty is dropped, so `sampleCount` reflects the window too.
+ * A sample whose in-window portion is empty is dropped, so `sampleCount` reflects the window too
  */
 export function windowCumulativeCpuProfile(
   raw: RawCpuProfile,
@@ -176,7 +178,7 @@ export function windowCumulativeCpuProfile(
 }
 
 /** Parent every root (a node no one is a child of) under one synthetic `(root)` super-root, so the
- * DevTools-format tree is single-rooted. A profile that already has one root is returned as-is. */
+ * DevTools-format tree is single-rooted. A profile that already has one root is returned as-is */
 function singleRootedNodes(nodes: RawProfileNode[]): RawProfileNode[] {
   const childIds = new Set<number>();
   for (const node of nodes) for (const childId of node.children ?? []) childIds.add(childId);
@@ -202,7 +204,7 @@ function singleRootedNodes(nodes: RawProfileNode[]): RawProfileNode[] {
  * port is a per-run accident, and keeping it would give the same unmapped code a fresh bucket every
  * run and split every cross-run cpu-diff / functionJoinKey join. The trade: two different
  * ephemeral-port origins on one host merge into a single bucket, and an ephemeral-port remote host
- * loses its port; accepted because unmapped-frame joins must survive a `listen(0)` re-pick.
+ * loses its port; accepted because unmapped-frame joins must survive a `listen(0)` re-pick
  */
 function unmappedOriginBucket(url: string | undefined): string {
   if (!url) return "(unmapped)";
@@ -217,7 +219,7 @@ function unmappedOriginBucket(url: string | undefined): string {
   }
 }
 
-/** The package name for a path inside node_modules; pnpm-safe (uses the LAST segment). */
+/** The package name for a path inside node_modules; pnpm-safe (uses the LAST segment) */
 function packageFromNodeModules(filePath: string): string | null {
   const at = filePath.lastIndexOf("node_modules");
   if (at < 0) return null;
@@ -234,7 +236,7 @@ function packageFromNodeModules(filePath: string): string | null {
  * segment PRECEDING the LAST of these names the package, whichever sub-directory (runtime/, core/,
  * ...) a given file sits in, so a library whose off-disk sources span several source directories
  * collapses to one bucket instead of splitting one per directory (and a nested
- * `.../src/vendor/<pkg>/dist/x` names `<pkg>`, not the outer `src`).
+ * `.../src/vendor/<pkg>/dist/x` names `<pkg>`, not the outer `src`)
  */
 const SOURCE_LAYOUT_DIRS = new Set(["src", "dist", "lib", "esm", "cjs", "build", "out"]);
 
@@ -252,7 +254,7 @@ const SOURCE_LAYOUT_DIRS = new Set(["src", "dist", "lib", "esm", "cjs", "build",
  *   - else the immediate directory, the last resort that still never reads as "app".
  *
  * Parenthesized to match the other "not a real package" buckets ((unmapped)/(served)/...): the map
- * pointed off-disk, so the identity is inferred from the path, not confirmed against a package.json.
+ * pointed off-disk, so the identity is inferred from the path, not confirmed against a package.json
  */
 function offDiskSourceBucket(filePath: string): string {
   const segments = filePath.split(/[\\/]+/).filter(Boolean);
@@ -269,7 +271,7 @@ function offDiskSourceBucket(filePath: string): string {
 /**
  * Owning package for a resolved local file: the node_modules package (pnpm-safe), else
  * the nearest package.json `name` (catches monorepo workspace packages like next-yak),
- * else "app". Directory results are cached so each tree is read at most once.
+ * else "app". Directory results are cached so each tree is read at most once
  */
 async function packageForFile(
   filePath: string,
@@ -315,7 +317,7 @@ async function packageForFile(
  * The server roots at the project root, so map the served pathname back to the local file and let
  * `packageForFile` attribute it like any on-disk source (the real npm/workspace package or the real
  * relative file). Only when the pathname names no existing local file fall back to the stable
- * literal `(served)` bucket, rather than fs-walking the missing path up to a stray package.json.
+ * literal `(served)` bucket, rather than fs-walking the missing path up to a stray package.json
  */
 async function attributeServedOrigin(
   url: string | undefined,
@@ -343,7 +345,7 @@ async function attributeServedOrigin(
   // A pathname that resolves to root itself (bare `/` or empty), escapes root, or names no on-disk
   // file cannot be honestly attributed to a local package; `(served)` is the stable answer rather
   // than a guess. root is included on purpose: `packageForFile(root)` walks UPWARD to an ancestor
-  // package.json, the stray walk this fallback exists to avoid.
+  // package.json, the stray walk this fallback exists to avoid
   if (!localPath.startsWith(rootPrefix) || !existsSync(localPath)) {
     return { package: "(served)" };
   }
@@ -364,7 +366,7 @@ export interface ResolvedFrame {
    * code this is and fell back to its origin. Set at the point of that decision rather than
    * inferred later from the package string: `(cdn.example.com)` is unmapped but `(native)` and
    * `(node)` are not, and telling those apart by pattern breaks on a dotless host like
-   * `(localhost)`. This is the only honest signal for "the package rollup is lying".
+   * `(localhost)`. This is the only honest signal for "the package rollup is lying"
    */
   unmapped?: boolean;
 }
@@ -372,7 +374,7 @@ export interface ResolvedFrame {
 /**
  * Resolve a CDP call frame to display name + original source + owning package. CDP
  * line/column are 0-based; convert to 1-based so the existing trace resolvers (which
- * expect the 1-based trace-stack convention) apply unchanged.
+ * expect the 1-based trace-stack convention) apply unchanged
  */
 export async function resolveCallFrame(
   callFrame: RawCallFrame,
@@ -386,7 +388,7 @@ export async function resolveCallFrame(
   // CDP callFrame line/column are 0-based; +1 makes them 1-based (the trace-stack convention). V8
   // reports a positionless frame (a native/builtin call that still carries a script url) as
   // lineNumber/columnNumber -1, which would shift to 0 -- an invalid line that makes the sourcemap
-  // lookup throw. Treat a negative source position as "no position" (undefined) instead.
+  // lookup throw. Treat a negative source position as "no position" (undefined) instead
   const hasPosition = callFrame.url != null && callFrame.url !== "" && callFrame.lineNumber >= 0;
   const frame: StackFrame = {
     functionName: callFrame.functionName || undefined,
@@ -397,7 +399,7 @@ export async function resolveCallFrame(
   rewriteToLocal(frame);
   await maps.resolveFrame(frame);
   // Prefer the sourcemap's original name (readable, and stable across minified builds so
-  // cpu-diff joins correctly); keep the minified name as a secondary label when they differ.
+  // cpu-diff joins correctly); keep the minified name as a secondary label when they differ
   const fn = frame.originalName ?? minifiedName;
   const minified =
     frame.originalName && frame.originalName !== minifiedName ? minifiedName : undefined;
@@ -409,7 +411,7 @@ export async function resolveCallFrame(
   // bucket by scheme and never fs-walk them, or packageForFile climbs to a stray package.json
   // and mis-blames their cost on an unrelated package (often wpd's own cwd package). Check the
   // ORIGINAL script URL too, since an inline data: module can carry a sourcemap that fills
-  // frame.source and would otherwise hide the scheme.
+  // frame.source and would otherwise hide the scheme
   const pseudo = classifyPseudoUrl(callFrame.url) ?? classifyPseudoUrl(frame.source);
   if (pseudo) {
     const lineSuffix = frame.line != null ? `:${frame.line}` : "";
@@ -429,7 +431,7 @@ export async function resolveCallFrame(
   // (the real npm/workspace package), or the stable literal `(served)` bucket when the served
   // pathname names no on-disk file. A frame that DID resolve to an existing source (the common case:
   // makeSourceResolver -> the served bundle on disk, or a mapped original source) is already the
-  // best, stablest answer and is left to the branches below.
+  // best, stablest answer and is left to the branches below
   const sourceExists =
     frame.source != null && path.isAbsolute(frame.source) && existsSync(frame.source);
   if (!sourceExists) {
@@ -460,7 +462,7 @@ export async function resolveCallFrame(
   // the difference between the last two is the whole point: frame.source is set only when the
   // sourcemap resolved, so an unmapped frame is still pointing at the bundle url and we do NOT
   // know whose code it is. Calling that "app" silently blames every unmapped third-party script
-  // on the user's own bundle.
+  // on the user's own bundle
   if (frame.remote) {
     const dependency = packageFromNodeModules(file);
     const owner = dependency ?? (frame.source != null ? "app" : unmappedOriginBucket(frame.url));
@@ -477,7 +479,7 @@ export async function resolveCallFrame(
   const relFile = relativizeSource(file, root) ?? file;
   const lineSuffix = frame.line != null ? `:${frame.line}` : "";
   // Not-on-disk and not flagged remote means the frame was never rewritten to a local path
-  // (e.g. --target node handed an http url): unknown owner, so bucket it rather than guess "app".
+  // (e.g. --target node handed an http url): unknown owner, so bucket it rather than guess "app"
   if (!isLocalPath) {
     return {
       fn,
@@ -494,11 +496,12 @@ export async function resolveCallFrame(
   // nearest package.json lands on whatever sits above it -- usually the user's own root -- and blames
   // a dependency's cost on "app". Instead derive the owner from the path string: the node_modules
   // package the phantom source or its original bundle url names (the code really is that dependency),
-  // else an honest off-disk bucket that names the phantom directory, never "app". A frame that was
-  // NEVER remapped points at its own url and is the app's own file even when that file is absent, so
-  // it is left to packageForFile. The off-disk bucket is not counted in `unmapped`: that flag drives
-  // the map-LOAD-health warning (origin-bucketed frames from a failed map), and this map loaded fine;
-  // the parenthesized bucket name is the rollup's own honest "owner unknown" signal.
+  // else an honest off-disk bucket that names the phantom directory, never "app"
+
+  // A frame that was NEVER remapped points at its own url and is the app's own file even when that
+  // file is absent, so it is left to packageForFile. The off-disk bucket is not counted in `unmapped`:
+  // that flag drives the map-LOAD-health warning (origin-bucketed frames from a failed map), and this
+  // map loaded fine; the parenthesized bucket name is the rollup's own honest "owner unknown" signal
   if (frame.bundled != null && path.isAbsolute(file) && !sourceExists) {
     const dependency = packageFromNodeModules(file) ?? packageFromNodeModules(frame.url ?? "");
     return {
@@ -510,7 +513,7 @@ export async function resolveCallFrame(
     };
   }
   // Resolve the owning package from the on-disk path (reads package.json), then store the path
-  // relative to root: smaller model, portable, and a stable cpu-diff join key.
+  // relative to root: smaller model, portable, and a stable cpu-diff join key
   return {
     fn,
     minified,
@@ -536,7 +539,7 @@ export async function resolveCallFrame(
  *  - (program)/(root), or a tool harness frame -> browser (engine/runtime work with the profiled
  *    JS not on the stack; left unsplit)
  *  - everything else     -> js, bucketed by the SAME resolved package as `functions`/packageRollup,
- *    so `byPackage` matches `query cpu --by package` and sums to `js.ms`.
+ *    so `byPackage` matches `query cpu --by package` and sums to `js.ms`
  */
 function computeBreakdown(
   nodes: RawProfileNode[],
@@ -563,7 +566,7 @@ function computeBreakdown(
       browserUs += selfUs;
     } else {
       // resolvedByKey is keyed by frameKey over these same raw.nodes, so this lookup always hits;
-      // fall back to jsUs staying unattributed rather than inventing a "(native)" bucket.
+      // fall back to jsUs staying unattributed rather than inventing a "(native)" bucket
       const owner = resolvedByKey.get(frameKey(node.callFrame))?.package;
       if (owner == null) continue;
       jsUs += selfUs;
@@ -585,7 +588,7 @@ function computeBreakdown(
   // Every classified node adds its selfUs to exactly one slice, so the four sum to totalMs by
   // construction. The one leak is a node whose owner resolves to null (the `continue` above): its
   // time belongs to no slice. The residual surfaces that instead of letting the bar quietly fall
-  // short of wall; same epsilon + escape valve as the seven-slice breakdown.
+  // short of wall; same epsilon + escape valve as the seven-slice breakdown
   const sliceSum =
     breakdown.slices.js.ms +
     breakdown.slices.browser.ms +
@@ -599,7 +602,7 @@ function computeBreakdown(
 /**
  * Turn a raw CPU profile into a resolved, self-contained model: per-function self/total
  * time, system buckets, and a thresholded call-graph. Sized by function count, not by
- * sample count, so it stays small for complex pages and needs no re-resolution later.
+ * sample count, so it stays small for complex pages and needs no re-resolution later
  */
 export async function buildCpuModel(
   raw: RawCpuProfile,
@@ -691,7 +694,7 @@ export async function buildCpuModel(
   const packageCache = new Map<string, string | null>();
   // Fetch the distinct remote script maps concurrently first, so the serial resolve below reads the
   // cache instead of fetching one script at a time (minutes on a heavy --url site). Only genuinely
-  // remote urls (not the served origin, which resolves to local paths) are warmed.
+  // remote urls (not the served origin, which resolves to local paths) are warmed
   const servedOrigin = context.serverUrl ?? "";
   await maps.warm(
     [...callFrameByKey.values()]
@@ -715,10 +718,10 @@ export async function buildCpuModel(
         context.serverUrl ?? "",
       ),
     );
-  // Frames whose owner we could not determine, i.e. what a failed sourcemap actually costs you.
+  // Frames whose owner we could not determine, i.e. what a failed sourcemap actually costs you
   // Surfaced on the model so `record` can warn about a broken package rollup only when it really
   // is broken: a missing sourcemap for plain unbundled source is a non-event, because those frames
-  // resolve straight to their local path with no map involved.
+  // resolve straight to their local path with no map involved
   const unmappedFrames = [...resolvedByKey.values()].filter((frame) => frame.unmapped).length;
 
   // system buckets vs rankable user functions
@@ -738,15 +741,15 @@ export async function buildCpuModel(
   const sampledUs = [...selfUsByNode.values()].reduce((sum, value) => sum + value, 0);
   const idleUs = msToUs(system.idleMs);
   // Non-idle sampled total (js + gc + engine/native), honestly named: it is everything the sampler saw
-  // that was not idle, NOT JS self-time. The JS headline is jsSelfMs below.
+  // that was not idle, NOT JS self-time. The JS headline is jsSelfMs below
   const activeMs = Math.max(0, usToMs(sampledUs - idleUs));
 
   const rankedKeys = rankedFrameKeys(callFrameByKey, selfUsByKey);
   // JS self-time: the sum over rankable user functions -- the SAME set packageRollup sums, so package
-  // percentages reconcile to 100% against it (unlike activeMs, which also carries gc/engine/native).
+  // percentages reconcile to 100% against it (unlike activeMs, which also carries gc/engine/native)
   // On the browser lanes this folds in the synchronous engine work JS triggered (a forced layout bills
   // to the forcing frame); only --target node measures pure JS. Excludes gc, (program)/(root), idle,
-  // and the tool's own harness frames.
+  // and the tool's own harness frames
   const jsSelfMs = usToMs(rankedKeys.reduce((sum, key) => sum + (selfUsByKey.get(key) ?? 0), 0));
 
   const ranked = rankedKeys.map((key) => {
@@ -765,7 +768,7 @@ export async function buildCpuModel(
 
   // The measured page URL for the per-function site relation (a `--url` run only). A resolved remote
   // function carries the URL-mechanical relation of the ORIGIN it was fetched from -- the real
-  // site/CDN origin, never wpd's own served localhost (that is plumbing, not a deployment origin).
+  // site/CDN origin, never wpd's own served localhost (that is plumbing, not a deployment origin)
   const pageUrl = measuredPageUrl(context.meta);
   const idByKey = new Map<string, number>();
   const functions: CpuFunction[] = ranked.map((entry, index) => {
@@ -814,7 +817,7 @@ export async function buildCpuModel(
   // (threadCPUDelta ~0 == descheduled/waiting) and style/layout come from the per-sample
   // Layout-category frame, both carried on `raw.gecko` when the `cpu` profiler feature populated the
   // column. Without that signal (js-only or an older dump) idle cannot be told from (program), so no
-  // breakdown is emitted rather than a fabricated one. Chrome/node classify V8's synthetic frames.
+  // breakdown is emitted rather than a fabricated one. Chrome/node classify V8's synthetic frames
   let breakdown: CpuBreakdown | undefined;
   if (context.meta.browser === "firefox") {
     if (raw.gecko) {
@@ -851,7 +854,7 @@ export async function buildCpuModel(
  * are never a real owner, so a stray sample on one must not skew the js-by-package split.
  *
  * Deliberately re-walks call-frame resolution here: the CpuModel exposes no node-id-to-package map,
- * and the shared resolver cache means this re-walk fetches no script or map twice.
+ * and the shared resolver cache means this re-walk fetches no script or map twice
  */
 export async function packagesByProfileNode(
   raw: RawCpuProfile,
@@ -896,7 +899,7 @@ export async function packagesByProfileNode(
  * carries its URL-mechanical site relation to the measured page (same-origin/same-site/cross-site): an
  * unmapped origin-bucket key (`(cdn.example.com)`) from its own host, and a RESOLVED package/file
  * bucket from the UNIFORM relation its member functions resolved from (item 5a). A bucket whose members
- * disagree (mixed origins) or carry none gets no tag -- never a wrong one. Non-`--url` runs carry none. */
+ * disagree (mixed origins) or carry none gets no tag -- never a wrong one. Non-`--url` runs carry none */
 function rollup(model: CpuModel, keyOf: (fn: CpuFunction) => string): CpuGroupStat[] {
   const byKey = new Map<
     string,
@@ -924,7 +927,7 @@ function rollup(model: CpuModel, keyOf: (fn: CpuFunction) => string): CpuGroupSt
         key,
         selfMs: entry.selfMs,
         // Denominated by jsSelfMs (the JS-only headline), the sum these buckets tile, so the shares add
-        // to 100%. activeMs would leave them short of 100 (it also carries gc/engine/native).
+        // to 100%. activeMs would leave them short of 100 (it also carries gc/engine/native)
         selfPct: model.jsSelfMs > 0 ? (entry.selfMs / model.jsSelfMs) * 100 : 0,
         functions: entry.functions,
         ...(relation ? { siteRelation: relation } : {}),
@@ -933,30 +936,30 @@ function rollup(model: CpuModel, keyOf: (fn: CpuFunction) => string): CpuGroupSt
     .sort((left, right) => right.selfMs - left.selfMs);
 }
 
-/** Self time by owning npm/workspace package (the headline rollup). */
+/** Self time by owning npm/workspace package (the headline rollup) */
 export function packageRollup(model: CpuModel): CpuGroupStat[] {
   return rollup(model, (fn) => fn.package);
 }
 
-/** Self time by source file. */
+/** Self time by source file */
 export function fileRollup(model: CpuModel): CpuGroupStat[] {
   return rollup(model, (fn) => fn.file ?? "(native)");
 }
 
 /** A stable join key for comparing the same function across two runs (cpu-diff). Joins on the
  * bare file path (not `source`, which carries `:line`): an edit that shifts a hot function down
- * a few lines must not split it into a phantom improvement (old key) + regression (new key). */
+ * a few lines must not split it into a phantom improvement (old key) + regression (new key) */
 export function functionJoinKey(fn: CpuFunction): string {
   return `${fn.fn} ${fn.file ?? fn.package}`;
 }
 
-/** Last `segments` path components, for compact table display. */
+/** Last `segments` path components, for compact table display */
 export function tailPath(filePath: string, segments = 2): string {
   const parts = filePath.split(/[\\/]+/).filter(Boolean);
   return parts.length <= segments ? filePath : parts.slice(-segments).join("/");
 }
 
-/** Longest path tail a compacted remote URL keeps before it is ellipsized (its origin is separate). */
+/** Longest path tail a compacted remote URL keeps before it is ellipsized (its origin is separate) */
 const REMOTE_TAIL_MAX = 40;
 
 /**
@@ -964,7 +967,7 @@ const REMOTE_TAIL_MAX = 40;
  * query string and hash dropped. An unmapped third-party frame's `file` is its full URL, which can run
  * hundreds of chars (a config endpoint with a long query string), sizing the source column to a wall
  * of dashes. The origin is kept whole -- it is the attribution signal such a frame buckets by -- and
- * the path tail is capped so one long segment cannot blow the column out either.
+ * the path tail is capped so one long segment cannot blow the column out either
  */
 export function shortRemoteUrl(url: string, segments = 2): string {
   let parsed: URL;
@@ -987,7 +990,7 @@ const REMOTE_URL = /^https?:\/\//i;
  * Compact "dir/file:line" for tables (the full absolute path is kept in the model and
  * shown by `query frame`). Pairs with the package column, which carries the owner. A remote URL
  * (an unmapped third-party frame) is compacted to origin + truncated path via `shortRemoteUrl`, so a
- * long config URL does not size the column to hundreds of chars.
+ * long config URL does not size the column to hundreds of chars
  */
 export function shortSource(
   file: string | undefined,
@@ -1002,7 +1005,7 @@ export function shortSource(
 
 /**
  * Load a resolved CPU model. Accepts the `.cpu.json` directly, `latest`, or (as a
- * convenience) a recording path whose sibling `.cpu.json` is loaded instead.
+ * convenience) a recording path whose sibling `.cpu.json` is loaded instead
  */
 export async function loadCpuModel(file: string): Promise<CpuModel> {
   const abs = await resolveTarget(file, "cpu-model");
@@ -1013,7 +1016,7 @@ export async function loadCpuModel(file: string): Promise<CpuModel> {
   }
   // a recording path was likely passed; try its sibling cpu model. `--out runs/a` writes the
   // recording to an extension-less path, so default the sibling to `.json` when there is no ext
-  // (slicing by a zero-length ext would otherwise blank the whole base path).
+  // (slicing by a zero-length ext would otherwise blank the whole base path)
   const ext = path.extname(abs);
   const base = ext ? abs.slice(0, -ext.length) : abs;
   const sibling = `${base}.cpu${ext || ".json"}`;
@@ -1028,13 +1031,13 @@ export async function loadCpuModel(file: string): Promise<CpuModel> {
     }
   } catch (error) {
     // A missing sibling is the expected "no CPU model" case, reported below; a corrupt or
-    // unreadable sibling surfaces as its own error rather than masquerading as absence.
+    // unreadable sibling surfaces as its own error rather than masquerading as absence
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
   }
   // An `--alloc` recording carries a sibling `.alloc.json`, not a `.cpu.json`: it sampled allocation,
   // not CPU, so there is no CpuModel to load and no cpu-diff to run against it. Point at `query alloc`
   // rather than the generic "record with a CPU-sampling mode" message, which would send the reader to
-  // re-record work they already have.
+  // re-record work they already have
   if (existsSync(`${base}.alloc.json`) || existsSync(`${base}.alloc.toon`)) {
     const noCpu = new Error(
       `${file} is an --alloc (allocation-sampling) recording, so it has no CPU model. Use \`query alloc\` for its allocation attribution. wpd has no alloc-diff yet, so there is nothing to cpu-diff here.`,

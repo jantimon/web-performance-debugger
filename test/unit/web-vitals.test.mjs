@@ -6,10 +6,9 @@ import {
 } from "../../dist/browser/driver.js";
 import { mergeLcp } from "../../dist/trace/steps.js";
 
-// --- CLS: the spec session-window maximum (computeLayoutShift, pure) ---
 
 // One layout-shift entry; a single source with a fabricated rect move so attribution has something to
-// rank. Timestamps are fabricated to exercise the session-window boundaries directly.
+// rank. Timestamps are fabricated to exercise the session-window boundaries directly
 const shift = (value, startTimeMs, opts = {}) => ({
   value,
   hadRecentInput: opts.hadRecentInput ?? false,
@@ -44,7 +43,7 @@ test("CLS sums a session window (shifts within the gap/window caps)", () => {
 });
 
 test("CLS opens a new session window past the 1s gap cap, and reports the max", () => {
-  // Gap of 1500ms > 1000ms: two windows. CLS is the larger.
+  // Gap of 1500ms > 1000ms: two windows. CLS is the larger
   const layoutShift = computeLayoutShift([shift(0.1, 0), shift(0.3, 1500)]);
   assert.ok(layoutShift);
   assert.ok(Math.abs(layoutShift.cls - 0.3) < 1e-9, `cls ${layoutShift.cls}`);
@@ -53,7 +52,7 @@ test("CLS opens a new session window past the 1s gap cap, and reports the max", 
 });
 
 test("CLS opens a new session window past the 5s window cap even within the gap cap", () => {
-  // Shifts every 900ms (< 1s gap), but the sixth lands >5s after the window's first, opening a new one.
+  // Shifts every 900ms (< 1s gap), but the sixth lands >5s after the window's first, opening a new one
   const entries = [0, 900, 1800, 2700, 3600, 4500, 5400, 6300].map((startTimeMs) =>
     shift(0.05, startTimeMs),
   );
@@ -76,7 +75,7 @@ test("CLS excludes hadRecentInput entries but keeps the rest of the window", () 
 
 test("CLS selects the winning window and attributes ITS sources", () => {
   const small = shift(0.1, 0, { id: "small" });
-  // A separate, larger window 2s later (past the 1s gap): its element must be the one named.
+  // A separate, larger window 2s later (past the 1s gap): its element must be the one named
   const big = shift(0.5, 2000, { id: "big" });
   const layoutShift = computeLayoutShift([small, big]);
   assert.ok(layoutShift);
@@ -95,18 +94,17 @@ test("CLS attribution ranks sources by area-weighted score, capped, summing to t
   assert.ok(layoutShift);
   assert.ok(layoutShift.sources.length <= LAYOUT_SHIFT_SOURCE_CAP, "top sources capped");
   assert.equal(layoutShift.sources[0].node, "div#huge", "largest moved area ranks first");
-  // The descriptor carries the first class name.
+  // The descriptor carries the first class name
   assert.equal(layoutShift.sources[1].node, "p#mid.lead");
-  // Scores descend.
+  // Scores descend
   for (let index = 1; index < layoutShift.sources.length; index++)
     assert.ok(layoutShift.sources[index - 1].score >= layoutShift.sources[index].score);
-  // The kept sources' scores never exceed the window score (they are shares of it).
+  // The kept sources' scores never exceed the window score (they are shares of it)
   const keptScore = layoutShift.sources.reduce((sum, source) => sum + source.score, 0);
   assert.ok(keptScore <= layoutShift.cls + 1e-9, `kept ${keptScore} <= cls ${layoutShift.cls}`);
   assert.ok(layoutShift.sources[0].currentRect.y === 200, "rects preserved from the largest occurrence");
 });
 
-// --- LCP: the per-iteration merge (mergeLcp, pure) ---
 
 const lcpStep = (renderTimeMs, extra = {}) => ({
   lcp: { tag: "H1", size: 186466, renderTimeMs, startTimeMs: renderTimeMs, ...extra },
@@ -126,7 +124,7 @@ test("mergeLcp on a single iteration keeps the entry and a degenerate series", (
 });
 
 test("mergeLcp grows the render-time series and stats across iterations", () => {
-  // The field case: one boot LCP that swung 536 -> 3644 between runs.
+  // The field case: one boot LCP that swung 536 -> 3644 between runs
   const merged = mergeLcp([lcpStep(536), lcpStep(3644)]);
   assert.ok(merged);
   assert.deepEqual(merged.perIteration, [536, 3644]);
@@ -135,7 +133,7 @@ test("mergeLcp grows the render-time series and stats across iterations", () => 
   assert.equal(merged.stats.maxMs, 3644);
   assert.equal(merged.stats.medianMs, 2090);
   // Identity/timing is the lower-median occurrence VERBATIM (a real sample), so renderTimeMs is 536,
-  // NOT the computed median 2090.
+  // NOT the computed median 2090
   assert.equal(merged.renderTimeMs, 536);
 });
 

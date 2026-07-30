@@ -19,7 +19,7 @@ const MIME: Record<string, string> = {
 };
 
 /** Is the request's Host header a loopback hostname we accept ("127.0.0.1", "localhost", "[::1]")?
- * The optional `:port` is ignored: only the hostname decides. A missing Host (HTTP/1.0) is rejected. */
+ * The optional `:port` is ignored: only the hostname decides. A missing Host (HTTP/1.0) is rejected */
 function isLoopbackHost(hostHeader: string | undefined): boolean {
   if (!hostHeader) return false;
   const hostname = hostHeader.replace(/:\d+$/, "").toLowerCase();
@@ -41,7 +41,7 @@ export interface StaticServer {
  * Every other mode serves the host page from this same server (same-origin, no CORS needed), so
  * `allowedOrigin` is left undefined and NO CORS header is sent. A wildcard `*` would instead let any
  * website open in the operator's browser read cwd files (source, .env) off this port while a run is
- * live; naming one origin closes that. The server still binds loopback only.
+ * live; naming one origin closes that. The server still binds loopback only
  */
 export async function startStaticServer(
   root: string,
@@ -55,17 +55,17 @@ export async function startStaticServer(
       // request comes from the controlled browser navigating/importing `http://127.0.0.1:<port>`, so
       // the Host is always loopback. A remote page using DNS rebinding (attacker.com -> 127.0.0.1)
       // would carry its own hostname here; refusing it closes the same-origin read that rebinding
-      // would otherwise get past CORS.
+      // would otherwise get past CORS
       if (!isLoopbackHost(req.headers.host)) {
         res.statusCode = 403;
         return res.end("Forbidden");
       }
       const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0]);
-      // Allow the one cross-origin host page (--url bench mode) to import modules, and nobody else.
-      // No `allowedOrigin` => same-origin host => no CORS header at all.
+      // Allow the one cross-origin host page (--url bench mode) to import modules, and nobody else
+      // No `allowedOrigin` => same-origin host => no CORS header at all
       if (allowedOrigin) res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
 
-      // A same-origin blank host page so module-mode import() isn't cross-origin.
+      // A same-origin blank host page so module-mode import() isn't cross-origin
       if (urlPath === "/__wpd_blank__") {
         res.setHeader("Content-Type", "text/html");
         res.setHeader("Cache-Control", "no-store");
@@ -88,7 +88,7 @@ export async function startStaticServer(
       }
       if (stat.isDirectory()) {
         // Re-stat the index file: a directory without index.html must 404, not blow up
-        // later when the read stream can't open it.
+        // later when the read stream can't open it
         filePath = path.join(filePath, "index.html");
         try {
           await fs.stat(filePath);
@@ -103,7 +103,7 @@ export async function startStaticServer(
       const stream = createReadStream(filePath);
       // A read error fires asynchronously (after this handler returns), so the outer
       // try/catch can't see it. Without this listener it's an uncaught 'error' that
-      // crashes the whole record run.
+      // crashes the whole record run
       stream.on("error", () => {
         if (!res.headersSent) res.statusCode = 500;
         res.end();
@@ -118,7 +118,7 @@ export async function startStaticServer(
   // A listen failure (EADDRINUSE/EPERM on the loopback bind) fires an asynchronous 'error' event, not
   // a throw from listen(). Without a listener that would be an uncaught exception that bypasses the
   // CLI's `record failed:` contract; route it into a rejection instead, naming the OS cause, so record
-  // fails cleanly with exit 1. The listener is removed once listening succeeds.
+  // fails cleanly with exit 1. The listener is removed once listening succeeds
   await new Promise<void>((resolve, reject) => {
     const onListenError = (error: Error) => reject(error);
     server.once("error", onListenError);
@@ -131,7 +131,7 @@ export async function startStaticServer(
 
   // On a fatal signal, drop the listening socket + any keep-alive connection synchronously so the
   // port is not held past the run; the normal close() deregisters this. The process re-raises and
-  // exits either way, so this is belt to the re-raise's braces (disposers.ts).
+  // exits either way, so this is belt to the re-raise's braces (disposers.ts)
   const release = registerDisposer(() => {
     try {
       server.closeAllConnections?.();

@@ -3,7 +3,7 @@
 // this ONE narrow interface the core calls; the core never imports an addon's internals, only the
 // registry (src/addons/registry.ts). An addon READS what the capture already recorded and enriches
 // spans; it never changes what is captured. With `--framework off` (or an empty registry) no addon
-// code runs and no addon facts enter the recording: the `Span.addons` slot stays absent on every span.
+// code runs and no addon facts enter the recording: the `Span.addons` slot stays absent on every span
 // (`meta.framework` records the resolved mode either way -- a core fact, not addon output.)
 
 import type { ReactFacts } from "../addons/react/facts.js";
@@ -16,7 +16,7 @@ import type { Span, SpanKind } from "./recording.js";
 /**
  * `--framework`: `off` guarantees zero addon code runs (the registry returns none); `auto` lets each
  * addon's factual detection decide whether it contributes. Default `auto`. Every lane accepts the
- * flag; an addon no-ops where its signals are absent, so `auto` is never a hard failure.
+ * flag; an addon no-ops where its signals are absent, so `auto` is never a hard failure
  */
 export type FrameworkMode = "off" | "auto";
 
@@ -24,7 +24,7 @@ export type FrameworkMode = "off" | "auto";
  * Per-span addon facts. Each key is an addon's `name`. This is the ONLY place the core Span type
  * mentions React vocabulary, and it does so through addon-exported types imported `import type` (erased
  * at runtime), so a consumer who never enables the addon sees no React vocabulary and clearing the
- * registry leaves the compiled core byte-identical. See docs/dev/react-attribution.md.
+ * registry leaves the compiled core byte-identical. See docs/dev/react-attribution.md
  */
 export interface SpanAddons {
   react?: ReactFacts;
@@ -37,13 +37,13 @@ export interface SpanAddons {
  * current document); it must be self-contained (reference no closure variables) and only touch
  * `window`. Convention: an addon stashes its run-level payload on `window.__wpdAddons[<name>]` and, for
  * a per-step read, wraps `window.__wpdAddonStepReset`/`window.__wpdAddonStepRead` (driver mode resets
- * at each step start and reads at each step's flush). Absent on an addon with no page probe.
+ * at each step start and reads at each step's flush). Absent on an addon with no page probe
  */
 export interface AddonPageInit {
   install: () => void;
 }
 
-/** A span's trace-clock window, so a per-span addon can scope the stored event log to it. */
+/** A span's trace-clock window, so a per-span addon can scope the stored event log to it */
 export interface AddonSpanWindow {
   label: string;
   kind: SpanKind;
@@ -52,7 +52,7 @@ export interface AddonSpanWindow {
 }
 
 /** Everything an addon needs to derive its facts post-capture, all read-only inputs. The addon mutates
- * `spans[i].addons[<name>]` in place; it never changes counts, bars, or anything the capture measured. */
+ * `spans[i].addons[<name>]` in place; it never changes counts, bars, or anything the capture measured */
 export interface AddonEnrichContext {
   meta: RecordingMeta;
   /** the built spans (run + steps + measures); the addon attaches facts onto their `addons` slot */
@@ -71,7 +71,7 @@ export interface AddonEnrichContext {
 
 /**
  * A framework addon. The core calls ONLY these members; it imports no addon internals. Keep the
- * surface minimal -- shaped from what the two shipped addons actually need, nothing speculative.
+ * surface minimal -- shaped from what the two shipped addons actually need, nothing speculative
  */
 export interface Addon {
   /** stable key, also the `Span.addons` slot key and the `window.__wpdAddons` payload key */
@@ -81,12 +81,12 @@ export interface Addon {
   /**
    * Derive this addon's facts and attach them onto the matching spans' `addons` slot, from everything
    * the capture recorded. Pure over the context (it only mutates the `addons` slot). Returns run-level
-   * disclosure notes to surface (e.g. why `phases` is absent on React 18 production), or nothing.
+   * disclosure notes to surface (e.g. why `phases` is absent on React 18 production), or nothing
    */
   enrich?(context: AddonEnrichContext): string[] | void;
 }
 
-/** Collect the in-page install functions of the addons that declare a page probe (browser lanes). */
+/** Collect the in-page install functions of the addons that declare a page probe (browser lanes) */
 export function addonPageInits(addons: Addon[]): (() => void)[] {
   const installs: (() => void)[] = [];
   for (const addon of addons) {
@@ -97,7 +97,7 @@ export function addonPageInits(addons: Addon[]): (() => void)[] {
 }
 
 /** Run each addon's enrichment in order (mutating `context.spans[i].addons`), returning the collected
- * disclosure notes. A no-op when `addons` is empty, so a --framework off run behaves identically. */
+ * disclosure notes. A no-op when `addons` is empty, so a --framework off run behaves identically */
 export function runEnrich(addons: Addon[], context: AddonEnrichContext): string[] {
   const notes: string[] = [];
   for (const addon of addons) {

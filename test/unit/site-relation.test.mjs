@@ -5,7 +5,7 @@ import { packageRollup } from "../../dist/profile/cpuprofile.js";
 
 // Site relation is a URL-MECHANICAL fact (registrable domain via the public-suffix list), never an
 // ownership or "third-party" claim. The canonical case: assets.alicdn.com is cross-SITE from
-// aliexpress.com yet the same company owns both.
+// aliexpress.com yet the same company owns both
 
 test("same registrable domain, different host => same-site", () => {
   assert.equal(siteRelation("assets.coop.ch", "https://www.coop.ch/"), "same-site");
@@ -21,7 +21,7 @@ test("identical host => same-origin", () => {
 
 test("public-suffix aware: co.uk is not the registrable domain", () => {
   // foo.co.uk and bar.co.uk are DIFFERENT registrable domains; a hand-rolled suffix strip would call
-  // them same-site. The PSL gets it right.
+  // them same-site. The PSL gets it right
   assert.equal(siteRelation("cdn.bar.co.uk", "https://www.foo.co.uk/"), "cross-site");
   assert.equal(siteRelation("cdn.foo.co.uk", "https://www.foo.co.uk/"), "same-site");
 });
@@ -44,7 +44,7 @@ test("originBucketHost recognises origin buckets and rejects the reserved bucket
 
 test("packageRollup tags an origin bucket with its site relation; real packages carry none", () => {
   // The canonical case: alicdn.com is cross-SITE from aliexpress.com, yet Aliexpress owns it. wpd
-  // reports the mechanical relation and nothing about ownership.
+  // reports the mechanical relation and nothing about ownership
   const model = {
     meta: { mode: "url", target: "https://www.aliexpress.com/" },
     jsSelfMs: 10,

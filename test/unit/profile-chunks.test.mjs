@@ -12,7 +12,7 @@ import { buildCpuModel, toDevtoolsCpuProfile } from "../../dist/profile/cpuprofi
 // The trace's v8.cpu_profiler ProfileChunk stream, assembled into a CDP-shaped RawCpuProfile. The
 // fixture is a cross-process navigation: two (pid, Profile id) streams, each restarting its node-id
 // space at 1, so a naive concat would conflate their roots. window.burn runs before the navigation
-// (pid 100), window.work after it (pid 200).
+// (pid 100), window.work after it (pid 200)
 const fixture = JSON.parse(
   readFileSync(
     fileURLToPath(new URL("../fixtures/v8-cpu-profiler-chunks.trimmed.json", import.meta.url)),
@@ -25,21 +25,21 @@ test("assembleTraceCpuProfile: merges the per-process streams into one disjoint 
   assert.ok(assembled, "the fixture carries a chunk stream");
   const { profile } = assembled;
 
-  // Six nodes: two streams of three, renumbered 1..6 with no collision.
+  // Six nodes: two streams of three, renumbered 1..6 with no collision
   assert.equal(profile.nodes.length, 6, "both streams' nodes are present, renumbered");
   const ids = profile.nodes.map((node) => node.id).sort((left, right) => left - right);
   assert.deepEqual(ids, [1, 2, 3, 4, 5, 6], "node ids are one disjoint 1..6 space");
 
-  // Two roots (one per process): buildCpuModel derives roots as nodes that are no one's child.
+  // Two roots (one per process): buildCpuModel derives roots as nodes that are no one's child
   const childIds = new Set(profile.nodes.flatMap((node) => node.children ?? []));
   const roots = profile.nodes.filter((node) => !childIds.has(node.id));
   assert.equal(roots.length, 2, "each stream keeps its own (root)");
 
-  // parent -> children was inverted: each (root) has its (program)/leaf as children.
+  // parent -> children was inverted: each (root) has its (program)/leaf as children
   for (const root of roots)
     assert.ok((root.children ?? []).length >= 1, "the root's parent links became children");
 
-  // 6 samples in stream A + 3 in stream B, all mapped to real node ids (none dropped/conflated).
+  // 6 samples in stream A + 3 in stream B, all mapped to real node ids (none dropped/conflated)
   assert.equal(profile.samples.length, 9, "every sample survived the merge");
   assert.ok(
     profile.samples.every((nodeId) => ids.includes(nodeId)),
@@ -52,7 +52,7 @@ test("assembleTraceCpuProfile: per-sample timestamps are absolute, trace-native,
   const timestamps = profile.sampleTimestampsUs;
   assert.ok(Array.isArray(timestamps) && timestamps.length === 9, "one timestamp per sample");
   // Stream A starts at 1_000_000; stream B at 2_000_000 (after the navigation). Both share the trace
-  // clock, so B's samples sit ~1s after A's, and the merged series is strictly ascending.
+  // clock, so B's samples sit ~1s after A's, and the merged series is strictly ascending
   for (let index = 1; index < timestamps.length; index++)
     assert.ok(timestamps[index] >= timestamps[index - 1], "timestamps are non-decreasing");
   assert.ok(timestamps[0] >= 1_000_000 && timestamps[0] < 1_100_000, "first sample is in stream A");
@@ -67,8 +67,8 @@ test("assembleTraceCpuProfile: reads the interval back from the chunk deltas", (
 
 test("assembleTraceCpuProfile: the interval is an actual observed delta, never an averaged fraction", () => {
   // An even count of distinct deltas: the two middle values are 150 and 152. An averaging median
-  // would report 151us, an interval no sample ran at, which then prints verbatim in the cpu headline.
-  // The lower median names a real observed delta and stays an integer microsecond.
+  // would report 151us, an interval no sample ran at, which then prints verbatim in the cpu headline
+  // The lower median names a real observed delta and stays an integer microsecond
   const node = { id: 1, callFrame: { functionName: "f", scriptId: 1, url: "u", lineNumber: 1, columnNumber: 1 } };
   const evenStream = {
     traceEvents: [
@@ -92,7 +92,7 @@ test("assembleTraceCpuProfile: the model's cumsum does NOT reconstruct the clock
   // (relative to each process's own startTime), so `startTime + Σ timeDeltas` COMPRESSES the
   // cross-process navigation gap away. The true clock lives only in the parallel sampleTimestampsUs
   // field, which windowTraceCpuProfile (and every other windowing consumer) must read. This test
-  // fails loudly if someone makes the model's timeDeltas absolute, tempting a cumsum shortcut.
+  // fails loudly if someone makes the model's timeDeltas absolute, tempting a cumsum shortcut
   const { profile } = assembleTraceCpuProfile(fixture);
   const cumsum = profile.timeDeltas.reduce((sum, delta) => sum + delta, profile.startTime);
   const realLastClock = profile.sampleTimestampsUs.at(-1);
@@ -100,7 +100,7 @@ test("assembleTraceCpuProfile: the model's cumsum does NOT reconstruct the clock
     realLastClock - cumsum > 100000,
     "cumsum lands ~1s short of the real clock: the navigation gap is absent from the model's deltas",
   );
-  // The field consumers must read reconstructs the clock exactly, and windowing uses it.
+  // The field consumers must read reconstructs the clock exactly, and windowing uses it
   const windowed = windowTraceCpuProfile(profile, realLastClock);
   assert.equal(windowed.samples.length, 1, "windowing by the real clock keeps only the final sample");
   assert.equal(windowed.sampleTimestampsUs[0], realLastClock, "it filtered on sampleTimestampsUs, not a cumsum");
@@ -117,7 +117,7 @@ test("assembleTraceCpuProfile: buildCpuModel runs UNCHANGED and attributes BOTH 
   const names = model.functions.map((fn) => fn.fn);
   assert.ok(names.includes("burn"), "the pre-navigation function is attributed");
   assert.ok(names.includes("work"), "the post-navigation function is attributed too");
-  // burn got 5 samples, work 3, at 150us each: their self-time reflects both documents' work summed.
+  // burn got 5 samples, work 3, at 150us each: their self-time reflects both documents' work summed
   const burn = model.functions.find((fn) => fn.fn === "burn");
   const work = model.functions.find((fn) => fn.fn === "work");
   assert.ok(burn.selfMs > work.selfMs, "burn (5 samples) outweighs work (3 samples)");
@@ -135,7 +135,7 @@ test("assembleTraceCpuProfile: no chunk stream yields null (the honest not-cover
 
 test("toDevtoolsCpuProfile: a navigation merge becomes a single-rooted, real-timeline DevTools file", () => {
   const { profile } = assembleTraceCpuProfile(fixture);
-  // Precondition: the model profile is two-rooted (one (root) per process) and carries the lane field.
+  // Precondition: the model profile is two-rooted (one (root) per process) and carries the lane field
   const modelChildIds = new Set(profile.nodes.flatMap((node) => node.children ?? []));
   assert.equal(profile.nodes.filter((node) => !modelChildIds.has(node.id)).length, 2, "model keeps both roots");
 
@@ -147,7 +147,7 @@ test("toDevtoolsCpuProfile: a navigation merge becomes a single-rooted, real-tim
   assert.deepEqual(roots[0].children.length, 2, "the super-root parents both process (root) nodes");
 
   // The deltas are recomputed from the absolute timestamps, so DevTools reconstructs the real timeline
-  // (startTime + cumulative deltas), including the ~1s navigation gap the model's per-sample deltas omit.
+  // (startTime + cumulative deltas), including the ~1s navigation gap the model's per-sample deltas omit
   assert.equal(disk.startTime, profile.sampleTimestampsUs[0], "startTime is the first sample's clock");
   const reconstructed = disk.timeDeltas.reduce((sum, delta) => sum + delta, disk.startTime);
   assert.equal(reconstructed, profile.sampleTimestampsUs.at(-1), "cumulative deltas rebuild the last sample's clock");
@@ -169,7 +169,7 @@ test("assembleTraceCpuProfile: a navigation with hundreds of thousands of sample
   // A heavy page's cold boot samples the profiler hundreds of thousands of times, and a --url boot is
   // a cross-process navigation (two streams => the timestamp reorder runs). The reorder must not spread
   // the merged arrays as call arguments (`splice(0, len, ...sorted)`): past ~125k entries that throws
-  // `Maximum call stack size exceeded`, taking `record --url <heavy page> --breakdown` down with it.
+  // `Maximum call stack size exceeded`, taking `record --url <heavy page> --breakdown` down with it
   const perStream = 100_000; // 200k merged: comfortably past the spread-argument stack limit
   const oneStream = (pid, base) => {
     const node = { id: 1, callFrame: { functionName: "hot", scriptId: 1, url: "u", lineNumber: 1, columnNumber: 1 } };
@@ -182,8 +182,8 @@ test("assembleTraceCpuProfile: a navigation with hundreds of thousands of sample
         ts: base + 1,
         args: {
           data: {
-            cpuProfile: { nodes: [node], samples: new Array(perStream).fill(1) },
-            timeDeltas: new Array(perStream).fill(200),
+            cpuProfile: { nodes: [node], samples: Array.from({ length: perStream }, () => 1) },
+            timeDeltas: Array.from({ length: perStream }, () => 200),
           },
         },
       },
@@ -206,7 +206,7 @@ test("assembleTraceCpuProfile: threads per-sample executing lines (data.lines) p
   // The v8.cpu_profiler ProfileChunk carries a `data.lines` array parallel to cpuProfile.samples: the
   // EXECUTING line at each sample (1-based, trace-stack convention), which sampled read-site forced-
   // layout blame reads. A cross-process merge reorders the sample arrays by timestamp; sampleLines
-  // must ride along so a line still describes its own sample.
+  // must ride along so a line still describes its own sample
   const node = { id: 1, callFrame: { functionName: "f", scriptId: 1, url: "u", lineNumber: 1, columnNumber: 1 } };
   const withLines = {
     traceEvents: [
@@ -249,7 +249,7 @@ test("assembleTraceCpuProfile: sampleThreads tags each sample with its stream's 
   // Two concurrent isolates on one process: the renderer MAIN thread (tid 1) and a WORKER (tid 7),
   // each its own (pid, Profile id) stream. Their samples overlap in time, so the merge reorders the
   // parallel arrays by timestamp. sampleThreads must ride along, so a sampled read-site blame join can
-  // keep the worker's line off a main-thread flush. The worker sample lands FIRST here (earlier clock).
+  // keep the worker's line off a main-thread flush. The worker sample lands FIRST here (earlier clock)
   const node = (fn) => ({ id: 1, callFrame: { functionName: fn, scriptId: 1, url: "u", lineNumber: 1, columnNumber: 1 } });
   const stream = (id, tid, deltaUs, line, fn) => [
     { name: "Profile", pid: 1, tid, id, ts: 1_000_000, args: { data: { startTime: 1_000_000 } } },
@@ -270,7 +270,7 @@ test("assembleTraceCpuProfile: sampleThreads tags each sample with its stream's 
   assert.ok(assembled.sampleThreads, "sampleThreads is present alongside sampleLines");
   assert.equal(assembled.sampleThreads.length, assembled.profile.samples.length, "one thread per sample");
   // Ascending by clock: the worker sample (1_000_100) sorts before the main one (1_000_200), and every
-  // parallel array agrees on that order.
+  // parallel array agrees on that order
   assert.deepEqual(assembled.sampleThreads, [{ pid: 1, tid: 7 }, { pid: 1, tid: 1 }], "each sample keeps its own thread");
   assert.deepEqual(assembled.sampleLines, [99, 10], "lines stay aligned with their threads after the reorder");
 });
@@ -278,13 +278,13 @@ test("assembleTraceCpuProfile: sampleThreads tags each sample with its stream's 
 test("windowTraceCpuProfile: drops samples before the run start (prepare/warmup exclusion)", () => {
   const { profile } = assembleTraceCpuProfile(fixture);
   // Keep only stream B (>= 2_000_000): the pre-navigation samples are dropped, as prepare()/warmup
-  // samples are on the driver lane where the trace starts before the run window.
+  // samples are on the driver lane where the trace starts before the run window
   const windowed = windowTraceCpuProfile(profile, 2_000_000);
   assert.equal(windowed.samples.length, 3, "only the post-2_000_000 samples remain");
   assert.ok(
     windowed.sampleTimestampsUs.every((ts) => ts >= 2_000_000),
     "no sample earlier than the window start survives",
   );
-  // The nodes/tree are kept intact; buildCpuModel bills self only from the surviving samples.
+  // The nodes/tree are kept intact; buildCpuModel bills self only from the surviving samples
   assert.equal(windowed.nodes.length, profile.nodes.length, "nodes are untouched, only samples filtered");
 });

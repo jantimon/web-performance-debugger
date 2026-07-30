@@ -22,7 +22,7 @@ test("scanTraceEvents: object envelope, bare array, and empties all yield the sa
 });
 
 test("scanTraceEvents: metadata fields before AND after traceEvents still reach the consumer", () => {
-  // Only the traceEvents elements are yielded; the surrounding metadata is skipped, not parsed.
+  // Only the traceEvents elements are yielded; the surrounding metadata is skipped, not parsed
   const events = [{ name: "A", ph: "X", ts: 1, args: { data: { nested: [1, 2, 3] } } }];
   const before = { metadata: { source: "x" }, otherArray: [{ k: 1 }], traceEvents: events };
   const after = { traceEvents: events, metadata: { source: "y" }, displayTimeUnit: "ns" };
@@ -38,7 +38,7 @@ test("scanTraceEvents: strings with braces, brackets, commas, quotes, and unicod
     { name: "]}]}fake structural bytes inside a string{[{[", ph: "X", ts: 4 },
   ];
   // JSON.stringify escapes these correctly; the scanner must isolate each element despite the
-  // structural-looking bytes living inside strings.
+  // structural-looking bytes living inside strings
   assert.deepEqual(scanText(JSON.stringify({ traceEvents: events })), events);
 });
 
@@ -59,7 +59,7 @@ test("scanTraceEvents: whitespace between every structural token is tolerated", 
 });
 
 test("scanTraceEvents: primitive-typed top-level metadata values are skipped", () => {
-  // Values before traceEvents that are numbers/booleans/null/strings must be stepped over cleanly.
+  // Values before traceEvents that are numbers/booleans/null/strings must be stepped over cleanly
   const events = [{ name: "A", ph: "X", ts: 1 }];
   const text = JSON.stringify({
     number: 42,
@@ -73,7 +73,7 @@ test("scanTraceEvents: primitive-typed top-level metadata values are skipped", (
   assert.deepEqual(scanText(text), events);
 });
 
-// Mirror trace/tracing.ts readStream: concatenate arbitrary-sized byte chunks into ONE Uint8Array.
+// Mirror trace/tracing.ts readStream: concatenate arbitrary-sized byte chunks into ONE Uint8Array
 function concatChunks(chunks) {
   let total = 0;
   for (const chunk of chunks) total += chunk.length;
@@ -87,7 +87,7 @@ function concatChunks(chunks) {
 }
 
 test("scanTraceEvents: events spanning arbitrary chunk boundaries parse identically", () => {
-  const events = Array.from({ length: 50 }, (_, index) => ({
+  const events = Array.from({ length: 50 }, (_value, index) => ({
     name: `event ${index} with a } brace and , comma`,
     ph: "X",
     ts: index,
@@ -95,11 +95,11 @@ test("scanTraceEvents: events spanning arbitrary chunk boundaries parse identica
   }));
   const bytes = encode(JSON.stringify({ traceEvents: events }));
 
-  // 1-byte chunks: the harshest boundary split, every token crosses a chunk edge.
+  // 1-byte chunks: the harshest boundary split, every token crosses a chunk edge
   const oneByte = [...bytes].map((byte) => Uint8Array.of(byte));
   assert.deepEqual([...scanTraceEvents(concatChunks(oneByte))], events, "1-byte chunks");
 
-  // Odd, uneven chunk sizes.
+  // Odd, uneven chunk sizes
   const odd = [];
   for (let offset = 0; offset < bytes.length; offset += 7) odd.push(bytes.subarray(offset, offset + 7));
   assert.deepEqual([...scanTraceEvents(concatChunks(odd))], events, "7-byte chunks");
@@ -107,7 +107,7 @@ test("scanTraceEvents: events spanning arbitrary chunk boundaries parse identica
 
 test("scanTraceEvents: byte-exact parity with JSON.parse over a real trace fixture", () => {
   // v8-cpu-profiler-chunks.trimmed.json is a real ProfileChunk trace envelope with a leading _comment
-  // metadata field before traceEvents.
+  // metadata field before traceEvents
   const text = readFileSync(
     fileURLToPath(new URL("../fixtures/v8-cpu-profiler-chunks.trimmed.json", import.meta.url)),
     "utf8",
@@ -129,18 +129,18 @@ test("toRawTraceEvents: bytes, string, envelope, bare array, and generator all n
 // scanString drives TWO paths not covered by the inline-object walker above: an ENVELOPE KEY, and a
 // bare-string top-level ARRAY ELEMENT. Both must skip the byte after a backslash (a `\"` is one
 // escaped quote, not a string terminator); a scanner that steps one byte instead of two would end
-// the string on the escaped quote and mis-slice, so these die if the backslash skip regresses.
+// the string on the escaped quote and mis-slice, so these die if the backslash skip regresses
 test("scanTraceEvents: an escaped quote/backslash inside an envelope KEY is scanned, not truncated", () => {
   const events = [{ name: "A", ph: "X", ts: 1 }];
   // A metadata key BEFORE traceEvents carrying `\"` and `\\`: scanString must run the key to its
-  // real closing quote before the `:`/`,` walk, or the envelope parse derails.
+  // real closing quote before the `:`/`,` walk, or the envelope parse derails
   const text = JSON.stringify({ 'we\\ird"key': 1, traceEvents: events });
   assert.deepEqual(scanText(text), events);
 });
 
 test("scanTraceEvents: a bare-string top-level element with escapes is yielded whole", () => {
   // A top-level array whose first element is a STRING (not an object): scanValue routes it to
-  // scanString directly, exercising the escape skip outside the object walker.
+  // scanString directly, exercising the escape skip outside the object walker
   const element = 'prefix "quoted" and a \\ backslash, then a } brace';
   const events = [element, { name: "A", ph: "X", ts: 2 }];
   assert.deepEqual(scanText(JSON.stringify(events)), events);

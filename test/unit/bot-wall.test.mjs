@@ -4,7 +4,7 @@ import { classifyBotWall, botWallRefusalMessage } from "../../dist/record/bot-wa
 
 // The classifier runs over SYNTHETIC signal structs -- no browser, no live site. It is deliberately
 // conservative: it keys on the RENDERED interstitial, never on the mere presence of a captcha script,
-// so a normal shop embedding reCAPTCHA/hCaptcha in a form must not trip it.
+// so a normal shop embedding reCAPTCHA/hCaptcha in a form must not trip it
 
 const base = () => ({
   mainDocumentUrl: "https://shop.example/",
@@ -61,7 +61,7 @@ test("main document on a Cloudflare challenge URL is a strong signal", () => {
 
 test("Cloudflare INLINE managed challenge (same-origin challenge-platform script) is a strong signal", () => {
   // The top document stays on the site's own origin (no __cf_chl in the URL, no dominant iframe), so
-  // only the same-origin /cdn-cgi/challenge-platform/ script names it.
+  // only the same-origin /cdn-cgi/challenge-platform/ script names it
   const verdict = classifyBotWall({
     ...base(),
     mainDocumentUrl: "https://www.ricardo.ch/",
@@ -102,7 +102,7 @@ test("Cloudflare inline challenge via a __cf_chl_rt_tk document token is a stron
 
 test("FALSE POSITIVE GUARD: a full page with a CROSS-ORIGIN Turnstile widget script does NOT trip", () => {
   // The widget loads challenges.cloudflare.com/turnstile (cross-origin), never the site's own
-  // /cdn-cgi/challenge-platform/, and sets no _cf_chl_opt global or __cf_chl_rt_tk token.
+  // /cdn-cgi/challenge-platform/, and sets no _cf_chl_opt global or __cf_chl_rt_tk token
   const verdict = classifyBotWall({
     ...base(),
     title: "Login — Shop",
@@ -115,7 +115,7 @@ test("FALSE POSITIVE GUARD: a full page with a CROSS-ORIGIN Turnstile widget scr
 });
 
 test("FALSE POSITIVE GUARD: a same-path challenge-platform script from a DIFFERENT origin does NOT trip", () => {
-  // /cdn-cgi/challenge-platform/ served from some other host is not the measured site's own runtime.
+  // /cdn-cgi/challenge-platform/ served from some other host is not the measured site's own runtime
   const verdict = classifyBotWall({
     ...base(),
     mainDocumentUrl: "https://shop.example/",

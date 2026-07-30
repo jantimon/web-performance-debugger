@@ -66,7 +66,7 @@ test("summarizeLoaf caps scripts per frame and keeps a small forced script", () 
   const loaf = summarizeLoaf([frame(300, many)]);
   assert.equal(loaf.frames[0].scripts.length, LOAF_SCRIPT_CAP, "scripts are capped per frame");
 
-  // A sub-min-ms script that forced style/layout is kept (it is signal, not noise).
+  // A sub-min-ms script that forced style/layout is kept (it is signal, not noise)
   const tiny = summarizeLoaf([
     frame(60, [script(LOAF_SCRIPT_MIN_MS - 0.1, { forcedStyleLayoutMs: 3 })]),
   ]);

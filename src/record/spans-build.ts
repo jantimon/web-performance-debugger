@@ -2,7 +2,7 @@
 // every user `performance.measure`. This is where the three former artifacts (recording / digest /
 // step index) collapse into one shape -- a step is a span of `kind: "step"`, carrying the same
 // windowed counts the old per-step recording did (buildSummary over its window), and the reconciling
-// bar from `bars` when the capture mode built one.
+// bar from `bars` when the capture mode built one
 
 import {
   buildSummary,
@@ -28,7 +28,7 @@ export interface SpansBuildInput {
   /** the reconciling per-span bars (run/step/measure) the capture mode built, or [] when it built none */
   bars: SpanBreakdown[];
   /** the run window's end (trace clock), so a step whose end mark was lost windows its counts to the
-   * run end exactly like its bar. null in capture modes with no trace / an unclosed run window. */
+   * run end exactly like its bar. null in capture modes with no trace / an unclosed run window */
   runWindowEnd: number | null;
 }
 
@@ -44,7 +44,7 @@ export interface SpansBuildInput {
  * carries the disjoint-in-time discriminator that separates a successive navigation from a CONCURRENT
  * same-page OOPIF. Without the split gate this test would fire for an OOPIF-heavy step whose top thread
  * did little -- but an OOPIF's own-process count is a separate off-thread count by design, so the top
- * thread's small count IS the honest top-process-scoped answer there, not a fake 0 to null.
+ * thread's small count IS the honest top-process-scoped answer there, not a fake 0 to null
  */
 function stepRanOnUnselectedProcess(
   windowEvents: NormalizedEvent[],
@@ -65,20 +65,20 @@ function stepRanOnUnselectedProcess(
  * Build the recording's `Span[]`: one run span, one per driver step, one per user measure. The run
  * and step spans carry exact windowed counts; a bar (breakdown + frames) is attached when the capture
  * mode built one for that span, joined by the `${kind}:${label}` key. Measure spans come straight from the
- * (already median-merged) measure bars. Always returns at least the run span.
+ * (already median-merged) measure bars. Always returns at least the run span
  */
 export function buildRecordingSpans(input: SpansBuildInput): Span[] {
   const { summary, mergedSteps, detailEvents, capabilities, bars, runWindowEnd } = input;
   const barByKey = new Map(bars.map((bar) => [`${bar.kind}:${bar.label}`, bar]));
   const spans: Span[] = [];
 
-  // The run's main-thread selection, from the full event log (which carries the run:start marker).
+  // The run's main-thread selection, from the full event log (which carries the run:start marker)
   // Each step's counts are scoped to THIS thread instead of re-selecting from the step's own
   // marker-less window (where the heuristic could land on the OOPIF thread), so a step's counts sit on
-  // the same thread as its bar -- buildBreakdowns scopes the step bar to this same selection.
+  // the same thread as its bar -- buildBreakdowns scopes the step bar to this same selection
   const runThread = mainThread(detailEvents);
 
-  // Run span: the whole-run window. Its counts, wall, INP and per-iteration stats are the run summary.
+  // Run span: the whole-run window. Its counts, wall, INP and per-iteration stats are the run summary
   const runBar = barByKey.get("run:run");
   spans.push({
     label: "run",
@@ -86,7 +86,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
     aggregation: spanAggregation("run"),
     wallMs: summary.wallMs,
     // A non-null run wall is the summed timed samples on the page clock (bench/node); a driver run has
-    // none. The bar's trace-clock window lives on `breakdown.wallMs`, a distinct quantity.
+    // none. The bar's trace-clock window lives on `breakdown.wallMs`, a distinct quantity
     ...(summary.wallMs != null ? { wallClock: "page" as const } : {}),
     ...(runBar?.breakdown ? { breakdown: runBar.breakdown } : {}),
     counts: countsFromSummary(summary),
@@ -100,11 +100,11 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
   });
 
   // Step spans: each step's counts come from buildSummary over its own trace window (the same
-  // windowing the old per-step recording used, so the numbers are identical), gated to iteration 0.
+  // windowing the old per-step recording used, so the numbers are identical), gated to iteration 0
   for (const step of mergedSteps ?? []) {
     // A step whose end mark was lost (endTs null) windows to the run end, matching its bar
     // (breakdown-spans.ts uses the same `step.endTs ?? runWindow.endTs`), so counts and bar cover the
-    // same events rather than the counts running open to trace end.
+    // same events rather than the counts running open to trace end
     const stepEnd = step.endTs ?? runWindowEnd;
     const windowEvents = detailEvents.filter(
       (event) =>
@@ -117,7 +117,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
     // renderer process is NOT-COVERED by the selected thread: report its counts as not-measured (null),
     // never the fake measured-clean 0 the selected-thread window would produce. The run-level split note
     // discloses it; here the honesty is per step, in the artifact, so no consumer reads that 0 as real
-    // work. A non-split run never nulls a step: a concurrent OOPIF's small top-thread count is honest.
+    // work. A non-split run never nulls a step: a concurrent OOPIF's small top-thread count is honest
     const stepCapabilities =
       runThread?.split && stepRanOnUnselectedProcess(windowEvents, runThread)
         ? NO_RENDERING_CAPTURE
@@ -161,7 +161,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
   }
 
   // Measure spans: the user performance.measure bars, already collapsed per label to their
-  // lower-median-by-wall sample (model/span-merge.ts). Windowed counts do not apply to a measure.
+  // lower-median-by-wall sample (model/span-merge.ts). Windowed counts do not apply to a measure
   for (const bar of bars) {
     if (bar.kind !== "measure") continue;
     spans.push({
@@ -169,7 +169,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       kind: "measure",
       aggregation: spanAggregation("measure", bar.samples),
       wallMs: bar.breakdown.wallMs,
-      // A measure's headline IS its bar's trace-clock tiled window.
+      // A measure's headline IS its bar's trace-clock tiled window
       wallClock: "trace",
       breakdown: bar.breakdown,
       counts: notMeasuredSpanCounts(),

@@ -20,20 +20,20 @@
  * carries the leaf FUNCTION's callFrame line+column (a real column, the same frame the CPU model
  * resolves); when the executing line cannot be disambiguated the resolver retries there, so the read
  * names the forcing function at line granularity instead of a bundle line (`app.jsx:8`, not
- * `dist/app.js:9`).
+ * `dist/app.js:9`)
  */
 
 import type { NormalizedEvent } from "../model/recording.js";
 import { isToolFrameUrl } from "./stacks.js";
 import { inWindow } from "./analysis.js";
 
-/** The assembled `--breakdown` sample stream the join reads, all parallel arrays ascending by time. */
+/** The assembled `--breakdown` sample stream the join reads, all parallel arrays ascending by time */
 export interface CpuSampleStream {
   /** leaf-frame served url per sample node id (from the assembled profile's `nodes[].callFrame.url`) */
   urlByNode: Map<number, string>;
   /** leaf-frame callFrame line+column per sample node id (0-based CDP convention, as the assembled
    * profile stores them), the column-bearing fallback the resolver uses when the executing line cannot
-   * be disambiguated. Absent (older assembler) leaves the sampled read with no fallback. */
+   * be disambiguated. Absent (older assembler) leaves the sampled read with no fallback */
   frameByNode?: Map<number, { line: number; column: number }>;
   /** node id per sample, parallel to `timestampsUs`/`lines` (ascending by timestamp) */
   samples: number[];
@@ -43,7 +43,7 @@ export interface CpuSampleStream {
   lines: number[];
   /** per-sample owning thread (pid/tid), parallel to `samples`. A merged stream interleaves every
    * renderer/worker/OOPIF isolate, so a flush is blamed only on a same-thread sample; absent (older
-   * assembler) disables the thread guard and keeps the timestamp-only join. */
+   * assembler) disables the thread guard and keeps the timestamp-only join */
   threads?: { pid: number; tid: number }[];
   /** the interval the stream ran at (us); a flush narrower than this is low-confidence */
   intervalUs: number;
@@ -54,7 +54,7 @@ export interface CpuSampleStream {
  * CPU sample stream. One event per flush that has an in-window sample resolving to a user source line;
  * a flush with no such sample yields nothing (the cheap-read miss the firefox lane also has). Pure and
  * order-independent over `events`; the caller runs `attachStacks` + `markForced` on the result so the
- * frame resolves to local source and the event reads `forced` like any read-site blame.
+ * frame resolves to local source and the event reads `forced` like any read-site blame
  */
 export function sampledForcedBlameEvents(
   events: NormalizedEvent[],
@@ -66,7 +66,7 @@ export function sampledForcedBlameEvents(
   if (lines.length === 0 || samples.length === 0) return [];
 
   // The layout/style flushes to blame, main-thread windowed and in ts order so the sample pointer
-  // below only moves forward (a nested flush starts no earlier than its parent).
+  // below only moves forward (a nested flush starts no earlier than its parent)
   const flushes = events
     .filter(
       (event) =>
@@ -78,7 +78,7 @@ export function sampledForcedBlameEvents(
     .sort((left, right) => left.ts - right.ts);
 
   const out: NormalizedEvent[] = [];
-  // First sample whose timestamp could fall in the current (ascending-start) flush window.
+  // First sample whose timestamp could fall in the current (ascending-start) flush window
   let lower = 0;
   for (const flush of flushes) {
     const windowEndUs = flush.ts + flush.dur;
@@ -98,17 +98,17 @@ export function sampledForcedBlameEvents(
       // The merged stream interleaves every isolate; a flush on the main thread must be blamed only on a
       // sample that ran on THAT thread. A worker/OOPIF/other-renderer sample can share the flush's
       // timestamp window but names an unrelated source line, so skip it. No `thread` filter (thread ==
-      // null) leaves the flush unrestricted, so the per-sample thread guard only ever narrows.
+      // null) leaves the flush unrestricted, so the per-sample thread guard only ever narrows
       if (thread != null && threads != null) {
         const owner = threads[index];
         if (!owner || owner.pid !== thread.pid || owner.tid !== thread.tid) continue;
       }
       const url = urlByNode.get(samples[index]) ?? "";
-      // A native accessor node (empty url) or a tool/harness frame is not the read site; keep scanning.
+      // A native accessor node (empty url) or a tool/harness frame is not the read site; keep scanning
       if (!url || isToolFrameUrl(url)) continue;
       // The leaf function's own callFrame position (0-based CDP): the column-bearing fallback the
       // resolver retries at when the executing line is unresolvable on a minified bundle. +1 to the
-      // 1-based trace-stack convention resolveFrame expects; skip a positionless (-1) frame.
+      // 1-based trace-stack convention resolveFrame expects; skip a positionless (-1) frame
       const nodeFrame = frameByNode?.get(samples[index]);
       const fallback =
         nodeFrame && nodeFrame.line >= 0
@@ -125,17 +125,17 @@ export function sampledForcedBlameEvents(
       dur: flush.dur,
       ph: "X",
       kind: flush.kind,
-      // A sampled annotation, not a measured flush: summarize skips it so it never inflates a count.
+      // A sampled annotation, not a measured flush: summarize skips it so it never inflates a count
       sampled: true,
       args: {
         data: {
-          // extractStack reads `stackTrace[].url`/`lineNumber`; attachStacks maps it to local source.
+          // extractStack reads `stackTrace[].url`/`lineNumber`; attachStacks maps it to local source
           // `lineOnly`: a sample carries an executing LINE but no column, so the resolver must not map
           // it through generated column 0 (a wrong original line on a minified single-line bundle); it
           // maps only when the generated line is unambiguous. `fallbackLine`/`fallbackColumn` name the
           // leaf function's column-bearing position, which the resolver retries at (the same frame the
           // CPU model resolves) so a minified-bundle read still names the forcing function, not a
-          // bundle line.
+          // bundle line
           stackTrace: [
             {
               url: picked.url,
@@ -146,7 +146,7 @@ export function sampledForcedBlameEvents(
                 : {}),
             },
           ],
-          // A flush narrower than one sampler interval may catch an adjacent line or none, so flag it.
+          // A flush narrower than one sampler interval may catch an adjacent line or none, so flag it
           ...(flush.dur < intervalUs ? { lowConfidence: true } : {}),
         },
       },

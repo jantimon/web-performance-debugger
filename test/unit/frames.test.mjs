@@ -9,7 +9,7 @@ import { diffCmd } from "../../dist/commands/diff.js";
 // The frame track is a single nestable-async track (id2.local "0x1"): PipelineReporter wraps its
 // stage slices in strict LIFO order. These fixtures are built from the real shapes measured on a
 // 20-box paint (FP-1): `args.frame_reporter.{state,frame_sequence,affects_smoothness}` on the "b",
-// stages nested between. Timestamps are microseconds (usToMs divides by 1000).
+// stages nested between. Timestamps are microseconds (usToMs divides by 1000)
 const pr = (ph, ts, asyncId, reporter) => ({
   id: ts,
   name: "PipelineReporter",
@@ -30,7 +30,7 @@ const stage = (name, ph, ts, asyncId) => ({
   asyncId,
 });
 
-// One frame each of the four states, on the same async track, properly nested, ts-ordered.
+// One frame each of the four states, on the same async track, properly nested, ts-ordered
 const FRAME_EVENTS = [
   // seq 5: no update desired (a vsync tick with nothing to draw), one stage
   pr("b", 1000, "0x1", { state: "STATE_NO_UPDATE_DESIRED", frame_sequence: 5, affects_smoothness: false }),
@@ -72,11 +72,11 @@ test("parseFrames pairs PipelineReporter b/e, maps state, and captures direct st
 });
 
 test("parseFrames ignores events with no asyncId (byte-identical non-breakdown modes) and unknown states", () => {
-  // Without asyncId (the id parseTrace keeps only in --breakdown mode) there is nothing to pair.
+  // Without asyncId (the id parseTrace keeps only in --breakdown mode) there is nothing to pair
   const noId = FRAME_EVENTS.map((event) => ({ ...event, asyncId: undefined }));
   assert.deepEqual(parseFrames(noId), []);
 
-  // An unrecognized state is dropped rather than bucketed as a fake verdict.
+  // An unrecognized state is dropped rather than bucketed as a fake verdict
   const unknown = [
     pr("b", 10, "0x2", { state: "STATE_SOMETHING_NEW", frame_sequence: 1, affects_smoothness: false }),
     pr("e", 20, "0x2"),
@@ -87,7 +87,7 @@ test("parseFrames ignores events with no asyncId (byte-identical non-breakdown m
 test("windowFrames: run span is start-onward (keeps the settle-tail frame); a sub-span is bounded", () => {
   const frames = parseFrames(FRAME_EVENTS);
   // run window [500, 2500]: start-onward keeps every frame from 500 on, INCLUDING seq 9 at 3000
-  // (its presentation lands after run:end, the reason the rule has no upper bound).
+  // (its presentation lands after run:end, the reason the rule has no upper bound)
   const run = windowFrames(frames, 500, 2500, true);
   assert.deepEqual(run.map((frame) => frame.sequence).sort(), [5, 8, 9]);
   // a bounded step window [1900, 2500) claims only frames whose START falls inside it
@@ -125,7 +125,7 @@ test("summarizeFrames: an empty window returns null so the span leaves `frames` 
 // Guard rail: the side track is DISPLAY-ONLY. It lives on SpanBreakdown.frames, NOT on the summary
 // `diff` reads, so two recordings that differ ONLY in their frame side track must produce no
 // regression -- the structural enforcement of "frame counts (scheduler noise, 1->28 on unchanged
-// code) never gate". A future edit that fed frames into diff would fail here.
+// code) never gate". A future edit that fed frames into diff would fail here
 test("diff does not regress on the frame side track (display-only invariant)", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-frames-"));
   const summary = {
@@ -148,7 +148,7 @@ test("diff does not regress on the frame side track (display-only invariant)", a
   });
   const base = path.join(dir, "base.json");
   const cur = path.join(dir, "cur.json");
-  // Identical summaries; only the frame side track differs (0 vs 28 dropped, the measured swing).
+  // Identical summaries; only the frame side track differs (0 vs 28 dropped, the measured swing)
   writeFileSync(base, JSON.stringify(withFrames(0)));
   writeFileSync(cur, JSON.stringify(withFrames(28)));
 

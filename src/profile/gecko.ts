@@ -3,7 +3,7 @@
  * rest of wpd already understands: a V8-style `RawCpuProfile` (fed to `buildCpuModel`) and, for
  * blame, `NormalizedEvent[]` from Reflow/Styles markers. Every field assumption here was verified
  * against a real dump; docs/dev/gecko-profile-format.md has the format details and the reasoning
- * behind each choice (thread selection, 1-based line/col, JS-only pruning, marker cause stacks).
+ * behind each choice (thread selection, 1-based line/col, JS-only pruning, marker cause stacks)
  */
 
 import type { NormalizedEvent } from "../model/recording.js";
@@ -18,7 +18,7 @@ import type { GeckoSlice, RawCallFrame, RawCpuProfile, RawProfileNode } from "./
 import { isToolFrameUrl } from "../trace/stacks.js";
 import type { GeckoMeasureWindow } from "./gecko-breakdown.js";
 
-/** Raw trace-stack frame shape that trace/stacks.ts `extractStack` reads (1-based line/col). */
+/** Raw trace-stack frame shape that trace/stacks.ts `extractStack` reads (1-based line/col) */
 interface RawStackFrame {
   functionName?: string;
   url: string;
@@ -28,7 +28,7 @@ interface RawStackFrame {
 
 interface Table {
   schema: Record<string, number>;
-  // frameTable's relevantForJS column is a boolean; the rest are numbers, strings, payloads, or null.
+  // frameTable's relevantForJS column is a boolean; the rest are numbers, strings, payloads, or null
   data: (number | string | boolean | null | Record<string, unknown>)[][];
 }
 
@@ -55,16 +55,16 @@ interface GeckoContainer {
   processes?: GeckoContainer[];
 }
 
-/** Everything the two converters need, computed once so the JSON is walked a single time. */
+/** Everything the two converters need, computed once so the JSON is walked a single time */
 export interface GeckoContext {
   thread: GeckoThread;
   jsCategory: number;
   idleCategory: number;
-  /** Layout category index (covers both Reflow and style recalc frames); -1 if the dump lacks it. */
+  /** Layout category index (covers both Reflow and style recalc frames); -1 if the dump lacks it */
   layoutCategory: number;
-  /** GC / CC category index; -1 if absent. */
+  /** GC / CC category index; -1 if absent */
   gcCategory: number;
-  /** DOM category index (WebIDL accessor label frames land here); -1 if absent. */
+  /** DOM category index (WebIDL accessor label frames land here); -1 if absent */
   domCategory: number;
   intervalMs: number;
   /** unit of the samples `threadCPUDelta` column, read from meta.sampleUnits; null if not declared */
@@ -79,22 +79,22 @@ export interface GeckoContext {
  * 152, macOS, awaits-only 470ms pure-wait] eps 0 reads 94.5-95.7% idle, eps 100µs reads 99.1%;
  * 50µs sits between them as a conservative middle that tolerates the small mutex/IO CPU a sleeping
  * thread can still show (Bug 1689325) without fabricating idle. Never over-reports a busy sample:
- * real work reads ~one full interval (~1000µs) of CPU, far above this. */
+ * real work reads ~one full interval (~1000µs) of CPU, far above this */
 const IDLE_CPU_DELTA_EPSILON_US = 50;
 
 /** Convert a raw `threadCPUDelta` cell to microseconds using the dump's declared unit; null when
  * the cell is absent/null (old dumps, or a js-only feature set that leaves the column empty). A
  * "variable CPU cycles" unit is not a time, so its raw value is compared to the epsilon directly
- * (only ~0 cycles reads as idle), which is the sound direction: cycles ~0 means no work. */
+ * (only ~0 cycles reads as idle), which is the sound direction: cycles ~0 means no work */
 function cpuDeltaToUs(raw: unknown, unit: string | null): number | null {
   if (typeof raw !== "number") return null;
   if (unit === "ns") return raw / 1000;
-  // "µs"/"us" and the cycles fallback both compare the raw number against the µs epsilon.
+  // "µs"/"us" and the cycles fallback both compare the raw number against the µs epsilon
   return raw;
 }
 
 /** Cycle guard for stackTable prefix walks: far above any real JS stack, so a corrupt
- * self-referencing dump cannot hang the converter. */
+ * self-referencing dump cannot hang the converter */
 const MAX_STACK_DEPTH = 1024;
 
 /** Parsed frame location: a resolvable JS url (http/https/file) keeps `url`; everything else
@@ -102,7 +102,7 @@ const MAX_STACK_DEPTH = 1024;
  * bucketed as (native) downstream, never fs-walked. Line/col are 1-based as Gecko writes them.
  * `rawUrl` keeps the ORIGINAL scheme url (chrome://, resource://, ...) even when it is not a
  * resolvable source, so the shared `isToolFrameUrl` predicate can spot a WebDriver-automation frame
- * (chrome://remote/) that the stripped `url` no longer names; it is never fs-walked or fetched. */
+ * (chrome://remote/) that the stripped `url` no longer names; it is never fs-walked or fetched */
 interface ParsedLocation {
   functionName: string;
   url: string;
@@ -111,7 +111,7 @@ interface ParsedLocation {
   column: number | null;
 }
 
-/** Only these url schemes are on-disk / fetchable source we resolve; see docs/dev/gecko-profile-format.md. */
+/** Only these url schemes are on-disk / fetchable source we resolve; see docs/dev/gecko-profile-format.md */
 function isResolvableUrl(url: string): boolean {
   return /^(https?|file):\/\//.test(url);
 }
@@ -122,7 +122,7 @@ function isResolvableUrl(url: string): boolean {
  *   "url:line:col"         anonymous top-level JS
  *   "url"                  script-level JS with no position
  *   "XRE_InitChildProcess" / "0x1180.." / "(root)"   native label (no url)
- * A trailing "[NN]" innerWindowID subscript is always stripped.
+ * A trailing "[NN]" innerWindowID subscript is always stripped
  */
 export function parseGeckoLocation(rawLocation: string): ParsedLocation {
   const location = rawLocation.replace(/\[\d+\]$/, "");
@@ -158,19 +158,19 @@ export function parseGeckoLocation(rawLocation: string): ParsedLocation {
  * chrome://remote/): the harness driving the page, never the user's JS. `parseGeckoLocation` strips
  * the unresolvable chrome:// url from `parsed.url`, so match `rawUrl` through the shared predicate.
  * Dropped from the CPU chain and the slice classification so its self-time (synthesizeMouseAtPoint et
- * al.) does not rank above the app's own functions. */
+ * al.) does not rank above the app's own functions */
 function isAutomationFrame(parsed: ParsedLocation): boolean {
   return isToolFrameUrl(parsed.rawUrl);
 }
 
-/** Walk parent + child processes (they nest recursively) and collect every thread. */
+/** Walk parent + child processes (they nest recursively) and collect every thread */
 function allThreads(container: GeckoContainer): GeckoThread[] {
   const threads: GeckoThread[] = [...(container.threads ?? [])];
   for (const child of container.processes ?? []) threads.push(...allThreads(child));
   return threads;
 }
 
-/** UserTiming marker label (a performance.mark/measure name) for a marker row, or null. */
+/** UserTiming marker label (a performance.mark/measure name) for a marker row, or null */
 function userTimingName(
   thread: GeckoThread,
   markerRow: (number | string | boolean | null | Record<string, unknown>)[],
@@ -181,7 +181,7 @@ function userTimingName(
   return typeof data?.name === "string" ? data.name : null;
 }
 
-/** The [start,end] ms window from this thread's wpd:run UserTiming markers. */
+/** The [start,end] ms window from this thread's wpd:run UserTiming markers */
 function runWindow(thread: GeckoThread): { startMs: number | null; endMs: number | null } {
   const startColumn = thread.markers.schema.startTime;
   let startMs: number | null = null;
@@ -197,7 +197,7 @@ function runWindow(thread: GeckoThread): { startMs: number | null; endMs: number
 /**
  * Locate the content thread that ran the module (the one carrying the wpd:run marks) and
  * compute the shared context. Selecting by marker, not by processType, holds across the
- * several content processes Firefox spawns (see docs/dev/gecko-profile-format.md).
+ * several content processes Firefox spawns (see docs/dev/gecko-profile-format.md)
  */
 export function parseGecko(profile: GeckoContainer): GeckoContext {
   const categories = profile.meta?.categories ?? [];
@@ -205,14 +205,14 @@ export function parseGecko(profile: GeckoContainer): GeckoContext {
   const idleCategory = categories.findIndex((category) => category.name === "Idle");
   // Both Reflow and style recalc frames carry the "Layout" category; style vs layout is split by
   // frame name downstream. "GC / CC" is Gecko's gc/cycle-collector category; "DOM" carries the
-  // WebIDL accessor label frames (get HTMLElement.offsetWidth) read-site blame keys on.
+  // WebIDL accessor label frames (get HTMLElement.offsetWidth) read-site blame keys on
   const layoutCategory = categories.findIndex((category) => category.name === "Layout");
   const gcCategory = categories.findIndex((category) => category.name === "GC / CC");
   const domCategory = categories.findIndex((category) => category.name === "DOM");
   const intervalMs = profile.meta?.interval ?? 1;
   const cpuDeltaUnit = profile.meta?.sampleUnits?.threadCPUDelta ?? null;
   // Without the JavaScript category no frame can be classified as JS, which would yield an
-  // empty-but-valid CPU model reporting ~0 scripting time. Fail loudly instead of lying.
+  // empty-but-valid CPU model reporting ~0 scripting time. Fail loudly instead of lying
   if (jsCategory < 0) {
     throw new Error(
       "Gecko profile has no 'JavaScript' category: the dump is not a profile wpd can read (unsupported format version, or the 'js' profiler feature was off).",
@@ -233,7 +233,7 @@ export function parseGecko(profile: GeckoContainer): GeckoContext {
     }
   }
   // Fallback: no wpd marks found (should not happen in practice). Use the thread with the most
-  // samples so the CPU model is still populated, and leave the window open (unsliced).
+  // samples so the CPU model is still populated, and leave the window open (unsliced)
   if (!chosen) {
     chosen = threads.reduce((best, thread) =>
       thread.samples.data.length > best.samples.data.length ? thread : best,
@@ -256,7 +256,7 @@ export function parseGecko(profile: GeckoContainer): GeckoContext {
 /** Info a frame contributes: whether it is JS, its call-frame identity (definition site, from the
  * location string), and the per-sample execution line/col (frameTable columns). CPU node identity
  * uses the definition site (function-level collapsing, like V8); marker blame uses the execution
- * line so a forced layout points at the exact offending statement (Chrome-parity). */
+ * line so a forced layout points at the exact offending statement (Chrome-parity) */
 interface FrameInfo {
   isJs: boolean;
   isIdle: boolean;
@@ -302,7 +302,7 @@ function readFrame(context: GeckoContext, frameIndex: number): FrameInfo {
  * (`PresShell::DoFlushPendingNotifications Style`). Everything else is layout (`Reflow ...`, the
  * ` Layout` flush wrapper, frame construction). Without these style wrappers ~10-25% of style recalc
  * on a style-bound workload buckets to layout. Matching stays anchored (prefix/suffix/exact): a bare
- * `Style` substring would wrongly claim the `CTFontFamily::FindStyleVariations` font-matching frame. */
+ * `Style` substring would wrongly claim the `CTFontFamily::FindStyleVariations` font-matching frame */
 export function layoutSlice(rawLocation: string): "style" | "layout" {
   return /^(Styles|Style computation|CSS parsing|Container Query|Update stylesheet information|RestyleManager::|ComputedStyle::CalcStyleDifference)/.test(
     rawLocation,
@@ -314,7 +314,7 @@ export function layoutSlice(rawLocation: string): "style" | "layout" {
 /** The breakdown slice for a sample, from the nearest-to-leaf categorized frame in its full stack
  * (the Firefox Profiler's own "Categories" semantic). Unsymbolicated native leaves carry no
  * category, so the walk skips them until it finds a categorized frame; a stack with none is `other`.
- * The idle decision is made by the caller from `threadCPUDelta`, not here. */
+ * The idle decision is made by the caller from `threadCPUDelta`, not here */
 function sampleSlice(context: GeckoContext, stackIndex: number | null): GeckoSlice {
   if (stackIndex == null) return "idle";
   const { thread, jsCategory, idleCategory, layoutCategory, gcCategory } = context;
@@ -329,7 +329,7 @@ function sampleSlice(context: GeckoContext, stackIndex: number | null): GeckoSli
       if (info.category === layoutCategory) return layoutSlice(info.rawLocation);
       if (info.category === gcCategory) return "gc";
       if (info.category === jsCategory) return isAutomationFrame(info.parsed) ? "other" : "js";
-      // DOM accessor time, Profiler self-overhead, Graphics, Other, etc. are engine/runtime work.
+      // DOM accessor time, Profiler self-overhead, Graphics, Other, etc. are engine/runtime work
       return "other";
     }
     current = stackRow[schema.prefix] as number | null;
@@ -338,7 +338,7 @@ function sampleSlice(context: GeckoContext, stackIndex: number | null): GeckoSli
 }
 
 /** The JS-only frame chain (root..leaf) for a Gecko stack index; native frames are dropped so
- * the result mirrors a V8 JS-only profile. Cached: many samples share stack prefixes. */
+ * the result mirrors a V8 JS-only profile. Cached: many samples share stack prefixes */
 function jsChainRootFirst(
   context: GeckoContext,
   stackIndex: number,
@@ -355,7 +355,7 @@ function jsChainRootFirst(
     const stackRow = thread.stackTable.data[current];
     const info = readFrame(context, stackRow[schema.frame] as number);
     // A WebDriver-automation frame is dropped like a native one: its self-time belongs to the harness,
-    // not the app, so it never becomes a ranked CPU node.
+    // not the app, so it never becomes a ranked CPU node
     if (info.isJs && !isAutomationFrame(info.parsed)) leafFirst.push(info.parsed);
     current = stackRow[schema.prefix] as number | null;
   }
@@ -366,7 +366,7 @@ function jsChainRootFirst(
 
 function toRawCallFrame(parsed: ParsedLocation): RawCallFrame {
   // resolveCallFrame adds 1 (CDP 0-based convention), so store line/col 0-based. When the
-  // location string had no position (script-level frame), fall back to 0 -> resolves to line 1.
+  // location string had no position (script-level frame), fall back to 0 -> resolves to line 1
   return {
     functionName: parsed.functionName || "(anonymous)",
     scriptId: "0",
@@ -376,7 +376,7 @@ function toRawCallFrame(parsed: ParsedLocation): RawCallFrame {
   };
 }
 
-/** A synthetic V8-style bookkeeping frame ((root)/(program)/(idle)): no url, no position. */
+/** A synthetic V8-style bookkeeping frame ((root)/(program)/(idle)): no url, no position */
 const systemCallFrame = (name: string): RawCallFrame => ({
   functionName: name,
   scriptId: "0",
@@ -386,7 +386,7 @@ const systemCallFrame = (name: string): RawCallFrame => ({
 });
 
 /** Identity of a JS frame for interning the pruned call tree (function-level, so all samples in
- * one function collapse to one node like V8). */
+ * one function collapse to one node like V8) */
 function chainFrameKey(parsed: ParsedLocation): string {
   return `${parsed.functionName}|${parsed.url}|${parsed.line}|${parsed.column}`;
 }
@@ -394,7 +394,7 @@ function chainFrameKey(parsed: ParsedLocation): string {
 /**
  * Build a V8-style `RawCpuProfile` from the Gecko context, restricted to the run window. Samples
  * are reduced to their JS frame chains and interned into a fresh prefix tree under a synthetic
- * (root); non-JS samples fall to (program) / (idle). Self time is the per-sample wall delta.
+ * (root); non-JS samples fall to (program) / (idle). Self time is the per-sample wall delta
  */
 export function geckoToRawCpuProfile(context: GeckoContext): RawCpuProfile {
   const { thread, windowStartMs, windowEndMs } = context;
@@ -438,7 +438,7 @@ export function geckoToRawCpuProfile(context: GeckoContext): RawCpuProfile {
   // The `threadCPUDelta` column is present only when the profiler ran with the `cpu` feature; a
   // js-only dump leaves it absent/empty. Its populated-ness gates the honest-idle breakdown: with no
   // CPU signal we cannot tell a descheduled wait from `(program)`, so no breakdown is emitted rather
-  // than a fabricated idle.
+  // than a fabricated idle
   const cpuDeltaColumn = sampleSchema.threadCPUDelta;
   let cpuDeltaPopulated = false;
 
@@ -458,7 +458,7 @@ export function geckoToRawCpuProfile(context: GeckoContext): RawCpuProfile {
     if (cpuDeltaUs != null) cpuDeltaPopulated = true;
     // Honest idle: a sample that burned ~no CPU since the previous one was descheduled (waiting),
     // so its wall-delta is idle regardless of what frame sat on the stack. Route it to the (idle)
-    // node so system.idleMs / jsSelfMs are honest, and classify its slice as idle.
+    // node so system.idleMs / jsSelfMs are honest, and classify its slice as idle
     const idleByCpu = cpuDeltaUs != null && cpuDeltaUs <= IDLE_CPU_DELTA_EPSILON_US;
 
     let nodeId: number;
@@ -497,12 +497,12 @@ export function geckoToRawCpuProfile(context: GeckoContext): RawCpuProfile {
     samples,
     timeDeltas,
     // Only when the CPU column was populated: the reconciling breakdown needs the idle signal, and
-    // without it a firefox bar would fabricate idle. Chrome/node profiles never set this field.
+    // without it a firefox bar would fabricate idle. Chrome/node profiles never set this field
     gecko: cpuDeltaPopulated ? { sampleSlices } : undefined,
   };
 }
 
-/** Kind + display name for a rendering marker, or null if it is not one we surface. */
+/** Kind + display name for a rendering marker, or null if it is not one we surface */
 function renderingKind(markerName: string): { kind: "layout" | "style"; name: string } | null {
   if (markerName === "Styles") return { kind: "style", name: "RecalcStyles" };
   if (markerName.startsWith("Reflow")) return { kind: "layout", name: "Layout" };
@@ -510,7 +510,7 @@ function renderingKind(markerName: string): { kind: "layout" | "style"; name: st
 }
 
 /** Resolve a marker cause-stack index to JS frames (1-based, trace-stack convention), leaf frame
- * first so `topLocation`/blame pick the innermost JS caller. */
+ * first so `topLocation`/blame pick the innermost JS caller */
 function causeStackFrames(context: GeckoContext, stackIndex: number): RawStackFrame[] {
   const { thread } = context;
   const schema = thread.stackTable.schema;
@@ -522,7 +522,7 @@ function causeStackFrames(context: GeckoContext, stackIndex: number): RawStackFr
     const info = readFrame(context, stackRow[schema.frame] as number);
     if (info.isJs && info.parsed.url) {
       // Prefer the executing line/col (exact offending statement) over the function definition
-      // site, so forced-layout blame points at the read/write that triggered the flush.
+      // site, so forced-layout blame points at the read/write that triggered the flush
       frames.push({
         functionName: info.parsed.functionName || undefined,
         url: info.parsed.url,
@@ -532,7 +532,7 @@ function causeStackFrames(context: GeckoContext, stackIndex: number): RawStackFr
     }
     current = stackRow[schema.prefix] as number | null;
   }
-  // Already leaf-first: the stack walk goes child -> parent.
+  // Already leaf-first: the stack walk goes child -> parent
   return frames;
 }
 
@@ -542,7 +542,7 @@ function causeStackFrames(context: GeckoContext, stackIndex: number): RawStackFr
  * marks become `usertiming` events (so findWindow/findSteps locate the window); Reflow -> layout,
  * Styles -> style, each carrying its JS cause as args.data.stackTrace for source attribution.
  * When a JS frame is on the cause stack the event resolves an `at`, which markForced reads as a
- * synchronously-forced (thrashing) layout/style.
+ * synchronously-forced (thrashing) layout/style
  */
 export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[] {
   const { thread, windowStartMs, windowEndMs } = context;
@@ -552,9 +552,9 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
     (windowEndMs == null || timeMs <= windowEndMs);
 
   // Reflow markers split into phase-2 (start, has the cause) / phase-3 (end) rows; pair them via
-  // a stack keyed by marker name so nested reflows match. Styles use a single phase-1 interval.
+  // a stack keyed by marker name so nested reflows match. Styles use a single phase-1 interval
   const openStarts = new Map<string, { startMs: number; causeIndex: number | null }[]>();
-  // Ids are assigned in ts order once the markers are sorted below, so push a placeholder here.
+  // Ids are assigned in ts order once the markers are sorted below, so push a placeholder here
   const events: NormalizedEvent[] = [];
 
   for (const markerRow of thread.markers.data) {
@@ -565,13 +565,13 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
     const data = markerRow[schema.data] as {
       name?: string;
       stack?: { samples?: { data?: number[][] } };
-      /** Styles marker only: elements recalculated (the Gecko analog of Chrome's elementCount). */
+      /** Styles marker only: elements recalculated (the Gecko analog of Chrome's elementCount) */
       elementsStyled?: number;
     } | null;
 
     const label = userTimingName(thread, markerRow);
     if (label) {
-      // Only surface the marks the pipeline windows on (run/step); skip other user marks.
+      // Only surface the marks the pipeline windows on (run/step); skip other user marks
       if (!isRunOrStepEdgeMark(label)) continue;
       if (!inWindow(startTime)) continue;
       events.push({
@@ -590,7 +590,7 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
     const causeIndex = data?.stack?.samples?.data?.[0]?.[0] ?? null;
 
     if (phase === 2) {
-      // interval start (Reflow): stash until the matching end row.
+      // interval start (Reflow): stash until the matching end row
       const pending = openStarts.get(markerName) ?? [];
       pending.push({ startMs: startTime, causeIndex });
       openStarts.set(markerName, pending);
@@ -610,7 +610,7 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
       effectiveStartMs = startTime;
       effectiveEndMs = endTime;
     } else {
-      // Instant rendering markers carry no duration.
+      // Instant rendering markers carry no duration
       continue;
     }
     if (!inWindow(effectiveStartMs)) continue;
@@ -620,7 +620,7 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
     // The Styles marker names how many elements it recalculated (elementsStyled), the Gecko analog of
     // Chrome's elementCount; carry it so the style-scope distribution reads it (trace/scope.ts) the
     // same way it reads chrome's `args.elementCount`. Reflow markers carry no scope, matching the
-    // never-fake-parity rule: firefox has no layout scope. Stashed under `args.data` beside any cause.
+    // never-fake-parity rule: firefox has no layout scope. Stashed under `args.data` beside any cause
     const styleElements =
       rendering.kind === "style" && typeof data?.elementsStyled === "number"
         ? data.elementsStyled
@@ -639,7 +639,7 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
       // cause names the WRITE that dirtied the DOM, not the read that forced the flush, so it is
       // deliberately NOT surfaced as `at`: that would put write lines in `query blame --forced`,
       // where the sampled read-site events below carry the read line instead. The write cause stays
-      // reachable via `query get`/`query events` under args.data.invalidationStack.
+      // reachable via `query get`/`query events` under args.data.invalidationStack
       forced: causeFrames.length > 0,
       args: Object.keys(argsData).length ? { data: argsData } : undefined,
     });
@@ -647,11 +647,11 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
 
   // Read-site forced blame from the sampled stacks: the answer `query blame --forced` shows on
   // Firefox (the read line + property), matching Chrome's flush-site semantics. Additive to the
-  // marker events above, which keep providing the flush COUNTS.
+  // marker events above, which keep providing the flush COUNTS
   events.push(...geckoReadSiteBlameEvents(context));
 
   events.sort((left, right) => left.ts - right.ts);
-  // Reassign ids in ts order for stable `query get <id>` addressing (parseTrace does the same).
+  // Reassign ids in ts order for stable `query get <id>` addressing (parseTrace does the same)
   events.forEach((event, index) => {
     event.id = index;
   });
@@ -659,7 +659,7 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
 }
 
 /** The clean property name from a DOM accessor label frame ("get HTMLElement.offsetWidth" ->
- * "HTMLElement.offsetWidth"; a method label with no leading get/set keyword is returned as-is). */
+ * "HTMLElement.offsetWidth"; a method label with no leading get/set keyword is returned as-is) */
 function readSiteProperty(rawLocation: string): string {
   const spaceAt = rawLocation.indexOf(" ");
   return spaceAt >= 0 ? rawLocation.slice(spaceAt + 1) : rawLocation;
@@ -676,7 +676,7 @@ interface ReadSite {
  * Walking leaf -> root: a Layout-category frame (Reflow/Styles) is the "this read forced a flush"
  * discriminator; the DOM-category accessor label above it names the property; the nearest JS
  * ancestor above the accessor carries the per-sample EXECUTING line (`frameTable.line`), which is
- * the read site (matching Chrome's flush-site blame), NOT the function-definition line.
+ * the read site (matching Chrome's flush-site blame), NOT the function-definition line
  */
 function readSiteFromStack(context: GeckoContext, stackIndex: number): ReadSite | null {
   const { thread, layoutCategory, domCategory } = context;
@@ -689,7 +689,7 @@ function readSiteFromStack(context: GeckoContext, stackIndex: number): ReadSite 
     const stackRow = thread.stackTable.data[current];
     const info = readFrame(context, stackRow[schema.frame] as number);
     if (property != null) {
-      // Past the accessor: the first JS ancestor with an executing line is the read site.
+      // Past the accessor: the first JS ancestor with an executing line is the read site
       if (info.isJs && info.parsed.url && info.execLine != null) {
         return {
           kind: forcedKind!,
@@ -711,7 +711,7 @@ function readSiteFromStack(context: GeckoContext, stackIndex: number): ReadSite 
       forcedKind &&
       // Only READ accessors force a flush; `set*` writes (bump's style assignments) dirty layout but
       // do not force it, and blaming them would put write lines in --forced. GL-1: reads and writes
-      // never collide once set* is excluded.
+      // never collide once set* is excluded
       !info.rawLocation.startsWith("set ")
     ) {
       property = readSiteProperty(info.rawLocation);
@@ -726,7 +726,7 @@ function readSiteFromStack(context: GeckoContext, stackIndex: number): ReadSite 
  * DOM geometry read sitting over a Layout-category flush; each carries the read line (via
  * args.data.stackTrace, resolved by attachStacks) and the property name. Marked `sampled` so the
  * summary does not count them as flushes (the Reflow/Styles markers do that); they exist for blame.
- * The per-sample wall delta mirrors the converter's, so grouped durations read as sampled time.
+ * The per-sample wall delta mirrors the converter's, so grouped durations read as sampled time
  */
 export function geckoReadSiteBlameEvents(context: GeckoContext): NormalizedEvent[] {
   const { thread, windowStartMs, windowEndMs } = context;
@@ -761,7 +761,7 @@ export function geckoReadSiteBlameEvents(context: GeckoContext): NormalizedEvent
  * User `performance.measure` spans inside the run window (the §14 mark bridge on Firefox). Read from
  * UserTiming interval markers (`data.entryType === "measure"`, phase 1). wpd's own `wpd:*` measures
  * are excluded (the run/step spans come from marks). Times are converted to the profiler µs clock,
- * the same clock the samples carry, so the breakdown builder can window them directly.
+ * the same clock the samples carry, so the breakdown builder can window them directly
  */
 export function geckoUserMeasures(context: GeckoContext): GeckoMeasureWindow[] {
   const { thread, windowStartMs, windowEndMs } = context;
@@ -779,7 +779,7 @@ export function geckoUserMeasures(context: GeckoContext): GeckoMeasureWindow[] {
     if (windowStartMs != null && startMs < windowStartMs) continue;
     if (windowEndMs != null && endMs > windowEndMs) continue;
     // EVERY in-window occurrence is kept, including a label repeated once per --iteration: those
-    // repetitions are the label's samples, merged per label downstream (see model/span-merge.ts).
+    // repetitions are the label's samples, merged per label downstream (see model/span-merge.ts)
     measures.push({ label, startTs: msToUs(startMs), endTs: msToUs(endMs) });
   }
   return measures;

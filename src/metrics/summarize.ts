@@ -5,17 +5,17 @@ import { mainThread } from "../trace/main-thread.js";
 import { measuredIf, type Measured } from "../model/measured.js";
 import { usToMs, msToUs } from "../model/time.js";
 import { LONG_TASK_MS, inWindow } from "../trace/analysis.js";
-// inWindow is start-onward by design; see the note in analysis.ts.
+// inWindow is start-onward by design; see the note in analysis.ts
 
-/** Layout/style counts and durations sourced from the trace, windowed on ONE renderer main thread. */
+/** Layout/style counts and durations sourced from the trace, windowed on ONE renderer main thread */
 export interface TraceRenderingWork {
-  /** trace `Layout` events on the main thread; equals Blink's `LayoutCount` (one event per increment). */
+  /** trace `Layout` events on the main thread; equals Blink's `LayoutCount` (one event per increment) */
   layoutCount: number;
-  /** trace `UpdateLayoutTree` on the main thread, excluding `ParseAuthorStyleSheet`; equals `RecalcStyleCount`. */
+  /** trace `UpdateLayoutTree` on the main thread, excluding `ParseAuthorStyleSheet`; equals `RecalcStyleCount` */
   styleCount: number;
-  /** Σ dur of the counted `Layout` events, microseconds. */
+  /** Σ dur of the counted `Layout` events, microseconds */
   layoutUs: number;
-  /** Σ dur of the counted `UpdateLayoutTree` events (parse excluded), microseconds. */
+  /** Σ dur of the counted `UpdateLayoutTree` events (parse excluded), microseconds */
   styleUs: number;
 }
 
@@ -35,7 +35,7 @@ export interface TraceRenderingWork {
  * `LayoutDuration`/`RecalcStyleDuration` to within ~1% (layout) / a few µs (style) on a light trace.
  * They are wall-tier `base::TimeTicks` ms, valid ONLY on a no-`.stack` trace: the `.stack` category
  * inflates `UpdateLayoutTree` dur up to +38%, so a caller reading a `.stack`/`--deep` trace must not
- * feed these into a reported duration field.
+ * feed these into a reported duration field
  */
 export function traceRenderingWork(
   detailEvents: NormalizedEvent[],
@@ -48,7 +48,7 @@ export function traceRenderingWork(
   let styleUs = 0;
   for (const event of detailEvents) {
     if (!inWindow(event, detailWindowStart)) continue;
-    // Sampled blame annotations are not measured flushes (see the note in buildSummary's loop).
+    // Sampled blame annotations are not measured flushes (see the note in buildSummary's loop)
     if (event.sampled) continue;
     if (thread && (event.pid !== thread.pid || event.tid !== thread.tid)) continue;
     if (event.kind === "layout") {
@@ -86,7 +86,7 @@ export function computeStats(perIteration: number[]): BenchStats | null {
  * to `Measured` null vs a number by one of these flags, so a capture mode that saw no trace reports null
  * (not a fake 0), and a `.stack`/`--deep` trace reports exact counts but suppresses its distorted
  * durations. Computed once in `capabilitiesFor` (record/capture.ts) and threaded to every
- * `buildSummary` call (run, step, node) so one capture mode's honesty is stated in one place.
+ * `buildSummary` call (run, step, node) so one capture mode's honesty is stated in one place
  */
 export interface CaptureCapabilities {
   /** a trace was captured, so layout/style COUNTS are exact (windowed on the bar's main thread) */
@@ -107,12 +107,12 @@ export interface CaptureCapabilities {
    * (+38%), and Firefox's Reflow/Styles markers under-report the forced subset ~7x (they carry only
    * the first, short-duration invalidation per flush). So `forcedLayoutMs` is structurally
    * not-measured; the honest total-layout signal is the reconciling bar's `layout` slice, and forced
-   * COUNTS stay (marker/`.stack` counts are honest counts). See docs/dev/blame-semantics.md.
+   * COUNTS stay (marker/`.stack` counts are honest counts). See docs/dev/blame-semantics.md
    */
   forcedDurations: boolean;
 }
 
-/** Everything not-measured: the default capture mode and node, which capture no rendering work. */
+/** Everything not-measured: the default capture mode and node, which capture no rendering work */
 export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
   counts: false,
   paintCount: false,
@@ -126,7 +126,7 @@ export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
 /**
  * The build-time run/step metrics struct buildSummary produces, consumed by spans-build to fill the
  * run and step spans. NOT serialized: schema 5 stores counts/timing only on the `Span[]` (the run span
- * carries these run-level numbers), so this is an internal assembly shape, never a recording field.
+ * carries these run-level numbers), so this is an internal assembly shape, never a recording field
  */
 export interface RecordingSummary {
   wallMs: number | null;
@@ -160,10 +160,10 @@ export interface SummaryInputs {
   interaction?: InteractionTiming | null;
   /** bench (in-page iterations) per-iteration wall times */
   perIteration?: number[];
-  /** what the capture could observe; defaults to NO_RENDERING_CAPTURE (default capture mode / node). */
+  /** what the capture could observe; defaults to NO_RENDERING_CAPTURE (default capture mode / node) */
   capabilities?: CaptureCapabilities;
   /** JS self-time from the CPU model (`CpuModel.jsSelfMs`), or null (--deep has no sampler, so no CPU
-   * model). NOT the non-idle sampled total. */
+   * model). NOT the non-idle sampled total */
   jsSelfMs?: Measured<number>;
   /**
    * The renderer main thread to scope EVERY trace-derived count to (layout/style AND
@@ -171,7 +171,7 @@ export interface SummaryInputs {
    * via `mainThread` -- the run's own selection. A per-step summary passes the run-selected thread so
    * its windowed counts sit on the same thread as its bar, rather than re-picking per step from a
    * window that carries no run:start marker. null means no thread was captured (every non-breakdown/
-   * non-deep capture mode strips pid/tid), so the single captured thread is counted whole.
+   * non-deep capture mode strips pid/tid), so the single captured thread is counted whole
    */
   thread?: { pid: number; tid: number } | null;
 }
@@ -186,7 +186,7 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
   // (marker, or the layout/paint heuristic); a step is handed the run's selection (input.thread) so
   // its counts share the thread of the bar it sits under. null (no pid/tid captured) admits the
   // single captured thread whole. This thread scopes BOTH traceRenderingWork (layout/style) and the
-  // general count loop below (paint/forced/invalidation/long-task/total).
+  // general count loop below (paint/forced/invalidation/long-task/total)
   const thread = input.thread !== undefined ? input.thread : mainThread(detailEvents);
   const renderingWork = traceRenderingWork(detailEvents, detailWindowStart, thread);
 
@@ -205,10 +205,10 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     if (!inWindow(event, detailWindowStart)) continue;
     // Sampled blame annotations (Firefox read-site forced blame) are not measured flushes: they
     // exist for `query blame --forced` only. Counting them would double-count the Reflow/Styles
-    // markers, which are the one-per-flush source of layout/style/forced counts and durations.
+    // markers, which are the one-per-flush source of layout/style/forced counts and durations
     if (event.sampled) continue;
     // Same main-thread scope as traceRenderingWork/the bar: skip an OOPIF's off-thread events so
-    // paint/forced/invalidation/long-task/total never sum a second process into this window.
+    // paint/forced/invalidation/long-task/total never sum a second process into this window
     if (thread && (event.pid !== thread.pid || event.tid !== thread.tid)) continue;
     total++;
     if (event.forced) {
@@ -234,7 +234,7 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
       // layout/style counts and durations come from traceRenderingWork (main-thread windowed), not
       // this all-pids loop; every kind here derives no inline summary counter. Enumerated (not left
       // to a silent default) so a future EventKind lands on the exhaustiveness guard below and must
-      // be handled here.
+      // be handled here
       case "layout":
       case "style":
       case "composite":
@@ -257,14 +257,14 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     // Counts come from the trace, main-thread windowed (renderingWork); a capture mode with no trace reports
     // null, never a fake 0. Durations ride Chrome's `base::TimeTicks` (wall-tier, ~1%) and are valid
     // only on the light no-`.stack` trace, so a `--deep` (.stack) capture reports the exact counts
-    // but null durations -- a distorted number is worse than none (.stack inflates style up to +38%).
+    // but null durations -- a distorted number is worse than none (.stack inflates style up to +38%)
     layoutCount: measuredIf(capabilities.counts, renderingWork.layoutCount),
     layoutMs: measuredIf(capabilities.durations, usToMs(renderingWork.layoutUs)),
     styleCount: measuredIf(capabilities.counts, renderingWork.styleCount),
     styleMs: measuredIf(capabilities.durations, usToMs(renderingWork.styleUs)),
     // Main-thread paint chunks only; see PAINT in trace/classify.ts. There is deliberately no
     // composite count: [measured] it tracks the settle-window duration (7x swing on a constant workload),
-    // i.e. frames elapsed, never the page's work. docs/dev/rendering-counts.md.
+    // i.e. frames elapsed, never the page's work. docs/dev/rendering-counts.md
     paintCount: measuredIf(capabilities.paintCount, paintCount),
     paintMs: measuredIf(capabilities.paintCount && capabilities.durations, usToMs(paintUs)),
     layoutInvalidations: measuredIf(capabilities.invalidations, layoutInval),
@@ -272,12 +272,12 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     styleInvalidations: measuredIf(capabilities.invalidations, styleInval),
     // null (not 0) when detection did not run: the default/--breakdown capture modes drop the `.stack`
     // category forced detection needs, so a 0 here would read as "no thrashing" instead of "not
-    // measured".
+    // measured"
     forcedLayoutCount: measuredIf(capabilities.forced, forcedLayoutCount),
     // forcedLayoutMs is structurally not-measured on every lane (forcedDurations is false everywhere):
     // no lane can honestly price the forced SUBSET's duration. Chrome measures the subset only from
     // `.stack`, which suppresses durations; Firefox's markers under-report it ~7x. Forced COUNTS
-    // stay; the honest total-layout duration is the reconciling bar's `layout` slice.
+    // stay; the honest total-layout duration is the reconciling bar's `layout` slice
     forcedLayoutMs: measuredIf(capabilities.forcedDurations, usToMs(forcedLayoutUs)),
     longTaskCount: measuredIf(capabilities.longTasks, longTaskCount),
     longestTaskMs: measuredIf(

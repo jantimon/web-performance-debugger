@@ -5,7 +5,7 @@ import { shortSource, shortRemoteUrl, tailPath } from "../../dist/profile/cpupro
 // The `function (source)` cell in `query cpu` / `query span` / `cpu-diff` tables. A local path is
 // tailed to its last segments; an unmapped remote frame's `file` is its full URL, which can run
 // hundreds of chars (a config endpoint with a long query string) and size the column to a wall of
-// dashes. shortSource compacts a remote URL to origin + truncated path, query/hash dropped.
+// dashes. shortSource compacts a remote URL to origin + truncated path, query/hash dropped
 
 test("shortSource tails a local path and keeps the line", () => {
   assert.equal(shortSource("src/app/render.ts", "src/app/render.ts:42"), "app/render.ts:42");
@@ -27,7 +27,7 @@ test("shortRemoteUrl keeps the origin whole and elides deep paths", () => {
     shortRemoteUrl("https://cdn.example.com/a/b/c/d/bundle.js"),
     "https://cdn.example.com/…/d/bundle.js",
   );
-  // A bare-origin script (no path) keeps just the origin.
+  // A bare-origin script (no path) keeps just the origin
   assert.equal(shortRemoteUrl("https://cdn.example.com/"), "https://cdn.example.com");
 });
 

@@ -6,7 +6,7 @@ import type { CpuModel, Recording } from "../model/recording.js";
 // "Invalid string length" (V8 code ERR_STRING_TOO_LONG). The trace itself now parses past that ceiling
 // event by event, but a --deep/firefox recording stores the full event log (every trace event, `.stack`
 // and invalidation args kept for blame), so a journey heavy enough to grow the trace past ~512MB grows
-// its stored event log past the same limit. Name that failure rather than surface a bare RangeError.
+// its stored event log past the same limit. Name that failure rather than surface a bare RangeError
 function isStringTooLongError(error: unknown): boolean {
   return (
     error instanceof RangeError &&
@@ -18,7 +18,7 @@ function isStringTooLongError(error: unknown): boolean {
 // The shared remedy for a --deep event log too large to serialize, named identically by the capture-time
 // preflight (record/runpass.ts) and the writeRecording backstop below so a reader gets the same next
 // step wherever the ceiling is hit. Every --iteration is traced, so the stored log scales with the
-// iteration count as well as the per-run work: fewer --iterations is a real reducer.
+// iteration count as well as the per-run work: fewer --iterations is a real reducer
 const DEEP_EVENT_LOG_REMEDY =
   "--deep stores the full event log (.stack + invalidationTracking) for forced-layout blame; reduce " +
   "the measured work (fewer steps per run, fewer --iterations, or scope the flow), or record with " +
@@ -28,7 +28,7 @@ const DEEP_EVENT_LOG_REMEDY =
  * The capture-time preflight error: a chrome --deep trace whose stored event log will exceed the
  * ~512MB JSON-string ceiling, refused right after capture so the parse cannot OOM first. `traceBytes`
  * is the raw trace byte length known when the stream completes. Shares DEEP_EVENT_LOG_REMEDY with the
- * writeRecording backstop.
+ * writeRecording backstop
  */
 export function deepEventLogOverflowError(traceBytes: number): Error {
   const traceMb = Math.round(traceBytes / (1024 * 1024));
@@ -43,10 +43,10 @@ export function deepEventLogOverflowError(traceBytes: number): Error {
 // handles, no meta mutation, so a fixture test can drive them directly. The collapse leaves two
 // writers: the one default artifact (Span[] + summary + meta, with the deep event log under --deep)
 // and the resolved CPU model. The `query spans`/`query span <label>` views are derived from the
-// recording at read time, so there is no separate step-index file to write.
+// recording at read time, so there is no separate step-index file to write
 
 /** Serialize a recording to `outPath` (atomic: temp file + rename, so a killed write leaves the
- * previous recording intact rather than a half-written one). */
+ * previous recording intact rather than a half-written one) */
 export async function writeRecording(
   outPath: string,
   recording: Recording,
@@ -66,7 +66,7 @@ export async function writeRecording(
   await writeFileAtomic(outPath, body);
 }
 
-/** Serialize the resolved CPU model to `cpuModelPath` (atomic, same reason as writeRecording). */
+/** Serialize the resolved CPU model to `cpuModelPath` (atomic, same reason as writeRecording) */
 export async function writeCpuModel(
   cpuModelPath: string,
   cpuModel: CpuModel,

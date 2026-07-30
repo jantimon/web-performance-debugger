@@ -8,11 +8,11 @@ import { RUN_START_MARK } from "../model/marks.js";
  * is a live top page whose OOPIF happens to render more, and it keeps the attribution (the OOPIF's
  * own-process counts are a separate off-thread count, never stolen). A blank-host stray is one or two
  * flushes against a real page's dozens-to-thousands, well under this floor; a real top page renders a
- * substantial fraction of the total.
+ * substantial fraction of the total
  */
 export const REANCHOR_MAX_MARKER_SHARE = 0.05;
 
-/** The renderer main thread the counts and the breakdown bar share, plus how it was chosen. */
+/** The renderer main thread the counts and the breakdown bar share, plus how it was chosen */
 export interface MainThreadSelection {
   pid: number;
   tid: number;
@@ -25,7 +25,7 @@ export interface MainThreadSelection {
    *   `page.goto` does the same) leaves `wpd:run:start` on the pre-navigation renderer. The counts and
    *   the bar must follow the page to its new process, so the selection re-anchors to the thread that
    *   carried the work.
-   * - `heuristic` when the marker was missing entirely and the busiest layout/paint thread stood in.
+   * - `heuristic` when the marker was missing entirely and the busiest layout/paint thread stood in
    */
   via: "marker" | "reanchored" | "heuristic";
   /**
@@ -35,7 +35,7 @@ export interface MainThreadSelection {
    * the whole run. The counts and bar describe only the selected (busiest) thread; a span whose window
    * ran in a different process cannot be tiled from it. A same-page OOPIF renders CONCURRENTLY with the
    * selected thread (its activity overlaps), so it is not a split -- its own-process counts are a
-   * separate off-thread count, never the reason to warn.
+   * separate off-thread count, never the reason to warn
    */
   split: boolean;
 }
@@ -51,10 +51,11 @@ export interface MainThreadSelection {
  * off-thread count. The share (not a strict zero) is what admits a common driver shape: a step that
  * touches the page (one forced layout on the blank host) before navigating leaves a stray count on the
  * pre-nav thread, and a strict zero test reads that as "no swap", anchoring the whole run to the husk
- * and reporting the navigated page's work as ~100% idle. The residual edge the share test cannot split:
- * a near-empty top page (a thin frame wrapper) that renders under the floor while a heavy cross-origin
- * OOPIF renders the rest looks like a swap and re-anchors to the iframe; rare, and it still lands on a
- * real rendering thread, never a fake zero.
+ * and reporting the navigated page's work as ~100% idle.
+ *
+ * The residual edge the share test cannot split: a near-empty top page (a thin frame wrapper) that
+ * renders under the floor while a heavy cross-origin OOPIF renders the rest looks like a swap and
+ * re-anchors to the iframe; rare, and it still lands on a real rendering thread, never a fake zero.
  *
  * Only the --breakdown/--deep captures keep pid/tid, so every other mode yields null here and its
  * consumers count the single thread they were given.
@@ -63,13 +64,13 @@ export interface MainThreadSelection {
  * long-task/total) to the thread this selector returns, and the breakdown bar (trace/breakdown.ts)
  * tiles that same thread. The run selects here from its own event log; a per-step summary is handed
  * the run's selection (buildRecordingSpans) rather than re-running this heuristic on a step window
- * with no run:start marker, so a step's counts sit on the same thread as the bar it sits under.
+ * with no run:start marker, so a step's counts sit on the same thread as the bar it sits under
  */
 export function mainThread(events: NormalizedEvent[]): MainThreadSelection | null {
   const start = events.find((event) => event.name === RUN_START_MARK);
   // Count layout/paint per thread, restricted to the run window (start-onward from the marker) so a
   // pre-navigation blank-page flush on the marker thread does not mask the process swap. With no
-  // marker there is no window bound, so every layout/paint event is admitted (the marker-less fallback).
+  // marker there is no window bound, so every layout/paint event is admitted (the marker-less fallback)
   const windowStart = start?.ts ?? null;
   const activity = new Map<
     string,
@@ -102,7 +103,8 @@ export function mainThread(events: NormalizedEvent[]): MainThreadSelection | nul
   // activity is disjoint in time from the selected thread's. Disjoint separates a second navigation
   // (its window follows or precedes the selected thread's) from a same-page OOPIF (concurrent, its
   // window overlaps), so the selected thread genuinely cannot represent the whole run -- record()
-  // turns this into a loud note rather than silently tiling the other process's window as idle.
+  // turns this into a loud note rather than silently tiling the other process's window as idle
+
   // A second disjoint renderer thread is a real successive navigation, not noise, once it carries at
   // least the husk share (REANCHOR_MAX_MARKER_SHARE) of the busiest thread's rendering -- the same
   // vanishing-vs-substantial boundary the re-anchor uses to tell a blank-host husk from a live page. A
@@ -111,7 +113,7 @@ export function mainThread(events: NormalizedEvent[]): MainThreadSelection | nul
   // never a silent wrong count). The Math.max(3, ...) noise floor keeps a near-empty busiest thread
   // (a few flushes) from calling any 1-2-flush neighbour a split. [measured] a second navigation
   // rendering 41 flushes against a 201-flush first page (20%) must trip split; a floor above the husk
-  // share would leave those 41 flushes silently uncounted (docs/dev/rendering-counts.md).
+  // share would leave those 41 flushes silently uncounted (docs/dev/rendering-counts.md)
   const heavyThreshold = busiest ? Math.max(3, busiest.count * REANCHOR_MAX_MARKER_SHARE) : 0;
   const busiestRange = busiest;
   const split =
@@ -127,7 +129,7 @@ export function mainThread(events: NormalizedEvent[]): MainThreadSelection | nul
     const markerCount = activity.get(`${start.pid}/${start.tid}`)?.count ?? 0;
     // The marker thread did none of the window's rendering, or only a vanishing share of it (a stray
     // pre-nav flush on the blank host), while the busiest thread carried the rest: the page navigated
-    // to a new renderer process. Re-anchor to the thread that carried the work.
+    // to a new renderer process. Re-anchor to the thread that carried the work
     const swappedAway =
       busiest != null &&
       busiest.count > 0 &&
@@ -139,7 +141,7 @@ export function mainThread(events: NormalizedEvent[]): MainThreadSelection | nul
     // selected thread's, so the disjoint-time test above excludes it), but a LATER cross-process
     // navigation does: it leaves a heavy thread disjoint in time even when the marker thread was
     // reused for the first page (the common blank-host process-reuse shape). Carry the computed
-    // `split` so that second-navigation signal survives the marker branch, never a hardcoded false.
+    // `split` so that second-navigation signal survives the marker branch, never a hardcoded false
     return { pid: start.pid, tid: start.tid, via: "marker", split };
   }
   return busiest ? { pid: busiest.pid, tid: busiest.tid, via: "heuristic", split } : null;

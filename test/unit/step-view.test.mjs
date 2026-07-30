@@ -4,10 +4,10 @@ import { stepSpans, isSteppedRecording, stepEntry } from "../../dist/model/step-
 
 // The per-step VIEW over a recording's step spans (model/step-view.ts): the shape `assert` gates
 // per step and `query span <step-label>` renders. Pins index ordering, the stepped-run predicate,
-// and stepEntry's field-for-field count mapping (a swapped headline field must fail here).
+// and stepEntry's field-for-field count mapping (a swapped headline field must fail here)
 
 // A Span carries SpanCounts; every count field gets a DISTINCT value so a mis-wired mapping
-// (forcedLayoutCount <- layoutCount, etc.) shows up as a wrong number, not a coincidental match.
+// (forcedLayoutCount <- layoutCount, etc.) shows up as a wrong number, not a coincidental match
 const stepSpan = (index, label, countOverrides = {}, extra = {}) => ({
   label,
   kind: "step",
@@ -96,14 +96,14 @@ test("stepEntry: maps each count to its OWN headline field (a swapped field fail
   assert.equal(entry.index, 3);
   assert.equal(entry.label, "add rows");
   assert.equal(entry.wallMs, 103);
-  // Distinct values pin the wiring: any cross-field swap surfaces here.
+  // Distinct values pin the wiring: any cross-field swap surfaces here
   assert.equal(entry.headline.layoutCount, 11, "layoutCount <- counts.layoutCount");
   assert.equal(entry.headline.forcedLayoutCount, 14, "forcedLayoutCount <- counts.forcedLayoutCount, not layoutCount");
   assert.equal(entry.headline.paintCount, 13, "paintCount <- counts.paintCount");
   assert.equal(entry.headline.layoutInvalidations, 15, "layoutInvalidations <- counts.layoutInvalidations");
   assert.equal(entry.headline.styleInvalidations, 16, "styleInvalidations <- counts.styleInvalidations, not layoutInvalidations");
   assert.equal(entry.headline.longTaskCount, 17, "longTaskCount <- counts.longTaskCount");
-  // styleCount is NOT a headline field: the per-step headline exposes layout, not style, counts.
+  // styleCount is NOT a headline field: the per-step headline exposes layout, not style, counts
   assert.ok(!("styleCount" in entry.headline), "styleCount is not projected into the headline");
 });
 

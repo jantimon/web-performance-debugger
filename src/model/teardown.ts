@@ -6,7 +6,7 @@
  * primary error: the caller would debug teardown instead of the workload. Attach the teardown failure
  * as the primary error's `cause` (never overwriting one already set) so the primary keeps propagating
  * and the secondary is still recoverable. When `primaryError` is not an Error (or already carries a
- * cause), the teardown failure is dropped, since the primary is the one to surface.
+ * cause), the teardown failure is dropped, since the primary is the one to surface
  */
 export function attachTeardownFailure(primaryError: unknown, teardownError: unknown): void {
   if (primaryError instanceof Error && primaryError.cause === undefined)

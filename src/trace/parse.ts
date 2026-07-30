@@ -22,7 +22,7 @@ interface RawTraceEvent {
  *
  * `keepThreadIds` retains each event's `pid`/`tid`. Off by default so no other mode carries thread
  * ids on its stored events; --breakdown turns it on because the seven-slice engine tiles the
- * renderer main thread alone and must tell it from raster/compositor threads.
+ * renderer main thread alone and must tell it from raster/compositor threads
  */
 export function parseTrace(
   rawJson: string | Uint8Array | { traceEvents?: RawTraceEvent[] } | Iterable<RawTraceEvent>,
@@ -49,10 +49,10 @@ export function parseTrace(
     if (keepThreadIds) {
       if (typeof rawEvent.pid === "number") event.pid = rawEvent.pid;
       if (typeof rawEvent.tid === "number") event.tid = rawEvent.tid;
-      // Pairing key for async begin/end slices (the frame side track pairs PipelineReporter b/e).
-      // Kept only here so non-breakdown recordings' events stay byte-for-byte.
+      // Pairing key for async begin/end slices (the frame side track pairs PipelineReporter b/e)
+      // Kept only here so non-breakdown recordings' events stay byte-for-byte
       const asyncId = rawEvent.id2?.local ?? rawEvent.id2?.global ?? rawEvent.id;
-      // the flat `id` can be numeric; store a string so asyncId keys pair uniformly.
+      // the flat `id` can be numeric; store a string so asyncId keys pair uniformly
       if (asyncId != null) event.asyncId = String(asyncId);
     }
     out.push(event);
@@ -67,7 +67,7 @@ export interface StepWindow {
   endTs: number | null;
 }
 
-/** Locate per-step [start,end] windows from wpd:step:N:start/end markers. */
+/** Locate per-step [start,end] windows from wpd:step:N:start/end markers */
 export function findSteps(events: NormalizedEvent[]): StepWindow[] {
   const starts = new Map<number, number>();
   const ends = new Map<number, number>();
@@ -82,7 +82,7 @@ export function findSteps(events: NormalizedEvent[]): StepWindow[] {
     .map(([index, startTs]) => ({ index, startTs, endTs: ends.get(index) ?? null }));
 }
 
-/** Locate the [start,end] trace-clock window from our user-timing marker events. */
+/** Locate the [start,end] trace-clock window from our user-timing marker events */
 export function findWindow(events: NormalizedEvent[]): {
   startTs: number | null;
   endTs: number | null;

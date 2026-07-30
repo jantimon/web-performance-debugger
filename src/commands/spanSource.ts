@@ -14,7 +14,7 @@ import type { SpanEntry } from "../model/query.js";
  * the SAME slice-reading path as `query spans` (`buildSpans`), so `assert --max-slice` and `diff`
  * never grow a second interpretation of a slice. Returns null when the recording carries no bar at
  * all (an older recording, or a sampler-off capture mode like --deep), which the caller
- * treats as "no slice data".
+ * treats as "no slice data"
  */
 export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null> {
   const abs = await resolveTarget(file, "recording");
@@ -31,7 +31,7 @@ export async function loadSpanEntries(file: string): Promise<SpanEntry[] | null>
     } catch (error) {
       // No CPU model beside the recording means "no bar", which buildSpans reports as no
       // slice data. Anything else (corrupt JSON, unreadable file) surfaces: swallowing it
-      // would report real slice data as absent.
+      // would report real slice data as absent
       if ((error as NodeJS.ErrnoException)?.code !== "ENOCPUMODEL") throw error;
     }
   }

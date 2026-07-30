@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mergeSpanOccurrences } from "../../dist/model/span-merge.js";
 
 // A real seven-slice bar whose wall drives the median pick. `mark` tags it so we can prove the KEPT
-// bar is byte-identical to one real occurrence, not a per-slice average.
+// bar is byte-identical to one real occurrence, not a per-slice average
 const slice = (ms) => ({ ms });
 const bar = (wallMs, mark) => ({
   wallMs,
@@ -80,7 +80,7 @@ test("mergeSpanOccurrences: run and step spans pass through unchanged, order pre
 // same-kind, same-label STEP spans (a shape run/step labels never actually take, but the guard is
 // what enforces it) must NOT be re-sampled to a median with a `samples` disclosure. Different walls
 // make the median pick differ from group[0], so a guard that let steps merge would swap the kept bar
-// AND stamp `samples`.
+// AND stamp `samples`
 const stepBar = (label, wallMs, mark) => ({ label, kind: "step", breakdown: bar(wallMs, mark) });
 const runBar = (label, wallMs, mark) => ({ label, kind: "run", breakdown: bar(wallMs, mark) });
 
@@ -116,12 +116,12 @@ test("mergeSpanOccurrences: distinct labels are merged independently, frames of 
     withFrames("a", 1, "a1"),
     withFrames("b", 4, "b1"),
   ]);
-  const a = merged.find((span) => span.label === "a");
-  const b = merged.find((span) => span.label === "b");
-  // "a": walls 5,1 lower-median 1 -> frames.total 1 (the picked occurrence's own side track).
-  assert.equal(a.breakdown.wallMs, 1);
-  assert.equal(a.frames.total, 1, "the kept bar keeps ITS occurrence's frame side track");
-  // "b": walls 2,4 lower-median 2.
-  assert.equal(b.breakdown.wallMs, 2);
-  assert.equal(b.frames.total, 2);
+  const spanA = merged.find((span) => span.label === "a");
+  const spanB = merged.find((span) => span.label === "b");
+  // "a": walls 5,1 lower-median 1 -> frames.total 1 (the picked occurrence's own side track)
+  assert.equal(spanA.breakdown.wallMs, 1);
+  assert.equal(spanA.frames.total, 1, "the kept bar keeps ITS occurrence's frame side track");
+  // "b": walls 2,4 lower-median 2
+  assert.equal(spanB.breakdown.wallMs, 2);
+  assert.equal(spanB.frames.total, 2);
 });

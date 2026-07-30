@@ -1,7 +1,7 @@
 // Per-span hot-function tally: top-K functions by pooled ranked-JS sample count within a span's
 // window(s), on the CPU-sampler scripting axis. Pure over its inputs (samples + windows + interval),
 // so it is fixture-testable and shared by the chrome (--breakdown) and firefox (gecko) lanes. See
-// model/recording.ts SpanHot for the axis/pooling/floor contract this enforces.
+// model/recording.ts SpanHot for the axis/pooling/floor contract this enforces
 
 import type { SpanHot, SpanHotRef } from "../model/recording.js";
 import { usToMs } from "../model/time.js";
@@ -10,24 +10,24 @@ import { usToMs } from "../model/time.js";
  * One CPU sample located on a clock comparable to the span windows (the trace clock on chrome, the
  * profiler clock on firefox), tagged with the ranked CpuModel function it hit. `functionId` is null
  * for a sample that is not a rankable user function (idle/gc/system/tool), so it never counts toward a
- * span's scripting samples.
+ * span's scripting samples
  */
 export interface SpanHotSample {
   ts: number;
   functionId: number | null;
 }
 
-/** One window on the same clock as the samples. A span pools over one (step) or many (measure) of these. */
+/** One window on the same clock as the samples. A span pools over one (step) or many (measure) of these */
 export interface SpanHotWindow {
   startTs: number;
   endTs: number;
 }
 
-/** Below this many pooled ranked-JS samples a ranking is noise: suppress it, never fabricate a top-N. */
+/** Below this many pooled ranked-JS samples a ranking is noise: suppress it, never fabricate a top-N */
 export const MIN_POOLED_HOT_SAMPLES = 10;
-/** A function below this many pooled samples in the window carries no signal and is dropped from the list. */
+/** A function below this many pooled samples in the window carries no signal and is dropped from the list */
 export const MIN_FUNCTION_HOT_SAMPLES = 3;
-/** How many hot functions a span stores. Bounded so the additive schema field stays digest-sized. */
+/** How many hot functions a span stores. Bounded so the additive schema field stays digest-sized */
 export const SPAN_HOT_TOP_K = 8;
 
 /**
@@ -36,7 +36,7 @@ export const SPAN_HOT_TOP_K = 8;
  * label are sequential in practice, but the input is a bare `{startTs,endTs}[]`, so overlaps are
  * representable and collapsed here rather than assumed away. Bounds are inclusive on both ends, so
  * two windows that merely touch (`next.startTs === current.endTs`) share the boundary sample and are
- * fused too.
+ * fused too
  */
 function mergeWindows(windows: readonly SpanHotWindow[]): SpanHotWindow[] {
   if (windows.length <= 1) return windows.slice();
@@ -63,7 +63,7 @@ function mergeWindows(windows: readonly SpanHotWindow[]): SpanHotWindow[] {
  * `samples` MUST be in ascending `ts` order (both callers project them by a cumulative sum of
  * non-negative sample deltas, so they are). Windows are merged into a sorted disjoint set and swept
  * with a single moving pointer that early-breaks once a sample passes the last window, so the cost is
- * O(samples + windows log windows) rather than O(samples x windows).
+ * O(samples + windows log windows) rather than O(samples x windows)
  */
 export function tallySpanHot(
   samples: readonly SpanHotSample[],
@@ -80,11 +80,12 @@ export function tallySpanHot(
   for (const sample of samples) {
     if (sample.functionId == null) continue;
     // Advance past every window this sample has already cleared; ascending ts means the pointer never
-    // rewinds and a sample past the last window ends the sweep.
+    // rewinds and a sample past the last window ends the sweep
     while (windowIndex < disjointWindows.length && sample.ts > disjointWindows[windowIndex].endTs)
       windowIndex++;
     if (windowIndex >= disjointWindows.length) break;
-    if (sample.ts < disjointWindows[windowIndex].startTs) continue; // in a gap between windows
+    // in a gap between windows
+    if (sample.ts < disjointWindows[windowIndex].startTs) continue;
     samplesByFunction.set(sample.functionId, (samplesByFunction.get(sample.functionId) ?? 0) + 1);
     pooledSamples++;
   }

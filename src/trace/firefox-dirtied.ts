@@ -15,7 +15,7 @@ import type {
  * never run the thrash detector (it needs every write in a flush's gap) and never fabricates a
  * forced-by read side (the read stays where it lives: the sampled read-site blame events on the same
  * gecko pass). The `semantic` field carries that scope into the JSON so a consumer cannot mistake it
- * for chrome's exact set.
+ * for chrome's exact set
  */
 const FIRST_INVALIDATION_SEMANTIC = "first-invalidation" as const;
 
@@ -24,7 +24,7 @@ const FIRST_INVALIDATION_SEMANTIC = "first-invalidation" as const;
  * marker (non-sampled) events carry `dirtiedBy`; the sampled read-site events carry the READ line and
  * are deliberately excluded here so write and read never merge. `start` windows to the run (null =
  * whole log). Returns null when no forced flush carried a resolvable cause -- "not available", never
- * an empty-but-present report.
+ * an empty-but-present report
  */
 export function firefoxDirtiedBy(
   events: NormalizedEvent[],

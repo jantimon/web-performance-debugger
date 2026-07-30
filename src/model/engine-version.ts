@@ -1,7 +1,7 @@
 /**
  * The engine build a recording measured on: the browser version (chrome/firefox) or the node runtime
  * version, raw as the engine reported it plus the parsed major milestone. Kept small and pure so the
- * comparability gate can compare two recordings without re-parsing prose.
+ * comparability gate can compare two recordings without re-parsing prose
  */
 export interface EngineVersion {
   /** the version string verbatim, e.g. "Chrome/151.0.7922.47", "Firefox/152.0", "v24.13.0" */
@@ -16,7 +16,7 @@ export interface EngineVersion {
  *   - Firefox (BiDi) -> "Firefox/152.0" -> 152
  *   - node `process.version` -> "v24.13.0" (or "24.13.0") -> 24
  * A string with no integer yields `{ raw }` alone, so an unrecognised format degrades to a raw-only
- * comparison rather than a fabricated milestone.
+ * comparison rather than a fabricated milestone
  */
 export function engineVersion(raw: string): EngineVersion {
   const match = raw.match(/\d+/);

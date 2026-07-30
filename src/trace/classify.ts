@@ -11,7 +11,7 @@ export const isEventKind = (value: string): value is EventKind =>
  * scripting v8-category fallback (a GC event's category can include "v8", which would otherwise
  * classify it as scripting and hide it inside the js slice), and usertiming's category check
  * precedes scripting's. Exact-name kinds first, then the two category/prefix matchers; `other` is
- * the fallback when no row matches.
+ * the fallback when no row matches
  */
 const CLASSIFY_ORDER: EventKind[] = [
   "layout",

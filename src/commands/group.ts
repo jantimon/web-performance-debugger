@@ -2,7 +2,7 @@
 // single-member verb (cpu/frame/blame/events/get) to the member that measures its axis. The stitched
 // multi-member views (query spans/span, assert, diff) branch in their own command files and reuse
 // these primitives. A verb that finds no member for its axis fails LOUDLY here (n/a), never a silent
-// pass -- the same honesty the Measured contract enforces on a single recording.
+// pass -- the same honesty the Measured contract enforces on a single recording
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -18,10 +18,12 @@ import {
 import { resolveConsumption } from "./resolve.js";
 import type { Recording } from "../model/recording.js";
 
-// The read side re-exports the shared member label so consumers import it from one place.
+/**
+ * The read side re-exports the shared member label so consumers import it from one place
+ */
 export { memberLabel };
 
-/** Load and validate a run-group manifest. */
+/** Load and validate a run-group manifest */
 export async function loadGroup(manifestPath: string): Promise<RunGroup> {
   const body = await fs.readFile(manifestPath, "utf8");
   const group = deserialize(body, path.extname(manifestPath).toLowerCase()) as RunGroup;
@@ -32,7 +34,7 @@ export async function loadGroup(manifestPath: string): Promise<RunGroup> {
   return group;
 }
 
-/** A member's recording path, absolute (its manifest stores it relative to the manifest dir). */
+/** A member's recording path, absolute (its manifest stores it relative to the manifest dir) */
 export function memberRecordingPath(manifestPath: string, member: GroupMember): string {
   return path.resolve(path.dirname(manifestPath), member.recording);
 }
@@ -41,7 +43,7 @@ export function memberRecordingPath(manifestPath: string, member: GroupMember): 
  * member's mode is its recording's `meta.capture`; a mismatch means the file was overwritten by a
  * different-mode record (two members that shared one `--out`), so the manifest entry now points at
  * the wrong capture. Fail loudly rather than route a verb to a mode it did not measure and return
- * silently-undefined slices (a fake-zero shape). Call it wherever a member recording is loaded. */
+ * silently-undefined slices (a fake-zero shape). Call it wherever a member recording is loaded */
 export function assertMemberMode(rec: Recording, member: GroupMember, abs: string): void {
   const fileMode = rec.meta.capture;
   if (fileMode !== member.mode)
@@ -53,7 +55,7 @@ export function assertMemberMode(rec: Recording, member: GroupMember, abs: strin
     );
 }
 
-/** Load a member's recording, verifying it still holds the manifest's recorded capture mode. */
+/** Load a member's recording, verifying it still holds the manifest's recorded capture mode */
 export async function loadMemberRecording(
   manifestPath: string,
   member: GroupMember,
@@ -68,7 +70,7 @@ export async function loadMemberRecording(
   return rec;
 }
 
-/** What a resolved verb target is: a plain recording, or a group member routed for one axis. */
+/** What a resolved verb target is: a plain recording, or a group member routed for one axis */
 export interface VerbTarget {
   /** the string the verb passes downstream: the ORIGINAL `file` for a plain recording (so `latest`
    * stays `latest` and its messages are unchanged), else the routed member's absolute recording path */
@@ -83,7 +85,7 @@ export interface VerbTarget {
  * Resolve a single-member verb's target: a plain recording resolves to the original argument; a
  * run-group routes to the member that measures `axis` (pickMember). No member for the axis is a LOUD
  * failure naming the axis and the members present, never a silent fall-through. `axisLabel` words the
- * axis for that error.
+ * axis for that error
  */
 export async function resolveVerbTarget(
   file: string,
@@ -109,7 +111,7 @@ export async function resolveVerbTarget(
 }
 
 /** The one-line routing disclosure a delegating verb prints (human output), so a reader knows which
- * member answered. Silent for a plain recording. */
+ * member answered. Silent for a plain recording */
 export function routingNote(target: VerbTarget, axisLabel: string): string | null {
   if (!target.group || !target.member) return null;
   return `run-group '${target.group.meta.name}': ${axisLabel} from member '${memberLabel(target.member)}'.`;

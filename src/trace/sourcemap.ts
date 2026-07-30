@@ -3,25 +3,25 @@ import path from "node:path";
 import { TraceMap, originalPositionFor, decodedMappings } from "@jridgewell/trace-mapping";
 import type { SourceMapDiagnostics, SourceMapFailure, StackFrame } from "../model/recording.js";
 
-/** ms before a single remote .js / .map fetch is abandoned (keeps a hung CDN from stalling a run). */
+/** ms before a single remote .js / .map fetch is abandoned (keeps a hung CDN from stalling a run) */
 const FETCH_TIMEOUT_MS = 5000;
 
 /** Overall wall budget for ALL remote sourcemap work in one run. A heavy site can name hundreds of
  * scripts, each up to FETCH_TIMEOUT_MS; without a run-wide ceiling that is minutes of stall. Once
- * spent, remaining lookups record `fetch-budget-exhausted` and their frames keep minified names. */
+ * spent, remaining lookups record `fetch-budget-exhausted` and their frames keep minified names */
 const REMOTE_BUDGET_MS = 30_000;
 
 /** Response-size caps: a map is bigger than its script, but neither should be able to exhaust memory
  * on a hostile or misbehaving server. Enforced by content-length AND by streaming (a lying/absent
- * content-length still aborts once the cap is crossed). */
+ * content-length still aborts once the cap is crossed) */
 const MAX_SCRIPT_BYTES = 20 * 1024 * 1024;
 const MAX_MAP_BYTES = 50 * 1024 * 1024;
 
 /** Concurrent remote fetches. Distinct scripts resolve in parallel up to this, instead of strictly
- * serial (minutes on a heavy site); the per-script cache/in-flight dedup keeps it one fetch each. */
+ * serial (minutes on a heavy site); the per-script cache/in-flight dedup keeps it one fetch each */
 const MAX_CONCURRENT_FETCHES = 4;
 
-/** Redirect hops followed manually (each hop is re-checked against the fetch policy). */
+/** Redirect hops followed manually (each hop is re-checked against the fetch policy) */
 const MAX_REDIRECTS = 5;
 
 function isHttpUrl(value: string | undefined): value is `http${string}` {
@@ -31,7 +31,7 @@ function isHttpUrl(value: string | undefined): value is `http${string}` {
 /**
  * Obviously-private / loopback / link-local host, by hostname or IP literal. Not a full RFC1918
  * resolver (no DNS lookup): it matches the literal forms a sourcemap URL carries directly, which is
- * where the SSRF risk on a public --url site actually lives.
+ * where the SSRF risk on a public --url site actually lives
  */
 export function isPrivateHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
@@ -56,7 +56,7 @@ export function isPrivateHostname(hostname: string): boolean {
  * - "private": the target resolves to a private/loopback host while the profiled page is PUBLIC.
  *   A public site's bundle should never make wpd reach into the operator's internal network. When
  *   the page itself is private/loopback (a served fixture, a localhost dev server), private targets
- *   are expected and allowed -- that is the common wpd case, so `pagePrivate` gates the rule.
+ *   are expected and allowed -- that is the common wpd case, so `pagePrivate` gates the rule
  */
 export function fetchBlockReason(
   targetUrl: string,
@@ -74,7 +74,7 @@ export function fetchBlockReason(
 }
 
 /** Is the profiled page itself on a private/loopback host? Unparseable => treat as private (the
- * common local/served case), so an odd page url never turns fetches off. */
+ * common local/served case), so an odd page url never turns fetches off */
 function isPageUrlPrivate(pageUrl: string): boolean {
   try {
     return isPrivateHostname(new URL(pageUrl).hostname);
@@ -89,7 +89,7 @@ function isPageUrlPrivate(pageUrl: string): boolean {
  * symlink (macOS `mktemp` lives under /var, a symlink to /private/var) while Node
  * canonicalizes cwd to the real path; that one-segment difference throws off the `../`
  * depth and lands on a non-existent path (losing the file's package). If the direct
- * resolution is missing, toggle the `/private` prefix so it lands on the real file.
+ * resolution is missing, toggle the `/private` prefix so it lands on the real file
  */
 function resolveOriginalSource(mapDir: string, relSource: string): string {
   const direct = path.resolve(mapDir, relSource);
@@ -101,13 +101,13 @@ function resolveOriginalSource(mapDir: string, relSource: string): string {
   return existsSync(alt) ? alt : direct;
 }
 
-/** Strip synthetic scheme prefixes (webpack://name/, ./) so a remote source reads cleanly. */
+/** Strip synthetic scheme prefixes (webpack://name/, ./) so a remote source reads cleanly */
 function cleanRemoteSource(source: string): string {
   const stripped = source.replace(/^[a-z-]+:\/\/[^/]*\//i, "").replace(/^\.?\//, "");
   return stripped || source;
 }
 
-/** The last `sourceMappingURL` reference in a JS body, if any. */
+/** The last `sourceMappingURL` reference in a JS body, if any */
 function sourceMappingURLOf(js: string): string | null {
   const matcher = /[#@]\s*sourceMappingURL=(\S+)/g;
   let last: string | null = null;
@@ -115,12 +115,12 @@ function sourceMappingURLOf(js: string): string | null {
   return last;
 }
 
-/** Per reason, so one broken CDN cannot flood the recording with thousands of urls. */
+/** Per reason, so one broken CDN cannot flood the recording with thousands of urls */
 const MAX_URLS_PER_REASON = 20;
 
 type RawMap = { raw: string } | { failure: SourceMapFailure };
 
-/** Decode a `data:application/json[;base64],...` sourcemap reference to raw JSON. */
+/** Decode a `data:application/json[;base64],...` sourcemap reference to raw JSON */
 function decodeDataUriMap(reference: string): string | null {
   const base64 = reference.match(/^data:application\/json;(?:charset=[^;]+;)?base64,(.*)$/s);
   if (base64) return Buffer.from(base64[1], "base64").toString("utf8");
@@ -129,7 +129,7 @@ function decodeDataUriMap(reference: string): string | null {
   return null;
 }
 
-/** What kind of body is being fetched: picks the size cap and the generic-failure reason. */
+/** What kind of body is being fetched: picks the size cap and the generic-failure reason */
 type FetchKind = "script" | "map";
 
 type FetchOutcome =
@@ -145,7 +145,7 @@ function tooLargeFailure(kind: FetchKind): SourceMapFailure {
 }
 
 /** Read a response body to text, aborting (and reporting too-large) the moment the cap is crossed.
- * Streams so a lying or absent content-length cannot smuggle an over-cap body through. */
+ * Streams so a lying or absent content-length cannot smuggle an over-cap body through */
 async function readCapped(
   response: Response,
   cap: number,
@@ -181,7 +181,7 @@ async function readCapped(
 /**
  * A single remote fetch, bounded on every axis a hostile or slow server can abuse: the run-wide time
  * budget (`deadlineMs`), the per-fetch timeout, the response-size cap, and the fetch policy (scheme +
- * private-host), re-checked at every manually-followed redirect hop so a 302 cannot escape it.
+ * private-host), re-checked at every manually-followed redirect hop so a 302 cannot escape it
  */
 export async function boundedFetch(
   url: string,
@@ -203,7 +203,7 @@ export async function boundedFetch(
         redirect: "manual",
       });
       // redirect: "manual" surfaces the 3xx to us so the destination is policy-checked before we
-      // follow it (an automatic follow would fetch a private host before we could refuse).
+      // follow it (an automatic follow would fetch a private host before we could refuse)
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
         if (!location) return { ok: false, failure: genericFailure(kind) };
@@ -212,7 +212,7 @@ export async function boundedFetch(
       }
       // 401/403 is a distinct, actionable outcome: the resource exists but is auth-walled, and
       // wpd's node-side fetch sends no cookies/credentials, so the generic "could not be fetched"
-      // remedy (which mentions CORS, a browser-only concept) would misdirect.
+      // remedy (which mentions CORS, a browser-only concept) would misdirect
       if (response.status === 401 || response.status === 403)
         return { ok: false, failure: "auth-required" };
       if (!response.ok) return { ok: false, failure: genericFailure(kind) };
@@ -230,7 +230,7 @@ export async function boundedFetch(
  * A line this long is machine-generated. Hand-written source, however sloppy, does not run to
  * hundreds of characters on one line; a minifier joins whole modules into one. Deliberately far
  * above anything a formatter would emit (oxfmt/prettier cap around 100) so the test is decisive
- * rather than a judgement call.
+ * rather than a judgement call
  */
 const MINIFIED_LINE_LENGTH = 500;
 
@@ -243,12 +243,13 @@ const MINIFIED_LINE_LENGTH = 500;
  * bundle with no map is the opposite: every frame is a lie wearing a real package name.
  *
  * Scans for a single long line rather than an average, so one huge bundled line is enough and a
- * bundle with a banner comment or a few short lines still trips it.
+ * bundle with a banner comment or a few short lines still trips it
  */
 function looksMinified(js: string): boolean {
   let lineLength = 0;
   for (let index = 0; index < js.length; index++) {
-    if (js.charCodeAt(index) === 10 /* \n */) {
+    // charCode 10 is "\n": reset the running line length at each newline
+    if (js.charCodeAt(index) === 10) {
       lineLength = 0;
       continue;
     }
@@ -257,7 +258,7 @@ function looksMinified(js: string): boolean {
   return false;
 }
 
-// Decoded-mapping segment layout: [generatedColumn, sourceIndex, originalLine, originalColumn, nameIndex?].
+// Decoded-mapping segment layout: [generatedColumn, sourceIndex, originalLine, originalColumn, nameIndex?]
 const SEG_GEN_COLUMN = 0;
 const SEG_SOURCE_INDEX = 1;
 const SEG_ORIGINAL_LINE = 2;
@@ -270,7 +271,7 @@ const SEG_ORIGINAL_LINE = 2;
  * and column 0 lands on whichever segment happens to start the line. This returns a real generated
  * column to query at ONLY when every mapped segment on the generated line points at one original
  * source + line, so the missing column cannot change the original line. Otherwise it returns null and
- * the caller keeps the frame on its bundle line. 1-based `generatedLine` in, 0-based column out.
+ * the caller keeps the frame on its bundle line. 1-based `generatedLine` in, 0-based column out
  */
 function unambiguousLineColumn(map: TraceMap, generatedLine: number): number | null {
   const decoded = decodedMappings(map);
@@ -282,7 +283,7 @@ function unambiguousLineColumn(map: TraceMap, generatedLine: number): number | n
   for (const segment of segments) {
     // A generated-column-only segment (length 1) carries no original position: it marks a gap, not a
     // mapping, so it neither anchors nor breaks the line's uniqueness. length >= 4 guarantees the
-    // source-index and original-line fields are present (the `!` reflects that, past TS's tuple union).
+    // source-index and original-line fields are present (the `!` reflects that, past TS's tuple union)
     if (segment.length < 4) continue;
     const segSource = segment[SEG_SOURCE_INDEX]!;
     const segLine = segment[SEG_ORIGINAL_LINE]!;
@@ -300,41 +301,41 @@ function unambiguousLineColumn(map: TraceMap, generatedLine: number): number | n
 /**
  * Best-effort mapping of bundled stack frames back to original source using sibling `.map`
  * files, inline data-URI maps, or (for remote scripts) the map auto-detected from the JS's
- * `sourceMappingURL` and fetched over the network.
+ * `sourceMappingURL` and fetched over the network
  */
 export class SourceMapResolver {
   private cache = new Map<string, TraceMap | null>();
   /** per attempted script: null = resolved, else why it failed. Keyed like `cache`, so each
-   * script counts once no matter how many frames point at it. */
+   * script counts once no matter how many frames point at it */
   private outcomes = new Map<string, SourceMapFailure | null>();
   /** scripts that read as build output (see looksMinified). Only meaningful for scripts whose map
    * did NOT resolve: those are the ones whose frames keep minified names and a bundle-shaped
-   * package rollup. Keyed like `cache`. */
+   * package rollup. Keyed like `cache` */
   private minified = new Set<string>();
   /** per script whose map RESOLVED: how many frame lookups the map answered (hits) vs returned no
    * mapping for (misses). Per-lookup, not per distinct position (each frame is queried once per
    * pass). A miss keeps the frame's minified/remote identity and buckets it by origin, so a map that
    * loads fine can still leak attribution -- invisible to `outcomes`, which only records LOAD
-   * failures. Keyed like `cache`. */
+   * failures. Keyed like `cache` */
   private positionCounts = new Map<string, { misses: number; hits: number }>();
   /** in-flight loads, so two concurrent lookups of one script share the single fetch rather than
    * racing (the cache is only populated after the await; `warm` fires many at once). Keyed like
-   * `cache`. */
+   * `cache` */
   private inflight = new Map<string, Promise<TraceMap | null>>();
   /** True when the profiled page is itself on a private/loopback host, which makes private fetch
-   * targets expected (served fixtures, localhost dev). A public page cannot reach private hosts. */
+   * targets expected (served fixtures, localhost dev). A public page cannot reach private hosts */
   private readonly pagePrivate: boolean;
   /** Absolute wall deadline for ALL remote fetches, set lazily on the first one so the run's trace
-   * time before any fetch does not eat the budget. */
+   * time before any fetch does not eat the budget */
   private remoteDeadline: number | null = null;
-  /** Concurrency gate for remote fetches (a hand-rolled counting semaphore). */
+  /** Concurrency gate for remote fetches (a hand-rolled counting semaphore) */
   private activeFetches = 0;
   private fetchWaiters: (() => void)[] = [];
 
   /**
    * @param options.pageUrl the profiled page's URL (--url), used to decide whether private fetch
    *   targets are expected. Absent (bench/module/local-file --url) means the page is wpd's own localhost
-   *   server, i.e. private, so private targets are permitted.
+   *   server, i.e. private, so private targets are permitted
    */
   constructor(options: { pageUrl?: string } = {}) {
     this.pagePrivate = options.pageUrl == null || isPageUrlPrivate(options.pageUrl);
@@ -351,12 +352,12 @@ export class SourceMapResolver {
   private releaseFetchSlot(): void {
     const next = this.fetchWaiters.shift();
     // Hand the slot directly to the next waiter (activeFetches unchanged); only drop the count when
-    // nobody is waiting.
+    // nobody is waiting
     if (next) next();
     else this.activeFetches--;
   }
 
-  /** One remote fetch, run under the concurrency gate and the run-wide time budget. */
+  /** One remote fetch, run under the concurrency gate and the run-wide time budget */
   private async remoteFetch(url: string, kind: FetchKind): Promise<FetchOutcome> {
     this.remoteDeadline ??= Date.now() + REMOTE_BUDGET_MS;
     await this.acquireFetchSlot();
@@ -379,7 +380,7 @@ export class SourceMapResolver {
     } catch {
       return { failure: "script-fetch-failed" };
     }
-    // The body is already in hand for the sourceMappingURL scan, so the minification test is free.
+    // The body is already in hand for the sourceMappingURL scan, so the minification test is free
     if (looksMinified(js)) this.minified.add(jsFile);
     const reference = sourceMappingURLOf(js);
     if (!reference) return { failure: "no-sourcemap-url" };
@@ -389,7 +390,7 @@ export class SourceMapResolver {
     }
     // A non-data reference (e.g. `maps/app.js.map`) resolves against the JS file's own directory,
     // mirroring the remote branch's `new URL(reference, jsUrl)`. The sibling `${jsFile}.map` read
-    // above only covers the conventional adjacent name, so a map in a sibling directory reaches here.
+    // above only covers the conventional adjacent name, so a map in a sibling directory reaches here
     if (isHttpUrl(reference)) {
       const fetched = await this.remoteFetch(reference, "map");
       return fetched.ok ? { raw: fetched.text } : { failure: fetched.failure };
@@ -400,7 +401,7 @@ export class SourceMapResolver {
       // A root-absolute URL path (`/maps/app.js.map`) names a location under the SERVING root,
       // which a filesystem read cannot know; path.resolve read it as a filesystem-absolute path
       // above. Best effort: re-anchor it under the JS file's own directory (dist/app.js ->
-      // dist/maps/app.js.map, the common bundle layout) before reporting failure.
+      // dist/maps/app.js.map, the common bundle layout) before reporting failure
       if (reference.startsWith("/")) {
         try {
           return {
@@ -423,7 +424,7 @@ export class SourceMapResolver {
     if (looksMinified(script.text)) this.minified.add(jsUrl);
     // DevTools honours the SourceMap response header as well as the trailing comment, and
     // production builds commonly emit the header while stripping the comment. Headers.get is
-    // case-insensitive, so the canonical `SourceMap` and legacy `X-SourceMap` both land here.
+    // case-insensitive, so the canonical `SourceMap` and legacy `X-SourceMap` both land here
     const reference =
       sourceMappingURLOf(script.text) ??
       script.headers.get("sourcemap") ??
@@ -477,7 +478,7 @@ export class SourceMapResolver {
    * Pre-load the maps for a set of distinct scripts concurrently (bounded by MAX_CONCURRENT_FETCHES),
    * so the serial per-frame resolution below hits the cache instead of fetching one script at a time.
    * The per-script cache/in-flight dedup keeps it one fetch each. Non-http targets are ignored: local
-   * reads are cheap and need no warming.
+   * reads are cheap and need no warming
    */
   async warm(targets: Iterable<string>): Promise<void> {
     const distinct = [...new Set([...targets].filter((target) => isHttpUrl(target)))];
@@ -486,7 +487,7 @@ export class SourceMapResolver {
 
   /**
    * What happened to every script this resolver tried to map. Scripts skipped before an attempt
-   * (non-JS targets, frames with no line) are not counted: nothing was tried for them.
+   * (non-JS targets, frames with no line) are not counted: nothing was tried for them
    */
   diagnostics(): SourceMapDiagnostics {
     const failed: Partial<Record<SourceMapFailure, string[]>> = {};
@@ -499,7 +500,7 @@ export class SourceMapResolver {
       }
       // Build output whose map did not resolve: its frames keep minified names and its cost rolls
       // up under whatever package.json happens to sit above the bundle. This -- not "a map was
-      // missing" -- is the condition worth warning about.
+      // missing" -- is the condition worth warning about
       if (this.minified.has(target)) unmappedBundles++;
       const urls = (failed[failure] ??= []);
       if (urls.length < MAX_URLS_PER_REASON) urls.push(target);
@@ -514,7 +515,7 @@ export class SourceMapResolver {
     // capped like `failed`, so `scripts`/`resolved` stay the authoritative totals. The script url
     // breaks ties, so which scripts survive the cap (and their order) is stable across runs rather
     // than riding Map insertion order. Each `{misses,hits}` is copied, so a caller mutating the
-    // returned diagnostics cannot reach back into the resolver's live counters.
+    // returned diagnostics cannot reach back into the resolver's live counters
     const missed = [...this.positionCounts.entries()]
       .filter(([, counts]) => counts.misses > 0)
       .sort(
@@ -527,7 +528,7 @@ export class SourceMapResolver {
     return diagnostics;
   }
 
-  /** Mutate a frame in place, mapping `.source:line:col` to original source. */
+  /** Mutate a frame in place, mapping `.source:line:col` to original source */
   async resolveFrame(frame: StackFrame): Promise<void> {
     // local served file (frame.source) or a remote script url (frame.remote)
     const target = frame.source ?? (frame.remote ? frame.url : undefined);
@@ -535,7 +536,7 @@ export class SourceMapResolver {
     if (!/\.(c|m)?js$/.test(target.split("?")[0])) return;
     // trace-mapping requires a 1-based line >= 1 and THROWS ("`line` must be greater than 0")
     // otherwise. A positionless V8 frame (lineNumber -1) can reach here as line 0; skip it and record
-    // the miss so the unmapped frame stays visible, rather than crashing the whole run.
+    // the miss so the unmapped frame stays visible, rather than crashing the whole run
     if (frame.line < 1) {
       const skipped = this.positionCounts.get(target) ?? { misses: 0, hits: 0 };
       skipped.misses++;
@@ -551,7 +552,7 @@ export class SourceMapResolver {
     // location. Map it only when its generated line is UNAMBIGUOUS (every mapped segment on that line
     // shares one original source+line, so no column could change the answer); otherwise the executing
     // line is unresolvable here. trace stack lines are 1-based; trace-mapping wants 1-based line,
-    // 0-based column.
+    // 0-based column
     const lookupColumn = frame.lineOnly
       ? unambiguousLineColumn(map, frame.line)
       : Math.max(0, (frame.column ?? 1) - 1);
@@ -560,7 +561,7 @@ export class SourceMapResolver {
         ? null
         : originalPositionFor(map, { line: frame.line, column: lookupColumn });
     // A line-only sample observed no column, so report line precision (no fabricated original column);
-    // an observed-column frame keeps its mapped column.
+    // an observed-column frame keeps its mapped column
     let reportColumn = !frame.lineOnly;
     if (
       (pos == null || pos.source == null || pos.line == null) &&
@@ -569,8 +570,8 @@ export class SourceMapResolver {
     ) {
       // The executing line could not be disambiguated, but the leaf FUNCTION's own callFrame carries a
       // real column (the same frame the CPU model resolves). Retry there so a minified-bundle sampled
-      // read names the forcing function at line granularity rather than keeping the bundle line.
-      // trace-mapping THROWS on a line < 1, so the >= 1 guard mirrors the primary lookup's.
+      // read names the forcing function at line granularity rather than keeping the bundle line
+      // trace-mapping THROWS on a line < 1, so the >= 1 guard mirrors the primary lookup's
       const fallbackColumn = Math.max(0, (frame.fallbackColumn ?? 1) - 1);
       const fallbackPos = originalPositionFor(map, {
         line: frame.fallbackLine,
@@ -578,7 +579,7 @@ export class SourceMapResolver {
       });
       if (fallbackPos.source != null && fallbackPos.line != null) {
         pos = fallbackPos;
-        // The fallback names the function, not the exact read statement, so keep line granularity.
+        // The fallback names the function, not the exact read statement, so keep line granularity
         reportColumn = false;
         frame.line = frame.fallbackLine;
       }
@@ -586,7 +587,7 @@ export class SourceMapResolver {
     if (pos == null || pos.source == null || pos.line == null) {
       // The map loaded but has no mapping (an ambiguous line-only lookup, or no segment for this
       // line/col): the frame keeps its minified/remote identity and buckets by origin. `outcomes`
-      // records only LOAD failures, so count the miss here or the leak stays invisible.
+      // records only LOAD failures, so count the miss here or the leak stays invisible
       positions.misses++;
       this.positionCounts.set(target, positions);
       return;

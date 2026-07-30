@@ -3,26 +3,26 @@
 // impossible. This scanner walks the raw UTF-8 bytes (a Uint8Array, which has no 512MB limit), isolates
 // each top-level element of the `traceEvents` array, and JSON.parse's that one small slice: the giant
 // string never exists, and peak heap tracks the events a consumer keeps, not the whole raw array. See
-// docs/dev/trace-buffer.md.
+// docs/dev/trace-buffer.md
 
 const SPACE = 0x20;
 const TAB = 0x09;
 const LINE_FEED = 0x0a;
 const CARRIAGE_RETURN = 0x0d;
-const QUOTE = 0x22; // "
-const BACKSLASH = 0x5c; // \
-const COMMA = 0x2c; // ,
-const COLON = 0x3a; // :
-const OPEN_BRACE = 0x7b; // {
-const CLOSE_BRACE = 0x7d; // }
-const OPEN_BRACKET = 0x5b; // [
-const CLOSE_BRACKET = 0x5d; // ]
+const QUOTE = 0x22;
+const BACKSLASH = 0x5c;
+const COMMA = 0x2c;
+const COLON = 0x3a;
+const OPEN_BRACE = 0x7b;
+const CLOSE_BRACE = 0x7d;
+const OPEN_BRACKET = 0x5b;
+const CLOSE_BRACKET = 0x5d;
 
 function isWhitespace(byte: number): boolean {
   return byte === SPACE || byte === TAB || byte === LINE_FEED || byte === CARRIAGE_RETURN;
 }
 
-/** First non-whitespace offset at or after `start`; `bytes.length` if none remains. */
+/** First non-whitespace offset at or after `start`; `bytes.length` if none remains */
 function skipWhitespace(bytes: Uint8Array, start: number): number {
   let offset = start;
   while (offset < bytes.length && isWhitespace(bytes[offset])) offset++;
@@ -32,7 +32,7 @@ function skipWhitespace(bytes: Uint8Array, start: number): number {
 /**
  * End offset (exclusive) of the JSON string that opens at `start` (a `"`). Skips the byte after every
  * backslash, which handles `\"`, `\\`, and `\uXXXX` (the `u` and its four hex digits are ordinary bytes
- * that carry no structural meaning, so only the escaped char immediately after `\` must be stepped over).
+ * that carry no structural meaning, so only the escaped char immediately after `\` must be stepped over)
  */
 function scanString(bytes: Uint8Array, start: number): number {
   let offset = start + 1;
@@ -51,7 +51,7 @@ function scanString(bytes: Uint8Array, start: number): number {
 /**
  * End offset (exclusive) of the one JSON value that begins at `start` (assumed to be the value's first
  * non-whitespace byte). Objects and arrays are walked with a string-aware depth counter so a brace,
- * bracket, or comma inside a string never miscounts; primitives run to the next structural byte.
+ * bracket, or comma inside a string never miscounts; primitives run to the next structural byte
  */
 function scanValue(bytes: Uint8Array, start: number): number {
   const first = bytes[start];
@@ -75,7 +75,7 @@ function scanValue(bytes: Uint8Array, start: number): number {
     }
     return bytes.length;
   }
-  // A primitive (number / true / false / null) ends at the next structural byte or whitespace.
+  // A primitive (number / true / false / null) ends at the next structural byte or whitespace
   let offset = start;
   while (offset < bytes.length) {
     const byte = bytes[offset];
@@ -86,14 +86,15 @@ function scanValue(bytes: Uint8Array, start: number): number {
   return offset;
 }
 
-/** Yield each element of the array whose `[` sits at `arrayOpen`, JSON.parsing one small slice each. */
+/** Yield each element of the array whose `[` sits at `arrayOpen`, JSON.parsing one small slice each */
 function* scanArrayElements<Element>(
   bytes: Uint8Array,
   arrayOpen: number,
   decoder: TextDecoder,
 ): Generator<Element> {
   let offset = skipWhitespace(bytes, arrayOpen + 1);
-  if (bytes[offset] === CLOSE_BRACKET) return; // empty array
+  // empty array
+  if (bytes[offset] === CLOSE_BRACKET) return;
   for (;;) {
     const elementStart = offset;
     const elementEnd = scanValue(bytes, elementStart);
@@ -120,12 +121,13 @@ function* scanArrayElements<Element>(
  * The bytes are held as one Uint8Array (concatenated from the CDP stream chunks). A Uint8Array has no
  * 512MB ceiling, so keeping the whole buffer and scanning byte offsets over it is simpler and correct
  * where carrying scanner state across raw chunk boundaries would not be: each element is decoded from a
- * complete, self-contained byte slice, so no boundary can split a token.
+ * complete, self-contained byte slice, so no boundary can split a token
  */
 export function* scanTraceEvents<Element = unknown>(bytes: Uint8Array): Generator<Element> {
   const decoder = new TextDecoder("utf-8");
   let offset = skipWhitespace(bytes, 0);
-  if (offset >= bytes.length) return; // empty input: no events
+  // empty input: no events
+  if (offset >= bytes.length) return;
   const opener = bytes[offset];
   if (opener === OPEN_BRACKET) {
     yield* scanArrayElements<Element>(bytes, offset, decoder);
@@ -133,7 +135,8 @@ export function* scanTraceEvents<Element = unknown>(bytes: Uint8Array): Generato
   }
   if (opener !== OPEN_BRACE) throw new Error("trace JSON is neither an object nor an array");
   offset = skipWhitespace(bytes, offset + 1);
-  if (bytes[offset] === CLOSE_BRACE) return; // empty object: no traceEvents
+  // empty object: no traceEvents
+  if (bytes[offset] === CLOSE_BRACE) return;
   for (;;) {
     if (bytes[offset] !== QUOTE) throw new Error("expected a string key in the trace envelope");
     const keyEnd = scanString(bytes, offset);
@@ -144,7 +147,8 @@ export function* scanTraceEvents<Element = unknown>(bytes: Uint8Array): Generato
     if (key === "traceEvents") {
       if (bytes[offset] !== OPEN_BRACKET) throw new Error("traceEvents is not an array");
       yield* scanArrayElements<Element>(bytes, offset, decoder);
-      return; // every other top-level field is metadata no consumer reads
+      // every other top-level field is metadata no consumer reads
+      return;
     }
     offset = skipWhitespace(bytes, scanValue(bytes, offset));
     const byte = bytes[offset];
@@ -152,7 +156,8 @@ export function* scanTraceEvents<Element = unknown>(bytes: Uint8Array): Generato
       offset = skipWhitespace(bytes, offset + 1);
       continue;
     }
-    if (byte === CLOSE_BRACE) return; // envelope ended without a traceEvents field
+    // envelope ended without a traceEvents field
+    if (byte === CLOSE_BRACE) return;
     throw new Error("malformed trace envelope: expected ',' or '}'");
   }
 }
@@ -161,13 +166,13 @@ export function* scanTraceEvents<Element = unknown>(bytes: Uint8Array): Generato
  * Normalize any trace representation to an iterable of raw events, so a consumer loops one way over raw
  * bytes (parsed incrementally via `scanTraceEvents`), a JSON string, a parsed `{traceEvents}` envelope /
  * bare array, or a live generator. Raw `Uint8Array` bytes are the record-time path: they alone dodge the
- * ~512MB single-string ceiling. A generator is consumed once; a fresh call is needed per pass.
+ * ~512MB single-string ceiling. A generator is consumed once; a fresh call is needed per pass
  */
 export function toRawTraceEvents<Element>(
   trace: string | Uint8Array | { traceEvents?: Element[] } | Iterable<Element>,
 ): Iterable<Element> {
   // Uint8Array is itself iterable (over bytes), so it must be routed to the scanner before the generic
-  // iterable branch below, which would otherwise walk it as numbers.
+  // iterable branch below, which would otherwise walk it as numbers
   if (trace instanceof Uint8Array) return scanTraceEvents<Element>(trace);
   const parsed = typeof trace === "string" ? JSON.parse(trace) : trace;
   if (parsed == null) return [];
@@ -179,7 +184,7 @@ export function toRawTraceEvents<Element>(
 /**
  * The record-pipeline read boundary over `toRawTraceEvents`: a scanner throw on malformed trace bytes
  * (or a JSON.parse failure on a bad string) is reframed as a capture fault. wpd produced this trace, so
- * a parse failure is wpd's to re-record, never the user's input to fix; the mechanical detail is kept.
+ * a parse failure is wpd's to re-record, never the user's input to fix; the mechanical detail is kept
  */
 export function* readTraceEvents<Element>(
   trace: string | Uint8Array | { traceEvents?: Element[] } | Iterable<Element>,

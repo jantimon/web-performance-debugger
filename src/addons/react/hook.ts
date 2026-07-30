@@ -3,17 +3,17 @@
 // INDEPENDENT, exact-tier facts with no fiber walk: React registers a reconciler through `hook.inject`
 // carrying `version`/`rendererPackageName`/`bundleType` [source: bippy README], and `onCommitFiberRoot`
 // fires once per committed update [measured: 5 clicks = 5 commits on dev AND production]. See
-// docs/dev/react-attribution.md#framework-detection-metadata-the-pre-load-global-hook.
+// docs/dev/react-attribution.md#framework-detection-metadata-the-pre-load-global-hook
 //
 // `installReactHook` is serialized into the page by Puppeteer, so it must be SELF-CONTAINED: it
 // references no module-level binding and only touches `window`. The descriptive-name rule holds here
-// too (names do not affect serialization).
+// too (names do not affect serialization)
 
 /**
  * Install the mini-hook and the per-step commit channel on `window`. Idempotent-ish: if a real hook
  * already exists (DevTools), it augments rather than replaces it. Stashes detection facts on
  * `window.__wpdAddons.react` and wraps `window.__wpdAddonStepReset`/`Read` so a driver step reads its
- * own commit delta.
+ * own commit delta
  */
 export function installReactHook(): void {
   const win = window as unknown as Record<string, any>;
@@ -35,7 +35,7 @@ export function installReactHook(): void {
   };
 
   // Seed a detected:false fact so ABSENCE is honest even if React never injects (never a fabricated
-  // "detected" and never a silent gap).
+  // "detected" and never a silent gap)
   const store = (win.__wpdAddons = win.__wpdAddons || {});
   if (!store.react) store.react = { detected: false };
 
@@ -43,7 +43,7 @@ export function installReactHook(): void {
   // dispatches a window `error` event; a hydration mismatch fires one. Capture React-authored error
   // messages (they always link to react.dev) so enrich can classify the hydration ones; a non-React
   // error is never stored. A user-supplied onRecoverableError replaces the default and suppresses the
-  // event, so this listener sees nothing then (absence is not proof of clean hydration).
+  // event, so this listener sees nothing then (absence is not proof of clean hydration)
   const REACT_ERROR_MARK = "react.dev/";
   const MAX_STORED_ERRORS = 25;
   const MAX_ERROR_LENGTH = 512;
@@ -67,7 +67,7 @@ export function installReactHook(): void {
   }
 
   // A commit bumps BOTH the resettable per-step counter (window channel) and the cumulative run-level
-  // count carried on the detection fact, so the run span reports total commits and each step its own.
+  // count carried on the detection fact, so the run span reports total commits and each step its own
   const bumpCommit = (): void => {
     win.__wpdReactCommits = (win.__wpdReactCommits || 0) + 1;
     const bumpStore = (win.__wpdAddons = win.__wpdAddons || {});
@@ -127,7 +127,7 @@ export function installReactHook(): void {
   }
 
   // Per-step channel (driver mode): wrap so a step's commit COUNT resets at its start and is read at
-  // its flush. Composes with any other addon that installed the same wrappers (call the prior first).
+  // its flush. Composes with any other addon that installed the same wrappers (call the prior first)
   const priorReset = win.__wpdAddonStepReset;
   win.__wpdAddonStepReset = () => {
     if (typeof priorReset === "function") priorReset();

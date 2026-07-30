@@ -10,7 +10,7 @@ import { sliceOf, type WorkSlice } from "./taxonomy.js";
  * clock because it is only comparable to trace-event timestamps, the same clock, so a sample can be
  * tested for membership in a scripting self-time region. `package` is the resolved owning package of
  * the sample's leaf frame, or null for a frame with no owner (idle/gc/system/tool). Sampled time is
- * NEVER added to the trace-measured ms; samples only supply proportions.
+ * NEVER added to the trace-measured ms; samples only supply proportions
  */
 export interface BreakdownSample {
   traceTs: number;
@@ -38,7 +38,7 @@ interface Segment {
  *
  * Pure and fixture-testable: `events` must already be restricted to the renderer main thread, and
  * `samples` to the same window. Off-main-thread work (raster/compositor) must be filtered out by
- * the caller, or it would eat into idle.
+ * the caller, or it would eat into idle
  */
 export function computeSpanBreakdown(
   events: NormalizedEvent[],
@@ -48,7 +48,7 @@ export function computeSpanBreakdown(
   const { startTs, endTs } = window;
   const windowUs = Math.max(0, endTs - startTs);
 
-  // Clamp each complete event to the window; instant (dur 0) events own no time and are dropped.
+  // Clamp each complete event to the window; instant (dur 0) events own no time and are dropped
   const intervals: { start: number; end: number; slice: WorkSlice }[] = [];
   for (const event of events) {
     if (event.dur <= 0) continue;
@@ -57,7 +57,7 @@ export function computeSpanBreakdown(
     if (end <= start) continue;
     intervals.push({ start, end, slice: sliceOf(event.kind) });
   }
-  // Parent before child: earlier start first, and at an equal start the longer (container) first.
+  // Parent before child: earlier start first, and at an equal start the longer (container) first
   intervals.sort((left, right) => left.start - right.start || right.end - left.end);
 
   const segments: Segment[] = [];
@@ -66,7 +66,7 @@ export function computeSpanBreakdown(
 
   // Attribute [cursor, target] to whatever main-thread work is innermost-open, filling idle when
   // the stack is empty; pops any interval that has finished by `target` first, so its tail lands on
-  // it and not on its parent.
+  // it and not on its parent
   const advanceTo = (target: number): void => {
     while (stack.length > 0 && stack[stack.length - 1].end <= target) {
       const top = stack[stack.length - 1];
@@ -89,7 +89,7 @@ export function computeSpanBreakdown(
   }
   advanceTo(endTs);
 
-  // Per-slice totals + the scripting segments (needed for sample membership).
+  // Per-slice totals + the scripting segments (needed for sample membership)
   const sliceUs = { js: 0, style: 0, layout: 0, paint: 0, gc: 0, other: 0, idle: 0 };
   const jsSegments: { start: number; end: number }[] = [];
   for (const segment of segments) {
@@ -99,7 +99,7 @@ export function computeSpanBreakdown(
   }
 
   // Subdivide the js slice by package: count the samples inside a scripting region per owner, then
-  // split the TRACE-measured js ms by those counts. Zero samples => empty rather than fabricated.
+  // split the TRACE-measured js ms by those counts. Zero samples => empty rather than fabricated
   const jsMs = usToMs(sliceUs.js);
   const byPackage = splitJsByPackage(jsMs, jsSegments, samples);
 
@@ -111,7 +111,7 @@ export function computeSpanBreakdown(
       js: { ms: jsMs, byPackage },
       style: { ms: usToMs(sliceUs.style) },
       layout: { ms: usToMs(sliceUs.layout) },
-      // Chrome measures main-thread paint (null only on firefox, where it is off-main-thread).
+      // Chrome measures main-thread paint (null only on firefox, where it is off-main-thread)
       paint: { ms: paintMs },
       gc: { ms: usToMs(sliceUs.gc) },
       other: { ms: usToMs(sliceUs.other) },
@@ -120,7 +120,7 @@ export function computeSpanBreakdown(
   };
 
   // The tiling is exact by construction (segments cover [startTs, endTs] with no gap or overlap),
-  // so this residual is a safety valve for float dust or a future lost-event bug, never a rescale.
+  // so this residual is a safety valve for float dust or a future lost-event bug, never a rescale
   const summed =
     breakdown.slices.js.ms +
     breakdown.slices.style.ms +
@@ -135,7 +135,7 @@ export function computeSpanBreakdown(
   return breakdown;
 }
 
-/** Split `jsMs` across packages by the sample counts landing inside the scripting regions. */
+/** Split `jsMs` across packages by the sample counts landing inside the scripting regions */
 function splitJsByPackage(
   jsMs: number,
   jsSegments: { start: number; end: number }[],

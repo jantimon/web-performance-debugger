@@ -10,7 +10,7 @@
  *
  * The disposer stays tiny and synchronous on purpose: a signal handler has no event loop to await on,
  * so a disposer must be a plain synchronous kill/unlink (`browser.process()?.kill("SIGKILL")`,
- * `unlinkSync`), never an async close.
+ * `unlinkSync`), never an async close
  */
 
 export type Disposer = () => void;
@@ -24,11 +24,11 @@ type FatalSignal = (typeof SIGNALS)[number];
 /**
  * Run every still-registered disposer once, in registration order. Each handle is removed BEFORE its
  * disposer runs, so a second signal arriving mid-cleanup, or a disposer that itself throws, can never
- * double-run one. A throwing disposer is swallowed so one bad cleanup does not block the rest.
+ * double-run one. A throwing disposer is swallowed so one bad cleanup does not block the rest
  */
 function runDisposers(): void {
   // Deleting the just-yielded entry mid-iteration is spec-safe for a Set, and removing it BEFORE its
-  // disposer runs is the run-once guard: a second signal (or a re-entrant one) finds it already gone.
+  // disposer runs is the run-once guard: a second signal (or a re-entrant one) finds it already gone
   for (const handle of active) {
     active.delete(handle);
     try {
@@ -49,7 +49,7 @@ function onSignal(signal: FatalSignal): void {
   runDisposers();
   // Re-raise with our handler gone so the process takes the signal's default action (terminate with
   // 128+signum) instead of looping back into this handler. Removing only our own listener leaves any
-  // unrelated handler in place.
+  // unrelated handler in place
   process.removeListener(signal, handlerFor[signal]);
   process.kill(process.pid, signal);
 }
@@ -63,7 +63,7 @@ function installSignalHandlers(): void {
 /**
  * Register a synchronous best-effort disposer, run only if a fatal signal arrives before the resource
  * is released the normal way. Returns a deregister function to call on clean release, so a completed
- * run leaves nothing registered. The signal handlers install on first use.
+ * run leaves nothing registered. The signal handlers install on first use
  */
 export function registerDisposer(dispose: Disposer): () => void {
   installSignalHandlers();
@@ -74,12 +74,12 @@ export function registerDisposer(dispose: Disposer): () => void {
   };
 }
 
-/** @testOnly Run the registered disposers once, standing in for a delivered signal (no re-raise). */
+/** @testOnly Run the registered disposers once, standing in for a delivered signal (no re-raise) */
 export function runDisposersForTest(): void {
   runDisposers();
 }
 
-/** @testOnly How many disposers are currently registered. */
+/** @testOnly How many disposers are currently registered */
 export function activeDisposerCount(): number {
   return active.size;
 }

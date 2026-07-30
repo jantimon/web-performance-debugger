@@ -4,18 +4,18 @@ import { readTraceEvents } from "./scan.js";
 
 // The trace's CPU profiler stream. Enabling the `disabled-by-default-v8.cpu_profiler` trace category
 // makes V8 emit a `Profile` event (the stream's startTime) followed by `ProfileChunk` events
-// (incremental nodes + samples + timeDeltas) per sampled isolate, with NO CDP Profiler.start/stop.
+// (incremental nodes + samples + timeDeltas) per sampled isolate, with NO CDP Profiler.start/stop
 // The stream is continuous across a cross-document navigation, so a pre-navigation window keeps its
-// samples, which the CDP sampler drops (it restarts in the new renderer process).
-//
+// samples, which the CDP sampler drops (it restarts in the new renderer process)
+
 // One `Profile` record per (pid, Profile id): a navigation swaps renderer process and each process
 // restarts its node-id space at 1, so the per-process streams must be MERGED into one id space, not
 // concatenated naively (which conflates the two roots). The merge renumbers node ids into disjoint
 // ranges, inverts each node's `parent` link into a `children[]` array, and stamps every sample with
 // its absolute trace-clock timestamp (startTime + cumulative timeDeltas within its own process), so a
-// windowing consumer never reconstructs a cross-process cumsum that would compress the gap away.
+// windowing consumer never reconstructs a cross-process cumsum that would compress the gap away
 
-/** A node as the trace emits it: a single `parent` link, not the `children[]` CDP uses. */
+/** A node as the trace emits it: a single `parent` link, not the `children[]` CDP uses */
 interface TraceProfileNode {
   id: number;
   callFrame: {
@@ -32,7 +32,7 @@ interface RawTraceEvent {
   name: string;
   pid?: number;
   /** the trace thread the Profile/ProfileChunk was emitted on = the isolate's own thread. A sampled
-   * read-site blame join needs it to keep a worker/OOPIF sample off a main-thread flush. */
+   * read-site blame join needs it to keep a worker/OOPIF sample off a main-thread flush */
   tid?: number;
   ts?: number;
   id?: string | number;
@@ -43,7 +43,7 @@ interface RawTraceEvent {
       timeDeltas?: number[];
       /** per-sample EXECUTING line (1-based, trace-stack convention), aligned with cpuProfile.samples.
        * Present on recent Chrome; absent on older builds, in which case sampled read-site blame
-       * degrades to unavailable rather than to a wrong (function-definition) line. */
+       * degrades to unavailable rather than to a wrong (function-definition) line */
       lines?: number[];
     };
   };
@@ -51,7 +51,7 @@ interface RawTraceEvent {
 
 interface ProfileGroup {
   /** the stream's own thread (pid/tid), so a sample can be matched to a same-thread flush. One stream
-   * is one isolate = one thread; the main-thread flush blame must not read a worker/OOPIF sample. */
+   * is one isolate = one thread; the main-thread flush blame must not read a worker/OOPIF sample */
   pid: number | undefined;
   tid: number | undefined;
   /** the stream's base clock (base::TimeTicks us), shared with the trace events and wpd:* markers */
@@ -61,7 +61,7 @@ interface ProfileGroup {
   /** node id -> node, first definition wins (a node is emitted once, in the chunk that introduces it) */
   nodes: Map<number, TraceProfileNode>;
   /** the ProfileChunk payloads for this stream, ordered by ts before the deltas are accumulated. `lines`
-   * is the per-sample executing line (undefined when the chunk carried no `data.lines`). */
+   * is the per-sample executing line (undefined when the chunk carried no `data.lines`) */
   chunks: { ts: number; samples: number[]; timeDeltas: number[]; lines: number[] | undefined }[];
 }
 
@@ -73,11 +73,11 @@ export interface AssembledTraceCpuProfile {
   /** per-sample EXECUTING line (1-based), parallel to `profile.samples`/`profile.sampleTimestampsUs`,
    * for sampled read-site forced-layout blame. Absent when NO chunk carried `data.lines` (older
    * Chrome): the feature then reports unavailable, never a function-definition line. A sample whose
-   * chunk lacked the field carries -1 here (skipped downstream). */
+   * chunk lacked the field carries -1 here (skipped downstream) */
   sampleLines?: number[];
   /** per-sample owning thread (pid/tid), parallel to `profile.samples`, so a sampled read-site blame
    * join matches a sample to the flush's OWN thread and never bills a worker/OOPIF/other-renderer
-   * sample to a main-thread flush. Present only alongside `sampleLines` (blame's only consumer). */
+   * sample to a main-thread flush. Present only alongside `sampleLines` (blame's only consumer) */
   sampleThreads?: { pid: number; tid: number }[];
 }
 
@@ -88,16 +88,16 @@ function normalizeCallFrame(callFrame: TraceProfileNode["callFrame"]): RawCallFr
   return {
     functionName: callFrame.functionName ?? "",
     // scriptId is a number in the trace; buildCpuModel keys frames on name/url/line/col, not scriptId,
-    // but the CDP-shaped type wants a string, so match it.
+    // but the CDP-shaped type wants a string, so match it
     scriptId: String(callFrame.scriptId ?? 0),
     url: callFrame.url ?? "",
-    // The trace uses the CDP 0-based line/column convention; -1 means "no position" (a system frame).
+    // The trace uses the CDP 0-based line/column convention; -1 means "no position" (a system frame)
     lineNumber: callFrame.lineNumber ?? -1,
     columnNumber: callFrame.columnNumber ?? -1,
   };
 }
 
-/** The stream's base clock: the Profile event's startTime, else its own ts, else the earliest chunk. */
+/** The stream's base clock: the Profile event's startTime, else its own ts, else the earliest chunk */
 function startOf(group: ProfileGroup): number {
   if (group.startTime != null) return group.startTime;
   if (group.fallbackStartTs != null) return group.fallbackStartTs;
@@ -110,7 +110,7 @@ function startOf(group: ProfileGroup): number {
  * rate (no CDP profiler to coarsen it), so the median is the honest per-sample time each `selfMs`
  * prices. Picking the lower of the two middle deltas (never their average) keeps the result an actual
  * observed integer-microsecond delta: it is printed verbatim (`query cpu` headline), and an averaged
- * "150.5us" would name an interval no sample ran at. */
+ * "150.5us" would name an interval no sample ran at */
 function medianInterval(timeDeltas: number[]): number {
   const positive = timeDeltas.filter((delta) => delta > 0).sort((left, right) => left - right);
   if (positive.length === 0) return DEFAULT_CPU_INTERVAL_US;
@@ -124,7 +124,7 @@ function medianInterval(timeDeltas: number[]): number {
  * back to the not-covered reporting -- never a fabricated zero-sample profile.
  *
  * Pure over the raw trace (string, `{traceEvents}`, the bare event array, or a `scanTraceEvents`
- * generator), so it is fixture-testable.
+ * generator), so it is fixture-testable
  */
 export function assembleTraceCpuProfile(
   trace: string | Uint8Array | { traceEvents?: RawTraceEvent[] } | Iterable<RawTraceEvent>,
@@ -133,7 +133,7 @@ export function assembleTraceCpuProfile(
 
   const groups = new Map<string, ProfileGroup>();
   const groupFor = (event: RawTraceEvent): ProfileGroup => {
-    // Group by the (pid, Profile id) pair, not pid alone: one renderer can emit more than one stream.
+    // Group by the (pid, Profile id) pair, not pid alone: one renderer can emit more than one stream
     const key = `${event.pid ?? 0} ${event.id ?? ""}`;
     let group = groups.get(key);
     if (!group) {
@@ -159,7 +159,7 @@ export function assembleTraceCpuProfile(
     } else if (event.name === PROFILE_CHUNK_EVENT) {
       const group = groupFor(event);
       // A stream may open with a ProfileChunk (no leading Profile event on some builds); stamp its
-      // thread here too so the group always carries the pid/tid its samples ran on.
+      // thread here too so the group always carries the pid/tid its samples ran on
       group.pid ??= event.pid;
       group.tid ??= event.tid;
       const data = event.args?.data;
@@ -170,13 +170,13 @@ export function assembleTraceCpuProfile(
         samples: data?.cpuProfile?.samples ?? [],
         timeDeltas: data?.timeDeltas ?? [],
         // undefined (not []) when the field is absent, so a chunk that lacks lines is distinguished
-        // from one that legitimately carried an empty sample set.
+        // from one that legitimately carried an empty sample set
         lines: data?.lines,
       });
     }
   }
 
-  // Only streams that carried samples; ordered by base clock so the concatenated stream starts ascending.
+  // Only streams that carried samples; ordered by base clock so the concatenated stream starts ascending
   const orderedGroups = [...groups.values()]
     .filter((group) => group.chunks.length > 0)
     .sort((left, right) => startOf(left) - startOf(right));
@@ -189,19 +189,19 @@ export function assembleTraceCpuProfile(
   let sampleTimestampsUs: number[] = [];
   // Per-sample executing line, parallel to `samples`. -1 = no line for this sample (its chunk carried
   // no `data.lines`); `anyLines` stays false until a real line lands, so a stream that never emits the
-  // field returns sampleLines absent (the feature reports unavailable, never a fake line).
+  // field returns sampleLines absent (the feature reports unavailable, never a fake line)
   let sampleLines: number[] = [];
   let anyLines = false;
   // Per-sample owning thread (pid/tid), parallel to `samples`. A sampled read-site blame join reads it
   // to keep a worker/OOPIF/other-renderer sample off a main-thread flush, which shares a timestamp
-  // window but not a source line. Number arrays (not objects) so a heavy profile stays lean.
+  // window but not a source line. Number arrays (not objects) so a heavy profile stays lean
   let samplePids: number[] = [];
   let sampleTids: number[] = [];
   let nextId = 1;
   let earliestStart = Infinity;
 
   for (const group of orderedGroups) {
-    // Renumber this stream's node ids into a range disjoint from every other stream's.
+    // Renumber this stream's node ids into a range disjoint from every other stream's
     const localToGlobal = new Map<number, number>();
     for (const localId of group.nodes.keys()) localToGlobal.set(localId, nextId++);
     for (const [localId, node] of group.nodes) {
@@ -219,7 +219,7 @@ export function assembleTraceCpuProfile(
     const start = startOf(group);
     earliestStart = Math.min(earliestStart, start);
     // Absolute per-sample timestamp = this stream's base clock + its own cumulative deltas. Reset per
-    // stream: process B's deltas are relative to process B's startTime, not a continuation of A's.
+    // stream: process B's deltas are relative to process B's startTime, not a continuation of A's
     let clock = start;
     const orderedChunks = [...group.chunks].sort((left, right) => left.ts - right.ts);
     for (const chunk of orderedChunks) {
@@ -227,7 +227,7 @@ export function assembleTraceCpuProfile(
         const deltaUs = chunk.timeDeltas[index] ?? 0;
         clock += deltaUs;
         const globalId = localToGlobal.get(chunk.samples[index]);
-        // A sample referencing a node no chunk introduced is unmappable; skip rather than mis-attribute.
+        // A sample referencing a node no chunk introduced is unmappable; skip rather than mis-attribute
         if (globalId == null) continue;
         samples.push(globalId);
         timeDeltas.push(deltaUs);
@@ -252,13 +252,13 @@ export function assembleTraceCpuProfile(
   // sees a monotonic clock. That tally (profile/span-hot.ts tallySpanHot) sweeps the samples with a
   // single moving pointer that never rewinds and early-breaks past the last window, so an out-of-order
   // sample would be miscounted; the js-by-package split and buildCpuModel are order-independent, but
-  // this one consumer is not. A single stream is already ascending, so this only runs across a navigation.
+  // this one consumer is not. A single stream is already ascending, so this only runs across a navigation
   if (orderedGroups.length > 1) {
     const order = sampleTimestampsUs.map((_timestamp, index) => index);
     order.sort((left, right) => sampleTimestampsUs[left] - sampleTimestampsUs[right]);
     // Reassign to the reordered arrays. Spreading them back in place with
     // `splice(0, len, ...sorted)` passes a per-sample-sized array (hundreds of thousands of entries on
-    // a heavy page) as call arguments, which overflows the stack (`Maximum call stack size exceeded`).
+    // a heavy page) as call arguments, which overflows the stack (`Maximum call stack size exceeded`)
     samples = order.map((index) => samples[index]);
     timeDeltas = order.map((index) => timeDeltas[index]);
     sampleTimestampsUs = order.map((index) => sampleTimestampsUs[index]);
@@ -280,7 +280,7 @@ export function assembleTraceCpuProfile(
     profile,
     sampleIntervalUs: medianInterval(timeDeltas),
     // Absent when no chunk carried lines: the sampled-blame join then reports unavailable. The
-    // per-sample thread rides alongside, so the join can keep an off-main-thread sample off a flush.
+    // per-sample thread rides alongside, so the join can keep an off-main-thread sample off a flush
     ...(anyLines
       ? {
           sampleLines,
@@ -295,7 +295,7 @@ export function assembleTraceCpuProfile(
  * describes the run onward rather than the whole trace (which in driver mode spans prepare()/warmup
  * before the run window). The nodes/tree are kept intact -- buildCpuModel bills self-time from samples,
  * so a node that loses all its samples simply reads zero. Requires the per-sample timestamps the
- * trace lane carries; a profile without them is returned unchanged.
+ * trace lane carries; a profile without them is returned unchanged
  */
 export function windowTraceCpuProfile(profile: RawCpuProfile, fromTs: number): RawCpuProfile {
   const timestamps = profile.sampleTimestampsUs;

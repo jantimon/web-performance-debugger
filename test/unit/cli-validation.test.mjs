@@ -9,7 +9,7 @@ import { toFloat, toInt, toNonNegativeInt, toPositiveInt } from "../../dist/cli-
 // One coherent numeric-validation policy for the CLI flags. The four parsers reject a bad value at
 // the argument boundary before any browser launches. They are pure functions, so test them in
 // process (call, assert the thrown InvalidArgumentError type + the constraint wording, assert the
-// accepted return): no subprocess needed. The wording is what tells a user which value was wrong.
+// accepted return): no subprocess needed. The wording is what tells a user which value was wrong
 function rejects(parse, value, pattern) {
   assert.throws(
     () => parse(value),
@@ -18,8 +18,7 @@ function rejects(parse, value, pattern) {
   );
 }
 
-// --- toFloat: wall/INP budgets accept non-negative floats (stored walls are fractional) ---
-// One parser backs both --max-wall and --max-inp, so their policy cannot drift apart.
+// One parser backs both --max-wall and --max-inp, so their policy cannot drift apart
 
 test("toFloat accepts a fractional ms (--max-wall/--max-inp budget)", () => {
   assert.equal(toFloat("40.5"), 40.5);
@@ -38,7 +37,6 @@ test("toFloat rejects a non-number", () => {
   rejects(toFloat, "abc", /not a non-negative number/);
 });
 
-// --- toNonNegativeInt: count maxima require non-negative (a negative gate fails forever) ---
 
 test("toNonNegativeInt accepts zero (--max-layouts 0 is a valid gate)", () => {
   assert.equal(toNonNegativeInt("0"), 0);
@@ -53,8 +51,7 @@ test("toNonNegativeInt rejects a fractional count (a count is whole)", () => {
   rejects(toNonNegativeInt, "1.5", /not a whole number/);
 });
 
-// --- toPositiveInt: --top and --protocol-timeout require a positive integer ---
-// --top feeds .slice(0, n); a zero or negative timeout fires instantly.
+// --top feeds .slice(0, n); a zero or negative timeout fires instantly
 
 test("toPositiveInt accepts a positive integer", () => {
   assert.equal(toPositiveInt("5"), 5);
@@ -68,7 +65,6 @@ test("toPositiveInt rejects zero", () => {
   rejects(toPositiveInt, "0", /must be a positive whole number/);
 });
 
-// --- toInt: the whole-number gate every count/rate option shares ---
 
 test("toInt accepts a whole number", () => {
   assert.equal(toInt("42"), 42);
@@ -92,7 +88,7 @@ function runCli(args) {
 }
 
 // positional ids (query get/frame) parse through toPositionalId, which calls program.error (not one
-// of the four parsers): commander dispatches the argument, the strict parse rejects junk.
+// of the four parsers): commander dispatches the argument, the strict parse rejects junk
 
 test("query get rejects a non-numeric id", () => {
   const result = runCli(["query", "get", missing, "abc"]);
@@ -116,7 +112,7 @@ test("query get accepts a whole-number id", () => {
 });
 
 // --cpu-throttle > 1 is an inline range guard in cli.ts (the parser accepts 0/1 as valid ints; the
-// guard then rejects a no-op rate). Guard ordering, not parser logic.
+// guard then rejects a no-op rate). Guard ordering, not parser logic
 
 test("record --cpu-throttle rejects a rate of 1 (a no-op the throttle skips)", () => {
   const result = runCli(["record", probe, "--bench", "--cpu-throttle", "1"]);

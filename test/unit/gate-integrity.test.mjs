@@ -10,7 +10,7 @@ import { countIntegrityRefusal } from "../../dist/model/count-integrity.js";
 // F2c / F3: trace-derived counts are known-incomplete on a cross-process split (they cover only the
 // busiest thread) or a trace-buffer overflow (dropped events). record() records each as a typed meta
 // field; assert/diff read it and REFUSE count thresholds rather than gate an undercount. These tests
-// inject the flag through a hand-written recording (no browser, no real overflow needed).
+// inject the flag through a hand-written recording (no browser, no real overflow needed)
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const cli = path.join(root, "dist", "cli.js");
@@ -35,7 +35,7 @@ const baseMeta = () => ({
 
 // A minimal schema-5 recording with a measured layout count, optionally flagged split/dataLoss. The
 // spans array is the sole count/timing store (there is no summary/window/marks block), so assert/diff
-// read the counts off the run span exactly as they do from a real recording.
+// read the counts off the run span exactly as they do from a real recording
 function recording({ split = false, dataLoss = false, layoutCount = 300, wallMs = 10 } = {}) {
   const meta = baseMeta();
   if (split) meta.mainThread = { via: "reanchored", split: true };
@@ -128,7 +128,7 @@ test("diff --fail-on-regression refuses when a side has known-incomplete counts 
   assert.equal(gated.status, 1, "a gate over an undercount must refuse, not fabricate a verdict");
   assert.match(gated.stdout, /known-incomplete counts/);
 
-  // Without the gate, the diff stays advisory: no refusal, no non-zero exit.
+  // Without the gate, the diff stays advisory: no refusal, no non-zero exit
   const advisory = run("diff", [base, split]);
   assert.equal(advisory.status, 0, "an advisory diff does not refuse");
   assert.doesNotMatch(advisory.stdout, /Refusing to gate/);

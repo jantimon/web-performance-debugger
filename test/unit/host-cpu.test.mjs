@@ -9,7 +9,7 @@ import {
 // Determinism in WORK: the block is a straight-line loop of fixed length with no data-dependent
 // branch, so the same input runs the same operations and returns the same value. Equal output across
 // repeated calls (and across two callers) is the observable proof the operation count is fixed -- only
-// the DURATION a machine takes to run it varies.
+// the DURATION a machine takes to run it varies
 test("host-cpu: the work block is deterministic in work (same input -> same output)", () => {
   assert.equal(hostCpuWorkBlock(50_000), hostCpuWorkBlock(50_000));
   assert.equal(hostCpuWorkBlock(1), hostCpuWorkBlock(1));
@@ -17,7 +17,7 @@ test("host-cpu: the work block is deterministic in work (same input -> same outp
 });
 
 // The index formula: throughput (work per ms), scaled and rounded. Monotonic (a faster host runs the
-// block in less time -> smaller medianMs -> larger index), and larger for more work at a fixed time.
+// block in less time -> smaller medianMs -> larger index), and larger for more work at a fixed time
 test("host-cpu: the index is monotonic in speed and scales with work", () => {
   const fast = hostCpuIndexFromMedianMs(10, 1_000_000);
   const slow = hostCpuIndexFromMedianMs(30, 1_000_000);
@@ -29,7 +29,7 @@ test("host-cpu: the index is monotonic in speed and scales with work", () => {
 
 // With the clock mocked to a fixed sequence, the index is fully determined by the injected durations,
 // not the machine the test runs on: the same machine-dependence lives ONLY in the timing. Durations
-// [10, 30, 20] -> median 20 -> index = round(100000 / 20 / 50) = 100.
+// [10, 30, 20] -> median 20 -> index = round(100000 / 20 / 50) = 100
 test("host-cpu: measure derives the index from the MEDIAN block duration (timing mocked)", () => {
   const reads = [0, 10, 100, 130, 200, 220];
   let cursor = 0;
@@ -38,7 +38,7 @@ test("host-cpu: measure derives the index from the MEDIAN block duration (timing
   assert.equal(index, 100, "median of [10,30,20] is 20; index = round(100000/20/50)");
 });
 
-// End to end on the real clock: a positive, finite, plausibly-benchmarkIndex-magnitude scalar.
+// End to end on the real clock: a positive, finite, plausibly-benchmarkIndex-magnitude scalar
 test("host-cpu: a real measurement is a positive finite scalar", () => {
   const index = measureHostCpuIndex();
   assert.ok(Number.isInteger(index), "the stamped index is a rounded integer");

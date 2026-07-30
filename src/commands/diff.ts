@@ -34,27 +34,27 @@ interface DiffCmdOpts extends StructuredOutOpts {
 // `gated` metrics participate in --fail-on-regression; `advisory` ones are printed but never
 // fail the build. A metric gates only if it is REPRODUCIBLE on unchanged code, which is not the
 // same as being a count:
-//
+
 //   - layout/style come from CDP counters, forced layout from trace stacks, and paint from
 //     main-thread `Paint` events. Where a count comes from is not the test; reproducibility is, and all four are
 //     [measured] bit-identical across repeated runs of the same flow (layout 41, style 42, forced
 //     80 on 5 runs; paint exactly N+1 for N dirtied regions on 40). Those gate. Do not widen paint
 //     to raster/compositor events: their counts track the scheduler rather than the page and would
-//     cost this gate its meaning (docs/dev/rendering-counts.md).
+//     cost this gate its meaning (docs/dev/rendering-counts.md)
 //   - wall/INP/scripting ride performance.now() (Chrome-clamped, run-to-run jitter), so gating on
-//     a +0.1 ms blip would contradict the tool's own trust tiers.
-//
+//     a +0.1 ms blip would contradict the tool's own trust tiers
+
 // Advisory metrics still show in the table as a directional signal. (For a real JS-cost gate use
 // `cpu-diff`, which has a sampling-noise floor.)
-//
+
 // The off-thread frame side track (SpanBreakdown.frames) is intentionally NOT a metric here: its
 // counts are scheduler noise (see docs/dev/rendering-counts.md), so it is display-only and would
 // manufacture regressions. This diff reads only the run-span counts + meta headline, where the side
-// track does not live, so no frame delta can be produced.
+// track does not live, so no frame delta can be produced
 
 /** The run-level metrics diff compares, read from the run span (counts/wall/INP) and meta (jsSelfMs) --
  * the schema-5 count/timing store. Every not-measured field is a Measured null, so a metric absent on
- * one side prints n/a and never fabricates a delta. */
+ * one side prints n/a and never fabricates a delta */
 function diffMetrics(rec: Recording): Record<DiffMetricKey, Measured<number>> {
   const run = runSpan(rec);
   const counts = run?.counts;
@@ -105,7 +105,7 @@ async function loadRecording(file: string): Promise<Recording> {
  * plus the labels present on one side only. ADVISORY, directional ms (trace wall-tier on --breakdown bars, the profiler's clock on CPU-only
  * bars): these never gate the build,
  * so they are shown for signal but do not join `regressions`. A slice not measured on one side
- * prints `—` rather than inventing a delta.
+ * prints `-` rather than inventing a delta
  */
 function printSliceDiff(diff: SpanSliceDiff): void {
   console.log("\nper-span slice deltas (advisory, directional ms):");
@@ -137,7 +137,7 @@ function printSliceDiff(diff: SpanSliceDiff): void {
  * Pure -- no printing, no process.exitCode. `gateRefusal` is set (only under `--fail-on-regression`)
  * when the gate cannot be evaluated: an incompatible blocking axis, or known-incomplete counts on
  * either side. `failed` is the process verdict (exit 1): a refusal or a real gated regression, only
- * ever under the gate.
+ * ever under the gate
  */
 function buildDiffView(
   baseline: string,
@@ -154,13 +154,13 @@ function buildDiffView(
   // Comparability: name every capture axis that differs, so a reader never reads a config-driven
   // delta as a code change. Directional by default; a --fail-on-regression gate REFUSES across an
   // incompatible browser/runtime/capture-mode, where an exact-count "regression" would be an artifact
-  // of the config, not the code.
+  // of the config, not the code
   const mismatches = comparabilityMismatches(baselineRec.meta, currentRec.meta);
 
   // Refusal (only under the gate): a blocking axis first, then known-incomplete counts. A blocking
   // mismatch would make a count delta an artifact of the config; a cross-process split or dropped
   // trace events would make it an artifact of the missing work. Either way, refuse rather than
-  // fabricate a verdict -- the same honest refusal assert makes.
+  // fabricate a verdict -- the same honest refusal assert makes
   let gateRefusal: string | undefined;
   if (failOnRegression) {
     const blocking = mismatches.filter((mismatch) => mismatch.blocksGating);
@@ -188,10 +188,10 @@ function buildDiffView(
     const baseValue = baselineMetrics[metric.key];
     const currentValue = currentMetrics[metric.key];
     // Don't conflate "not measured" (null) with 0; a null on either side means no delta (never a
-    // fabricated 0 -> 45 regression or 300 -> 0 improvement).
+    // fabricated 0 -> 45 regression or 300 -> 0 improvement)
     const delta = baseValue == null || currentValue == null ? null : currentValue - baseValue;
     // Only exact CDP counts gate the build; wall/INP/scripting are directional, not numbers to fail
-    // CI on (see METRICS note).
+    // CI on (see METRICS note)
     const regression = metric.gated && metric.higherIsWorse && delta != null && delta > 0;
     metrics.push({
       key: metric.key,
@@ -224,7 +224,7 @@ function buildDiffView(
 }
 
 /** Render a `DiffView` as the human report: the comparability warning, then either the gate refusal
- * or the metric table + advisory slice deltas + regression verdict. */
+ * or the metric table + advisory slice deltas + regression verdict */
 function renderDiffHuman(view: DiffView): void {
   if (view.comparability.length) {
     console.log("\n⚠ WARNING: baseline and current were captured differently:");
@@ -235,7 +235,7 @@ function renderDiffHuman(view: DiffView): void {
     );
   }
   // A refused gate stops before the table: the whole point is to not show a delta the config, not
-  // the code, produced.
+  // the code, produced
   if (view.gateRefusal) {
     console.log(`\n${view.gateRefusal}`);
     return;
@@ -262,8 +262,8 @@ function renderDiffHuman(view: DiffView): void {
   console.log(`baseline: ${view.baseline}\ncurrent:  ${view.current}\n`);
   console.log(table(["metric", "baseline", "current", "delta"], rows));
 
-  // Additive per-span slice section: shown only when either recording carries a breakdown bar.
-  // Advisory, so it never touches `regressions` or the exit code.
+  // Additive per-span slice section: shown only when either recording carries a breakdown bar
+  // Advisory, so it never touches `regressions` or the exit code
   const sliceDiff = view.sliceDeltas;
   if (
     sliceDiff.spans.length ||
@@ -277,7 +277,7 @@ function renderDiffHuman(view: DiffView): void {
     for (const regression of view.regressions) console.log(`  ▲ ${regression}`);
   } else {
     // Scoped to what actually gates: the advisory rows (wall/INP) and the slice deltas above are
-    // directional and never counted here, so claiming "no regressions" outright would overclaim.
+    // directional and never counted here, so claiming "no regressions" outright would overclaim
     console.log(
       "\nNo exact-count regressions in the gated set. Directional deltas (wall, INP, slices) above are advisory.",
     );
@@ -286,7 +286,7 @@ function renderDiffHuman(view: DiffView): void {
 
 /** Compare two recordings OR two run-groups field-by-field; optionally fail on regression. A group
  * pairs its members by (mode, variant) and diffs each pair; a group vs a plain recording is refused
- * (one shape at a time). `--format json|toon` serializes the same data the human report shows. */
+ * (one shape at a time). `--format json|toon` serializes the same data the human report shows */
 export async function diffCmd(baseline: string, current: string, opts: DiffCmdOpts): Promise<void> {
   const [baselineConsumption, currentConsumption] = await Promise.all([
     resolveConsumption(baseline),
@@ -305,7 +305,7 @@ export async function diffCmd(baseline: string, current: string, opts: DiffCmdOp
 }
 
 /** Load two recordings + their spans and build the `DiffView`. Shared by the plain-recording path and
- * each run-group member pair. */
+ * each run-group member pair */
 async function pairDiffView(
   baseline: string,
   current: string,
@@ -328,7 +328,7 @@ async function pairDiffView(
   );
 }
 
-/** Compare two recordings field-by-field; optionally fail the process on regression. */
+/** Compare two recordings field-by-field; optionally fail the process on regression */
 async function diffRecordings(baseline: string, current: string, opts: DiffCmdOpts): Promise<void> {
   const view = await pairDiffView(baseline, current, !!opts.failOnRegression);
   const fmt = structuredFormat(opts);
@@ -337,7 +337,7 @@ async function diffRecordings(baseline: string, current: string, opts: DiffCmdOp
   if (view.failed) process.exitCode = 1;
 }
 
-/** A member's pairing key across two groups: capture mode + variant (span identity's group analogue). */
+/** A member's pairing key across two groups: capture mode + variant (span identity's group analogue) */
 function memberPairKey(member: GroupMember): string {
   return `${member.mode}::${member.variant ?? ""}`;
 }
@@ -347,7 +347,7 @@ function memberPairKey(member: GroupMember): string {
  * the SAME per-recording diff (comparabilityMismatches and the gates unchanged). Members present on
  * only one side are reported, not compared. A GROUP-LEVEL refusal fires only when the two groups
  * measured different workloads: pairing per-mode captures of two different programs is meaningless, so
- * `--fail-on-regression` refuses the whole diff there rather than per pair.
+ * `--fail-on-regression` refuses the whole diff there rather than per pair
  */
 async function diffGroups(
   baselineManifest: string,
@@ -367,7 +367,7 @@ async function diffGroups(
 
   // Group-level workload refusal: read each group's first member's meta and reuse the comparability
   // gate's workload axis. Different workloads make every per-pair count delta a program difference, not
-  // a code change, so refuse the whole diff rather than fabricate per-pair regressions.
+  // a code change, so refuse the whole diff rather than fabricate per-pair regressions
   const [baselineRef, currentRef] = await Promise.all([
     loadMemberRecording(baselineManifest, baselineGroup.members[0]),
     loadMemberRecording(currentManifest, currentGroup.members[0]),
@@ -435,7 +435,7 @@ async function diffGroups(
     console.log(
       "\nNo members matched by capture mode + variant; nothing was compared. Record the groups with the same members.",
     );
-  // A gate you asked for but could not evaluate must fail loudly, never pass silently on an empty diff.
+  // A gate you asked for but could not evaluate must fail loudly, never pass silently on an empty diff
   const failed = anyFailed || (!comparedAny && failOnRegression);
   if (fmt) {
     const view: GroupDiffView = {

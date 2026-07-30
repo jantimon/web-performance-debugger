@@ -13,13 +13,12 @@ import { assertCmd } from "../../dist/commands/assert.js";
 import { diffCmd } from "../../dist/commands/diff.js";
 import { tmpDir, captureExitCode } from "./helpers.mjs";
 
-// --- SpanEntry fixtures: the unified slice shape assert/diff read (query spans output) ---
 
 const slice = (ms) => ({ ms });
 const jsSlice = (ms) => ({ ms, byPackage: {} });
 
 // A chrome run span: every slice measured. A node-style run span: style/layout/paint not-measured
-// (null), the Measured contract this whole feature turns on.
+// (null), the Measured contract this whole feature turns on
 const chromeRun = (overrides = {}) => ({
   label: "run",
   kind: "run",
@@ -55,7 +54,6 @@ const nodeRun = () => ({
   },
 });
 
-// --- parseSliceBudgets: valid, repeated, malformed, unknown slice ---
 
 test("parseSliceBudgets: a single valid entry parses to a slice->ms map", () => {
   assert.deepEqual(parseSliceBudgets(["js=5"]), { js: 5 });
@@ -83,7 +81,6 @@ test("parseSliceBudgets: an unknown slice name lists the valid names", () => {
   });
 });
 
-// --- sliceMs: the Measured accessor (null stays null, a measured 0 stays 0) ---
 
 test("sliceMs: reads a measured slice, keeps a measured 0, and returns null for not-measured", () => {
   const run = nodeRun();
@@ -92,7 +89,6 @@ test("sliceMs: reads a measured slice, keeps a measured 0, and returns null for 
   assert.equal(sliceMs(chromeRun({ gc: slice(0) }).slices, "gc"), 0, "a measured 0 is not null");
 });
 
-// --- gateSliceBudgets: pass, fail, n/a->FAIL, --label targeting ---
 
 test("gateSliceBudgets: a budget the slice satisfies passes", () => {
   const [gate] = gateSliceBudgets([chromeRun()], { js: 6 }, "run");
@@ -149,14 +145,13 @@ test("gateSliceBudgets: budgets are gated in insertion order", () => {
   assert.deepEqual(results.map((gate) => gate.slice), ["layout", "js"]);
 });
 
-// --- diffSpanSlices: matched, unmatched, missing breakdowns ---
 
 test("diffSpanSlices: matched spans get per-slice ms deltas", () => {
   const base = [chromeRun()];
   const current = [chromeRun({ js: jsSlice(7), layout: slice(2) })];
   const diff = diffSpanSlices(base, current);
   assert.equal(diff.spans.length, 1);
-  // Spans are joined + displayed by kind+label, so a user measure named "run" can never collide (F32).
+  // Spans are joined + displayed by kind+label, so a user measure named "run" can never collide (F32)
   assert.equal(diff.spans[0].label, "run:run");
   const bySlice = Object.fromEntries(diff.spans[0].slices.map((slice) => [slice.slice, slice]));
   assert.equal(bySlice.js.delta, 2, "5 -> 7 is +2");
@@ -191,10 +186,9 @@ test("diffSpanSlices: missing breakdowns on either side is empty, not a throw", 
   assert.deepEqual(oneSide.unmatchedCurrent, ["run:run"]);
 });
 
-// --- End-to-end through the commands, reading a recording with stored breakdowns ---
 
 // A minimal summary so the count-gating path (which reads `summary` unconditionally) has fields to
-// read; the slice path reads `breakdowns`. Both live on the same recording here.
+// read; the slice path reads `breakdowns`. Both live on the same recording here
 const emptySummary = {
   wallMs: null, inpMs: null, jsSelfMs: 0,
   layoutCount: 0, styleCount: 0, paintCount: 0,
@@ -212,7 +206,7 @@ function writeBreakdownRecording(name, breakdowns) {
   return file;
 }
 
-// A stored run span carrying a bar (Recording.spans): buildSpans folds it to the run span entry.
+// A stored run span carrying a bar (Recording.spans): buildSpans folds it to the run span entry
 const storedRun = (slices) => ({
   label: "run",
   kind: "run",
@@ -245,7 +239,7 @@ test("assertCmd: --max-slice on an exceeded slice fails the gate (exit 1)", asyn
 
 // After the collapse there is no separate step-index file: a stepped run is one recording, and
 // `--max-slice` reads its spans (the run bar by default). This pins that the slice path finds the bar
-// on the single artifact.
+// on the single artifact
 test("assertCmd: --max-slice reads the run bar off the (single) recording", async () => {
   const recording = writeBreakdownRecording("slice-single-rec.json", [storedRun()]);
   const code = await captureExitCode(() => assertCmd(recording, {}, { js: 6 }));

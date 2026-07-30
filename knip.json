@@ -3,6 +3,7 @@
   "entry": ["src/cli.ts", "src/index.ts"],
   "project": ["src/**/*.ts"],
   "ignore": ["examples/**", "test/**"],
+  "ignoreDependencies": ["eslint", "estree"],
   "ignoreExportsUsedInFile": true,
   "tags": ["-testOnly"]
 }

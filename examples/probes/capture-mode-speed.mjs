@@ -2,21 +2,23 @@
 // NO-MEASUREMENT baseline (plain browser, no trace, no sampler, no gecko profiler), on one mixed
 // JS + layout/style workload, on both engines. Backs the Speed column in the README's
 // "One capture per run: the capture modes" table and the full results table in
-// docs/dev/cpu-profiling.md.
-//
+// docs/dev/cpu-profiling.md
+
 // Method: one page-clock window (performance.now inside the page) times the SAME workload in every
 // cell, so node-side dispatch and the trace start/stop calls stay outside the timed window; the
 // number is how much the active instrumentation slows the page's own execution. Cells are
 // interleaved across rounds (rotated order per round) so thermal drift spreads across modes rather
 // than biasing one. A fresh browser launches per cell per round, because Firefox's profiler is a
 // launch-time startup feature (no per-iteration start/stop) and a clean process avoids cross-mode
-// carryover. Chrome instrumentation matches src/record/capture.ts verbatim: default = the CDP
+// carryover
+
+// Chrome instrumentation matches src/record/capture.ts verbatim: default = the CDP
 // sampler at the 200us default interval; --breakdown = a light trace (breakdownTraceCategories,
 // carrying the v8.cpu_profiler sample stream, NO CDP profiler); --deep = the full .stack +
 // invalidationTracking trace, sampler off. The baseline cell captures nothing (no trace, no
 // sampler), so every mode's overhead is read against it. Firefox is one gecko pass in every mode, so
-// gecko and gecko-deep share one capture and one overhead; --breakdown does not exist there.
-//
+// gecko and gecko-deep share one capture and one overhead; --breakdown does not exist there
+
 // Requires a build first (imports the real category/trace helpers from dist/):
 //   npm run build
 //   node examples/probes/capture-mode-speed.mjs                 # full run (medians the README/docs cite)
@@ -50,7 +52,7 @@ const GECKO_ENTRIES = 16_000_000; // GECKO_PROFILER_ENTRIES (src/browser/launch.
  * style invalidation), so --deep's `.stack` + invalidationTracking overhead is visible (a pure-JS
  * loop would read ~0 there) without letting a layout-dominated window inflate the trace cost past
  * what a real interaction pays. DOM setup is idempotent and excluded from the timed window. Returns
- * the page-clock elapsed ms.
+ * the page-clock elapsed ms
  */
 function workload() {
   let host = document.getElementById("wpd-probe-host");
@@ -83,7 +85,7 @@ function workload() {
   return { elapsedMs: performance.now() - start, checksum: (accumulator + sink) | 0 };
 }
 
-/** Run WARMUP + ITERATIONS timed evaluations of the workload with `mode`'s instrumentation active. */
+/** Run WARMUP + ITERATIONS timed evaluations of the workload with `mode`'s instrumentation active */
 async function runCell(engine, mode) {
   const launch =
     engine === "firefox"
@@ -110,12 +112,12 @@ async function runCell(engine, mode) {
 
 // One temp dir for every Gecko shutdown dump, removed at the end. Firefox writes a large dump
 // (16M-entry ring buffer, 16MB+) on each close; a full run makes one per gecko cell per round, so
-// they must not accumulate.
+// they must not accumulate
 const geckoDumpDir = mkdtempSync(join(tmpdir(), "wpd-speed-"));
 let geckoDumpCount = 0;
 
 /** Firefox: the gecko modes launch under the Gecko startup profiler (matches geckoEnv in
- * src/browser/launch.ts); the baseline launches plain. Chrome ignores this. */
+ * src/browser/launch.ts); the baseline launches plain. Chrome ignores this */
 function geckoEnvFor(mode) {
   if (mode !== "gecko" && mode !== "gecko-deep") return process.env;
   return {
@@ -163,13 +165,13 @@ if (ENGINES.includes("firefox")) {
 const collected = new Map(CELLS.map((cell) => [`${cell.engine}:${cell.mode}`, []]));
 // An engine whose browser is not installed (Chrome ships with `npm install`, Firefox needs
 // `npx puppeteer browsers install firefox`) self-skips on its first launch failure, like the repo's
-// firefox e2e does, so the run still reports every engine that IS present rather than crashing.
+// firefox e2e does, so the run still reports every engine that IS present rather than crashing
 const skippedEngines = new Set();
 
 try {
   for (let round = 0; round < ROUNDS; round++) {
-    // Rotate cell order each round so drift/thermal effects do not bias one mode.
-    const order = CELLS.map((_, index) => CELLS[(index + round) % CELLS.length]);
+    // Rotate cell order each round so drift/thermal effects do not bias one mode
+    const order = CELLS.map((_cell, index) => CELLS[(index + round) % CELLS.length]);
     for (const cell of order) {
       if (skippedEngines.has(cell.engine)) continue;
       try {
@@ -181,11 +183,11 @@ try {
       } catch (error) {
         // First failure for an engine (usually "browser not installed") skips the whole engine so a
         // partial run still reports; a mid-run failure for an already-measured engine is logged but
-        // its collected samples are kept.
+        // its collected samples are kept
         const collectedSoFar = collected.get(`${cell.engine}:${cell.mode}`).length;
         if (collectedSoFar === 0) skippedEngines.add(cell.engine);
         // A thrown value is not guaranteed to be an Error, so coerce before reading a message: the
-        // self-skip must survive a non-Error throw rather than crash inside its own handler.
+        // self-skip must survive a non-Error throw rather than crash inside its own handler
         const reason = String(error instanceof Error ? error.message : error).split("\n")[0];
         process.stderr.write(`SKIP ${cell.engine}:${cell.mode} (round ${round + 1}): ${reason}\n`);
       }
@@ -207,7 +209,7 @@ function report(engine) {
     const samples = collected.get(`${engine}:${cell.mode}`);
     if (samples.length === 0) {
       // A mode that failed every round after its engine's baseline succeeded collected nothing;
-      // median/min/max would read NaN/Infinity, so report it as n/a rather than printing garbage.
+      // median/min/max would read NaN/Infinity, so report it as n/a rather than printing garbage
       console.log(cell.mode.padEnd(14), "n/a");
       continue;
     }

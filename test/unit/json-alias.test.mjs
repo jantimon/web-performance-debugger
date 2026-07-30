@@ -10,7 +10,7 @@ import { tmpDir } from "./helpers.mjs";
 
 // --json is the HIDDEN alias of --format json: kept working, absent from every help surface. --format
 // is the documented spelling. Two halves of the contract, both pinned here: the flag still selects
-// json output, and it never advertises itself in --help.
+// json output, and it never advertises itself in --help
 
 const cli = path.join(fileURLToPath(new URL("../..", import.meta.url)), "dist", "cli.js");
 
@@ -32,7 +32,7 @@ test("structuredFormat: --json selects the same 'json' as --format json, and --f
   assert.equal(structuredFormat({ json: true }), "json");
   assert.equal(structuredFormat({ format: "json" }), structuredFormat({ json: true }));
   assert.equal(structuredFormat({}), null, "neither flag = the human report");
-  // --format is authoritative when both are present, so the alias never overrides an explicit format.
+  // --format is authoritative when both are present, so the alias never overrides an explicit format
   assert.equal(structuredFormat({ json: true, format: "toon" }), "toon");
 });
 

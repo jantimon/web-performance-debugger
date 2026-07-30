@@ -1,6 +1,6 @@
 // The one-pass capture modes: every invocation is exactly ONE pass (one browser launch, one run of
-// the flow, one recording). A capture mode picks WHAT that pass captures, never how many passes run.
-//
+// the flow, one recording). A capture mode picks WHAT that pass captures, never how many passes run
+
 // Chrome capture modes:
 //   default        sampler only, no trace           -> the four-slice CPU bar; no rendering counts
 //   --breakdown    light trace + sampler            -> reconciling bar + exact counts + sampled blame
@@ -9,18 +9,18 @@
 // startup); its capture modes are REPORTING tiers over that one capture, not capture tiers. --deep
 // adds a reporting tier (mode "gecko-deep"): it surfaces Gecko's native cause-stack write identity as
 // a dirtied-by report, captured no differently from the default gecko pass. node is its own in-process
-// lane (runtime/node.ts).
-//
+// lane (runtime/node.ts)
+
 // [measured] constraints that shape the capture modes (present-tense; docs/dev/cpu-profiling.md):
 //   - The CPU sampler must NEVER ride a `.stack` trace: `disabled-by-default-devtools.timeline.stack`
 //     makes Blink walk the JS stack on every Layout, and the sampler bills that to the JS frame that
 //     forced the layout -- the same frame the real forced-layout cost lands on -- inflating sampled
 //     self-time +21%. So the sampler rides only the light (no-`.stack`) trace (--breakdown) or no
-//     trace at all (default); --deep, which needs `.stack`, runs with the sampler OFF.
+//     trace at all (default); --deep, which needs `.stack`, runs with the sampler OFF
 //   - The fused --breakdown pass costs ~2-5% wall over sampler-only and leaves sampled self-time
 //     clean (+0-1%), which is why the light trace and the sampler can share one pass. That ~2-5% is
 //     the pure-JS floor (a near-empty trace); a workload that renders costs more, since the trace
-//     records every layout/style event (docs/dev/cpu-profiling.md, per-capture-mode wall overhead).
+//     records every layout/style event (docs/dev/cpu-profiling.md, per-capture-mode wall overhead)
 
 import { traceCategories, breakdownTraceCategories, STACK_CATEGORY } from "../trace/categories.js";
 import type { BrowserName } from "../browser/backend.js";
@@ -28,11 +28,13 @@ import type { BlameSemantic } from "../model/recording.js";
 import type { CaptureCapabilities } from "../metrics/summarize.js";
 import type { RecordOptions } from "./options.js";
 
-// Every capture-mode name a schema-5 recording stamps into `meta.capture`. The first five are the
-// browser passes a `CaptureConfig` names; `node-cpu`/`node-alloc` are the in-process node lanes
-// (runtime/node.ts, runtime/node-alloc.ts), which build a recording directly without a CaptureConfig.
-// There is no "precise-wall" arm: that flag is retired and the schema epoch gate rejects any
-// pre-5 recording that could have carried it.
+/**
+ * Every capture-mode name a schema-5 recording stamps into `meta.capture`. The first five are the
+ * browser passes a `CaptureConfig` names; `node-cpu`/`node-alloc` are the in-process node lanes
+ * (runtime/node.ts, runtime/node-alloc.ts), which build a recording directly without a CaptureConfig.
+ * There is no "precise-wall" arm: that flag is retired and the schema epoch gate rejects any
+ * pre-5 recording that could have carried it
+ */
 export type CaptureMode =
   | "default"
   | "breakdown"
@@ -42,7 +44,7 @@ export type CaptureMode =
   | "node-cpu"
   | "node-alloc";
 
-/** The single capture that runs for an invocation. `categories: null` means no DevTools trace. */
+/** The single capture that runs for an invocation. `categories: null` means no DevTools trace */
 export interface CaptureConfig {
   /** capture-mode name, recorded verbatim as meta.capture (the scalar; no multi-pass plan) */
   mode: CaptureMode;
@@ -55,7 +57,7 @@ export interface CaptureConfig {
    *   - "cdp"   the CDP Profiler.start/stop sampler (default mode, and firefox uses the gecko dump).
    *   - "trace" the trace's `disabled-by-default-v8.cpu_profiler` ProfileChunk stream (--breakdown),
    *             continuous across a cross-document navigation. On this source the CDP profiler is NOT
-   *             started -- only ONE profiler ever runs.
+   *             started -- only ONE profiler ever runs
    */
   cpuSource: "cdp" | "trace";
   /** keep each trace event's pid/tid so counts and the bar window to the one renderer main thread */
@@ -64,28 +66,28 @@ export interface CaptureConfig {
   gecko: boolean;
 }
 
-/** Pick the one capture for this invocation from the flags and backend. */
+/** Pick the one capture for this invocation from the flags and backend */
 export function captureFor(opts: RecordOptions, browserName: BrowserName): CaptureConfig {
   if (browserName === "firefox") {
     // One gecko pass IS the firefox lane in every capture mode: samples, layout/style markers,
     // read-site blame and the reconciling bar all come from it. The capture modes are reporting tiers
     // over this one capture, not capture tiers (the profiler is a startup feature for the whole
     // browser lifetime). The CLI forces the profiler on; a programmatic cpuProfile:false yields a
-    // timing-only pass, which counts nothing (capabilitiesFor keys off `gecko`, and the notes say so).
+    // timing-only pass, which counts nothing (capabilitiesFor keys off `gecko`, and the notes say so)
     const gecko = opts.cpuProfile !== false;
     // --deep is a reporting tier on firefox, not a capture change: the same gecko pass runs, and the
     // mode name ("gecko-deep") records that the dirtied-by write report was requested. capabilitiesFor
-    // and blameSemanticFor key off `gecko` (still true), so nothing about what is captured moves.
+    // and blameSemanticFor key off `gecko` (still true), so nothing about what is captured moves
     const mode: CaptureMode = opts.deep ? "gecko-deep" : "gecko";
     return { mode, categories: null, cpu: gecko, cpuSource: "cdp", keepThreadIds: false, gecko };
   }
   if (opts.breakdown) {
     // Light trace (no `.stack`, no invalidationTracking, plus the v8.cpu_profiler stream) fused with
-    // the samples: trace events and samples share a clock so the seven-slice bar reconciles.
+    // the samples: trace events and samples share a clock so the seven-slice bar reconciles
     // keepThreadIds so the engine picks the main thread. The samples come from the trace stream (not
     // the CDP sampler), which is continuous across a cross-document navigation, so a navigating driver
     // step keeps CPU attribution. The forced COUNT needs `.stack` (unmeasured here), but forced-layout
-    // BLAME is available, sampled from the stream's per-sample executing line (trace/sampled-blame.ts).
+    // BLAME is available, sampled from the stream's per-sample executing line (trace/sampled-blame.ts)
     return {
       mode: "breakdown",
       categories: breakdownTraceCategories(),
@@ -98,7 +100,7 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
   if (opts.deep) {
     // Full trace (`.stack` + invalidationTracking) with the sampler OFF: forced-layout blame, exact
     // counts, invalidation rollup and long tasks are the product; slice durations are suppressed
-    // (the `.stack` trace distorts them). No CPU model or reconciling bar -- run --breakdown for those.
+    // (the `.stack` trace distorts them). No CPU model or reconciling bar -- run --breakdown for those
     return {
       mode: "deep",
       categories: traceCategories({ invalidationTracking: true }),
@@ -109,7 +111,7 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
     };
   }
   // Default mode: the CPU sampler alone, no trace, for the cleanest wall (~1% on JS-heavy work; more
-  // on a short rendering window, docs/dev/cpu-profiling.md per-capture-mode wall overhead). No counts.
+  // on a short rendering window, docs/dev/cpu-profiling.md per-capture-mode wall overhead). No counts
   return {
     mode: "default",
     categories: null,
@@ -124,9 +126,9 @@ export function captureFor(opts: RecordOptions, browserName: BrowserName): Captu
  * What the one capture that ran can observe, per capture mode/lane, so buildSummary gates each
  * count/duration to `Measured` null vs a number in one place (see CaptureCapabilities). The `.stack`
  * presence is the dividing line for durations: an exact `.stack`/`--deep` trace reports counts but
- * suppresses its distorted durations.
+ * suppresses its distorted durations
  */
-/** No rendering work observed: every count/duration field reports Measured null, never 0. */
+/** No rendering work observed: every count/duration field reports Measured null, never 0 */
 export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
   counts: false,
   paintCount: false,
@@ -141,7 +143,7 @@ export const NO_RENDERING_CAPTURE: CaptureCapabilities = {
  * The capabilities a recording may actually claim once the trace is parsed. A trace whose
  * wpd:run window markers are missing observed rendering work but cannot window it; counting the
  * whole trace (page load, prepare, teardown) would inflate every count, so the rendering capture
- * degrades to not-measured rather than to a wrong number.
+ * degrades to not-measured rather than to a wrong number
  */
 export function capabilitiesAfterParse(
   capabilities: CaptureCapabilities,
@@ -157,10 +159,10 @@ export function capabilitiesFor(
   if (browserName === "firefox") {
     // Layout/style counts and durations come from the Gecko Reflow/Styles markers, forced from their
     // cause stacks; paint is off-main-thread (a side track), and there is no DevTools trace for
-    // invalidations or long tasks. Reported not-measured, never a fake 0 (meta.notes says so).
+    // invalidations or long tasks. Reported not-measured, never a fake 0 (meta.notes says so)
     // forcedDurations is false: the markers under-report the forced subset's flush duration ~7x
     // (first-invalidation only), so forcedLayoutMs is not-measured; the honest total-layout duration
-    // is the reconciling bar's layout slice, and forced COUNTS stay (marker counts are honest counts).
+    // is the reconciling bar's layout slice, and forced COUNTS stay (marker counts are honest counts)
     return {
       counts: config.gecko,
       paintCount: false,
@@ -172,7 +174,7 @@ export function capabilitiesFor(
     };
   }
   if (config.categories == null) {
-    // Default mode: no trace, so no rendering work is observed at all.
+    // Default mode: no trace, so no rendering work is observed at all
     return { ...NO_RENDERING_CAPTURE };
   }
   const hasStack = config.categories.includes(STACK_CATEGORY);
@@ -181,12 +183,12 @@ export function capabilitiesFor(
     paintCount: true,
     longTasks: true,
     invalidations: config.mode === "deep",
-    // Durations are trustworthy ONLY on the light (no-`.stack`) trace; `.stack` inflates them.
+    // Durations are trustworthy ONLY on the light (no-`.stack`) trace; `.stack` inflates them
     durations: !hasStack,
     forced: hasStack,
     // The forced SUBSET's duration is never honestly measurable on chrome either: the forced flag
     // needs `.stack`, and a `.stack` trace suppresses all durations (+38%). So forcedLayoutMs is
-    // structurally not-measured across every lane; forced COUNTS remain a --deep product.
+    // structurally not-measured across every lane; forced COUNTS remain a --deep product
     forcedDurations: false,
   };
 }
@@ -197,12 +199,12 @@ export function capabilitiesFor(
  * Blink's `.stack` on `--deep` (exact), Chrome from the `v8.cpu_profiler` per-sample executing line on
  * `--breakdown` (sampled), Firefox from the sampled DOM-accessor stacks. A capture mode with none
  * produces no blame. On `--breakdown` the caller clears this when the trace carried no per-sample lines
- * (older Chrome), so an unavailable feature is not advertised.
+ * (older Chrome), so an unavailable feature is not advertised
  */
 export function blameSemanticFor(config: CaptureConfig): BlameSemantic | undefined {
   if (config.gecko) return "flush-site";
   // Chrome --deep: Blink's `.stack` at the forced flush. --breakdown: the sampled per-sample executing
-  // line over a Layout/UpdateLayoutTree window (docs/dev/blame-semantics.md). Both are flush-site.
+  // line over a Layout/UpdateLayoutTree window (docs/dev/blame-semantics.md). Both are flush-site
   if (config.categories?.includes(STACK_CATEGORY) || config.mode === "breakdown")
     return "flush-site";
   return undefined;
@@ -212,7 +214,7 @@ export function blameSemanticFor(config: CaptureConfig): BlameSemantic | undefin
  * Says what a run's counts are scoped to, when --iterations makes the question real (at 1 there is
  * nothing to scale). Every invocation is one pass, which runs every iteration for the wall samples,
  * so a capture mode that counts at all counts a TOTAL across iterations -- disclosed here rather than
- * silently rescaling `assert --max-layouts`. Null when this capture mode captured no counts.
+ * silently rescaling `assert --max-layouts`. Null when this capture mode captured no counts
  */
 export function countScopeNote(
   capabilities: CaptureCapabilities,
@@ -221,7 +223,7 @@ export function countScopeNote(
   if (opts.iterations <= 1 || !capabilities.counts) return null;
   // Driver per-step counts window to the first timed iteration's trace window (labelWindows keeps
   // iteration 0), so only the overall recording's counts total. Saying "counts are totals" flatly
-  // would send a reader to re-derive per-step numbers that are already right.
+  // would send a reader to re-derive per-step numbers that are already right
   const perStep = opts.driver
     ? " Per-step counts are unaffected: they describe the first timed iteration."
     : "";

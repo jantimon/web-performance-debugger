@@ -1,13 +1,13 @@
 // Gecko-overhead matrix probe. wpd's Firefox gecko capture costs ~150% wall over a plain Firefox
 // BiDi launch on a reflow-heavy workload (Chrome's sampler costs ~4-7% on the same work). This
 // probe attributes those points. It discriminates:
-//   interval-sweep (standing vs per-periodic-sample): 1/4/16/50 ms at fixed features.
+//   interval-sweep (standing vs per-periodic-sample): 1/4/16/50 ms at fixed features
 //   workload (marker/cause-stack weighting): shipped config on a MIXED reflow workload vs a PURE-JS
-//     one with zero layout.
-//   thread filter: MOZ_PROFILER_STARTUP_FILTERS=GeckoMain vs unset.
-//   ring buffer: ENTRIES 1M vs 16M.
-//   feature marginal: js vs js,cpu.
-//
+//     one with zero layout
+//   thread filter: MOZ_PROFILER_STARTUP_FILTERS=GeckoMain vs unset
+//   ring buffer: ENTRIES 1M vs 16M
+//   feature marginal: js vs js,cpu
+
 // Method mirrors examples/probes/capture-mode-speed.mjs: ONE page-clock window (performance.now INSIDE the
 // page) times the SAME workload in every cell, so node-side dispatch stays outside the window; a
 // fresh Firefox launches per cell per round (the Gecko profiler is a launch-time startup feature,
@@ -27,7 +27,7 @@ import puppeteer from "puppeteer";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist");
-// A file URL, not a raw path, so the dynamic import resolves on Windows too (matches runtime/node.ts).
+// A file URL, not a raw path, so the dynamic import resolves on Windows too (matches runtime/node.ts)
 const { parseGecko } = await import(pathToFileURL(join(dist, "profile/gecko.js")).href);
 
 const ROUNDS = Number(process.env.WPD_ROUNDS ?? 8);
@@ -36,7 +36,7 @@ const WARMUP = Number(process.env.WPD_WARMUP ?? 4);
 const GECKO_ENTRIES = 16_000_000; // GECKO_PROFILER_ENTRIES (src/browser/launch.ts)
 
 // MIXED: ~7 ms integer loop + a read-after-write thrash over 25 boxes (22 rounds => ~550 forced
-// reflows). Verbatim from examples/probes/capture-mode-speed.mjs so the two probes share a workload.
+// reflows). Verbatim from examples/probes/capture-mode-speed.mjs so the two probes share a workload
 function mixedWorkload() {
   let host = document.getElementById("wpd-probe-host");
   if (!host) {
@@ -70,7 +70,7 @@ function mixedWorkload() {
 
 // PURE-JS: integer loop only, ZERO layout/DOM, sized so its window (~14 ms) is comparable to the
 // mixed baseline. No reflows => no Reflow/Styles markers and no cause-stack captures, which isolates
-// the marker cost from the periodic sampler's own wall cost.
+// the marker cost from the periodic sampler's own wall cost
 function pureWorkload() {
   const start = performance.now();
   let accumulator = 0;
@@ -85,11 +85,11 @@ let dumpCount = 0;
 const savedDumps = {}; // cellId -> last dump kept for the signal-loss check
 
 // The gecko env for a cell config; a null config launches plain Firefox (the baseline). Matches
-// geckoEnv() in src/browser/launch.ts, adding the FILTERS knob wpd does not set.
+// geckoEnv() in src/browser/launch.ts, adding the FILTERS knob wpd does not set
 function geckoEnv(config) {
   if (!config) {
     // Strip any MOZ_PROFILER_* the caller already has in their environment: a stray one would start
-    // the profiler on the baseline and quietly corrupt every delta computed against it.
+    // the profiler on the baseline and quietly corrupt every delta computed against it
     const env = { ...process.env };
     for (const key of Object.keys(env)) if (key.startsWith("MOZ_PROFILER_")) delete env[key];
     return { env, dumpPath: null };
@@ -130,7 +130,7 @@ async function runCell(cell) {
       savedDumps[cell.id] = kept;
     } catch (error) {
       // Log rather than swallow: otherwise the later signal-loss check prints "no dump kept" with no
-      // hint why. Fall back to the original dump path so verification can still read it.
+      // hint why. Fall back to the original dump path so verification can still read it
       const reason = String(error instanceof Error ? error.message : error).split("\n")[0];
       process.stderr.write(`keep-dump failed for ${cell.id}: ${reason}\n`);
       savedDumps[cell.id] = dumpPath;
@@ -157,7 +157,7 @@ const collected = new Map(CELLS.map((cell) => [cell.id, []]));
 let skipped = false;
 
 for (let round = 0; round < ROUNDS && !skipped; round++) {
-  const order = CELLS.map((_, index) => CELLS[(index + round) % CELLS.length]);
+  const order = CELLS.map((_cell, index) => CELLS[(index + round) % CELLS.length]);
   for (const cell of order) {
     try {
       const samples = await runCell(cell);
@@ -167,10 +167,10 @@ for (let round = 0; round < ROUNDS && !skipped; round++) {
       );
     } catch (error) {
       // A thrown value is not guaranteed to be an Error, so coerce before reading a message: the
-      // self-skip must survive a non-Error throw rather than crash inside its own handler.
+      // self-skip must survive a non-Error throw rather than crash inside its own handler
       const reason = String(error instanceof Error ? error.message : error).split("\n")[0];
       process.stderr.write(`SKIP ${cell.id} (round ${round + 1}): ${reason}\n`);
-      // Firefox not installed (npx puppeteer browsers install firefox) => bail on the first baseline.
+      // Firefox not installed (npx puppeteer browsers install firefox) => bail on the first baseline
       if (collected.get(cell.id).length === 0 && cell.id.endsWith("baseline")) {
         skipped = true;
         break;

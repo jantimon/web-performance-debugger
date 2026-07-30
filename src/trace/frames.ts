@@ -17,10 +17,10 @@ import { usToMs } from "../model/time.js";
  * main-thread `Paint`. See docs/dev/rendering-counts.md.
  *
  * The data is already in every Chrome wpd trace via the enabled `disabled-by-default-devtools.
- * timeline.frame` category; this module only parses what is there, with no trace-config change.
+ * timeline.frame` category; this module only parses what is there, with no trace-config change
  */
 
-/** `PipelineReporter.frame_reporter.state` -> our compact FrameState. Unknown states are dropped. */
+/** `PipelineReporter.frame_reporter.state` -> our compact FrameState. Unknown states are dropped */
 const STATE_MAP: Record<string, FrameState> = {
   STATE_PRESENTED_ALL: "presented",
   STATE_PRESENTED_PARTIAL: "presentedPartial",
@@ -30,10 +30,10 @@ const STATE_MAP: Record<string, FrameState> = {
 
 const PIPELINE_REPORTER = "PipelineReporter";
 
-/** Top pipeline stages named on the slowest presented (incl. partial) frame's side-track line. */
+/** Top pipeline stages named on the slowest presented (incl. partial) frame's side-track line */
 const WORST_STAGES_TOP = 3;
 
-/** The `frame_reporter` payload carried on a PipelineReporter begin ("b") event. */
+/** The `frame_reporter` payload carried on a PipelineReporter begin ("b") event */
 interface FrameReporter {
   state?: string;
   frame_sequence?: number;
@@ -47,7 +47,7 @@ function frameReporterOf(event: NormalizedEvent): FrameReporter | undefined {
 
 /**
  * One paired compositor frame, before windowing. Carries `startTs` (trace clock, microseconds) so
- * the caller can window it, plus the frame's direct pipeline stages for the worst-frame annotation.
+ * the caller can window it, plus the frame's direct pipeline stages for the worst-frame annotation
  */
 export interface ParsedFrame {
   sequence: number;
@@ -59,7 +59,7 @@ export interface ParsedFrame {
   stages: { name: string; ms: number }[];
 }
 
-/** An open async slice on the frame track, awaiting its "e". */
+/** An open async slice on the frame track, awaiting its "e" */
 interface OpenSlice {
   name: string;
   startTs: number;
@@ -75,10 +75,10 @@ interface OpenSlice {
  * stage's parent is whatever PipelineReporter is open beneath it.
  *
  * Pure and fixture-testable: it reads only async b/e events that carry an `asyncId` (kept solely in
- * --breakdown mode), so on any other events it returns []. The window rule lives in the caller.
+ * --breakdown mode), so on any other events it returns []. The window rule lives in the caller
  */
 export function parseFrames(events: NormalizedEvent[]): ParsedFrame[] {
-  // events are already ts-sorted by parseTrace; a per-track stack needs that order.
+  // events are already ts-sorted by parseTrace; a per-track stack needs that order
   const stacks = new Map<string, OpenSlice[]>();
   const frames: ParsedFrame[] = [];
   for (const event of events) {
@@ -91,12 +91,12 @@ export function parseFrames(events: NormalizedEvent[]): ParsedFrame[] {
     // unrelated async slice. Correctness does not need to tell them apart, because a stage is only
     // ever recorded when a PipelineReporter is open beneath it on the same track (see the "e" branch),
     // and unrelated tracks never nest inside a PipelineReporter -- so their slices open and close with
-    // no reporter parent and contribute nothing.
+    // no reporter parent and contribute nothing
     if (!isReporter && !isOtherAsyncSlice) continue;
     // Assumes (pid, asyncId) is not shared by a foreign non-frame slice sitting inside an open
     // reporter's lifetime: such a collision would be recorded as a bogus stage. Chrome's async ids are
     // display-only and effectively unique per track, and this side track is itself display-only, so
-    // the risk is acceptable.
+    // the risk is acceptable
     const key = `${event.pid}/${event.asyncId}`;
     const stack = stacks.get(key) ?? [];
     if (event.ph === "b") {
@@ -109,7 +109,7 @@ export function parseFrames(events: NormalizedEvent[]): ParsedFrame[] {
       stacks.set(key, stack);
       continue;
     }
-    // "e": close the innermost open slice on this track.
+    // "e": close the innermost open slice on this track
     const slice = stack.pop();
     if (!slice) continue;
     const durMs = usToMs(event.ts - slice.startTs);
@@ -126,7 +126,7 @@ export function parseFrames(events: NormalizedEvent[]): ParsedFrame[] {
         });
       }
     } else {
-      // A stage: attribute it to the PipelineReporter now innermost on the track, if any.
+      // A stage: attribute it to the PipelineReporter now innermost on the track, if any
       const parent = stack[stack.length - 1];
       if (parent?.name === PIPELINE_REPORTER) parent.stages.push({ name: slice.name, ms: durMs });
     }
@@ -141,7 +141,7 @@ export function parseFrames(events: NormalizedEvent[]): ParsedFrame[] {
  * that presents a span's work lands AFTER its end marker (settle-tail), so bounding at `endTs` would
  * drop exactly the presented frame the work produced. rendering-counts.md: Chrome's window rule is
  * start-onward, or it measures nothing. A bounded sub-span (a step / user measure) claims frames
- * whose start falls in `[startTs, endTs)`.
+ * whose start falls in `[startTs, endTs)`
  */
 export function windowFrames(
   frames: ParsedFrame[],
@@ -158,7 +158,7 @@ export function windowFrames(
  * Tally a windowed frame set into the display side track: verdict counts, the raw per-frame list,
  * and the top pipeline-stage durations of the slowest presented (incl. partial) frame. Returns null for an empty
  * set, so the caller leaves the span's `frames` field absent rather than attaching an all-zero
- * tally.
+ * tally
  */
 export function summarizeFrames(frames: ParsedFrame[]): FrameSideTrack | null {
   if (frames.length === 0) return null;
@@ -166,7 +166,7 @@ export function summarizeFrames(frames: ParsedFrame[]): FrameSideTrack | null {
   for (const frame of frames) tally[frame.state]++;
 
   // Slowest presented frame, counting partial presentations too (a noUpdate/dropped one has no
-  // presentation to decompose).
+  // presentation to decompose)
   let slowest: ParsedFrame | null = null;
   for (const frame of frames) {
     if (frame.state !== "presented" && frame.state !== "presentedPartial") continue;

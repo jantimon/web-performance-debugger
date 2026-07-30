@@ -8,7 +8,7 @@ import { startStaticServer } from "../../dist/browser/server.js";
 
 /** Send a raw request line to the server, bypassing a client's path normalization (fetch/undici
  * collapses `..` and `%2e%2e` before it leaves the process, so a traversal can only be exercised over
- * a raw socket). Returns the numeric status. */
+ * a raw socket). Returns the numeric status */
 function rawStatus(server, rawPath, hostHeader = "127.0.0.1") {
   const { port } = new URL(server.url);
   return new Promise((resolve, reject) => {
@@ -52,7 +52,7 @@ test("allowedOrigin (--url bench mode): CORS names exactly the host origin, neve
       headers: { Origin: "https://evil.example" },
     });
     // Same value for both (constant, not reflected), and it is the host origin, not "*", so only the
-    // host page can read the response; the browser refuses it for any other origin.
+    // host page can read the response; the browser refuses it for any other origin
     assert.equal(toHost.headers.get("access-control-allow-origin"), "https://example.com");
     assert.equal(toEvil.headers.get("access-control-allow-origin"), "https://example.com");
     assert.notEqual(toHost.headers.get("access-control-allow-origin"), "*");
@@ -74,9 +74,9 @@ test("static server binds loopback only and blocks path traversal", async () => 
 test("static server rejects a non-loopback Host header (DNS-rebinding defense)", async () => {
   const server = await startStaticServer(tempRoot());
   try {
-    // A rebinding page (attacker.com -> 127.0.0.1) carries its own hostname in Host; refuse it.
+    // A rebinding page (attacker.com -> 127.0.0.1) carries its own hostname in Host; refuse it
     assert.equal(await rawStatus(server, "/secret.txt", "attacker.example"), 403);
-    // The controlled browser always reaches the server as loopback, which stays served.
+    // The controlled browser always reaches the server as loopback, which stays served
     assert.equal(await rawStatus(server, "/secret.txt", "127.0.0.1"), 200);
     assert.equal(await rawStatus(server, "/secret.txt", "localhost:1234"), 200);
   } finally {

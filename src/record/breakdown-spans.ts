@@ -22,7 +22,7 @@ import type { NormalizedEvent, SpanBreakdown, SpanHot } from "../model/recording
  * sequentially within one iteration: those repetitions are the label's samples, merged per label
  * downstream (see model/span-merge.ts). Pairing is FIFO per label, so NESTED or overlapping
  * same-label measures cross-pair into wrong windows; sequential repeats only. Order is by end
- * event, so the first occurrence of each label comes first. */
+ * event, so the first occurrence of each label comes first */
 export function userMeasureSpans(
   events: NormalizedEvent[],
   runStart: number,
@@ -51,7 +51,7 @@ export function userMeasureSpans(
  * Build one seven-slice breakdown per span (--breakdown mode). Spans are the run window, each driver
  * step window, and every user `performance.measure` inside the run window. Durations come from the
  * main-thread trace events; the js slice is subdivided from the CPU samples projected onto the same
- * trace clock (they share Chrome's base::TimeTicks). Returns [] if no run window was found.
+ * trace clock (they share Chrome's base::TimeTicks). Returns [] if no run window was found
  */
 export async function buildBreakdowns(
   events: NormalizedEvent[],
@@ -71,7 +71,7 @@ export async function buildBreakdowns(
   const main = mainThread(events);
   if (!main) return [];
   // The marker path names the page's own main thread; the heuristic only guesses from where the
-  // rendering work landed, so another thread doing more layout/paint would steal the attribution.
+  // rendering work landed, so another thread doing more layout/paint would steal the attribution
   if (main.via === "heuristic") context.notes.push(breakdownHeuristicMainThread());
   const mainEvents = events.filter(
     (event) => event.pid === main.pid && event.tid === main.tid && event.dur > 0,
@@ -81,7 +81,7 @@ export async function buildBreakdowns(
   // absolute timestamps because it merges the per-process streams a navigation splits, where the
   // `startTime + Σ timeDeltas` cumsum no longer reconstructs a sample's real position; a single-stream
   // profile has none, so the cumsum is exact. The same clock feeds the bar's js-by-package split
-  // (packagesByNode) and the per-span hot tally (functionByNode -> the ranked CpuModel function id).
+  // (packagesByNode) and the per-span hot tally (functionByNode -> the ranked CpuModel function id)
   const packagesByNode = await packagesByProfileNode(raw, context);
   const functionByNode = functionIdByNode(raw);
   const sampleTimestampsUs = raw.sampleTimestampsUs;
@@ -105,7 +105,7 @@ export async function buildBreakdowns(
     { label: "run", kind: "run", startTs: runWindow.startTs, endTs: runWindow.endTs },
   ];
   for (const step of mergedSteps ?? []) {
-    // A step whose end marker was lost runs to the end of the run window rather than being dropped.
+    // A step whose end marker was lost runs to the end of the run window rather than being dropped
     if (step.startTs == null) continue;
     spans.push({
       label: step.label,
@@ -124,7 +124,7 @@ export async function buildBreakdowns(
 
   // The off-thread compositor frame side track (display-only, never summed into a bar and never
   // gated; see trace/frames.ts). Parsed once from ALL events -- the frame track lives on
-  // compositor/viz threads, not `mainEvents` -- then windowed per span below.
+  // compositor/viz threads, not `mainEvents` -- then windowed per span below
   const allFrames = parseFrames(events);
 
   const breakdowns: SpanBreakdown[] = [];
@@ -136,14 +136,14 @@ export async function buildBreakdowns(
       (sample) => sample.traceTs >= span.startTs && sample.traceTs <= span.endTs,
     );
     // The run span is start-onward (its presented frame lands in the settle tail, after run:end);
-    // a step/measure sub-span is bounded by its own window. See windowFrames.
+    // a step/measure sub-span is bounded by its own window. See windowFrames
     const frames = summarizeFrames(
       windowFrames(allFrames, span.startTs, span.endTs, span.kind === "run"),
     );
     // Layout/style scope distribution across this window's main-thread flushes (a count-tier fact,
     // beside the bar's ms). Read from every main-thread flush that STARTED in the window, not the
     // dur>0 `mainEvents` the bar tiles: scope belongs with the counts, so it admits a zero-duration
-    // flush the same way the count loop does. p50/max, never a sum (spanScope).
+    // flush the same way the count loop does. p50/max, never a sum (spanScope)
     const scopeEvents = events.filter(
       (event) =>
         event.pid === main.pid &&
@@ -167,7 +167,7 @@ export async function buildBreakdowns(
   // slice; see SpanHot). A step tallies its single iteration-0 window; a measure label POOLS across
   // every occurrence's window (the merge below keeps only the lower-median occurrence's bar, but the
   // hot list wants all the samples). The run span is skipped: its hot list is the CpuModel at query
-  // time. Keyed `${kind}:${label}` so it re-attaches after the merge collapses measure occurrences.
+  // time. Keyed `${kind}:${label}` so it re-attaches after the merge collapses measure occurrences
   const hotByKey = new Map<string, SpanHot>();
   const measureWindowsByLabel = new Map<string, SpanHotWindow[]>();
   for (const span of spans) {
@@ -195,7 +195,7 @@ export async function buildBreakdowns(
 
   // A `performance.measure` label repeated across --iterations produced one bar per occurrence above;
   // collapse each label to its lower-median-by-wall real sample. run/steps have unique labels and
-  // pass through unchanged.
+  // pass through unchanged
   const merged = mergeSpanOccurrences(breakdowns);
   for (const bar of merged) {
     const hot = hotByKey.get(`${bar.kind}:${bar.label}`);
@@ -207,7 +207,7 @@ export async function buildBreakdowns(
   // window before it (iteration-0 steps, early measure occurrences) gets zero samples even though the
   // trace-measured bar shows real JS there. Push ONE note when that symptom is present -- a step/
   // measure bar attributing JS the sampler never covered -- so an empty per-span package split and hot
-  // list read as "the sampler could not reach this window", not as "no JS ran" or "raise --iterations".
+  // list read as "the sampler could not reach this window", not as "no JS ran" or "raise --iterations"
   const intervalMs = usToMs(context.sampleIntervalUs);
   const uncoveredJsSpans = merged.filter(
     (bar) =>
@@ -220,7 +220,7 @@ export async function buildBreakdowns(
   if (uncoveredJsSpans.length > 0) {
     // When the whole run recorded zero samples, the profiler's own origin (raw.startTime) is the
     // earliest a sample could have landed; runWindow.startTs would force gapMs to 0 and misreport
-    // "about 0 ms into the run window".
+    // "about 0 ms into the run window"
     const firstSampleTs = samples.length > 0 ? samples[0].traceTs : raw.startTime;
     const gapMs = usToMs(Math.max(0, firstSampleTs - runWindow.startTs));
     context.notes.push(samplerCoverageGap(uncoveredJsSpans.length, gapMs));

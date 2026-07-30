@@ -51,7 +51,7 @@ export function extractStack(args: unknown): StackFrame[] | undefined {
       column: typeof frame.columnNumber === "number" ? frame.columnNumber : undefined,
       // A sampled read-site carries a line but no column; carry the flag so the resolver never assumes
       // generated column 0 for it (a wrong original line on a minified single-line bundle), plus the
-      // leaf function's column-bearing fallback position for when the executing line is unresolvable.
+      // leaf function's column-bearing fallback position for when the executing line is unresolvable
       ...(frame.lineOnly ? { lineOnly: true } : {}),
       ...(typeof frame.fallbackLine === "number" ? { fallbackLine: frame.fallbackLine } : {}),
       ...(typeof frame.fallbackColumn === "number" ? { fallbackColumn: frame.fallbackColumn } : {}),
@@ -62,7 +62,7 @@ export function extractStack(args: unknown): StackFrame[] | undefined {
  * Pull the Gecko cause stack (the WRITE that dirtied a flush) out of a Reflow/Styles marker event.
  * Gecko stashes it under `args.data.invalidationStack` (leaf-first JS frames), a different key from
  * the read-site `stackTrace` above, so it never becomes a blame `at`. Undefined on chrome events,
- * which carry no such key.
+ * which carry no such key
  */
 export function extractInvalidationStack(args: unknown): StackFrame[] | undefined {
   const data = (args as { data?: { invalidationStack?: RawFrame[] } } | undefined)?.data;
@@ -78,7 +78,7 @@ export function extractInvalidationStack(args: unknown): StackFrame[] | undefine
     }));
 }
 
-/** Rewrite served (http://127.0.0.1:PORT/...) urls back to local file paths. */
+/** Rewrite served (http://127.0.0.1:PORT/...) urls back to local file paths */
 export function makeSourceResolver(serverUrl: string, root: string) {
   return (frame: StackFrame): StackFrame => {
     if (frame.url && frame.url.startsWith(serverUrl)) {
@@ -91,7 +91,7 @@ export function makeSourceResolver(serverUrl: string, root: string) {
       frame.source = frame.url;
     } else if (frame.url) {
       // a remote (http) script not served by us, e.g. a CDN bundle on a profiled --url
-      // site; its sourcemap is fetched from the JS's sourceMappingURL during resolution.
+      // site; its sourcemap is fetched from the JS's sourceMappingURL during resolution
       frame.remote = true;
     }
     return frame;
@@ -101,7 +101,7 @@ export function makeSourceResolver(serverUrl: string, root: string) {
 /**
  * Resolver for the node runtime (--target node): V8 reports file:// urls for ESM and
  * "node:" urls for builtins. Convert file:// to a local path so sourcemap + package
- * resolution apply; leave node: builtins for the (node) bucket downstream.
+ * resolution apply; leave node: builtins for the (node) bucket downstream
  */
 export function makeNodeSourceResolver() {
   return (frame: StackFrame): StackFrame => {
@@ -125,7 +125,7 @@ export function makeNodeSourceResolver() {
  * Puppeteer stamps an evaluated
  * function's sourceURL as `pptr:<fn>;<encoded call site>`, so a frame from one of these files is
  * wpd's own, not the user's. A driver-mode USER `page.evaluate` callback carries the same `pptr:`
- * scheme but a call site inside the user's module, so it is NOT one of these and must survive.
+ * scheme but a call site inside the user's module, so it is NOT one of these and must survive
  */
 const WPD_EVALUATE_SITES = [
   "/browser/driver.",
@@ -135,20 +135,20 @@ const WPD_EVALUATE_SITES = [
   "/record/runpass.",
 ];
 
-/** True for urls injected by the tool itself (puppeteer internals/harness or node-runtime runner). */
+/** True for urls injected by the tool itself (puppeteer internals/harness or node-runtime runner) */
 export function isToolFrameUrl(url: string | undefined): boolean {
   if (!url) return false;
   if (url.startsWith("debugger://")) return true;
   // Firefox's WebDriver-automation code (Marionette, RemoteAgent, the BiDi handlers, EventUtils'
   // synthesizeMouseAtPoint) is hosted under chrome://remote/; it is the harness driving the page,
   // never the user's own JS, so its self-time must not rank alongside the app's. Anchored to the
-  // /remote/ subtree, so Firefox's own browser-UI chrome:// frames are untouched.
+  // /remote/ subtree, so Firefox's own browser-UI chrome:// frames are untouched
   if (url.startsWith("chrome://remote/")) return true;
   if (
     // page.evaluate'd code under older puppeteer (its legacy evaluation sourceURL)
     url.includes("__puppeteer_evaluation_script__") ||
     // Firefox/BiDi attributes page.evaluate code to the served host page url, so the
-    // bench harness loop lands on the blank host page; drop it (not user code).
+    // bench harness loop lands on the blank host page; drop it (not user code)
     url.includes("/__wpd_blank__") ||
     // the in-process node-runtime driver loop (not user code); node.js is the CPU lane,
     // node-alloc.js the allocation lane
@@ -157,11 +157,11 @@ export function isToolFrameUrl(url: string | undefined): boolean {
   )
     return true;
   if (url.startsWith("pptr:")) {
-    // Puppeteer's own internal frames.
+    // Puppeteer's own internal frames
     if (url.startsWith("pptr:internal")) return true;
     // A `pptr:<fn>;<encoded call site>` frame: the call site is percent-encoded in the url, so decode
     // before matching (the `/` separators would otherwise read as `%2F`). On Windows the path uses
-    // backslashes; the fragments are written with forward slashes, so normalize before matching.
+    // backslashes; the fragments are written with forward slashes, so normalize before matching
     let site = url;
     try {
       site = decodeURIComponent(url);
@@ -174,16 +174,16 @@ export function isToolFrameUrl(url: string | undefined): boolean {
     // automation dispatch, never user code (a user's driver-mode page.evaluate callback names the
     // user's module, not puppeteer-core's lib), so drop it. Without this its cost ranks like app JS
     // and its percent-encoded path leaks into the js-by-package rollup as a `%2Fpuppeteer-core...`
-    // bucket. Anchored to /node_modules/puppeteer-core/, so a user file under a lookalike path stays.
+    // bucket. Anchored to /node_modules/puppeteer-core/, so a user file under a lookalike path stays
     if (normalized.includes("/node_modules/puppeteer-core/")) return true;
     // Otherwise drop it ONLY when the call site is one of wpd's own injection points; a user's
-    // driver-mode page.evaluate callback survives to reach blame/cpu.
+    // driver-mode page.evaluate callback survives to reach blame/cpu
     return WPD_EVALUATE_SITES.some((fragment) => normalized.includes(fragment));
   }
   return false;
 }
 
-/** Frames injected by puppeteer itself (our harness), not user source. */
+/** Frames injected by puppeteer itself (our harness), not user source */
 function isToolFrame(frame: StackFrame): boolean {
   return isToolFrameUrl(frame.url);
 }
@@ -191,7 +191,7 @@ function isToolFrame(frame: StackFrame): boolean {
 /**
  * Make an absolute source path relative to the project root: shorter output, portable
  * recordings, and stable cpu-diff joins across machines/checkouts. Leaves urls, "node:"
- * builtins, and paths outside root untouched (path.isAbsolute is false for the first two).
+ * builtins, and paths outside root untouched (path.isAbsolute is false for the first two)
  */
 export function relativizeSource(where: string | undefined, root: string): string | undefined {
   if (!where || !path.isAbsolute(where)) return where;
@@ -199,7 +199,7 @@ export function relativizeSource(where: string | undefined, root: string): strin
   return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : where;
 }
 
-/** First frame that has a resolvable location, formatted "source:line:col". */
+/** First frame that has a resolvable location, formatted "source:line:col" */
 export function topLocation(stack: StackFrame[] | undefined): string | undefined {
   if (!stack) return undefined;
   for (const frame of stack) {
@@ -219,7 +219,7 @@ export function topLocation(stack: StackFrame[] | undefined): string | undefined
  *
  * Pass `maps` to share one resolver (its cache, and its diagnostics) across every call in a run:
  * a `record` run resolves stacks twice and builds a CPU model, and each would
- * otherwise re-fetch the same remote script and map.
+ * otherwise re-fetch the same remote script and map
  */
 export async function attachStacks(
   events: NormalizedEvent[],
@@ -232,15 +232,16 @@ export async function attachStacks(
     const stack = extractStack(event.args);
     if (!stack) continue;
     stack.forEach(resolve);
-    await maps.resolveStack(stack); // bundle -> original source (best effort)
-    // Relativize after resolution (the resolvers read absolute paths from disk).
+    // bundle -> original source (best effort)
+    await maps.resolveStack(stack);
+    // Relativize after resolution (the resolvers read absolute paths from disk)
     for (const frame of stack) frame.source = relativizeSource(frame.source, root);
     event.stack = stack;
     event.at = topLocation(stack);
   }
   // Resolve the Gecko cause stack (firefox marker events) the same way, so `query get` shows local
   // sources and the firefox --deep dirtied-by report has a write line. This is the WRITE, kept off
-  // `at` on purpose (the read-site stays the blame answer). A no-op on chrome (no invalidationStack).
+  // `at` on purpose (the read-site stays the blame answer). A no-op on chrome (no invalidationStack)
   for (const event of events) {
     const cause = extractInvalidationStack(event.args);
     if (!cause) continue;

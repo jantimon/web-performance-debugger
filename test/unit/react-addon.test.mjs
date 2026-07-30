@@ -8,7 +8,6 @@ import { reactServerPhaseRollup } from "../../dist/addons/react/phases.js";
 import { isReactHydrationError } from "../../dist/addons/react/hydration.js";
 import { classifyReactTracks } from "../../dist/addons/react-dev/classify.js";
 
-// --- helpers --------------------------------------------------------------
 
 const runSpan = () => ({ label: "run", kind: "run", aggregation: "sum", wallMs: 10, counts: {} });
 const stepSpan = (label) => ({ label, kind: "step", aggregation: "first", wallMs: 5, counts: {} });
@@ -23,7 +22,7 @@ const cpuFn = (fn, pkg, selfMs, file) => ({
 });
 // A React TimeStamp trace event as parseTrace stores it (kind "other", args.data.track intact). React
 // emits it as an INSTANT marker (ph "I", dur 0); the phase span is on args.data.start/end (the extended
-// console.timeStamp(label, start, end, ...) arguments), same trace clock (us). `spanUs` is end - start.
+// console.timeStamp(label, start, end, ...) arguments), same trace clock (us). `spanUs` is end - start
 const timeStamp = (track, trackGroup, start, spanUs) => ({
   id: 0,
   name: "TimeStamp",
@@ -34,7 +33,6 @@ const timeStamp = (track, trackGroup, start, spanUs) => ({
   args: { data: { track, trackGroup, start, end: start + spanUs } },
 });
 
-// --- registry contract: --framework off runs zero addon code -------------
 
 test("registry: off runs no addons, auto offers react + react-dev in order", () => {
   assert.deepEqual(activeAddons("off"), []);
@@ -57,23 +55,22 @@ test("off = zero addon code: activeAddons('off') feeds runEnrich nothing, so no 
     cpuModel: undefined,
     events: [],
   };
-  // The guarantee: off resolves to [], and runEnrich over [] calls no addon.
+  // The guarantee: off resolves to [], and runEnrich over [] calls no addon
   runEnrich(activeAddons("off"), context);
   assert.equal(calls, 0);
-  // A spy proves the harness would have counted a call had one been offered.
+  // A spy proves the harness would have counted a call had one been offered
   runEnrich([spy], context);
   assert.equal(calls, 1);
 });
 
 test("only the react addon declares a page probe; react-dev reads the stored log", () => {
-  // The React detection hook is the sole page install; react-dev has no page probe.
+  // The React detection hook is the sole page install; react-dev has no page probe
   assert.equal(addonPageInits([reactAddon]).length, 1);
   assert.equal(addonPageInits([reactDevAddon]).length, 0);
   assert.equal(typeof reactAddon.pageInit().install, "function");
   assert.equal(reactDevAddon.pageInit, undefined);
 });
 
-// --- react detection-fact shaping (browser lanes) ------------------------
 
 test("react enrich: run-level detection payload shapes onto the run span", () => {
   const spans = [runSpan()];
@@ -115,15 +112,14 @@ test("react enrich: per-step commit count lands on the matching step span", () =
     events: [],
   });
   assert.equal(spans[1].addons.react.commitCount, 2);
-  // Production build is carried honestly, no fabricated dev fields.
+  // Production build is carried honestly, no fabricated dev fields
   assert.equal(spans[0].addons.react.build, "production");
 });
 
-// --- hydration-mismatch signal -------------------------------------------
 
 // The pure classifier: matches React's hydration recoverable errors (either build) via the react.dev
 // marker, and nothing else. [measured] react 19.2 fires #418 in production and the hydration-mismatch
-// link in development.
+// link in development
 test("isReactHydrationError: matches production code and dev link, rejects other errors", () => {
   // production minified form (measured)
   assert.equal(
@@ -184,7 +180,7 @@ test("react enrich: no hydration fact when none was observed (absent, never a fa
 test("react enrich: detected:false attaches no React vocabulary, and no phases off a browser lane", () => {
   // The hook seeds detected:false + a commits:0 step channel on every page; a non-React app must come
   // back with NO react slot. And a browser (driver) lane must never roll react-dom-named frames up as
-  // "server phases" (that rollup is node-lane only).
+  // "server phases" (that rollup is node-lane only)
   const spans = [runSpan(), stepSpan("click")];
   reactAddon.enrich({
     meta: { workload: { lane: "driver" } },
@@ -199,7 +195,6 @@ test("react enrich: detected:false attaches no React vocabulary, and no phases o
   assert.equal(spans[1].addons, undefined);
 });
 
-// --- react node-lane server-phase rollup ---------------------------------
 
 test("reactServerPhaseRollup: pools react-dom self-time onto the stable anchors, descending", () => {
   const model = {
@@ -221,7 +216,7 @@ test("reactServerPhaseRollup: pools react-dom self-time onto the stable anchors,
 });
 
 test("reactServerPhaseRollup: absent when no anchor resolved (React 18 prod is mangled)", () => {
-  // Mangled server build: one-letter names, none in the allowlist -> honestly absent, never 0.
+  // Mangled server build: one-letter names, none in the allowlist -> honestly absent, never 0
   const mangled = { functions: [cpuFn("Fb", "react-dom", 8), cpuFn("Ib", "react-dom", 5)] };
   assert.equal(reactServerPhaseRollup(mangled), undefined);
 });
@@ -256,7 +251,6 @@ test("react enrich: node lane attaches phases and notes react-dom-without-anchor
   assert.match(mangledNotes[0], /no server-phase anchor resolved/);
 });
 
-// --- react-dev TimeStamp classifier --------------------------------------
 
 test("classifyReactTracks: buckets React track events by label, sums duration, ignores non-React", () => {
   const events = [
@@ -276,14 +270,14 @@ test("classifyReactTracks: buckets React track events by label, sums duration, i
 });
 
 // The phase span lives on args.data.start/end, not event.dur (the event is an instant marker). A lane
-// React only declared (start == end) is a genuine 0, kept as a count with no ms.
+// React only declared (start == end) is a genuine 0, kept as a count with no ms
 test("classifyReactTracks: duration comes from data.start/end, not the instant event's dur", () => {
   const events = [
-    // Real span (Render phase): start 1000, end 6300 -> 5300us -> 5.3ms. dur:0 on the event.
+    // Real span (Render phase): start 1000, end 6300 -> 5300us -> 5.3ms. dur:0 on the event
     { id: 0, name: "TimeStamp", ts: 6300, dur: 0, ph: "I", kind: "other", args: { data: { track: "Blocking", trackGroup: "Scheduler ⚛", start: 1000, end: 6300 } } },
-    // Lane declaration: start == end -> 0 ms, but still a counted entry.
+    // Lane declaration: start == end -> 0 ms, but still a counted entry
     { id: 1, name: "TimeStamp", ts: 200, dur: 0, ph: "I", kind: "other", args: { data: { track: "Idle", trackGroup: "Scheduler ⚛", start: 200, end: 200 } } },
-    // A stray dur on the event must NOT be read (no start/end -> 0 ms).
+    // A stray dur on the event must NOT be read (no start/end -> 0 ms)
     { id: 2, name: "TimeStamp", ts: 300, dur: 9999, ph: "I", kind: "other", args: { data: { track: "Suspense", trackGroup: "Scheduler ⚛" } } },
   ];
   const facts = classifyReactTracks(events);
@@ -301,18 +295,17 @@ test("classifyReactTracks: null when no React track event is present (never a fa
   assert.equal(classifyReactTracks([timeStamp("Timings", "console.timeStamp", 1, 10)]), null);
 });
 
-// --- react-dev gating on the react-detected build ------------------------
 
 test("react-dev enrich: no-op unless react detected a development build", () => {
   const events = [timeStamp("Blocking", "Scheduler ⚛", 100, 2000)];
   const spanWindows = [{ label: "run", kind: "run", startTs: null, endTs: null }];
 
-  // Production build: gate closed, no react-dev facts even though track events exist.
+  // Production build: gate closed, no react-dev facts even though track events exist
   const prod = [{ ...runSpan(), addons: { react: { build: "production" } } }];
   reactDevAddon.enrich({ meta: {}, spans: prod, spanWindows, pageData: undefined, stepData: new Map(), cpuModel: undefined, events });
   assert.equal(prod[0].addons["react-dev"], undefined);
 
-  // Development build + entries present: gate open, facts attached to the run span.
+  // Development build + entries present: gate open, facts attached to the run span
   const dev = [{ ...runSpan(), addons: { react: { build: "development" } } }];
   reactDevAddon.enrich({ meta: {}, spans: dev, spanWindows, pageData: undefined, stepData: new Map(), cpuModel: undefined, events });
   assert.equal(dev[0].addons["react-dev"].total, 1);

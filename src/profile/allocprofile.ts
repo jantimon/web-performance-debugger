@@ -19,7 +19,7 @@ import { resolveTarget } from "../commands/resolve.js";
  * The raw V8 heap SAMPLING profile, as `HeapProfiler.stopSampling` returns it (`.profile`). A tree of
  * allocation call frames (`head` + nested `children`), each node carrying the bytes sampled AT that
  * frame (`selfSize`), plus the per-sample event list. Distinct from `RawCpuProfile` (a flat node list
- * + `samples`/`timeDeltas`): heap sampling is a tree, so this needs its own walk.
+ * + `samples`/`timeDeltas`): heap sampling is a tree, so this needs its own walk
  */
 export interface RawHeapNode {
   callFrame: RawCallFrame;
@@ -45,7 +45,7 @@ export interface RawHeapProfile {
  * rankable user frames by self bytes, and resolve each to its owning package/source with the SAME
  * `resolveCallFrame` + package walk the CPU model uses, so an allocation's package matches
  * `query cpu --by package`'s spelling. System pseudo-frames ((root)) and the tool's own harness frames
- * drop out of the ranking (isRankableFrame), so `totalBytes` and the shares never bill wpd's own loop.
+ * drop out of the ranking (isRankableFrame), so `totalBytes` and the shares never bill wpd's own loop
  */
 export async function buildAllocModel(
   raw: RawHeapProfile,
@@ -63,7 +63,7 @@ export async function buildAllocModel(
     maps?: SourceMapResolver;
   },
 ): Promise<AllocModel> {
-  // Walk the sampling tree, summing self bytes by frame key and keeping one call frame per key.
+  // Walk the sampling tree, summing self bytes by frame key and keeping one call frame per key
   const selfBytesByKey = new Map<string, number>();
   const callFrameByKey = new Map<string, RawCallFrame>();
   const stack: RawHeapNode[] = [raw.head];
@@ -75,7 +75,7 @@ export async function buildAllocModel(
     for (const child of node.children ?? []) stack.push(child);
   }
 
-  // Resolve each unique frame once (sourcemap + local path), shared cache with the run's resolver.
+  // Resolve each unique frame once (sourcemap + local path), shared cache with the run's resolver
   const rewriteToLocal =
     context.runtime === "node"
       ? makeNodeSourceResolver()
@@ -100,7 +100,7 @@ export async function buildAllocModel(
   // Rank rankable user frames by self bytes (isRankableFrame drops (root)/system pseudo-frames and the
   // tool's own harness frames), reusing the CPU model's ranking with bytes as the weight. totalBytes is
   // the sum over these ranked frames, so the per-package/per-function shares reconcile to 100% against
-  // it (the (root) frame's own selfSize is ~0 and never a real owner).
+  // it (the (root) frame's own selfSize is ~0 and never a real owner)
   const rankedKeys = rankedFrameKeys(callFrameByKey, selfBytesByKey);
   const totalBytes = rankedKeys.reduce((sum, key) => sum + (selfBytesByKey.get(key) ?? 0), 0);
 
@@ -131,7 +131,7 @@ export async function buildAllocModel(
 }
 
 /** Self bytes bucketed by a per-function key (package or file), descending. Denominated by
- * `totalBytes`, so the shares reconcile to 100% -- the same contract packageRollup keeps for CPU. */
+ * `totalBytes`, so the shares reconcile to 100% -- the same contract packageRollup keeps for CPU */
 function allocRollup(model: AllocModel, keyOf: (fn: AllocFunction) => string): AllocGroupStat[] {
   const byKey = new Map<string, { selfBytes: number; functions: number }>();
   for (const fn of model.functions) {
@@ -151,18 +151,18 @@ function allocRollup(model: AllocModel, keyOf: (fn: AllocFunction) => string): A
     .sort((left, right) => right.selfBytes - left.selfBytes);
 }
 
-/** Self bytes by owning npm/workspace package (the headline rollup). */
+/** Self bytes by owning npm/workspace package (the headline rollup) */
 export function packageAllocRollup(model: AllocModel): AllocGroupStat[] {
   return allocRollup(model, (fn) => fn.package);
 }
 
-/** Self bytes by source file. */
+/** Self bytes by source file */
 export function fileAllocRollup(model: AllocModel): AllocGroupStat[] {
   return allocRollup(model, (fn) => fn.file ?? "(native)");
 }
 
 /** An AllocModel carries `functions[]` AND a `sampling` block; a CpuModel has functions but no
- * `sampling`, so that field discriminates the two artifact kinds at one schema epoch. */
+ * `sampling`, so that field discriminates the two artifact kinds at one schema epoch */
 function looksLikeAllocModel(parsed: unknown): parsed is AllocModel {
   return (
     !!parsed &&
@@ -176,7 +176,7 @@ function looksLikeAllocModel(parsed: unknown): parsed is AllocModel {
  * Load a resolved allocation model. Accepts the `.alloc.json` directly, `latest`, or (as a
  * convenience) a recording path whose sibling `.alloc.json` is loaded instead. A `--target node`
  * (CPU) recording passed here points the reader at `query cpu`, so the two verbs never load each
- * other's model silently.
+ * other's model silently
  */
 export async function loadAllocModel(file: string): Promise<AllocModel> {
   const abs = await resolveTarget(file, "alloc-model");
@@ -186,7 +186,7 @@ export async function loadAllocModel(file: string): Promise<AllocModel> {
     return parsed;
   }
   // A recording path was likely passed; try its sibling alloc model. An extension-less `--out`
-  // recording defaults the sibling to `.json`.
+  // recording defaults the sibling to `.json`
   const ext = path.extname(abs);
   const base = ext ? abs.slice(0, -ext.length) : abs;
   const sibling = `${base}.alloc${ext || ".json"}`;
@@ -203,7 +203,7 @@ export async function loadAllocModel(file: string): Promise<AllocModel> {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
   }
   // A CPU-sampling recording (the default node lane, or a chrome capture) has a `.cpu.json` sibling,
-  // not a `.alloc.json`: point at `query cpu` rather than a bare "not an alloc model".
+  // not a `.alloc.json`: point at `query cpu` rather than a bare "not an alloc model"
   if (existsSync(`${base}.cpu.json`) || existsSync(`${base}.cpu.toon`)) {
     const wrongModel = new Error(
       `${file} sampled CPU, not allocation, so it has no allocation model. Use \`query cpu\` for its self-time attribution, or re-record with --alloc for allocation attribution.`,

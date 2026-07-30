@@ -1,7 +1,7 @@
 // A small allocation workload for the --alloc node lane: run() allocates a mix of short-lived
 // strings, objects and arrays (dropped every call, so a GC reclaims them). With the GC-inclusion
 // flags on, the heap sampler attributes those bytes to the functions below, under the "app" package
-// (this module is outside node_modules). Deliberately dependency-free so it runs from a clean checkout.
+// (this module is outside node_modules). Deliberately dependency-free so it runs from a clean checkout
 //
 // Run:  node dist/cli.js record examples/probes/allocates.mjs --target node --alloc --iterations 20
 //       node dist/cli.js query alloc latest

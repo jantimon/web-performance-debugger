@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { notMeasuredSpanCounts, countsFromSummary } from "../../dist/model/span.js";
 
 // The stored Span's `counts` sub-object: not-measured is an explicit null on every field (never a
-// fake 0), and a run/step span projects the Measured counts off its summary.
+// fake 0), and a run/step span projects the Measured counts off its summary
 
 test("notMeasuredSpanCounts: every count is null (not-measured), never a fabricated 0", () => {
   assert.deepEqual(notMeasuredSpanCounts(), {

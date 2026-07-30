@@ -6,7 +6,7 @@ import { resolvePageOption } from "../../dist/record/page-option.js";
 // file. resolvePageOption is the pure detection order: (1) a `://` scheme -> URL, (2) an existing
 // path -> local HTML, (3) a host-ish shape -> URL with http:// assumed, (4) neither -> a dual
 // file/URL error. `fileExists` is injected so the order is tested without touching disk. These are
-// the cases a first-time user's typo lands on, so assert on the resolved kind AND the error wording.
+// the cases a first-time user's typo lands on, so assert on the resolved kind AND the error wording
 const noFiles = () => false;
 const allFiles = () => true;
 
@@ -35,7 +35,7 @@ test("an existing path resolves to the local-HTML case", () => {
 });
 
 test("a scheme wins over an existing file (a file:// path never becomes local HTML)", () => {
-  // Even if such a file existed, `://` is decided first: file:// points at the plain-path form.
+  // Even if such a file existed, `://` is decided first: file:// points at the plain-path form
   assert.throws(
     () => resolvePageOption("file:///tmp/page.html", allFiles),
     /pass its plain path instead/,
@@ -107,7 +107,7 @@ test("a non-http(s) scheme is rejected as unsupported", () => {
 
 test("C:\\path on a non-windows box is a dual error, never read as a scheme", () => {
   // Requiring `://` for the scheme branch is what keeps a Windows drive path out of it: with no
-  // `://` and no matching file, `C:\nope` falls through to the dual error, not a `C:` scheme.
+  // `://` and no matching file, `C:\nope` falls through to the dual error, not a `C:` scheme
   assert.throws(() => resolvePageOption("C:\\nope", noFiles), (error) => {
     assert.match(error.message, /no such file/);
     assert.match(error.message, /not a recognizable URL/);

@@ -7,7 +7,7 @@ import { STALL_CEILING_MS } from "./settle.js";
  * cap so a page that never stops mutating cannot hang the step). The caller turns a `false` at the
  * deadline into a loud failure. A trailing `requestAnimationFrame` lets the last mutation paint before
  * the step's end mark. Descriptive names throughout: this is serialized, but the house rule on
- * identifiers holds in page context too.
+ * identifiers holds in page context too
  */
 const QUIET_SOURCE = (quietMs: number, maxMs: number, stallCeilingMs: number) =>
   new Promise<boolean>((resolve) => {
@@ -18,7 +18,7 @@ const QUIET_SOURCE = (quietMs: number, maxMs: number, stallCeilingMs: number) =>
       observer.disconnect();
       // Let the last mutation paint, but bound the frame wait: if the headless compositor has stalled
       // (rAF never fires), resolve at the ceiling anyway. The caller's next paintFlush detects a truly
-      // dead compositor and throws the retryable frame-stall error, so this must not hang here.
+      // dead compositor and throws the retryable frame-stall error, so this must not hang here
       let resolved = false;
       const ceiling = setTimeout(() => {
         if (resolved) return;
@@ -49,30 +49,30 @@ const QUIET_SOURCE = (quietMs: number, maxMs: number, stallCeilingMs: number) =>
 export interface WaitForStableOptions {
   /**
    * A selector to wait for BEFORE the quiet check, so "the landed content is here" gates "and the
-   * page has stopped changing". Skipped when absent.
+   * page has stopped changing". Skipped when absent
    */
   selector?: string;
   /**
    * How long the DOM must go without a mutation to count as stable, ms. The helper resolves this
    * long AFTER the last mutation, so it is a deliberate tail on the measured wall, not part of the
-   * transition. Default 200.
+   * transition. Default 200
    */
   quietMs?: number;
   /**
    * Hard cap on the whole wait, ms (selector wait + quiet check). Default 30000. Both arms REJECT on
    * expiry: the selector wait rejects with `page.waitForSelector`'s own timeout, and the quiet check
    * rejects when the DOM never produced a `quietMs`-long lull within the cap (a page that never stops
-   * mutating), naming both values. Never a silent pass that prices the whole cap as a settled wall.
+   * mutating), naming both values. Never a silent pass that prices the whole cap as a settled wall
    */
   timeoutMs?: number;
-  /** @deprecated alias for `timeoutMs`; `timeoutMs` wins when both are set. */
+  /** @deprecated alias for `timeoutMs`; `timeoutMs` wins when both are set */
   timeout?: number;
 }
 
 /**
  * The loud failure a never-quiet page earns: the DOM kept mutating for the whole cap, so no
  * `quietMs`-long window ever opened. Names both knobs and the three ways forward, so the message says
- * what to change rather than leaving a multi-minute silent wait whose cause reads as a protocol timeout.
+ * what to change rather than leaving a multi-minute silent wait whose cause reads as a protocol timeout
  */
 export function neverQuietError(quietMs: number, timeoutMs: number): Error {
   return new Error(
@@ -104,10 +104,10 @@ export function neverQuietError(quietMs: number, timeoutMs: number): Error {
  * A HARD cross-document navigation mid-wait (a `window.location` swap, a meta refresh, a server
  * redirect the step lands on) destroys the execution context the quiet check runs in. That is a
  * transition to observe, not a failure, so the destroyed-context rejection is caught and the wait
- * re-attaches to the new document, bounded by the same deadline.
+ * re-attaches to the new document, bounded by the same deadline
  */
 /** Pause before a selector-less retry so a page that keeps hard-redirecting cannot spin the quiet
- * check against CDP; the shared deadline still bounds the whole wait. */
+ * check against CDP; the shared deadline still bounds the whole wait */
 const RETRY_BACKOFF_MS = 50;
 
 export function waitForStable(page: Page, options: WaitForStableOptions = {}): () => Promise<void> {
@@ -118,7 +118,7 @@ export function waitForStable(page: Page, options: WaitForStableOptions = {}): (
     if (options.selector) await page.waitForSelector(options.selector, { timeout: timeoutMs });
     // A hard navigation while the quiet check runs destroys its execution context; re-attach to the
     // new document and keep waiting for IT to go quiet. The deadline is shared across attempts, so a
-    // page that keeps hard-redirecting cannot outlast the caller's cap.
+    // page that keeps hard-redirecting cannot outlast the caller's cap
     for (;;) {
       const remainingMs = Math.max(0, deadlineMs - Date.now());
       if (remainingMs === 0) break;
@@ -130,7 +130,7 @@ export function waitForStable(page: Page, options: WaitForStableOptions = {}): (
         // The document navigated out from under the quiet check. If a content selector gates the
         // wait, let the new document reach it before retrying (swallow its own timeout: the shared
         // deadline is the real bound); otherwise pause briefly so a redirect storm cannot spin the
-        // retry against CDP, still bounded by the shared deadline.
+        // retry against CDP, still bounded by the shared deadline
         if (options.selector) {
           const untilDeadlineMs = Math.max(0, deadlineMs - Date.now());
           await page
@@ -144,7 +144,7 @@ export function waitForStable(page: Page, options: WaitForStableOptions = {}): (
       }
       if (wentQuiet) return;
       // The in-page hard cap fired without a quiet window: the DOM mutated for the whole remaining
-      // budget, so the page never settled. Fail loudly rather than pricing the cap as a settled wall.
+      // budget, so the page never settled. Fail loudly rather than pricing the cap as a settled wall
       break;
     }
     throw neverQuietError(quietMs, timeoutMs);
@@ -155,7 +155,7 @@ export function waitForStable(page: Page, options: WaitForStableOptions = {}): (
  * Whether a thrown error is Puppeteer's "the execution context went away under me because the frame
  * navigated" family, as opposed to a real failure (a closed target, a broken evaluate). A hard
  * cross-document navigation raises one of these while `page.evaluate` is mid-flight; matching the
- * message is the only signal Puppeteer gives (it does not type these).
+ * message is the only signal Puppeteer gives (it does not type these)
  */
 export function isDestroyedContextError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);

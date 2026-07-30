@@ -10,7 +10,7 @@ const META = { tool: "wpd", version: "0.0.0", schemaVersion: "1" };
 const SAMPLING = { samplingIntervalBytes: 32768, includeMajorGC: true, includeMinorGC: true };
 
 /** A synthetic heap sampling profile: a (root) with three allocating leaves (two node builtins, one
- * native frame with no url), so package attribution and the byte ranking are deterministic. */
+ * native frame with no url), so package attribution and the byte ranking are deterministic */
 function heapProfile() {
   return {
     head: {
@@ -58,11 +58,11 @@ async function modelFor(profile) {
 
 test("buildAllocModel: totalBytes sums rankable frames only, excluding the (root) pseudo-frame", async () => {
   const model = await modelFor(heapProfile());
-  // (root) contributes selfSize 0 and is not rankable; the three leaves sum to 10000.
+  // (root) contributes selfSize 0 and is not rankable; the three leaves sum to 10000
   assert.equal(model.totalBytes, 10000);
   assert.equal(model.sampleCount, 3);
   assert.equal(model.functions.length, 3);
-  // No (root) row in the ranked functions.
+  // No (root) row in the ranked functions
   assert.ok(!model.functions.some((fn) => fn.fn === "(root)"), "(root) is not a ranked function");
 });
 
@@ -92,7 +92,7 @@ test("packageAllocRollup: sums per package, denominated on totalBytes so shares 
   assert.equal(native.selfBytes, 6000);
   assert.equal(node.selfBytes, 4000, "the two node: frames sum into one (node) bucket");
   assert.equal(node.functions, 2, "two functions rolled into (node)");
-  // Descending by bytes: (native) 6000 leads (node) 4000.
+  // Descending by bytes: (native) 6000 leads (node) 4000
   assert.equal(rollup[0].key, "(native)");
   const shareSum = rollup.reduce((sum, entry) => sum + entry.selfPct, 0);
   assert.ok(Math.abs(shareSum - 100) < 1e-9, `package shares reconcile to 100%, got ${shareSum}`);

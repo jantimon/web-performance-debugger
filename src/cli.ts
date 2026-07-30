@@ -24,14 +24,14 @@ import { VERSION, TOOL } from "./version.js";
  *
  * Two causes, and the advice differs: a heavy traced interaction pinned the main thread, or the
  * browser never finished its startup handshake (`session.new`, Firefox/BiDi), where there is no
- * step to make smaller.
+ * step to make smaller
  */
 function recordFailureMessage(error: Error): string {
   const protocolTimedOut =
     error.name === "ProtocolTimeoutError" || /protocolTimeout/i.test(error.message);
   if (!protocolTimedOut) return error.message;
   // `session.new` is the BiDi handshake: this fired before the browser was usable, so advice about
-  // measuring less work per step would point at a step that never ran.
+  // measuring less work per step would point at a step that never ran
   if (/session\.new/i.test(error.message))
     return `${error.message}\n\nThe browser did not finish its startup handshake in time. This is usually load, not your flow: retry, or raise --protocol-timeout (e.g. --protocol-timeout 600000).`;
   return `${error.message}\n\nThe page did not answer in time, usually because a traced interaction pinned the main thread. Retry with a higher --protocol-timeout (e.g. --protocol-timeout 600000), or measure less work per step.`;
@@ -42,7 +42,7 @@ function recordFailureMessage(error: Error): string {
  * WPD_DEBUG the full stack trails it (a RangeError such as a stack overflow carries an unhelpful
  * one-line message; the stack is the only pointer to where it blew). Otherwise the debug hint trails
  * ON THE SAME LINE as the message, so a caller reading only the last stderr line still gets the real
- * error, not a bare "(set WPD_DEBUG=1 ...)".
+ * error, not a bare "(set WPD_DEBUG=1 ...)"
  */
 function emitFailure(message: string, error: Error): void {
   if (process.env.WPD_DEBUG && error.stack) {
@@ -66,12 +66,12 @@ program
     "\nQuick start:\n  wpd record --url https://example.com\n  wpd query spans latest\n",
   )
   // Absolute paths to the installed package's docs, so an agent running `wpd --help` can open and
-  // read them. import.meta.url is dist/cli.js; the docs sit at the package root above dist/.
+  // read them. import.meta.url is dist/cli.js; the docs sit at the package root above dist/
   .addHelpText("after", docLinksEpilog(import.meta.url));
 
 // Resolve color once before any command runs. Human tables/reports use it; structured
-// (--format) output never calls the color helpers, so it stays plain regardless.
-// auto = on only for an interactive TTY with NO_COLOR unset (https://no-color.org).
+// (--format) output never calls the color helpers, so it stays plain regardless
+// auto = on only for an interactive TTY with NO_COLOR unset (https://no-color.org)
 program.hook("preAction", (thisCommand) => {
   const when = thisCommand.opts().color;
   if (!["auto", "always", "never"].includes(when))
@@ -87,7 +87,7 @@ program.hook("preAction", (thisCommand) => {
 
 /**
  * A positional id (`query get`/`query frame`). Bare `parseInt` turns `abc` into NaN ("No function
- * with id NaN") and `12junk` into 12, so parse it strictly and name the argument that was wrong.
+ * with id NaN") and `12junk` into 12, so parse it strictly and name the argument that was wrong
  */
 const toPositionalId = (raw: string, argName: string): number => {
   if (!/^\d+$/.test(raw.trim()))
@@ -99,12 +99,12 @@ program
   .command("record")
   // Both modes have a real page and a live DOM; they differ in WHERE run() executes, and therefore
   // in what times it. Name both signatures: "no args" or an unqualified "real page" on one of them
-  // reads as "--bench has no page", and from there as "it cannot touch the DOM".
+  // reads as "--bench has no page", and from there as "it cannot touch the DOM"
   .description(
     "Record where rendering work comes from. Default: run({ page, ctx, measureStep }) executes in Node and drives the page via Puppeteer. --bench: run(ctx) executes inside the page itself, with live document/window and no page handle, timed in-page.",
   )
   // Optional: with no module, wpd runs a built-in load flow (navigate to --url and settle), so a
-  // first run needs zero authoring. A module continues to work exactly as before.
+  // first run needs zero authoring. A module continues to work exactly as before
   .argument(
     "[module]",
     "path to a JS/ESM module exporting `run` (and optional prepare/cleanup). Omit it with --url to run the built-in load flow",
@@ -120,7 +120,7 @@ program
   )
   // --html is removed: --url names the host page and accepts a local HTML file or a live URL. Kept
   // hidden so an explicit --html gets a migration message from the action, not commander's generic
-  // unknown-option error.
+  // unknown-option error
   .addOption(new Option("--html <file>").hideHelp())
   .option(
     "--bench",
@@ -159,7 +159,7 @@ program
   )
   // The chrome capture modes. Default (no flag): CPU sampler only, no trace, cleanest wall -- the
   // four-slice CPU bar, no rendering counts. --breakdown and --deep each capture more. Every
-  // invocation is exactly ONE pass.
+  // invocation is exactly ONE pass
   .option(
     "--breakdown",
     "chrome capture mode: ONE fused pass (light trace + CPU sampler) yields a reconciling js/style/layout/paint/gc/other/idle bar per span, plus exact layout/style/paint counts. Cannot report forced-layout counts or blame (they need the `.stack` category, which --deep captures). Mutually exclusive with --deep; for both, record a run group via --members. Read it with `query spans`",
@@ -172,13 +172,13 @@ program
     "--alloc",
     "allocation-attribution capture mode (--target node only): which dependency ALLOCATES during run(). Runs V8's heap sampler instead of the CPU sampler (CPU self-time not measured on this recording). Read it with `query alloc`",
   )
-  // Removed: wpd always runs Chrome's built-in headless (full Chrome, windowless) or --no-headless.
+  // Removed: wpd always runs Chrome's built-in headless (full Chrome, windowless) or --no-headless
   // Kept as a hidden option so an explicit --headless-mode gets a clear removal message from the
-  // action, not commander's generic unknown-option error.
+  // action, not commander's generic unknown-option error
   .addOption(new Option("--headless-mode <mode>").hideHelp())
   // Removed: the CPU sampler now rides every chrome sampling capture; its wall cost is systematic and
   // cancels in diff/cpu-diff. Kept as a hidden option so an explicit --precise-wall gets a clear
-  // removal message from the action, not commander's generic unknown-option error.
+  // removal message from the action, not commander's generic unknown-option error
   .addOption(new Option("--precise-wall").hideHelp())
   .option(
     "--variant <label>",
@@ -205,11 +205,11 @@ program
   .action(async (module: string | undefined, cmdOpts: any) => {
     if (!["json", "toon"].includes(cmdOpts.format)) program.error("--format must be json or toon");
     // --framework accepts every lane (an addon no-ops where its signals are absent), so it is validated
-    // here for spelling but never rejected on a target.
+    // here for spelling but never rejected on a target
     if (!["off", "auto"].includes(cmdOpts.framework))
       program.error("--framework must be off or auto");
     // One axis: chrome | firefox | node, so a conflicting browser/runtime combination is
-    // unrepresentable rather than something to guard against.
+    // unrepresentable rather than something to guard against
     if (!["chrome", "firefox", "node"].includes(cmdOpts.target))
       program.error("--target must be chrome, firefox, or node");
     const bench = !!cmdOpts.bench;
@@ -219,7 +219,7 @@ program
     // --alloc is a dedicated node capture mode (V8 heap sampling in-process): it needs --target node,
     // and it is mutually exclusive with the chrome capture modes (--breakdown/--deep) -- three
     // different questions, one capture each. Fired before the lane guards below so an --alloc on the
-    // wrong lane gets this message, not a generic browser-flag complaint.
+    // wrong lane gets this message, not a generic browser-flag complaint
     if (alloc && !node)
       program.error(
         "--alloc needs --target node: it is an in-process heap-sampling capture mode (which dependency allocates during run()), not available on chrome or firefox.",
@@ -228,13 +228,13 @@ program
       program.error(
         "--alloc, --breakdown and --deep are different capture modes (allocation vs the reconciling bar vs the attribution report): pick one. --alloc runs the heap sampler with the CPU sampler off.",
       );
-    // --html is removed: --url names the host page and accepts a local HTML file or a live URL.
+    // --html is removed: --url names the host page and accepts a local HTML file or a live URL
     // Intercept an explicit --html here (before resolution reuses cmdOpts.html for the resolved
-    // local-file case) so it gets a migration message, not a silently ignored flag.
+    // local-file case) so it gets a migration message, not a silently ignored flag
     if (cmdOpts.html !== undefined)
       program.error("--html was removed in this version. Use --url <file-or-url>.");
     // --precise-wall is removed: fires before the firefox/node/no-module guards so any invocation
-    // carrying it gets the retirement message, not a lane-specific complaint about the same flag.
+    // carrying it gets the retirement message, not a lane-specific complaint about the same flag
     if (cmdOpts.preciseWall !== undefined)
       program.error(
         "--precise-wall was removed. The CPU sampler now rides every chrome sampling capture; its wall cost is systematic, so it cancels in `diff`/`cpu-diff`. A sampler-free wall serves only absolute-wall benchmarking, which wpd does not measure. Record in the default capture mode and compare with `diff`.",
@@ -242,7 +242,7 @@ program
     // --url names the host page and accepts a live URL OR a local HTML file path; the detection
     // (URL vs file) sets cmdOpts.url or cmdOpts.html to the resolved value. node has no page, so its
     // own guard (below) rejects --url with a lane-specific message; skip the detection there so a bad
-    // value does not preempt it.
+    // value does not preempt it
     let urlSchemeAssumed = false;
     const rawHostPage = cmdOpts.url;
     if (rawHostPage != null && !node) {
@@ -262,7 +262,7 @@ program
     }
     // Zero-authoring on-ramp: no module runs the built-in driver flow (navigate to --url and
     // settle). It needs a page to load and a driver to load it, so --bench (imports run() in-page)
-    // and --target node (no page) have nothing to run, and a bare `record` has no target at all.
+    // and --target node (no page) have nothing to run, and a bare `record` has no target at all
     if (!module) {
       if (node)
         program.error(
@@ -279,13 +279,13 @@ program
     }
     // --headless-mode is removed: wpd measures how real Chrome performs, so it always runs Chrome's
     // built-in headless (full Chrome, windowless), and chrome-headless-shell is gone. Fail an explicit
-    // flag with a clear message rather than silently ignoring it.
+    // flag with a clear message rather than silently ignoring it
     if (cmdOpts.headlessMode !== undefined)
       program.error(
         "--headless-mode was removed in this version. wpd always runs Chrome's built-in headless; use --no-headless for a visible window.",
       );
     // The capture modes are mutually exclusive: each answers a different question with a different
-    // capture, and every invocation is exactly one pass. Two capture modes means two invocations.
+    // capture, and every invocation is exactly one pass. Two capture modes means two invocations
     if (cmdOpts.breakdown && cmdOpts.deep)
       program.error(
         "--breakdown and --deep are two different capture modes (two captures, two questions): --breakdown is the reconciling bar, --deep is the attribution report. Record both into one group: `record --members breakdown,deep --group <name>`.",
@@ -294,11 +294,11 @@ program
       // On firefox the ONE gecko pass IS the lane in every capture mode. --breakdown has no meaning
       // over it, and --cpu-throttle needs CDP, which BiDi does not expose. --deep IS supported: it is
       // a reporting tier (the dirtied-by write report from Gecko's cause stacks), not a capture
-      // change. --protocol-timeout is deliberately allowed: puppeteer threads it into BiDi.
+      // change. --protocol-timeout is deliberately allowed: puppeteer threads it into BiDi
       const unsupported = [
         cmdOpts.breakdown &&
           "--breakdown (firefox's reconciling bar comes from the Gecko profile automatically; your performance.measure() spans surface in recording.spans without a flag)",
-        // Presence-based, not truthiness: --cpu-throttle 0 is still unsupported here, and 0 is falsy.
+        // Presence-based, not truthiness: --cpu-throttle 0 is still unsupported here, and 0 is falsy
         cmdOpts.cpuThrottle != null && "--cpu-throttle (needs CDP)",
         cmdOpts.disableBrowserSandbox && "--disable-browser-sandbox (chrome-only launch flag)",
       ].filter(Boolean);
@@ -310,17 +310,17 @@ program
     }
     if (node) {
       const browserOnly = [
-        // Detection is skipped on node (above), so this holds the raw flag the user passed.
+        // Detection is skipped on node (above), so this holds the raw flag the user passed
         cmdOpts.url && "--url",
         // Presence-based where the value can be falsy (0 throttle, 0 timeout): the lane consumes
-        // none of these, so a passed-but-falsy value is still a flag on the wrong lane.
+        // none of these, so a passed-but-falsy value is still a flag on the wrong lane
         cmdOpts.cpuThrottle != null && "--cpu-throttle",
         cmdOpts.userDataDir && "--user-data-dir",
         cmdOpts.disableBrowserSandbox && "--disable-browser-sandbox",
         cmdOpts.breakdown && "--breakdown",
         cmdOpts.deep && "--deep",
         // No browser to make headless/visible, no driver iteration to salvage, no protocol to time
-        // out: this lane runs in-process.
+        // out: this lane runs in-process
         cmdOpts.headless === false && "--no-headless",
         cmdOpts.keepPartial && "--keep-partial",
         cmdOpts.protocolTimeout != null && "--protocol-timeout",
@@ -330,37 +330,37 @@ program
         program.error(
           `--target node is a CPU-only lane with no browser or trace: remove ${browserOnly.join(", ")}`,
         );
-      // --bench selects in-page execution, not iteration, so it has no meaning without a page.
+      // --bench selects in-page execution, not iteration, so it has no meaning without a page
       if (bench)
         program.error(
           "--bench imports the module inside a page; --target node has no page. Drop --bench (--iterations already repeats run() on this lane).",
         );
     }
     // --keep-partial salvages a failed driver iteration; --bench imports run() in-page with no
-    // driver loop to salvage, so the flag has nothing to act on (node already rejected --bench).
+    // driver loop to salvage, so the flag has nothing to act on (node already rejected --bench)
     if (bench && cmdOpts.keepPartial)
       program.error(
         "--keep-partial is a driver-mode salvage: --bench runs run() in-page, with no per-iteration driver step to keep. Drop --keep-partial.",
       );
     // --cpu-throttle multiplies CPU slowdown; the throttle skips a rate of 1 or below silently, so a
     // value that does nothing is a typo, not a request. firefox/node already rejected the flag above,
-    // so reaching here is chrome.
+    // so reaching here is chrome
     if (!firefox && !node && cmdOpts.cpuThrottle != null && cmdOpts.cpuThrottle <= 1)
       program.error("--cpu-throttle must be an integer greater than 1 (e.g. 4 for 4x slower).");
     // --disable-browser-sandbox drops the renderer's OS process containment (chrome-only; firefox and
     // node reject the flag above, so reaching here means chrome). What that unsandboxed renderer is
     // then allowed to touch decides whether the combination is merely reduced-containment or actively
-    // dangerous.
+    // dangerous
     if (cmdOpts.disableBrowserSandbox && !firefox && !node) {
       // A persistent real profile behind an unsandboxed renderer has no safe use: a renderer
-      // compromise reaches the profile's cookies and logins with nothing in the way. Refuse.
+      // compromise reaches the profile's cookies and logins with nothing in the way. Refuse
       if (cmdOpts.userDataDir)
         program.error(
           "--disable-browser-sandbox with --user-data-dir runs page content in a renderer with no OS containment AND gives it your persistent Chrome profile (its cookies and logins). There is no safe way to combine them: drop one.",
         );
       // A public --url loads content you do not control into that unsandboxed renderer. This is
       // legitimate inside an already-isolated container (the reason the opt-out exists), so warn
-      // loudly before launch rather than refuse -- the point is that the composition is not silent.
+      // loudly before launch rather than refuse -- the point is that the composition is not silent
       let publicUrlHost: string | undefined;
       if (cmdOpts.url) {
         try {
@@ -376,17 +376,17 @@ program
         );
     }
     // toInt already rejected non-numbers, so these are range checks only. 0 iterations would run
-    // the flow zero times and report a page's worth of zeros.
+    // the flow zero times and report a page's worth of zeros
     if (cmdOpts.iterations < 1) program.error("--iterations must be at least 1");
     if (cmdOpts.warmup < 0) program.error("--warmup cannot be negative");
     // --group appends this recording to a named manifest; --members records several capture modes
     // into ONE group in one invocation. The runner sets the capture mode per member, so it is chrome
     // only (firefox is one gecko pass at every mode, node is one lane) and rejects the single-mode
-    // flags. --group alone stays allowed on every target.
+    // flags. --group alone stays allowed on every target
     const groupName = cmdOpts.group?.trim() || undefined;
     if (cmdOpts.group != null && !groupName) program.error("--group needs a non-empty name.");
     // --alloc has no group-aware consumer verb yet (query alloc reads a single recording), so a group
-    // holding an alloc member has nothing to stitch. Refuse rather than write a member no verb reaches.
+    // holding an alloc member has nothing to stitch. Refuse rather than write a member no verb reaches
     if (alloc && groupName)
       program.error(
         "--alloc does not support --group in this version: there is no group-aware allocation verb. Record it as a standalone `record <module> --target node --alloc` run.",
@@ -425,10 +425,10 @@ program
     const opts: RecordOptions = {
       module,
       // `run` is the sole export the harness/driver look for (plus prepare/cleanup); there is no
-      // flag to name another.
+      // flag to name another
       fn: "run",
       // RecordOptions keeps browser/runtime as separate internal axes because runPass and capsFor
-      // are written against them. --target is the single user-facing axis that maps onto both.
+      // are written against them. --target is the single user-facing axis that maps onto both
       browser: firefox ? "firefox" : "chrome",
       html: cmdOpts.html,
       url: cmdOpts.url,
@@ -439,10 +439,10 @@ program
       headless: cmdOpts.headless,
       userDataDir: cmdOpts.userDataDir ? path.resolve(cmdOpts.userDataDir) : undefined,
       // WPD_DISABLE_BROWSER_SANDBOX=1 is the env equivalent of --disable-browser-sandbox, for a CI
-      // whose runner cannot run Chrome's sandbox with trace capture; chrome-only, ignored by node/firefox.
+      // whose runner cannot run Chrome's sandbox with trace capture; chrome-only, ignored by node/firefox
       disableSandbox:
         !!cmdOpts.disableBrowserSandbox || process.env.WPD_DISABLE_BROWSER_SANDBOX === "1",
-      // Internal default (no user flag): async paints flush before tracing stops.
+      // Internal default (no user flag): async paints flush before tracing stops
       settleMs: 200,
       format: cmdOpts.format,
       driver: !bench && !node,
@@ -450,8 +450,8 @@ program
       runtime: node ? "node" : "chrome",
       cpuThrottle: cmdOpts.cpuThrottle,
       allowBotWall: !!cmdOpts.allowBotWall,
-      // On by default; captureFor turns it off on --deep (the sampler cannot ride a .stack trace).
-      // On firefox it is what produces counts + blame at all.
+      // On by default; captureFor turns it off on --deep (the sampler cannot ride a .stack trace)
+      // On firefox it is what produces counts + blame at all
       cpuProfile: true,
       protocolTimeoutMs: cmdOpts.protocolTimeout,
       breakdown: !!cmdOpts.breakdown,
@@ -459,10 +459,10 @@ program
       alloc,
       // Trim to a non-empty label or drop it: an empty/whitespace --variant would otherwise persist
       // into meta and block a comparability gate while every truthiness-guarded output omitted it,
-      // so gating and disclosure would disagree.
+      // so gating and disclosure would disagree
       variant: cmdOpts.variant?.trim() || undefined,
       group: groupName,
-      // off runs zero addon code; auto (default) lets factual detection decide.
+      // off runs zero addon code; auto (default) lets factual detection decide
       framework: cmdOpts.framework === "off" ? "off" : "auto",
     };
     try {
@@ -472,10 +472,10 @@ program
       const error = err as Error;
       // Set a non-zero exit code so CI/scripts detect the failure. process.exitCode (not a hard
       // process.exit) lets buffered stdout/stderr flush and the browser/server teardown finish before
-      // the process ends.
+      // the process ends
       // The built-in --url load flow (no module) failing on a site-behavior class gets the
       // driver-module escape-hatch guidance appended; a bot-wall refusal already carries its own
-      // evidence + skip-flag message, so it is left as-is.
+      // evidence + skip-flag message, so it is left as-is
       const builtinFlow = !module && !!cmdOpts.url;
       const guidance = builtinFlow ? builtinFlowFailureGuidance(error) : null;
       const cause = recordFailureMessage(error) + (guidance ?? "");
@@ -490,11 +490,11 @@ const query = program
 const fmtOpts = (command: Command) =>
   command
     // --json is the hidden alias of --format json: kept working (structuredFormat reads it), kept out
-    // of help. --format is the documented spelling.
+    // of help. --format is the documented spelling
     .addOption(new Option("--json").hideHelp())
     .option("--format <fmt>", "structured output: json | toon");
 // Surface query errors (bad --kind, missing recording, unknown id) as a clean message
-// and exit 1, not a raw unhandled-rejection stack trace.
+// and exit 1, not a raw unhandled-rejection stack trace
 const run = (promise: Promise<void>) =>
   promise.catch((error: Error) => {
     emitFailure(error.message, error);
@@ -536,7 +536,7 @@ fmtOpts(
 ).action((file, label, opts) => run(querySpan(file, label, opts)));
 // The removed `digest`/`index` verbs: a run is already digest-sized and steps are spans, so both
 // folded into `spans` (overview) + `span <label>` (one span's anatomy). Kept as hidden stubs so an
-// old invocation gets a message naming the replacement, not commander's bare "unknown command".
+// old invocation gets a message naming the replacement, not commander's bare "unknown command"
 for (const [removed, replacement] of [
   [
     "digest",
@@ -614,7 +614,7 @@ program
   .option("--max-long-tasks <n>", "max tasks >=50ms", toNonNegativeInt)
   // INP (Event Timing) durations are 8ms-granular whole numbers, but the budget accepts fractional
   // ms for one consistent policy with --max-wall and --max-slice: every directional ms budget is a
-  // non-negative finite float.
+  // non-negative finite float
   .option("--max-inp <ms>", "max INP (worst interaction) ms", toFloat)
   .option("--max-wall <ms>", "max wall ms", toFloat)
   .option(
@@ -674,7 +674,7 @@ program
     "--fail-on-regression",
     "exit 1 if net JS self-time increased (gc/native/idle changes and sampler noise do not count)",
   )
-  // --json is the hidden alias of --format json: kept working, kept out of help.
+  // --json is the hidden alias of --format json: kept working, kept out of help
   .addOption(new Option("--json").hideHelp())
   .option("--format <fmt>", "structured output: json | toon")
   .action((baseline, current, opts) =>
@@ -689,7 +689,7 @@ program
   );
 
 // Any error that escapes a command action (one not already routed through emitFailure) must still
-// exit non-zero, independent of Node's --unhandled-rejections policy, so CI never reads a silent 0.
+// exit non-zero, independent of Node's --unhandled-rejections policy, so CI never reads a silent 0
 program.parseAsync(process.argv).catch((error: unknown) => {
   const failure = error instanceof Error ? error : new Error(String(error));
   emitFailure(failure.message, failure);

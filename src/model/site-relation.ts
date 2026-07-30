@@ -8,7 +8,7 @@ import type { RecordingMeta } from "./recording.js";
  *
  * It is NOT ownership and NOT "third-party". A cross-site CDN can be first-party-owned -- the canonical
  * case is `assets.alicdn.com` serving Aliexpress, cross-SITE from `aliexpress.com` yet the same
- * company. Ownership is the caller's classification; wpd states the mechanical relation and stops there.
+ * company. Ownership is the caller's classification; wpd states the mechanical relation and stops there
  */
 export type SiteRelation = "same-origin" | "same-site" | "cross-site";
 
@@ -16,7 +16,7 @@ export type SiteRelation = "same-origin" | "same-site" | "cross-site";
  * The host of an origin bucket key (`(assets.alicdn.com)`, `(127.0.0.1:3000)`), or null when the key
  * is not an origin bucket. The other parenthesized buckets are NOT origins ((native)/(node)/(blob)/
  * (inline)/(wasm)/(served)/(unmapped)/(unmapped: pkg)), so they return null and carry no site relation.
- * A host is recognised by a dot, a bracketed IPv6 literal, or the literal `localhost`.
+ * A host is recognised by a dot, a bracketed IPv6 literal, or the literal `localhost`
  */
 export function originBucketHost(key: string): string | null {
   if (!key.startsWith("(") || !key.endsWith(")")) return null;
@@ -33,7 +33,8 @@ export function originBucketHost(key: string): string | null {
     "root",
   ]);
   if (reserved.has(inner)) return null;
-  if (inner.startsWith("[")) return inner; // [::1] / [::1]:port IPv6
+  // [::1] / [::1]:port IPv6
+  if (inner.startsWith("[")) return inner;
   const hostname = inner.split(":")[0];
   if (hostname !== "localhost" && !hostname.includes(".")) return null;
   return inner;
@@ -43,7 +44,7 @@ export function originBucketHost(key: string): string | null {
  * The site relation of an origin-bucket host to the measured page URL, or undefined when it cannot be
  * decided (no page URL, an unparseable host). `same-origin` = same host (with an explicit port
  * matching, or the bucket's port dropped as an ephemeral accident); `same-site` = same registrable
- * domain via the PSL; `cross-site` otherwise. Pure and hand-rolled-suffix-free (tldts owns the PSL).
+ * domain via the PSL; `cross-site` otherwise. Pure and hand-rolled-suffix-free (tldts owns the PSL)
  */
 export function siteRelation(bucketHost: string, pageUrl: string): SiteRelation | undefined {
   let page: URL;
@@ -60,7 +61,7 @@ export function siteRelation(bucketHost: string, pageUrl: string): SiteRelation 
     return undefined;
   }
   if (!bucket.hostname) return undefined;
-  // Same host: identical host:port, or identical hostname when the bucket dropped an ephemeral port.
+  // Same host: identical host:port, or identical hostname when the bucket dropped an ephemeral port
   if (bucket.host === page.host || bucket.hostname === page.hostname) return "same-origin";
   const pageDomain = getDomain(page.hostname);
   const bucketDomain = getDomain(bucket.hostname);
@@ -69,7 +70,7 @@ export function siteRelation(bucketHost: string, pageUrl: string): SiteRelation 
 }
 
 /** The host (with port) of an http(s) URL, for a site-relation comparison; undefined for a non-http
- * scheme or an unparseable URL. Pairs with `siteRelation`, which reconstructs `https://${host}`. */
+ * scheme or an unparseable URL. Pairs with `siteRelation`, which reconstructs `https://${host}` */
 export function originHost(url: string): string | undefined {
   try {
     const parsed = new URL(url);
@@ -89,7 +90,7 @@ export function originHost(url: string): string | undefined {
  * post-navigation URL is not derivable from the CpuModel (it carries no per-sample document URL), so
  * re-anchoring the relation to a step's final URL is deliberately NOT attempted: a wrong same/cross
  * tag would be worse than anchoring on the measured entry URL. Same-site work stays same-site across an
- * in-site route; only a cross-registrable-domain navigation would shift the anchor, which is out of scope.
+ * in-site route; only a cross-registrable-domain navigation would shift the anchor, which is out of scope
  */
 export function measuredPageUrl(meta: RecordingMeta): string | undefined {
   return meta.mode === "url" ? meta.target : undefined;

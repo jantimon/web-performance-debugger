@@ -9,7 +9,7 @@ import {
 
 // The navigation classifier is a pure function of the two CDP-free reads a step already takes:
 // before/after page.url() and before/after performance.timeOrigin. Its rule is the contract, so it is
-// unit-tested independently of any browser.
+// unit-tested independently of any browser
 
 test("unchanged URL + unchanged clock is 'none'", () => {
   assert.equal(classifyNavigation("https://x/a", "https://x/a", 1000, 1000), "none");
@@ -17,7 +17,7 @@ test("unchanged URL + unchanged clock is 'none'", () => {
 
 test("a moved timeOrigin is 'hard' even when the URL is unchanged (reload, same-url goto)", () => {
   // timeOrigin is fixed per document: it cannot move without a new document, so the clock outranks
-  // URL equality.
+  // URL equality
   assert.equal(classifyNavigation("https://x/a", "https://x/a", 1000, 9999), "hard");
 });
 
@@ -28,16 +28,16 @@ test("changed URL + moved timeOrigin is a 'hard' navigation", () => {
 
 test("changed URL + unchanged timeOrigin is a 'soft' navigation", () => {
   assert.equal(classifyNavigation("https://x/a", "https://x/b", 1000, 1000), "soft");
-  // A query-only change stays plain 'soft': a URL diff cannot tell an in-page filter from a route.
+  // A query-only change stays plain 'soft': a URL diff cannot tell an in-page filter from a route
   assert.equal(classifyNavigation("https://x/a?q=1", "https://x/a?q=2", 1000, 1000), "soft");
 });
 
 test("a fragment-only change (same origin/path/query) is 'soft-hash'", () => {
   assert.equal(classifyNavigation("https://x/a", "https://x/a#s", 1000, 1000), "soft-hash");
   assert.equal(classifyNavigation("https://x/a#one", "https://x/a#two", 1000, 1000), "soft-hash");
-  // A hash change that ALSO changes the path is not fragment-only: it is a plain soft route change.
+  // A hash change that ALSO changes the path is not fragment-only: it is a plain soft route change
   assert.equal(classifyNavigation("https://x/a#s", "https://x/b#s", 1000, 1000), "soft");
-  // A hash change alongside a query change is not fragment-only either.
+  // A hash change alongside a query change is not fragment-only either
   assert.equal(classifyNavigation("https://x/a?q=1", "https://x/a?q=2#s", 1000, 1000), "soft");
 });
 
@@ -46,12 +46,12 @@ test("the hard-vs-soft threshold is HARD_NAV_ORIGIN_DELTA_MS (0.5ms), boundary i
   assert.equal(classifyNavigation("https://x/a", "https://x/b", 1000, 1000 + under), "soft");
   const over = HARD_NAV_ORIGIN_DELTA_MS + 0.001;
   assert.equal(classifyNavigation("https://x/a", "https://x/b", 1000, 1000 + over), "hard");
-  // Jitter below the threshold does not read as a reload.
+  // Jitter below the threshold does not read as a reload
   assert.equal(classifyNavigation("https://x/a", "https://x/b", 1000, 1000.4), "soft");
 });
 
 // shapeLcp keeps only the fields that carry signal, leads with the identifiers that survive a
-// production build (url/size/tag), and suppresses the built-in-headless startTime anomaly.
+// production build (url/size/tag), and suppresses the built-in-headless startTime anomaly
 
 const rawLcp = (extra = {}) => ({
   url: "https://cdn/hero.avif",
@@ -96,7 +96,7 @@ test("shapeLcp drops empty/zero fields rather than storing them", () => {
 });
 
 test("shapeLcp suppresses an implausible startTime (built-in-headless anomaly) with no timing", () => {
-  // ~60s startTime on a step whose window ended at ~40ms: beyond the bound + slack, so suppressed.
+  // ~60s startTime on a step whose window ended at ~40ms: beyond the bound + slack, so suppressed
   const lcp = shapeLcp(rawLcp({ startTimeMs: 60000 }), 40);
   assert.deepEqual(lcp, { suppressed: true }, "suppressed carries no fabricated timing");
 });

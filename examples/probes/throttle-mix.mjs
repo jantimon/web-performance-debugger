@@ -4,7 +4,7 @@
 // synchronous engine work it forces (a read-after-write reflow over 25 boxes), which the browser-lane
 // sampler bills to the forcing line (~85% of its self-time is Blink reflow C++, not JS). If CDP CPU
 // throttling multiplies both alike, the two shares hold at 1x and 4x; if reflow throttles differently
-// than JS, the split moves. Sized so each function is ~40-50% at 1x, leaving room to see a shift.
+// than JS, the split moves. Sized so each function is ~40-50% at 1x, leaving room to see a shift
 // Run: node dist/cli.js record examples/probes/throttle-mix.mjs --bench --iterations 5 [--cpu-throttle 4]
 //      node dist/cli.js query cpu latest --by function
 

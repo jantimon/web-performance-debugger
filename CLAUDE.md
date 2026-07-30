@@ -30,7 +30,7 @@ before changing the capture modes, the Gecko converter, or any cross-engine clai
 npm run build           # tsc -> dist/ (ESM, NodeNext)
 npm test                # unit only (pretest builds first); pure functions, no browser
 npm run test:e2e        # e2e: drives the real CLI against headless Chrome (record -> query)
-npm run lint            # oxlint src   (lint:fix to autofix)
+npm run lint            # oxlint src test scripts examples   (lint:fix to autofix)
 npm run format          # oxfmt --write (format:check to verify; config in .oxfmtrc.json, ~prettier)
 npm run knip            # dead exports/files/deps (config knip.json); a fresh dead export fails it
 node dist/cli.js <...>  # run the CLI (installed bins: web-performance-debugger, wpd)
@@ -429,11 +429,13 @@ attributes bench harness frames to the served host page). Fixture:
   `../model/recording.js` still resolves it; mapped by `classify.ts`), the `wpd:*` mark namespace
   (`model/marks.ts`), and the trace category list (`trace/categories.ts`) are the coupling points
   across files; change each in its one home.
-- **No single-letter identifiers.** Locals, params, loop counters, `for...of`/`catch` bindings,
-  destructured aliases, and sort-comparator params all get descriptive names (`event` not `e`,
-  `group` not `g`, `frame` not `f`, `(left, right)` not `(a, b)`, `index` not `i`). This holds
-  even inside browser-serialized functions (harness/driver/settle), where names don't affect
-  serialization. Exported names, type names, and object property keys are exempt.
+- **No single-letter identifiers, except the integer counters `i`/`j`/`n`.** Locals, params,
+  `for...of`/`catch` bindings, destructured aliases, and sort-comparator params otherwise get
+  descriptive names (`event` not `e`, `group` not `g`, `frame` not `f`, `(left, right)` not
+  `(a, b)`). This holds even inside browser-serialized functions (harness/driver/settle), where
+  names don't affect serialization. Exported names, type names, and object property keys are exempt.
+  Enforced by the `local/id-length` oxlint rule (`lint/id-length.ts`, `min: 2`, `exceptions:
+  ["i","j","n"]`, `properties: "never"`).
 - **When more than one clock is in scope, a timestamp identifier names its clock** (`traceTs`,
   `pageNowMs`, `profileTs`), so a `* 1000` / `/ 1000` is never read for its direction. The unit
   conversions live in one place (`model/time.ts`: `usToMs`/`msToUs`/`cdpSecondsToMs`); use them
@@ -441,6 +443,13 @@ attributes bench harness frames to the served host page). Fixture:
 - **No em-dashes or AI-prose in comments.** Use ASCII punctuation (`:`, `;`, `()`, `.`) and keep
   comments terse and technical; drop chatty tells (`à la`, `Best-guess`, `Nudge the engine`).
   The standalone `"—"` used as a missing-value placeholder in table *output* is allowed.
+  Enforced by the vendored `no-comment-slop` oxlint plugin (`lint/no-comment-slop.ts`, upstream
+  `eslint-plugin-no-comment-slop`): no trailing period, no em-dash, no banner/separator comments,
+  no foreign syntax (`///`, `#region`, XML doc tags), no inflated jargon, and JSDoc (not `//`) for
+  the comment documenting an export. `no-trailing-comment` runs on `src`/`scripts` only (compact
+  inline annotations stay in `test`/`examples`). `max-comment-lines` runs at a repo-tuned budget
+  (10 lines, not the plugin default of 3) so the multi-line `[measured]` comments this repo keeps
+  stay legal; a comment past 10 lines gets split into blank-line-separated sections.
 - **No hedging endcaps.** Do not append an unrequested caveat, counterargument, or moralizing endcap
   to a sharp claim in a comment or doc merely to demonstrate balance. If a boundary condition changes
   the truth of the claim, put it in the mechanism or scope the claim correctly. If it does not, cut
