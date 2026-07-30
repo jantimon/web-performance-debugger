@@ -11,6 +11,7 @@ import type {
   Span,
   SpanAggregation,
   SpanKind,
+  TargetLane,
 } from "./recording.js";
 import { recordingRuntime } from "./meta.js";
 import type { SpanCountsEntry, SpanEntry, SpansResult, UnifiedSlices } from "./query.js";
@@ -104,7 +105,7 @@ export function resolveSpanSelector(spans: SpanEntry[], selector: string): SpanE
  * from `meta.target` (which holds the recorded module/url/html path, a different thing). Absent
  * browser/workload => the chrome default.
  */
-export function recordingLane(meta: Pick<RecordingMeta, "browser" | "workload">): string {
+export function recordingLane(meta: Pick<RecordingMeta, "browser" | "workload">): TargetLane {
   if (recordingRuntime(meta) === "node") return "node";
   if (meta.browser === "firefox") return "firefox";
   return "chrome";
@@ -232,7 +233,7 @@ function runEntryFromCpuBreakdown(
 export function buildSpans(
   spans: Span[] | undefined,
   cpuBreakdown: CpuBreakdown | undefined,
-  target: string,
+  target: TargetLane,
   iterations = 1,
   meta?: FloorMeta,
 ): SpansResult | null {
@@ -278,7 +279,7 @@ export function buildSpans(
  * bar.
  */
 export interface SpanCountsOverview {
-  target: string;
+  target: TargetLane;
   source: "counts";
   iterations: number;
   spans: SpanCountsEntry[];
@@ -295,7 +296,7 @@ export interface SpanCountsOverview {
  */
 export function buildSpanCounts(
   spans: Span[] | undefined,
-  target: string,
+  target: TargetLane,
   iterations: number,
   meta?: FloorMeta,
 ): SpanCountsOverview | null {

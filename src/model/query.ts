@@ -26,8 +26,10 @@ import type {
   SpanScope,
   StepLcp,
   StepLoaf,
+  TargetLane,
   ThrashReport,
 } from "./recording.js";
+import type { CaptureMode } from "../record/capture.js";
 import type { Measured } from "./measured.js";
 import type { SoftNavVerdict } from "./soft-nav.js";
 import type { FrameFloorMatch } from "./frame-floor.js";
@@ -315,7 +317,7 @@ export interface SpanCountsEntry {
  */
 export interface SpansResult {
   /** the --target axis this recording was produced on: chrome | firefox | node */
-  target: string;
+  target: TargetLane;
   source: "breakdowns" | "cpu-model";
   spans: SpanEntry[];
   /**
@@ -448,7 +450,7 @@ export interface SpanAnatomy {
   /** absolute back-pointer to the recording this anatomy was read from */
   recording: string;
   /** the --target axis: chrome | firefox | node */
-  target: string;
+  target: TargetLane;
   label: string;
   kind: SpanKind;
   aggregation: SpanAggregation;
@@ -538,7 +540,7 @@ export interface SpanAnatomy {
 /** One member's own numbers for a stitched span, tagged by its capture mode. Walls are shown PER
  * member and never combined -- a group holds N captures of one workload, not one measurement. */
 export interface GroupSpanMember {
-  mode: string;
+  mode: CaptureMode;
   variant?: string;
   wallMs: number | null;
   aggregation: SpanAggregation;
@@ -564,7 +566,7 @@ export interface GroupSpanSources {
  */
 export interface GroupSpanStitch {
   group: string;
-  target: string;
+  target: TargetLane;
   label: string;
   kind: SpanKind;
   /** each member's own wall for this span, tagged by mode; NEVER combined into one number */

@@ -23,6 +23,7 @@ import type {
   SpanForced,
   SpanHotFunctions,
 } from "../model/query.js";
+import type { CaptureMode } from "../record/capture.js";
 import {
   buildSpans,
   buildSpanCounts,
@@ -605,7 +606,9 @@ async function buildGroupSpanStitch(
       const anatomy = perMember.get(member);
       if (!anatomy) return null;
       return {
-        mode: member.mode,
+        // GroupMember.mode is the member recording's `meta.capture` verbatim (group.ts), a CaptureMode;
+        // the manifest type stores it as the wider `string`, so narrow it back at this boundary.
+        mode: member.mode as CaptureMode,
         ...(member.variant ? { variant: member.variant } : {}),
         wallMs: anatomy.wallMs,
         aggregation: anatomy.aggregation,

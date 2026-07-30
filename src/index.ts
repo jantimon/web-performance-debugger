@@ -24,6 +24,12 @@ export type {
   RecordingWindow,
   BlameSemantic,
   RecordingMeta,
+  TargetLane,
+  WorkloadIdentity,
+  WorkloadLane,
+  Measured,
+  SourceMapDiagnostics,
+  SourceMapFailure,
   EngineVersion,
   Recording,
   Span,
@@ -40,6 +46,17 @@ export type {
   SpanBreakdown,
   SpanHot,
   SpanHotRef,
+  LayoutShift,
+  LayoutShiftSource,
+  LayoutShiftRect,
+  EngineSoftNav,
+  SoftNavRoute,
+  SoftNavRouteLcp,
+  ThrashReport,
+  ThrashStep,
+  DirtiedByWrite,
+  DirtiedByWriteRollup,
+  FirefoxDirtiedByReport,
   FrameSideTrack,
   FrameRecord,
   FrameState,
@@ -50,11 +67,18 @@ export type {
   CpuEdge,
   CpuSystem,
   CpuModel,
+  CpuBreakdown,
+  CpuSlice,
+  CpuJsSlice,
   AllocFunction,
   AllocGroupStat,
   AllocSamplingConfig,
   AllocModel,
 } from "./model/recording.js";
+
+// The one capture-mode name stamped into `meta.capture` / a group member's `mode`. Referenced by
+// RecordingMeta and GroupSpanMember, so a consumer that types those needs it by name.
+export type { CaptureMode } from "./record/capture.js";
 
 // Derived shapes emitted by the query / cpu-diff verbs under --format json|toon.
 export type {
@@ -67,6 +91,7 @@ export type {
   BlameEntry,
   UnifiedSlices,
   SpanEntry,
+  SpanCountsEntry,
   SpansResult,
   SpanForced,
   SpanHotFunctions,
@@ -86,8 +111,14 @@ export type {
 // members. `query spans`/`span` on a group emit GroupSpansResult / GroupSpanStitch (above).
 export type { RunGroup, GroupMeta, GroupMember } from "./model/group.js";
 
-// Raw V8 sampling profile (the .cpuprofile file, DevTools/Speedscope format).
-export type { RawCpuProfile } from "./profile/cpuprofile.js";
+// Fact shapes referenced by the query views but declared in their own home modules: the
+// classifier-vs-engine soft-nav verdict a step anatomy carries, and the frame-cadence floor a floored
+// wall/INP pins to.
+export type { SoftNavVerdict, SoftNavAgreement } from "./model/soft-nav.js";
+export type { FrameFloorMatch } from "./model/frame-floor.js";
+
+// Raw V8 sampling profile (the .cpuprofile file, DevTools/Speedscope format) and its node/frame shapes.
+export type { RawCpuProfile, RawProfileNode, RawCallFrame, GeckoSlice } from "./profile/raw.js";
 
 // The `latest` pointer file (cwd-keyed, under the XDG state dir).
 export type { LastPointer } from "./commands/resolve.js";
@@ -107,4 +138,4 @@ export type { WaitForStableOptions } from "./browser/until.js";
 
 // The argument driver mode hands `run`/`prepare`/`cleanup`, so a TypeScript driver module can annotate
 // its hook (`run({ page, measureStep, waitForStable }: DriverContext)`) and see the injected helper.
-export type { DriverContext, MeasureStep } from "./browser/driver.js";
+export type { DriverContext, MeasureStep, StepOpts, Until } from "./browser/driver.js";

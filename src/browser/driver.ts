@@ -578,7 +578,8 @@ export interface DriverOptions {
 /** "Step is done" override: a selector to wait for, a predicate/async fn, or a promise. */
 export type Until = string | (() => unknown | Promise<unknown>) | Promise<unknown> | undefined;
 
-interface StepOpts {
+/** The options bag form of a step's third argument: currently just the `until` override. */
+export interface StepOpts {
   until?: Until;
 }
 
