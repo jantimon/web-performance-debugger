@@ -56,7 +56,7 @@ dominate; on a typical interaction most of the wall is `idle` (the frame wait) a
 ## Install
 
 ```bash
-npm i -g @jantimon/web-performance-debugger   # installs the `wpd` and `web-performance-debugger` bins
+npm i -g @jantimon/web-performance-debugger   # installs the `wpd` command (long form: `web-performance-debugger`)
 # or run without installing:
 npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown
 ```
@@ -67,10 +67,11 @@ Firefox is optional. The pnpm caveats and how to point wpd at your own browser a
 
 ## At a glance
 
-- **What it does that a scorecard cannot:** decompose one real interaction, page load, or SSR render
-  into slices that tile the wall exactly (`Σ slices + idle = wall`), and name the source line, package,
-  and count behind each -- across Chrome, Firefox, and Node. Forced layout, CPU self-time, allocation,
-  and rendering counts, attributed to code, not graded.
+- **Names the line a grade can't:** a page score like Lighthouse tells you the page is slow, not which
+  line of your code made it slow. wpd decomposes one real interaction, page load, or SSR render into
+  slices that tile the wall exactly (`Σ slices + idle = wall`), and names the source line, package, and
+  count behind each -- across Chrome, Firefox, and Node. Forced layout, CPU self-time, allocation, and
+  rendering counts, attributed to code, not graded.
 - **How far to trust each number:** every load-bearing figure is measured in both engines, tagged with
   its provenance, and drift-tested in CI. [How wpd verifies its numbers](https://github.com/jantimon/web-performance-debugger/blob/main/docs/verification.md).
 - **Try it now:** `npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown`
@@ -1137,7 +1138,7 @@ number; the trust tiers and the comparability warnings say which numbers survive
 ### What wpd leaves to the caller
 
 wpd finds and investigates; it does not grade, rank, or guide. Synthesis, N-way and cross-site
-comparison reports (including HTML scorecards), question-to-command recommenders, and orchestration
+comparison reports (including graded HTML summaries), question-to-command recommenders, and orchestration
 recipes stay with the caller, who holds the context and the comparability judgment wpd cannot defend.
 In exchange wpd owes a typed, stable JSON/TOON contract, honest refusals (an n/a-FAIL, a comparability
 gate — never a fake zero), provenance on every number, and a non-zero exit on every gate. The standing
