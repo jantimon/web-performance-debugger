@@ -3,10 +3,7 @@ dist/
 recordings/
 .wpd-profile/
 *.png
-# The routing-section terminal shots are committed (they render on GitHub and npm rewrites the
-# relative paths via the repository field); the render's throwaway GIFs are not.
-!examples/demo-gif/shots/
-!examples/demo-gif/shots/*.png
+# The VHS demo render writes throwaway GIFs next to demo.tape; demo.gif is hosted, never committed.
 examples/demo-gif/*.gif
 *.tsbuildinfo
 *.tgz

@@ -45,7 +45,7 @@ tier:
 | Signal | Source | Trust |
 | --- | --- | --- |
 | Counts (layout / style / paint / forced / invalidation) | DevTools trace, windowed to the main thread | **exact:** bit-identical across repeated runs |
-| Slice ms on a `--breakdown` bar | trace `base::TimeTicks`, light trace only | **wall-tier** (~1%, directional); reconciles to `wall` exactly |
+| Slice ms on a `--breakdown` bar | trace `base::TimeTicks` (Chromium's internal monotonic clock), light trace only | **wall-tier** (~1%, directional); reconciles to `wall` exactly |
 | Wall and INP times | `performance.now()`, browser-clamped | **directional:** good for "~2x worse?", not "1.3 ms" |
 | CPU self-time | the sampler's own microsecond clock | **real:** trustworthy in aggregate (a few % noise) |
 
