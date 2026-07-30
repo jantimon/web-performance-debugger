@@ -3,10 +3,10 @@ import { isToolFrameUrl } from "../trace/stacks.js";
 /** The reconciling breakdown slice a sample's wall-delta lands in (Firefox lane). `idle` comes from
  * the per-sample CPU-usage signal; style/layout/gc/js from the leaf-ward frame category; `other` is
  * DOM-accessor time, Profiler self-overhead, and everything else. Parallel to a converted profile's
- * `samples`, so summing `timeDeltas` by this classification tiles the profile window exactly. */
+ * `samples`, so summing `timeDeltas` by this classification tiles the profile window exactly */
 export type GeckoSlice = "js" | "style" | "layout" | "gc" | "idle" | "other";
 
-/** Raw V8 CPU sampling profile, as returned by CDP `Profiler.stop` (`.profile`). */
+/** Raw V8 CPU sampling profile, as returned by CDP `Profiler.stop` (`.profile`) */
 export interface RawCpuProfile {
   nodes: RawProfileNode[];
   startTime: number;
@@ -16,7 +16,7 @@ export interface RawCpuProfile {
   /**
    * Firefox (js,cpu) only: per-sample breakdown data the Gecko converter attaches, parallel to
    * `samples`/`timeDeltas`. Absent on chrome/node (their breakdown reads node classification) and on
-   * firefox dumps with an empty `threadCPUDelta` column (no honest idle signal, so no breakdown).
+   * firefox dumps with an empty `threadCPUDelta` column (no honest idle signal, so no breakdown)
    */
   gecko?: { sampleSlices: GeckoSlice[] };
   /**
@@ -25,7 +25,7 @@ export interface RawCpuProfile {
    * splits, so `startTime + Σ timeDeltas` no longer reconstructs a sample's real clock position; the
    * per-span windowing reads these directly. Absent on the CDP/node/gecko single-stream profiles,
    * where the cumulative reconstruction is exact, and stripped before the raw `.cpuprofile` is written
-   * (it is not part of the DevTools format).
+   * (it is not part of the DevTools format)
    */
   sampleTimestampsUs?: number[];
 }
@@ -47,7 +47,7 @@ export interface RawCallFrame {
   columnNumber: number;
 }
 
-/** Pseudo-frames V8 injects that are not user functions; bucketed, not ranked. */
+/** Pseudo-frames V8 injects that are not user functions; bucketed, not ranked */
 const SYSTEM_FRAMES = new Set(["(idle)", "(program)", "(garbage collector)", "(root)"]);
 
 export function frameKey(callFrame: RawCallFrame): string {
@@ -60,7 +60,7 @@ export function frameKey(callFrame: RawCallFrame): string {
  * A rankable user function, i.e. one that earns an id in `CpuModel.functions[]`. Excludes V8's
  * pseudo-frames ((idle)/(program)/(garbage collector)/(root)) and the tool's own harness frames. The
  * ONE predicate the ranked model and the per-span `functionIdByNode` join both use, so they assign
- * identical ids and a per-span sample cannot land on a phantom function.
+ * identical ids and a per-span sample cannot land on a phantom function
  */
 export function isRankableFrame(callFrame: RawCallFrame): boolean {
   if (SYSTEM_FRAMES.has(callFrame.functionName) && !callFrame.url) return false;
@@ -70,7 +70,7 @@ export function isRankableFrame(callFrame: RawCallFrame): boolean {
 /**
  * The one ranking both CpuModel.functions[] and the per-span hot refs share: rankable frames by
  * self-time descending, key as the tie-break. Function ids ARE positions in this order, so any
- * consumer deriving ids must call this rather than re-sorting.
+ * consumer deriving ids must call this rather than re-sorting
  */
 export function rankedFrameKeys(
   callFrameByKey: Map<string, RawCallFrame>,
@@ -94,7 +94,7 @@ export function rankedFrameKeys(
  * Pure over `raw`: the rank depends only on sample self-time and the frame key, not on source
  * resolution, so this needs neither the sourcemap resolver nor the built model. It re-derives
  * self-time per key rather than sharing `buildCpuModel`'s (both are cheap node walks over the same
- * `raw`), so the join stays a standalone function the record-time projection loop can call directly.
+ * `raw`), so the join stays a standalone function the record-time projection loop can call directly
  */
 export function functionIdByNode(raw: RawCpuProfile): Map<number, number> {
   const selfUsByNode = new Map<number, number>();

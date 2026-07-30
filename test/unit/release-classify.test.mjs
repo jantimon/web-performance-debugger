@@ -5,7 +5,7 @@ import { classifyPublishFailure } from "../../scripts/release.mjs";
 // The release wrapper turns ONE specific `changeset publish` failure into a no-op success: the current
 // version is already on npm, so a no-changeset push to main should not red the release job. Every other
 // failure must still propagate. `classifyPublishFailure(output, currentVersion)` is the pure decision;
-// these fixtures reproduce the real changeset/npm output shapes it reads.
+// these fixtures reproduce the real changeset/npm output shapes it reads
 
 const alreadyPublished = [
   "🦋  info npm info @jantimon/web-performance-debugger",
@@ -27,7 +27,7 @@ test("current version already on npm is a no-op success", () => {
 });
 
 test("the same output does NOT excuse a different current version", () => {
-  // package.json says 1.3.0 but the registry rejected 1.2.0: a real mismatch, not a benign re-run.
+  // package.json says 1.3.0 but the registry rejected 1.2.0: a real mismatch, not a benign re-run
   const verdict = classifyPublishFailure(alreadyPublished, "1.3.0");
   assert.equal(verdict.alreadyPublished, false);
 });
@@ -50,14 +50,14 @@ test("a genuine publish error (no cannot-publish marker) propagates", () => {
 });
 
 test("no failed-packages block means no benign no-op", () => {
-  // A crash before the publish loop leaves no failure list; there is nothing to excuse.
+  // A crash before the publish loop leaves no failure list; there is nothing to excuse
   const early = "🦋  error EACCES: permission denied, open '/home/runner/.npmrc'";
   assert.equal(classifyPublishFailure(early, "1.2.0").alreadyPublished, false);
 });
 
 test("a package failing at another version propagates", () => {
   // The current package is already on npm, but a sibling failed at a different version for a real
-  // reason: not all failures are the current version, so the guard must not swallow it.
+  // reason: not all failures are the current version, so the guard must not swallow it
   const mixed = [
     "🦋  error npm error You cannot publish over the previously published versions: 1.2.0.",
     "🦋  error an error occurred while publishing @jantimon/other: E500 network error",

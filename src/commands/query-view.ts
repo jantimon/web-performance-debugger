@@ -39,15 +39,15 @@ import { shortSource } from "../profile/cpuprofile.js";
 import { MIN_POOLED_HOT_SAMPLES } from "../profile/span-hot.js";
 import { hintTarget } from "./resolve.js";
 // Format selection lives with the verb routing in query.ts; the bar-less overview printer needs it
-// to honor --json/--format, so it is imported back (query.ts imports the printers from here).
+// to honor --json/--format, so it is imported back (query.ts imports the printers from here)
 import type { SpansQuery } from "./query.js";
 import { emit, structuredFormat } from "../output/format.js";
 
-/** How many forced read-sites / thrash writes the human anatomy prints before eliding the rest. */
+/** How many forced read-sites / thrash writes the human anatomy prints before eliding the rest */
 const ANATOMY_FORCED_CAP = 12;
 
 /** A compact navigation marker for a step row in a `query spans` table, "" for none/absent (the
- * common static step, which earns no marker). */
+ * common static step, which earns no marker) */
 function navMarker(navigation: NavigationKind | undefined): string {
   return navigation && navigation !== "none" ? dim(` [nav: ${navigation}]`) : "";
 }
@@ -55,7 +55,7 @@ function navMarker(navigation: NavigationKind | undefined): string {
 /**
  * The step's navigation line for `query span`: the url+timeOrigin classification with its before ->
  * after URLs, then (where present) Chrome's own soft-navigation verdict beside it. The two are
- * independent facts; where they disagree the note states both and picks no winner (model/soft-nav.ts).
+ * independent facts; where they disagree the note states both and picks no winner (model/soft-nav.ts)
  */
 function printStepNavigation(
   navigation: NavigationKind | undefined,
@@ -77,7 +77,7 @@ function printStepNavigation(
   if (verdict.note) console.log(dim(`  engine soft-nav: ${verdict.note}`));
 }
 
-/** The boot-LCP block for `query span` (wall-tier directional, frozen at the first trusted input). */
+/** The boot-LCP block for `query span` (wall-tier directional, frozen at the first trusted input) */
 function printStepLcp(lcp: StepLcp): void {
   if (lcp.suppressed) {
     console.log(
@@ -92,7 +92,7 @@ function printStepLcp(lcp: StepLcp): void {
   const parts: string[] = [];
   if (lcp.size != null) parts.push(`size ${lcp.size}`);
   if (lcp.renderTimeMs != null) parts.push(`render ${num(lcp.renderTimeMs, 1)} ms`);
-  // loadTime is the timing left when renderTime is unavailable (cross-origin without Timing-Allow-Origin).
+  // loadTime is the timing left when renderTime is unavailable (cross-origin without Timing-Allow-Origin)
   else if (lcp.loadTimeMs != null)
     parts.push(
       `load ${num(lcp.loadTimeMs, 1)} ms (no render time: cross-origin, no Timing-Allow-Origin)`,
@@ -101,7 +101,7 @@ function printStepLcp(lcp: StepLcp): void {
   if (parts.length) console.log(dim(`  ${parts.join(" · ")}`));
   // Per-iteration spread: a boot LCP swings run-to-run (field-measured 536ms vs 3644ms on one site),
   // so the single render time above is one sample and the spread is what says whether to trust it. A
-  // miss (an iteration that fired no usable entry) stays null in the series, counted here, never 0.
+  // miss (an iteration that fired no usable entry) stays null in the series, counted here, never 0
   if (lcp.perIteration && lcp.perIteration.length > 1) {
     const misses = lcp.perIteration.filter((value) => value == null).length;
     const missNote = misses ? `; ${misses} iteration(s) fired no entry` : "";
@@ -117,14 +117,14 @@ function printStepLcp(lcp: StepLcp): void {
   if (lcp.className) console.log(dim(`  class ${lcp.className}`));
 }
 
-/** A source's rect move as `[x,y w×h] -> [x,y w×h]`, rounded to whole px (page coordinates). */
+/** A source's rect move as `[x,y w×h] -> [x,y w×h]`, rounded to whole px (page coordinates) */
 function describeRectMove(previousRect: LayoutShiftRect, currentRect: LayoutShiftRect): string {
   const rect = (box: LayoutShiftRect) =>
     `[${num(box.x, 0)},${num(box.y, 0)} ${num(box.width, 0)}x${num(box.height, 0)}]`;
   return `${rect(previousRect)} -> ${rect(currentRect)}`;
 }
 
-/** The CLS block for `query span`: the session-window-max score and the top shifting elements. */
+/** The CLS block for `query span`: the session-window-max score and the top shifting elements */
 function printLayoutShift(layoutShift: LayoutShift): void {
   console.log(
     `\nCLS (boot, spec session-window max; wall-tier directional): ${bold(num(layoutShift.cls, 4))}`,
@@ -151,7 +151,7 @@ function printLayoutShift(layoutShift: LayoutShift): void {
 /**
  * The route-transition block for `query span`: a soft-navigating step's LCP-equivalent, CLS, and worst
  * post-route interaction, all on the ROUTE clock (anchored to the soft nav's startTime), clearly labelled
- * as the route's own numbers and kept distinct from the boot LCP/CLS above. Chrome 151+ only.
+ * as the route's own numbers and kept distinct from the boot LCP/CLS above. Chrome 151+ only
  */
 function printSoftNavRoute(softNav: SoftNavRoute): void {
   const extra = softNav.additionalSoftNavs
@@ -204,7 +204,7 @@ function printSoftNavRoute(softNav: SoftNavRoute): void {
 /**
  * Rejoin a structured read-site (`source` + optional `line`/`column`) into the `file:line:col` cell
  * the forced table shows. The inverse of `splitReadSite`; an absent line/column simply drops off, and a
- * column without a line is dropped (it can only follow a line).
+ * column without a line is dropped (it can only follow a line)
  */
 function readSiteCell(entry: { source: string; line?: number; column?: number }): string {
   const line = entry.line != null ? `:${entry.line}` : "";
@@ -215,7 +215,7 @@ function readSiteCell(entry: { source: string; line?: number; column?: number })
 /**
  * A compact dim suffix naming a forced flush's scope for a blame/forced row's source cell: layout
  * objects relaid out over the document total, elements recalculated, and a contained flush's root.
- * "" when the row carries no scope (the sampled --breakdown/firefox lanes). Chrome --deep only.
+ * "" when the row carries no scope (the sampled --breakdown/firefox lanes). Chrome --deep only
  */
 export function flushScopeSuffix(scope: FlushScope | undefined): string {
   if (!scope) return "";
@@ -230,7 +230,7 @@ export function flushScopeSuffix(scope: FlushScope | undefined): string {
 /**
  * The per-span scope block for `query span`: the layout/style scope distribution beside the counts.
  * A count-tier fact (how much relaid out / recalculated), a DISTRIBUTION not a sum, and never a proxy
- * for the ms. Prints nothing when the capture stored no scope. Firefox carries the style row only.
+ * for the ms. Prints nothing when the capture stored no scope. Firefox carries the style row only
  */
 function printSpanScope(scope: SpanScope): void {
   const rows: string[] = [];
@@ -258,7 +258,7 @@ function printSpanScope(scope: SpanScope): void {
   for (const row of rows) console.log(row);
 }
 
-/** Human report for `query span`: the bar, wall/counts/interaction, forced attribution, hot list. */
+/** Human report for `query span`: the bar, wall/counts/interaction, forced attribution, hot list */
 export function printSpanAnatomy(
   anatomy: SpanAnatomy,
   span: Span,
@@ -269,7 +269,7 @@ export function printSpanAnatomy(
   const count = (value: Measured<number>): string =>
     formatMeasured(value, (measured) => String(measured));
   // Name the framework mode only when it was turned OFF: that is why no React block appears below, even
-  // on a React app. `auto` is the default and the addon block speaks for itself, so it stays unnamed.
+  // on a React app. `auto` is the default and the addon block speaks for itself, so it stays unnamed
   const frameworkTag = meta.framework === "off" ? " · framework off" : "";
   console.log(
     `\nspan ${bold(middleEllipsis(anatomy.label, LABEL_COL_MAX))} ${dim(`(${anatomy.kind} · ${anatomy.target} · ${anatomy.aggregation} of ${anatomy.iterations} iteration(s)${frameworkTag})`)}`,
@@ -286,7 +286,7 @@ export function printSpanAnatomy(
   // number), and a settle-dominated window's width reads as workload unless its idle share sits beside
   // it. The idle tag rides ONLY a span whose wall IS the tiled bar window (idleShareSuffix's contract):
   // a step's headline is the median, not that window, so its idle share stays on the bar's own idle row
-  // (whose header names the iteration-0 window), never beside a median it does not describe.
+  // (whose header names the iteration-0 window), never beside a median it does not describe
   const wallTags: string[] = [];
   const stepMedian = spanWallProvenance(anatomy.kind, span.perIteration?.length ?? 0);
   if (stepMedian) wallTags.push(stepMedian);
@@ -296,7 +296,7 @@ export function printSpanAnatomy(
   }
   // The built-in load flow booted but did near-zero work: it may have measured a consent/region shell
   // in place of the app (the loud meta.notes entry explains). Tag the run line so the reader sees it
-  // where the numbers are, not only in the notes block.
+  // where the numbers are, not only in the notes block
   if (
     anatomy.kind === "run" &&
     looksLikePreAppShell({
@@ -315,7 +315,7 @@ export function printSpanAnatomy(
   // each under the floor all report the floor (a measure floors at one frame, a wait-dominated span at
   // a whole multiple of it, docs/dev/frame-floor.md). Surface the faster sample and the js slice
   // beside it so the floored number is not read as "no difference". The n>= gate lives in
-  // buildSpanAnatomy (frameFloor is set only when the window is frame-dominated).
+  // buildSpanAnatomy (frameFloor is set only when the window is frame-dominated)
   if (anatomy.frameFloor) {
     const floor = anatomy.frameFloor;
     const minMs = span.stats?.minMs ?? span.wallMinMs;
@@ -325,7 +325,7 @@ export function printSpanAnatomy(
     if (anatomy.slices?.js) belowFloor.push(`js ${num(anatomy.slices.js.ms, 1)} ms`);
     const detail = belowFloor.length ? `; sub-frame work reads on ${belowFloor.join(" / ")}` : "";
     // A work-signal floor (a driver step whose wall carries input dispatch) reads as one frame: the
-    // work is sub-frame whatever the wall landed on. A wall-multiple floor names its n frames.
+    // work is sub-frame whatever the wall landed on. A wall-multiple floor names its n frames
     const where =
       floor.basis === "work-signal" || floor.multiple === 1
         ? `the ~${num(floor.floorMs, 1)} ms frame floor`
@@ -333,7 +333,7 @@ export function printSpanAnatomy(
     console.log(dim(`  wall sits on ${where}${detail} (frame-floor.md)`));
   }
 
-  // A driver step's navigation (what its document did) and, on a hard navigation, its boot LCP.
+  // A driver step's navigation (what its document did) and, on a hard navigation, its boot LCP
   printStepNavigation(
     anatomy.navigation,
     anatomy.beforeUrl,
@@ -345,7 +345,7 @@ export function printSpanAnatomy(
   if (anatomy.softNav) printSoftNavRoute(anatomy.softNav);
 
   // The reconciling bar, when the capture mode built one. A stored bar prints the seven-slice per-span
-  // table; a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled).
+  // table; a run span with only the sibling CpuModel bar prints that (four/six slices, honestly labelled)
   if (span.breakdown) printSpanBreakdowns([span], anatomy.iterations, meta.browser, showFrames);
   else if (span.kind === "run" && model?.breakdown) printCpuBreakdown(model, anatomy.iterations);
   else
@@ -369,11 +369,11 @@ export function printSpanAnatomy(
     ),
   );
   // Layout/style scope beside the counts: how much each flush relaid out / recalculated, as a
-  // distribution (never a sum). Present only where the capture stored it (--breakdown / firefox style).
+  // distribution (never a sum). Present only where the capture stored it (--breakdown / firefox style)
   if (anatomy.scope) printSpanScope(anatomy.scope);
   // Firefox forced counts come from the Reflow/Styles markers, and the read that forced each flush is
   // a sampled estimate: a cheap read can be missed, so `query blame --forced` can locate fewer sites
-  // than the count (or none). Say so, so a count with no locatable site is not read as a contradiction.
+  // than the count (or none). Say so, so a count with no locatable site is not read as a contradiction
   const firefoxForced = anatomy.counts.forcedLayoutCount;
   if (meta.browser === "firefox" && firefoxForced != null && firefoxForced > 0)
     console.log(
@@ -387,7 +387,7 @@ export function printSpanAnatomy(
   // above tiles [run:start, run:end] exactly, so its slice ms stop at run:end. A run count can
   // therefore exceed what its bar slice suggests. Step spans are windowed to their own marks and do
   // not have this gap. Firefox is excluded: the gecko lane windows its markers bounded on both sides
-  // and reports paint as not-measured, so the start-onward claim is not true there.
+  // and reports paint as not-measured, so the start-onward claim is not true there
   if (anatomy.kind === "run" && span.breakdown && anatomy.target !== "firefox")
     console.log(
       dim(
@@ -396,9 +396,9 @@ export function printSpanAnatomy(
     );
   // A measure span carries a reconciling bar (real style/layout/paint slice ms) but no counts: counts
   // window to the run/steps, never to an arbitrary user-measure window. Without this the bar's slice
-  // ms beside an all-"—" counts table read as a contradiction. Gated on the rendering slices actually
+  // ms beside an all-"-" counts table read as a contradiction. Gated on the rendering slices actually
   // summing above 0, so an all-idle bar (no style/layout/paint to reconcile against) prints no note
-  // rather than claiming ms it did not measure. Say it, rather than fabricate counts.
+  // rather than claiming ms it did not measure. Say it, rather than fabricate counts
   const renderingSliceMs = span.breakdown
     ? span.breakdown.slices.style.ms +
       span.breakdown.slices.layout.ms +
@@ -429,7 +429,7 @@ export function printSpanAnatomy(
       );
     }
     // A floored INP is the frame boundary, not the interaction's own cost; point at the sub-frame
-    // signal (the processing split above, the js slice) so it is not read as "every tech is equal".
+    // signal (the processing split above, the js slice) so it is not read as "every tech is equal"
     if (anatomy.inpFrameFloor) {
       const { floorMs, multiple } = anatomy.inpFrameFloor;
       const signal = anatomy.interaction
@@ -528,7 +528,7 @@ export function printSpanAnatomy(
           : "in the run window";
     if (hot.suppressed) {
       // pooledSamples 0 must NOT say "raise --iterations": more iterations of an un-sampled window
-      // stay un-sampled. Split by why the pool is empty (see hotSuppressionReason).
+      // stay un-sampled. Split by why the pool is empty (see hotSuppressionReason)
       const message =
         hot.suppressionReason === "not-covered"
           ? `\nHot functions: none — the reconciling bar attributes ${num(anatomy.slices?.js.ms ?? 0, 1)} ms of JS ${where}, but the CPU sampler recorded no samples in it. The V8 profiler resets on each cross-document navigation, so a window that ran before the run's last navigation is not sampled; raising --iterations cannot recover it.`
@@ -562,7 +562,7 @@ export function printSpanAnatomy(
   } else if (span.kind !== "run") {
     const pointer = model ? " Use `query cpu` for the run-window hot list." : "";
     // Firefox drives steps through the one gecko pass, which windows hot samples for measures
-    // only; pointing at --breakdown there would name a flag the lane refuses.
+    // only; pointing at --breakdown there would name a flag the lane refuses
     const remedy =
       anatomy.target === "firefox"
         ? "step spans carry no hot list on firefox; wrap the work in a performance.measure"
@@ -581,7 +581,7 @@ export function printSpanAnatomy(
 /**
  * A compact, clearly-labeled framework-addon block, printed only when an addon attached facts for the
  * span. Factual tone: detection metadata, exact commit counts, the node-lane server-phase rollup, and
- * (dev builds, --deep) the React Performance-Track summary. No editorial. See docs/dev/react-attribution.md.
+ * (dev builds, --deep) the React Performance-Track summary. No editorial. See docs/dev/react-attribution.md
  */
 function printSpanAddons(addons: SpanAddons | undefined): void {
   if (!addons) return;
@@ -590,7 +590,7 @@ function printSpanAddons(addons: SpanAddons | undefined): void {
     const identity: string[] = [];
     // Detection is a RUN-level fact (`detected` is a boolean only on the run span's fact). A step span
     // carries a commit count with no detection result (`detected` undefined), so it must not claim "not
-    // detected" -- that reads as a detection failure when React was plainly detected on the run.
+    // detected" -- that reads as a detection failure when React was plainly detected on the run
     if (react.detected === true) identity.push("detected");
     else if (react.detected === false) identity.push("not detected");
     if (react.version) identity.push(`v${react.version}`);
@@ -628,12 +628,12 @@ function printSpanAddons(addons: SpanAddons | undefined): void {
       `${bold("React tracks")} ${dim("(react-dev addon, dev build)")}: ${dev.total} entries  ${dim(tracks)}`,
     );
     // Per-track ms is each track's own sequential busy time; tracks nest (Components ⚛ inside the
-    // Blocking lane's Render), so there is no honest grand total to lead with.
+    // Blocking lane's Render), so there is no honest grand total to lead with
     console.log(dim("  per-track ms from each entry's start/end; tracks nest, so read per track"));
   }
 }
 
-/** Human report for the stitch: per-member walls, then each panel tagged with its source member. */
+/** Human report for the stitch: per-member walls, then each panel tagged with its source member */
 export function printGroupSpanStitch(stitch: GroupSpanStitch): void {
   const count = (value: Measured<number>): string =>
     formatMeasured(value, (measured) => String(measured));
@@ -744,7 +744,7 @@ export function printGroupSpanStitch(stitch: GroupSpanStitch): void {
   }
 
   // Group-level disclosures (count disagreement across members, partial formation): surface them so a
-  // stitched number is never read as agreed when the members did not.
+  // stitched number is never read as agreed when the members did not
   for (const note of stitch.notes) console.log(dim(`\n${note}`));
 
   if (stitch.hints.length) {
@@ -753,7 +753,7 @@ export function printGroupSpanStitch(stitch: GroupSpanStitch): void {
   }
 }
 
-/** The footer rebuilt from a stitch's `sources` for the human header (no GroupMember handles here). */
+/** The footer rebuilt from a stitch's `sources` for the human header (no GroupMember handles here) */
 function stitchFooterFromSources(stitch: GroupSpanStitch): string {
   const bar = stitch.sources.slices ? `bar+hot from ${stitch.sources.slices}` : "no bar member";
   const counts = stitch.sources.counts ? `counts from ${stitch.sources.counts}` : null;
@@ -762,7 +762,7 @@ function stitchFooterFromSources(stitch: GroupSpanStitch): string {
   return `${bar}, ${rest}. Walls are per member, never combined.`;
 }
 
-/** Print a UnifiedSlices bar (js/style/layout/paint/gc/other/idle), Measured-honest (— for not-measured). */
+/** Print a UnifiedSlices bar (js/style/layout/paint/gc/other/idle), Measured-honest (- for not-measured) */
 function printUnifiedSlices(slices: UnifiedSlices): void {
   const rows: [string, number | null, string][] = [
     ["js", slices.js.ms, ""],
@@ -788,7 +788,7 @@ function printUnifiedSlices(slices: UnifiedSlices): void {
 }
 
 /** One dim line disclosing how many spans --min-wall/--filter hid, so a filtered view is never
- * mistaken for the whole recording. Silent when the filter hid nothing. */
+ * mistaken for the whole recording. Silent when the filter hid nothing */
 export function printSpanFilterNote(hidden: number): void {
   if (hidden > 0)
     console.log(dim(`\n  ${hidden} span(s) hidden by --min-wall/--filter (drop them to see all).`));
@@ -797,7 +797,7 @@ export function printSpanFilterNote(hidden: number): void {
 /**
  * One subtle line naming the framework identity the overview detected (React version + build), so a
  * bulk `query spans` reader sees it without drilling. Silent when no row carries addon facts. The full
- * per-span facts (commit counts, server phases) live in `query span`.
+ * per-span facts (commit counts, server phases) live in `query span`
  */
 export function printSpansReactMarker(entries: { addons?: SpanOverviewAddons }[]): void {
   const react = entries.map((entry) => entry.addons?.react).find((fact) => fact != null);
@@ -813,7 +813,7 @@ export function printSpansReactMarker(entries: { addons?: SpanOverviewAddons }[]
  * (default) built no per-span bar for, or a step that navigated cross-document in a
  * --breakdown recording. Listed by wall + INP rather than dropped from the overview; slices/counts are
  * not on these rows, so the table stays to what is real (wall, aggregation, INP). `hint` names WHY the
- * rows have no bar (it differs by capture mode), so a --breakdown user is not told to run --breakdown.
+ * rows have no bar (it differs by capture mode), so a --breakdown user is not told to run --breakdown
  */
 export function printBarlessStepRows(spans: SpanCountsEntry[], hint: string): void {
   console.log(`\nspans without a bar ${dim(`(${hint})`)}\n`);
@@ -837,7 +837,7 @@ export function printBarlessStepRows(spans: SpanCountsEntry[], hint: string): vo
  * `query spans` on a bar-less recording (default/--deep): the overview it CAN render
  * honestly -- label/kind/wall/aggregation and the Measured rendering counts -- with the reconciling
  * bar shown as not-measured. --deep leads with its exact counts here; the default mode
- * carries only the wall (counts —). Never a fabricated all-zero bar.
+ * carries only the wall (counts -). Never a fabricated all-zero bar
  */
 export async function printBarlessSpans(
   overview: SpanCountsOverview,
@@ -849,7 +849,7 @@ export async function printBarlessSpans(
   const label = query.label;
   const selected = label ? overview.spans.filter((span) => span.label === label) : overview.spans;
   // A null-wall span (a navigating step on a no-trace capture mode) is honest, not sub-threshold: only a
-  // MEASURED wall below --min-wall hides. --filter matches the label the usual way.
+  // MEASURED wall below --min-wall hides. --filter matches the label the usual way
   const passes = (span: SpanCountsEntry): boolean => {
     const needle = query.filter?.toLowerCase();
     if (needle && !span.label.toLowerCase().includes(needle)) return false;

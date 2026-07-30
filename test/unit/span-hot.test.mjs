@@ -11,14 +11,14 @@ import { syntheticProfile } from "./helpers.mjs";
 // The per-span hot tally is a pure function (samples + windows -> top-K refs). These pin the
 // load-bearing behaviours: the CPU-sampler scripting axis (never the bar's js slice), MEASURE-only
 // pooling across occurrences, the pooled + per-function floors, the Σ selfMs <= window wall invariant,
-// and the deterministic tie-break. Fixtures use a 200us interval and a ts space shared with windows.
+// and the deterministic tie-break. Fixtures use a 200us interval and a ts space shared with windows
 
 const INTERVAL_US = 200;
 const sample = (ts, functionId) => ({ ts, functionId });
 
 test("tallySpanHot pools across measure occurrences and ranks by pooled sample count", () => {
   // Two occurrence windows; fn 0 appears in both, fn 1 in one. A null-function sample and an
-  // out-of-window sample never count.
+  // out-of-window sample never count
   const samples = [
     sample(10, 0), sample(15, 0), sample(20, 0), sample(25, 0), sample(30, 0), sample(40, 1),
     sample(210, 0), sample(220, 0), sample(230, 1), sample(240, 1),
@@ -55,7 +55,7 @@ test("tallySpanHot suppresses the ranked list below the pooled floor, keeping th
 });
 
 test("tallySpanHot drops functions below the per-function floor even when the pool clears", () => {
-  // fn0 x8, fn1 x2 (below 3), fn2 x3 -> pooled 13 clears the floor; fn1 is dropped from the list.
+  // fn0 x8, fn1 x2 (below 3), fn2 x3 -> pooled 13 clears the floor; fn1 is dropped from the list
   const samples = [
     ...Array.from({ length: 8 }, (_unused, index) => sample(index * 5, 0)),
     sample(100, 1), sample(105, 1),
@@ -76,7 +76,7 @@ test("tallySpanHot tie-breaks equal sample counts by ascending id (stable)", () 
 });
 
 test("tallySpanHot honours the Σ selfMs <= window wall invariant, never <= the bar's js slice", () => {
-  // 10 samples spaced one interval apart inside a window exactly 10 intervals wide.
+  // 10 samples spaced one interval apart inside a window exactly 10 intervals wide
   const samples = Array.from({ length: 10 }, (_unused, index) => sample(index * INTERVAL_US, 0));
   const windowUs = 10 * INTERVAL_US;
   const hot = tallySpanHot(samples, [{ startTs: 0, endTs: windowUs }], "measure-pooled", INTERVAL_US);
@@ -86,7 +86,7 @@ test("tallySpanHot honours the Σ selfMs <= window wall invariant, never <= the 
 });
 
 test("tallySpanHot caps the stored list at topK", () => {
-  // 12 distinct functions, each above the per-function floor.
+  // 12 distinct functions, each above the per-function floor
   const samples = [];
   for (let functionId = 0; functionId < 12; functionId++)
     for (let repeat = 0; repeat < 4; repeat++) samples.push(sample(functionId * 100 + repeat, functionId));
@@ -98,7 +98,7 @@ test("tallySpanHot caps the stored list at topK", () => {
 test("tallySpanHot merges out-of-order and overlapping windows so an overlap never double-counts", () => {
   // Windows given out of order and overlapping: [200,300] and [0,150] and [100,250]. Merged they
   // cover [0,300] as one disjoint span. A sample at ts 120 sits in the [0,150]/[100,250] overlap and
-  // must count exactly ONCE, exactly as a membership `some()` over the raw windows counts it once.
+  // must count exactly ONCE, exactly as a membership `some()` over the raw windows counts it once
   const samples = [
     sample(10, 0), sample(120, 0), sample(140, 0), sample(160, 0), sample(180, 0),
     sample(210, 0), sample(230, 1), sample(250, 1), sample(270, 1), sample(290, 1),
@@ -111,7 +111,7 @@ test("tallySpanHot merges out-of-order and overlapping windows so an overlap nev
   ];
   const hot = tallySpanHot(samples, outOfOrderOverlapping, "measure-pooled", INTERVAL_US);
 
-  // Cross-check against the pre-optimization semantics: a membership test over the RAW windows.
+  // Cross-check against the pre-optimization semantics: a membership test over the RAW windows
   const bySome = samples.filter(
     (candidate) =>
       candidate.functionId != null &&
@@ -126,7 +126,7 @@ test("tallySpanHot merges out-of-order and overlapping windows so an overlap nev
 // The join is the feature's correctness hinge: a stored ref's id must index the EXACT function the
 // resolved CpuModel ranks, or the panel names the wrong code. functionIdByNode reproduces
 // buildCpuModel's rank (pure over raw), so this asserts the two agree, including under recursion
-// (alpha appears at two nodes -> one id).
+// (alpha appears at two nodes -> one id)
 test("functionIdByNode assigns the same ids buildCpuModel's functions[] carry", async () => {
   const raw = syntheticProfile();
   const model = await buildCpuModel(raw, {
@@ -138,7 +138,7 @@ test("functionIdByNode assigns the same ids buildCpuModel's functions[] carry", 
   });
   const ids = functionIdByNode(raw);
 
-  // model.functions: beta (self 2.0) id 0, alpha (self 1.5) id 1.
+  // model.functions: beta (self 2.0) id 0, alpha (self 1.5) id 1
   const betaId = model.functions.findIndex((fn) => fn.fn === "beta");
   const alphaId = model.functions.findIndex((fn) => fn.fn === "alpha");
   assert.equal(ids.get(3), betaId, "node 3 (beta) joins to beta's model id");
@@ -146,7 +146,7 @@ test("functionIdByNode assigns the same ids buildCpuModel's functions[] carry", 
   assert.equal(ids.get(4), alphaId, "the recursed alpha node joins to the SAME id");
   for (const systemNode of [1, 5, 6])
     assert.ok(!ids.has(systemNode), "(root)/(idle)/(garbage collector) earn no id, never a phantom");
-  // Every joined id resolves to a real function name matching the node's frame.
+  // Every joined id resolves to a real function name matching the node's frame
   assert.equal(model.functions[ids.get(3)].fn, "beta");
   assert.equal(model.functions[ids.get(2)].fn, "alpha");
 });

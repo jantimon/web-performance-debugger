@@ -10,14 +10,14 @@ import ts from "typescript";
 // type by name instead of copying its shape. tsc erases types at runtime, so this walks the EMITTED
 // declarations with the TypeScript compiler API: it resolves every type reference reachable from a
 // root export and fails if any reference that resolves to one of OUR OWN declarations is not itself a
-// root export. A dropped or forgotten re-export is caught here, not by a consumer's red build.
-//
+// root export. A dropped or forgotten re-export is caught here, not by a consumer's red build
+
 // Design (why a compiler-API walk, not a regex or a hand-maintained list): the set of transitively
 // referenced types drifts as the shapes evolve, so a hardcoded list rots. The checker resolves each
 // reference to its declaration symbol, which distinguishes our types (under dist/) from lib/global
 // types (Record, Partial, node_modules) and from type parameters, with no dependency beyond the
 // TypeScript already used to build. The walk is a worklist over declaration symbols (visited-guarded),
-// so one run reports the COMPLETE set of missing exports, not just the first hop.
+// so one run reports the COMPLETE set of missing exports, not just the first hop
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(here, "..", "..", "dist");
@@ -25,7 +25,7 @@ const entry = path.join(distDir, "index.d.ts");
 
 /** Is this symbol declared in OUR built output (dist/), as opposed to a lib/global or node_modules
  * type? lib.d.ts and installed packages live under node_modules, so a dist/ path that is not inside
- * node_modules is ours. */
+ * node_modules is ours */
 function isOwnType(symbol) {
   const declarations = symbol.declarations ?? [];
   return declarations.some((declaration) => {
@@ -35,7 +35,7 @@ function isOwnType(symbol) {
 }
 
 /** Does this symbol declare a TYPE (interface / type alias / enum / class), the thing the promise
- * covers? A value-only export (a const, a function) is not part of the type surface. */
+ * covers? A value-only export (a const, a function) is not part of the type surface */
 function declaresType(symbol) {
   const declarations = symbol.declarations ?? [];
   return declarations.some(
@@ -47,19 +47,19 @@ function declaresType(symbol) {
   );
 }
 
-/** Resolve a symbol through re-export aliases to the symbol that actually declares the type. */
+/** Resolve a symbol through re-export aliases to the symbol that actually declares the type */
 function resolveAlias(checker, symbol) {
   return symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
 }
 
-/** Collect every type-reference entity name and heritage expression under a declaration node. */
+/** Collect every type-reference entity name and heritage expression under a declaration node */
 function collectReferencedNames(node, out) {
   if (ts.isTypeReferenceNode(node)) out.push(node.typeName);
   else if (ts.isExpressionWithTypeArguments(node)) out.push(node.expression);
   ts.forEachChild(node, (child) => collectReferencedNames(child, out));
 }
 
-/** The rightmost identifier of a possibly-qualified entity name (`A.B` -> `B`). */
+/** The rightmost identifier of a possibly-qualified entity name (`A.B` -> `B`) */
 function rightmostName(entityName) {
   return ts.isQualifiedName(entityName) ? entityName.right : entityName;
 }
@@ -79,7 +79,7 @@ test("every type referenced by a public export is itself exported from the packa
   const moduleSymbol = checker.getSymbolAtLocation(indexFile);
   assert.ok(moduleSymbol, "index.d.ts has no module symbol");
 
-  // The root exports, resolved through their re-export aliases to the real declaration symbols.
+  // The root exports, resolved through their re-export aliases to the real declaration symbols
   const exportedSymbols = checker.getExportsOfModule(moduleSymbol);
   const exportedTargets = new Set();
   const exportedNames = new Set();
@@ -95,11 +95,11 @@ test("every type referenced by a public export is itself exported from the packa
   // parameter/return/annotation type nodes are roots too. Walking only type-declaring exports would
   // miss a type reachable ONLY through a function signature (WaitForStableOptions passes today by luck
   // of a manual re-export, not because the walk reaches it). Each missing reference is recorded once
-  // (by name); traversal continues through it so one run is complete.
+  // (by name); traversal continues through it so one run is complete
   //
   // The extension is proven to bite: with WaitForStableOptions removed from the export set, the OLD
   // type-only seed does NOT reach it (would pass), while this all-exports seed DOES flag it missing --
-  // reached through `waitForStable(options: WaitForStableOptions)`'s parameter type.
+  // reached through `waitForStable(options: WaitForStableOptions)`'s parameter type
   const exportedTypeTargets = [...exportedTargets].filter(declaresType);
   const worklist = [];
   const visited = new Set(exportedTypeTargets);
@@ -129,7 +129,7 @@ test("every type referenced by a public export is itself exported from the packa
   }
 
   // Seed from EVERY export (value + type); the exported types are pre-visited so their bodies walk
-  // exactly once here and are never redundantly re-drained.
+  // exactly once here and are never redundantly re-drained
   for (const exportedTarget of exportedTargets) walkDeclarations(exportedTarget.declarations);
   while (worklist.length > 0) walkDeclarations(worklist.pop().declarations);
 

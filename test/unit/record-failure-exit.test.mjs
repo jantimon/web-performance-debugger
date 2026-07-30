@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 // A record failure must exit non-zero so CI and scripts can detect it. The --target node lane imports
 // and profiles run() in-process (no browser), so a module that throws in run() reproduces a real
-// record failure browser-free and fast, without needing Chrome.
+// record failure browser-free and fast, without needing Chrome
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const cli = path.join(root, "dist", "cli.js");
 const badModule = path.join(root, "test", "fixtures", "throws-in-run.mjs");
@@ -28,7 +28,7 @@ test("a record failure exits non-zero", () => {
 test("the cause leads and the last stderr line names the actual error (not a bare debug hint)", () => {
   const result = runRecord();
   // A caller that reads only the final stderr line must still see the cause. The hint trails on the
-  // same line as the cause, so the last non-empty line names the real error, never just "(set WPD_DEBUG=1 ...)".
+  // same line as the cause, so the last non-empty line names the real error, never just "(set WPD_DEBUG=1 ...)"
   const lines = result.stderr.split("\n").filter((line) => line.trim().length > 0);
   const lastLine = lines[lines.length - 1];
   assert.match(lastLine, /record failed:/, "the cause leads the last line");
@@ -50,7 +50,7 @@ test("WPD_DEBUG surfaces the error stack, not just the one-line message", () => 
 test("the non-zero exit does not depend on Node's --unhandled-rejections policy", () => {
   // The record catch resolves rather than rejecting, so this re-confirms it under a policy env where a
   // silent 0 would be the failure mode: a wrapper or CI that sets --unhandled-rejections=warn must
-  // still read a non-zero code, or it cannot catch a broken record.
+  // still read a non-zero code, or it cannot catch a broken record
   const result = runRecord({ NODE_OPTIONS: "--unhandled-rejections=warn" });
   assert.equal(result.status, 1, "policy-independent non-zero exit");
 });

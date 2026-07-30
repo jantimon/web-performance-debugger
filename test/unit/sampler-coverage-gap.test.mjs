@@ -9,19 +9,19 @@ import { SourceMapResolver } from "../../dist/trace/sourcemap.js";
 // samples over a window that should have caught >= 2). On --breakdown the samples come from the trace's
 // v8.cpu_profiler stream, which is continuous across navigation, so this is the fallback for a window
 // the stream genuinely produced no sample for (or a profile shape the merge could not populate), NOT
-// the per-navigation reset the CDP sampler had. See notes.samplerCoverageGap.
+// the per-navigation reset the CDP sampler had. See notes.samplerCoverageGap
 //
 // Clocks are microseconds on the trace axis (events) and the profile axis (raw), which share
 // base::TimeTicks, so a sample's absolute ts = startTime + Σ timeDeltas is directly comparable to a
 // span window. sampleIntervalUs 1000 => intervalMs 1, so the >= 2-expected-samples threshold is
-// js.ms >= 2.
+// js.ms >= 2
 const INTERVAL_US = 1000;
 const MAIN_PID = 100;
 const MAIN_TID = 200;
 
 // One driver step "boot", window [0, 30ms], carrying 10ms of real JS (a FunctionCall) on the main
 // thread. run:start on the same thread with in-window layout so mainThread() resolves via marker (no
-// heuristic note), keeping the note set to samplerCoverageGap alone.
+// heuristic note), keeping the note set to samplerCoverageGap alone
 function stepEvents() {
   const on = (event) => ({ ...event, pid: MAIN_PID, tid: MAIN_TID });
   return [
@@ -47,7 +47,7 @@ const RUN_WINDOW = { startTs: 0, endTs: 100000 };
 
 // A 12-sample profile of one rankable user frame (node: url keeps resolution fully offline). The only
 // difference between the two cases is startTime, which slides the whole sample block relative to the
-// step window: after it (the sampler never reached the step) vs. inside it (the sampler covered it).
+// step window: after it (the sampler never reached the step) vs. inside it (the sampler covered it)
 function rawProfile(startTime) {
   const root = { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 };
   const appfn = { functionName: "appfn", scriptId: "1", url: "node:app", lineNumber: 0, columnNumber: 0 };
@@ -78,7 +78,7 @@ const isCoverageGap = (note) =>
 
 test("buildBreakdowns: a step the sampler never reached pushes exactly one samplerCoverageGap note", async () => {
   // First sample lands at 41ms (startTime 40ms + first 1ms delta), well past the step's [0,30ms]
-  // window, so the step's pooled hot samples are 0 while its bar still shows 10ms of js.
+  // window, so the step's pooled hot samples are 0 while its bar still shows 10ms of js
   const notes = [];
   const breakdowns = await buildBreakdowns(
     stepEvents(),
@@ -102,7 +102,7 @@ test("buildBreakdowns: a step the sampler never reached pushes exactly one sampl
 test("buildBreakdowns: zero recorded samples still fires the note and prices the gap off the profiler origin", async () => {
   // No samples at all (an extreme reset): every span has 0 pooled samples while the step bar still
   // shows 10ms of trace-measured js. The gap must be priced off the profiler's origin (startTime
-  // 40ms => ~40ms into the [0,100ms] run window), not clamped to ~0 by using the run window start.
+  // 40ms => ~40ms into the [0,100ms] run window), not clamped to ~0 by using the run window start
   const notes = [];
   const emptyProfile = { ...rawProfile(40000), samples: [], timeDeltas: [] };
   const breakdowns = await buildBreakdowns(
@@ -123,7 +123,7 @@ test("buildBreakdowns: zero recorded samples still fires the note and prices the
 
 test("buildBreakdowns: a step the sampler DID cover pushes no samplerCoverageGap note", async () => {
   // Same profile, startTime 0: the 12 samples now fall at 1..12ms, inside the step's [0,30ms] window,
-  // so the sampler covered it and there is no gap to disclose.
+  // so the sampler covered it and there is no gap to disclose
   const notes = [];
   const breakdowns = await buildBreakdowns(
     stepEvents(),

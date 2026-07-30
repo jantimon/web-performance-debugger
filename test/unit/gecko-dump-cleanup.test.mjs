@@ -15,7 +15,7 @@ function dumpFile(contents) {
 
 // B-09: the Firefox lane writes a large temp dump the caller later copies to the artifact. A parse
 // failure (a truncated/corrupt dump, or a profile missing the JavaScript category) must not leave
-// that 16MB+ temp behind.
+// that 16MB+ temp behind
 test("readGeckoDump: a corrupt dump throws and removes the temp file", async () => {
   const file = dumpFile("{ this is not valid json");
   await assert.rejects(readGeckoDump(file));
@@ -24,7 +24,7 @@ test("readGeckoDump: a corrupt dump throws and removes the temp file", async () 
 
 test("readGeckoDump: a structurally-invalid dump (no JavaScript category) throws and removes the temp file", async () => {
   // parseGecko throws on a profile with no JavaScript category / empty thread list rather than emit a
-  // fake-zero model; that failure must still clear the temp.
+  // fake-zero model; that failure must still clear the temp
   const file = dumpFile(JSON.stringify({ meta: { interval: 1, categories: [] }, threads: [] }));
   await assert.rejects(readGeckoDump(file));
   assert.ok(!existsSync(file), "the temp dump was removed on the structural failure");

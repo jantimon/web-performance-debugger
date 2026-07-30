@@ -6,7 +6,7 @@ import { driverStep } from "./helpers.mjs";
 
 // The two honest signals a heavy --deep trace can raise: buffer overflow (data loss) and a partial
 // --keep-partial run. Both must disclose loudly; neither may report a silent, plausible-but-wrong
-// number. See docs/dev/trace-buffer.md.
+// number. See docs/dev/trace-buffer.md
 
 test("traceDataLoss note names the dropped-count risk and the remedy", () => {
   const note = notesCatalog.traceDataLoss();
@@ -32,13 +32,13 @@ test("partialIterations note handles a failure between steps (no active step)", 
 });
 
 // mergeSteps hard-errors on a step/window divergence. When the divergence is KNOWN to be a trace
-// overflow (Chrome reported data loss), the message must say so outright, not also blame idempotency.
+// overflow (Chrome reported data loss), the message must say so outright, not also blame idempotency
 test("mergeSteps: a divergence under known data loss blames the overflow, not the flow", () => {
   const timing = [driverStep(0, "search"), driverStep(1, "open-product"), driverStep(2, "add-to-cart")];
   const traced = [
     { label: "search", startTs: 100, endTs: 200 },
     { label: "open-product", startTs: 300, endTs: 400 },
-    // add-to-cart's marker was dropped by the overflow.
+    // add-to-cart's marker was dropped by the overflow
   ];
   assert.throws(
     () => mergeSteps(timing, traced, true),

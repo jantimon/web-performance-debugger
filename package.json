@@ -28,8 +28,8 @@
   "scripts": {
     "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc",
-    "lint": "oxlint src",
-    "lint:fix": "oxlint src --fix",
+    "lint": "oxlint src test scripts examples",
+    "lint:fix": "oxlint src test scripts examples --fix",
     "format": "oxfmt --write \"src/**/*.ts\" \"examples/**/*.mjs\"",
     "format:check": "oxfmt --check \"src/**/*.ts\" \"examples/**/*.mjs\"",
     "knip": "knip --no-config-hints --no-tag-hints",

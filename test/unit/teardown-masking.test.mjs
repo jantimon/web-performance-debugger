@@ -7,7 +7,7 @@ import { recordNode } from "../../dist/runtime/node.js";
 // B-10: when the user's flow throws AND a teardown step (the cleanup hook) also throws, the primary
 // run error must be the one that surfaces so the caller debugs their workload, not teardown. The
 // teardown failure is attached as `cause`, never substituted. The --target node lane runs run() +
-// cleanup() in-process (no browser), so a dual failure is reproducible and fast here.
+// cleanup() in-process (no browser), so a dual failure is reproducible and fast here
 const badModule = path.join(
   fileURLToPath(new URL("../..", import.meta.url)),
   "test",

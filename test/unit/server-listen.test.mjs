@@ -10,11 +10,11 @@ const tempRoot = () => mkdtempSync(path.join(os.tmpdir(), "wpd-server-listen-"))
 
 // B-05: a listen failure (EADDRINUSE/EPERM on the loopback bind) fires an asynchronous 'error' event,
 // not a throw from listen(). It must surface as a REJECTED promise (so record's normal `record
-// failed:` path reports it and exits 1), never an uncaught 'error' that crashes the process.
+// failed:` path reports it and exits 1), never an uncaught 'error' that crashes the process
 test("startStaticServer: a listen failure rejects (not an uncaught 'error'), naming the cause", async () => {
   const originalListen = net.Server.prototype.listen;
   // Force the bind to fail the way the OS would: emit 'error' asynchronously and never call the
-  // listen callback. Without the server's own 'error' listener this would be an uncaught exception.
+  // listen callback. Without the server's own 'error' listener this would be an uncaught exception
   net.Server.prototype.listen = function patchedListen() {
     queueMicrotask(() =>
       this.emit(
@@ -33,7 +33,7 @@ test("startStaticServer: a listen failure rejects (not an uncaught 'error'), nam
   }
 });
 
-// The happy path is unchanged: it resolves to a loopback server that closes cleanly.
+// The happy path is unchanged: it resolves to a loopback server that closes cleanly
 test("startStaticServer: a successful listen resolves to a loopback server and closes cleanly", async () => {
   const server = await startStaticServer(tempRoot());
   assert.ok(server.url.startsWith("http://127.0.0.1:"), "binds loopback");

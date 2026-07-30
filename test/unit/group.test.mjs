@@ -20,7 +20,7 @@ import {
 import { resolveConsumption, writePointer } from "../../dist/commands/resolve.js";
 import { SCHEMA_VERSION } from "../../dist/schema.js";
 
-// A minimal RecordingMeta with the axes comparabilityMismatches reads; `over` tweaks one arm.
+// A minimal RecordingMeta with the axes comparabilityMismatches reads; `over` tweaks one arm
 const meta = (over = {}) => ({
   tool: "wpd",
   version: "0",
@@ -54,7 +54,7 @@ const group = (modes) => ({
 
 test("formationVerdict: a differing capture mode joins; a differing gating axis refuses", () => {
   // breakdown reference, deep joining: only the capture mode (and the sampler interval) differ. The
-  // mode is the group's purpose, so it does not refuse; the interval annotates rather than blocks.
+  // mode is the group's purpose, so it does not refuse; the interval annotates rather than blocks
   const verdict = formationVerdict(meta(), meta({ capture: "deep", cpuIntervalUs: 200 }), [
     { mode: "breakdown" },
   ]);
@@ -64,7 +64,7 @@ test("formationVerdict: a differing capture mode joins; a differing gating axis 
     "a sampler-interval difference annotates",
   );
 
-  // A differing gating axis (iterations) refuses.
+  // A differing gating axis (iterations) refuses
   const refused = formationVerdict(meta(), meta({ capture: "deep", iterations: 3 }), [
     { mode: "breakdown" },
   ]);
@@ -80,13 +80,13 @@ test("formationVerdict: a duplicate (mode, variant) pair is refused", () => {
     verdict.refusals.some((reason) => reason.includes("duplicate member")),
     "a second breakdown member is a duplicate, not a second question",
   );
-  // Same mode, DIFFERENT variant is allowed (future cross-variant groups stay legal).
+  // Same mode, DIFFERENT variant is allowed (future cross-variant groups stay legal)
   const distinct = formationVerdict(
     meta({ variant: "b" }),
     meta({ capture: "breakdown", variant: "b2" }),
     [{ mode: "breakdown", variant: "b" }],
   );
-  // variant differs -> a gating refusal (variant blocks), but NOT the duplicate refusal.
+  // variant differs -> a gating refusal (variant blocks), but NOT the duplicate refusal
   assert.ok(
     !distinct.refusals.some((reason) => reason.includes("duplicate member")),
     "a different variant is not a duplicate",
@@ -104,7 +104,7 @@ test("pickMember: routes each axis to the member that measures it", () => {
 
   // A breakdown-only group has no deep member: BLAME (the read-site) falls back to the breakdown member
   // (it carries the sampled read-site blame), but the forced COUNT and the WRITE set (dirtied/thrash)
-  // stay deep-only -> nobody.
+  // stay deep-only -> nobody
   const barOnly = group(["breakdown"]);
   assert.equal(pickMember(barOnly, "blame").mode, "breakdown", "blame falls back to breakdown (sampled read-site)");
   assert.equal(pickMember(barOnly, "forced"), null, "no deep member -> no forced COUNT (assert --max-forced)");
@@ -112,18 +112,18 @@ test("pickMember: routes each axis to the member that measures it", () => {
   assert.equal(pickMember(barOnly, "thrash"), null, "no deep member -> no thrash");
   assert.equal(pickMember(barOnly, "counts").mode, "breakdown", "counts fall back to breakdown");
 
-  // With both members, blame/forced still prefer the exact deep member over the sampled breakdown one.
+  // With both members, blame/forced still prefer the exact deep member over the sampled breakdown one
   assert.equal(pickMember(both, "dirtied").mode, "deep", "dirtied -> deep only");
   assert.equal(pickMember(both, "thrash").mode, "deep", "thrash -> deep only");
 
-  // A deep-only group has no CPU-bearing member: cpu/bar route to nobody.
+  // A deep-only group has no CPU-bearing member: cpu/bar route to nobody
   const deepOnly = group(["deep"]);
   assert.equal(pickMember(deepOnly, "cpu"), null, "deep runs no sampler -> no cpu answer");
   assert.equal(pickMember(deepOnly, "slice-bar"), null, "deep builds no bar");
   assert.equal(pickMember(deepOnly, "forced").mode, "deep", "forced -> deep");
 
   // A firefox gecko member carries the event log (markers + sampled read-site blame) AND CPU samples,
-  // so a single-member gecko group answers blame, counts, cpu, and the bar from that one pass.
+  // so a single-member gecko group answers blame, counts, cpu, and the bar from that one pass
   const gecko = group(["gecko"]);
   assert.equal(pickMember(gecko, "blame").mode, "gecko", "a plain gecko member answers blame");
   assert.equal(pickMember(gecko, "forced").mode, "gecko", "and forced");
@@ -162,17 +162,17 @@ test("artifact gates keep group manifests and old recordings apart", () => {
   const validGroup = { meta: { schemaVersion: SCHEMA_VERSION, kind: "run-group" }, members: [] };
   const validRecording = { meta: { schemaVersion: SCHEMA_VERSION }, spans: [] };
 
-  // assertGroupArtifact accepts a manifest, rejects a recording.
+  // assertGroupArtifact accepts a manifest, rejects a recording
   assertGroupArtifact(validGroup, "g.group.json");
   assert.throws(() => assertGroupArtifact(validRecording, "r.json"), /not a run-group manifest/);
 
   // assertRecordingArtifact rejects a manifest with a helpful message, and keeps accepting a recording
-  // (including an OLD one with no meta.kind).
+  // (including an OLD one with no meta.kind)
   assert.throws(() => assertRecordingArtifact(validGroup, "g.group.json"), /is a run-group manifest/);
   assertRecordingArtifact(validRecording, "r.json");
   assertRecordingArtifact({ meta: { schemaVersion: SCHEMA_VERSION }, spans: [] }, "old.json");
 
-  // A wrong schema still fails first, for both kinds.
+  // A wrong schema still fails first, for both kinds
   assert.throws(() => assertGroupArtifact({ meta: { schemaVersion: "2", kind: "run-group" }, members: [] }, "g"), /unreadable artifact/);
 });
 
@@ -180,7 +180,7 @@ test("schema-epoch guidance points the right way: re-record vs upgrade vs neutra
   const older = String(Number.parseInt(SCHEMA_VERSION, 10) - 1);
   const newer = String(Number.parseInt(SCHEMA_VERSION, 10) + 1);
 
-  // An OLDER artifact re-records under this build.
+  // An OLDER artifact re-records under this build
   assert.throws(
     () => assertSchemaVersion(older, "old.json"),
     (error) =>
@@ -188,7 +188,7 @@ test("schema-epoch guidance points the right way: re-record vs upgrade vs neutra
     "an older epoch says re-record",
   );
 
-  // A NEWER artifact means the reader is behind: upgrade, never re-record (that discards evidence).
+  // A NEWER artifact means the reader is behind: upgrade, never re-record (that discards evidence)
   assert.throws(
     () => assertSchemaVersion(newer, "new.json"),
     (error) =>
@@ -198,7 +198,7 @@ test("schema-epoch guidance points the right way: re-record vs upgrade vs neutra
     "a newer epoch says upgrade, and never re-record",
   );
 
-  // An absent or unparseable version cannot be ordered: neutral wording, no older/newer claim.
+  // An absent or unparseable version cannot be ordered: neutral wording, no older/newer claim
   for (const unorderable of [undefined, "draft"]) {
     assert.throws(
       () => assertSchemaVersion(unorderable, "weird.json"),
@@ -213,11 +213,11 @@ test("schema-epoch guidance points the right way: re-record vs upgrade vs neutra
 
 test("resolveConsumption: filename detection for explicit paths, pointer.group for latest", async () => {
   // Explicit paths: a .group.json is a group, anything else is a recording (so a member path always
-  // resolves to the recording, per the maintainer-locked rule).
+  // resolves to the recording, per the maintainer-locked rule)
   assert.equal((await resolveConsumption("out/perf.group.json")).kind, "group");
   assert.equal((await resolveConsumption("out/run.json")).kind, "recording");
 
-  // `latest` resolves to the group iff the pointer carries one; a subsequent non-group pointer clears it.
+  // `latest` resolves to the group iff the pointer carries one; a subsequent non-group pointer clears it
   const stateHome = mkdtempSync(path.join(tmpdir(), "wpd-state-"));
   const workDir = mkdtempSync(path.join(tmpdir(), "wpd-cwd-"));
   const prevXdg = process.env.XDG_STATE_HOME;
@@ -232,7 +232,7 @@ test("resolveConsumption: filename detection for explicit paths, pointer.group f
     assert.equal(group.kind, "group", "latest -> group when the pointer has one");
     assert.equal(group.path, manifest);
 
-    // A later non-group record writes a pointer WITHOUT group, which clears it.
+    // A later non-group record writes a pointer WITHOUT group, which clears it
     await writePointer({ recording });
     const rec = await resolveConsumption("latest");
     assert.equal(rec.kind, "recording", "a non-group record clears the group pointer");
@@ -245,7 +245,7 @@ test("resolveConsumption: filename detection for explicit paths, pointer.group f
 });
 
 test("partialGroupNotes: reflects current counts while incomplete, silent once complete", () => {
-  // Requested breakdown+deep, only breakdown present: one loud note naming the gap AND the recovery.
+  // Requested breakdown+deep, only breakdown present: one loud note naming the gap AND the recovery
   const incomplete = partialGroupNotes("perf", ["breakdown", "deep"], ["breakdown"]);
   assert.equal(incomplete.length, 1, "an incomplete group carries one partial note");
   assert.ok(incomplete[0].includes("1 of 2"), "the note reflects the CURRENT counts");
@@ -255,17 +255,17 @@ test("partialGroupNotes: reflects current counts while incomplete, silent once c
     "and the exact recovery command",
   );
 
-  // Once the missing member records, the note is GONE -- state, never a stored failure narrative.
+  // Once the missing member records, the note is GONE -- state, never a stored failure narrative
   assert.deepEqual(
     partialGroupNotes("perf", ["breakdown", "deep"], ["breakdown", "deep"]),
     [],
     "a complete group carries no partial note",
   );
-  // An ad-hoc --group group requested nothing, so it is complete-by-construction: never partial.
+  // An ad-hoc --group group requested nothing, so it is complete-by-construction: never partial
   assert.deepEqual(partialGroupNotes("perf", [], ["breakdown"]), [], "no requested set => no note");
 });
 
-// Write a manifest to a fresh temp dir and return its path, for the preflight tests.
+// Write a manifest to a fresh temp dir and return its path, for the preflight tests
 const writeManifest = (over = {}) => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
   const manifest = {
@@ -297,7 +297,7 @@ const writeManifest = (over = {}) => {
 
 test("preflightGroup: a name that only sanitize-collides refuses with BOTH names", async () => {
   // Stored "perf app", requested "perf-app": both fold to perf-app.group.json, so a join would merge
-  // two distinct groups. Refuse, naming both so the collision is legible.
+  // two distinct groups. Refuse, naming both so the collision is legible
   const manifestPath = writeManifest({ meta: { name: "perf app" }, modes: ["breakdown"] });
   await assert.rejects(
     preflightGroup(manifestPath, "json", "perf-app", [{ mode: "deep" }]),
@@ -327,7 +327,7 @@ test("preflightGroup: a duplicate on a COMPLETE group refuses, naming the rename
 
 test("preflightGroup: a duplicate on a PARTIAL group names the exact missing-members command", async () => {
   // breakdown present, deep still missing (requested both). Re-running breakdown is a duplicate, but
-  // the recovery must point at the member that is actually missing.
+  // the recovery must point at the member that is actually missing
   const manifestPath = writeManifest({ requested: ["breakdown", "deep"], modes: ["breakdown"] });
   await assert.rejects(
     preflightGroup(manifestPath, "json", "perf", [{ mode: "breakdown" }]),
@@ -338,14 +338,14 @@ test("preflightGroup: a duplicate on a PARTIAL group names the exact missing-mem
 
 test("preflightGroup: no manifest and a non-duplicate member both pass silently", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
-  // No manifest yet (first formation): nothing to conflict with.
+  // No manifest yet (first formation): nothing to conflict with
   await preflightGroup(path.join(dir, "perf.group.json"), "json", "perf", [{ mode: "breakdown" }]);
-  // An existing group, a genuinely new member: no refusal.
+  // An existing group, a genuinely new member: no refusal
   const manifestPath = writeManifest({ requested: ["breakdown"], modes: ["breakdown"] });
   await preflightGroup(manifestPath, "json", "perf", [{ mode: "deep" }]);
 });
 
-// A minimal on-disk recording for a member, so appendMember can read its meta + run-span counts.
+// A minimal on-disk recording for a member, so appendMember can read its meta + run-span counts
 const recordingFor = (mode) => ({
   meta: meta({ capture: mode }),
   window: { measure: "wpd:run", startTs: null, endTs: null, wallMs: null },
@@ -372,7 +372,7 @@ test("appendMember: a partial group's stale note is GONE once the missing member
       requested,
     });
 
-  // First member: the group is partial (deep still missing), so it carries the structural note.
+  // First member: the group is partial (deep still missing), so it carries the structural note
   writeMember("breakdown");
   await append("breakdown");
   let manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -383,7 +383,7 @@ test("appendMember: a partial group's stale note is GONE once the missing member
     "while incomplete the note reflects the current counts and names the gap",
   );
 
-  // Recovery: the missing member records. The partial note is REMOVED (present state, not history).
+  // Recovery: the missing member records. The partial note is REMOVED (present state, not history)
   writeMember("deep");
   await append("deep");
   manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -398,7 +398,7 @@ test("appendMember: a name that only sanitize-collides is refused, naming both n
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
   const manifestPath = path.join(dir, "perf-app.group.json");
   writeFileSync(path.join(dir, "breakdown.json"), JSON.stringify(recordingFor("breakdown")));
-  // Form the group under the stored name "perf app".
+  // Form the group under the stored name "perf app"
   await appendMember({
     name: "perf app",
     manifestPath,
@@ -408,7 +408,7 @@ test("appendMember: a name that only sanitize-collides is refused, naming both n
     runCounts: {},
   });
   writeFileSync(path.join(dir, "deep.json"), JSON.stringify(recordingFor("deep")));
-  // A second record whose --group "perf-app" folds to the same filename must refuse, not silently join.
+  // A second record whose --group "perf-app" folds to the same filename must refuse, not silently join
   await assert.rejects(
     appendMember({
       name: "perf-app",
@@ -425,7 +425,7 @@ test("appendMember: a name that only sanitize-collides is refused, naming both n
 
 test("preflightGroup: refuses a member whose --out lands on an existing member's recording", async () => {
   // An existing member 'breakdown' stored at breakdown.json; a second record with a DIFFERENT mode but
-  // the SAME --out would overwrite it, leaving two manifest entries pointing at one file.
+  // the SAME --out would overwrite it, leaving two manifest entries pointing at one file
   const manifestPath = writeManifest({ modes: ["breakdown"] });
   const dir = path.dirname(manifestPath);
   await assert.rejects(
@@ -437,10 +437,10 @@ test("preflightGroup: refuses a member whose --out lands on an existing member's
       /--members/.test(error.message),
     "the out-path refusal names the clobbered member and both fixes",
   );
-  // A distinct --out for the new member passes silently.
+  // A distinct --out for the new member passes silently
   await preflightGroup(manifestPath, "json", "perf", [{ mode: "default" }], path.join(dir, "default.json"));
   // A SAME-mode re-record to the same --out is a duplicate, not an out-path collision: the apter D1
-  // message wins (the out-path check runs only after the duplicate check clears).
+  // message wins (the out-path check runs only after the duplicate check clears)
   await assert.rejects(
     preflightGroup(manifestPath, "json", "perf", [{ mode: "breakdown" }], path.join(dir, "breakdown.json")),
     (error) => /already holds/.test(error.message) && !/overwrite that member/.test(error.message),
@@ -461,7 +461,7 @@ test("appendMember: refuses a second member that would overwrite the first membe
     meta: meta({ capture: "breakdown" }),
     runCounts: {},
   });
-  // A second, different-mode member pointed at the SAME --out (its file already clobbered on disk).
+  // A second, different-mode member pointed at the SAME --out (its file already clobbered on disk)
   writeFileSync(shared, JSON.stringify(recordingFor("default")));
   await assert.rejects(
     appendMember({
@@ -475,7 +475,7 @@ test("appendMember: refuses a second member that would overwrite the first membe
     (error) => /overwrite that member/.test(error.message) && error.message.includes("breakdown"),
     "the primitive refuses a second member overwriting the first member's recording",
   );
-  // The manifest still holds only the first member (the refusal left it untouched).
+  // The manifest still holds only the first member (the refusal left it untouched)
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   assert.equal(manifest.members.length, 1, "the refused append added no member");
 });
@@ -483,7 +483,7 @@ test("appendMember: refuses a second member that would overwrite the first membe
 test("loadMemberRecording: refuses a member file overwritten by another capture mode", async () => {
   // The manifest records this member as 'breakdown', but the file on disk is a 'default' capture (a
   // second record clobbered it via a shared --out). Consumption must fail loudly, not route a verb to
-  // a mode it did not measure and return silently-undefined slices.
+  // a mode it did not measure and return silently-undefined slices
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-grp-"));
   const manifestPath = path.join(dir, "perf.group.json");
   const member = { mode: "breakdown", recording: "shared.json", createdAt: "", annotations: [] };

@@ -3,10 +3,12 @@ import { usToMs } from "../model/time.js";
 
 export const LONG_TASK_MS = 50;
 
-// Window membership is start-onward by design: in-page paints land asynchronously
-// AFTER the run:end mark (during the settle flush), so a hard upper bound would drop
-// them. Post-run pollution (cleanup/teardown) is instead kept out of the traced region
-// entirely (see harness phases / driver cleanup deferral).
+/**
+ * Window membership is start-onward by design: in-page paints land asynchronously
+ * AFTER the run:end mark (during the settle flush), so a hard upper bound would drop
+ * them. Post-run pollution (cleanup/teardown) is instead kept out of the traced region
+ * entirely (see harness phases / driver cleanup deferral)
+ */
 export const inWindow = (event: NormalizedEvent, start: number | null) =>
   start == null || event.ts >= start;
 
@@ -14,7 +16,7 @@ export const inWindow = (event: NormalizedEvent, start: number | null) =>
  * Mark layout/style events that were forced synchronously by JS. The browser only
  * attaches a JS stack to a Layout/UpdateLayoutTree when script triggered it mid-task
  * (reading offsetTop etc.); natural frame-boundary layout has no stack. So:
- * layout/style kind + a resolvable user stack = forced.
+ * layout/style kind + a resolvable user stack = forced
  */
 export function markForced(events: NormalizedEvent[]): void {
   for (const event of events) {
@@ -30,7 +32,7 @@ export interface ForcedGroup {
    * Id of the widest (max-duration) flush at this line, the representative for the blame -> `query
    * get` drill. Absent when no flush here carries a real, addressable id: the chrome `--breakdown`
    * sampled read-site log synthesizes every event with id 0, so those rows carry no id (never a fake
-   * one). See representativeEventId.
+   * one). See representativeEventId
    */
   eventId?: number;
 }
@@ -45,7 +47,7 @@ export interface ForcedGroup {
  * not addressable by `query get`, so such an event is never eligible to be the representative and a
  * row of only-sampled events yields no id. Every trace-parsed (chrome --deep) or gecko-reassigned
  * (firefox) event carries a real ts-order id, including firefox's own sampled read-site events, whose
- * ids are reassigned; only the synthesized id-0 case is excluded.
+ * ids are reassigned; only the synthesized id-0 case is excluded
  */
 export function representativeEventId(events: NormalizedEvent[]): number | undefined {
   let widest: NormalizedEvent | undefined;
@@ -56,7 +58,7 @@ export function representativeEventId(events: NormalizedEvent[]): number | undef
   return widest?.id;
 }
 
-/** Forced (synchronous) layout/style grouped by source location. */
+/** Forced (synchronous) layout/style grouped by source location */
 export function forcedLayouts(events: NormalizedEvent[], start: number | null): ForcedGroup[] {
   const groups = new Map<string, { at: string; events: NormalizedEvent[] }>();
   for (const event of events) {

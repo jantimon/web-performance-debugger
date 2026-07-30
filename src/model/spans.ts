@@ -2,7 +2,7 @@
 // `SpanBreakdown` and the four/six-slice `CpuModel.breakdown`) into ONE unified per-span shape, so a
 // cross-engine consumer joins on `label` without special-casing the engine. This is an OUTPUT
 // adapter only: it never mutates or re-stores a recording, so old artifacts keep loading and yield
-// spans from whatever they hold.
+// spans from whatever they hold
 
 import type {
   Breakdown,
@@ -34,12 +34,12 @@ import {
   type WallMultipleFloor,
 } from "./frame-floor.js";
 
-/** Whatever a frame-floor check needs off the recording meta (the lane's headless flavour + browser). */
+/** Whatever a frame-floor check needs off the recording meta (the lane's headless flavour + browser) */
 type FloorMeta = Pick<RecordingMeta, "headless" | "browser">;
 
 /** A bar's idle share of its own tiled window, the wait signal an elevated frame-floor multiple gates
  * on. null on a zero-width window or a hand-built bar with no `idle` slice (only the diff/assert path,
- * which passes no meta, hits the latter). */
+ * which passes no meta, hits the latter) */
 function barIdleShare(wallMs: number, idle: { ms: number } | undefined): number | null {
   return wallMs > 0 && idle != null ? idle.ms / wallMs : null;
 }
@@ -50,7 +50,7 @@ function barIdleShare(wallMs: number, idle: { ms: number } | undefined): number 
  * (frame-floor.md). `undefined` when the wall is real work, `meta` is absent, or the lane declares no
  * floor. The detector for a bench/in-page/measure wall and a bar-less row; a driver STEP with a bar
  * goes through `barFrameFloor` instead (its wall carries input dispatch, so the bar's work signal, not
- * the wall value, is the honest test).
+ * the wall value, is the honest test)
  */
 function overviewFrameFloor(
   wallMs: number | null | undefined,
@@ -64,7 +64,7 @@ function overviewFrameFloor(
 
 /**
  * The summed main-thread real-work slices (js+style+layout+paint+gc), skipping a not-measured slice
- * (firefox paint is off-main-thread). The sub-frame work signal a driver step's frame floor reads.
+ * (firefox paint is off-main-thread). The sub-frame work signal a driver step's frame floor reads
  */
 function workSliceSumMs(slices: BreakdownSlices): number {
   return slices.js.ms + slices.style.ms + slices.layout.ms + (slices.paint?.ms ?? 0) + slices.gc.ms;
@@ -75,7 +75,7 @@ function workSliceSumMs(slices: BreakdownSlices): number {
  * by its bar's work signal (its wall carries ~8ms of trusted-click input dispatch, so it lands off any
  * exact n*floor; docs/dev/driver-timing.md); a run/measure span is timed in-page with no such offset,
  * so its wall-multiple reading is correct and stays. INP and bar-less rows are judged by
- * `matchedFrameFloor` directly (they carry no bar).
+ * `matchedFrameFloor` directly (they carry no bar)
  */
 export function barFrameFloor(
   kind: SpanKind,
@@ -98,7 +98,7 @@ export function barFrameFloor(
  * recurred (`samples > 1`) reports the lower-median-by-wall occurrence, so `"median"`; a single
  * occurrence stays `"first"`. At `iterations === 1` the labels coincide, but the per-kind label stays
  * the truthful description of what the numbers are. Single source of truth for the adapter and the
- * human printers.
+ * human printers
  */
 export function spanAggregation(kind: SpanKind, samples?: number): SpanAggregation {
   if (kind === "run") return "sum";
@@ -110,7 +110,7 @@ export function spanAggregation(kind: SpanKind, samples?: number): SpanAggregati
  * Split a `kind:label` qualifier (`run:`, `step:`, `measure:`) off a span selector, or null for a
  * bare label. Only the three span kinds qualify; a label that itself begins `foo:` is not one and
  * stays a bare label. Span identity is kind+label, so this is how a caller disambiguates a bare label
- * that collides across kinds (e.g. a user `performance.measure` literally named "run").
+ * that collides across kinds (e.g. a user `performance.measure` literally named "run")
  */
 export function parseSpanKindLabel(raw: string): { kind: SpanKind; label: string } | null {
   const colon = raw.indexOf(":");
@@ -125,7 +125,7 @@ export function parseSpanKindLabel(raw: string): { kind: SpanKind; label: string
  * Resolve a span selector -- a `kind:label` qualifier or a bare label -- to ONE span, honoring span
  * identity = kind+label. A bare label matching more than one kind throws, listing the qualified
  * forms, rather than silently joining whichever comes first (the collision a user measure named "run"
- * would otherwise cause with the run span). Returns null when nothing matches.
+ * would otherwise cause with the run span). Returns null when nothing matches
  */
 export function resolveSpanSelector(spans: SpanEntry[], selector: string): SpanEntry | null {
   const qualifier = parseSpanKindLabel(selector);
@@ -148,7 +148,7 @@ export function resolveSpanSelector(spans: SpanEntry[], selector: string): SpanE
  * The engine lane a recording was produced on -- the `--target` axis, "chrome" | "firefox" |
  * "node". Derived from `meta.browser` + the workload lane (only the node lane runs in-process), NOT
  * from `meta.target` (which holds the recorded module/url/html path, a different thing). Absent
- * browser/workload => the chrome default.
+ * browser/workload => the chrome default
  */
 export function recordingLane(meta: Pick<RecordingMeta, "browser" | "workload">): TargetLane {
   if (recordingRuntime(meta) === "node") return "node";
@@ -158,7 +158,7 @@ export function recordingLane(meta: Pick<RecordingMeta, "browser" | "workload">)
 
 /** Superset slices from a stored seven-slice `Breakdown` (chrome, or firefox measure spans). On
  * firefox `paint` is not-measured (off-main-thread) and stays null; read slices through `sliceMs`,
- * never bare `.ms`. */
+ * never bare `.ms` */
 function slicesFromBreakdown(breakdown: Breakdown): UnifiedSlices {
   const { js, style, layout, paint, gc, other, idle } = breakdown.slices;
   return { js, style, layout, paint, gc, other, idle };
@@ -166,7 +166,7 @@ function slicesFromBreakdown(breakdown: Breakdown): UnifiedSlices {
 
 /** Superset slices from a `CpuModel.breakdown`. `style`/`layout` are present only on the firefox
  * six-slice bar (null on the node four-slice), `paint` is not a concept this bar carries (always
- * null), and `browser` is the unified `other`. Not-measured is an explicit null, never a fake 0. */
+ * null), and `browser` is the unified `other`. Not-measured is an explicit null, never a fake 0 */
 function slicesFromCpuBreakdown(cpu: CpuBreakdown): UnifiedSlices {
   return {
     js: cpu.slices.js,
@@ -179,7 +179,7 @@ function slicesFromCpuBreakdown(cpu: CpuBreakdown): UnifiedSlices {
   };
 }
 
-/** A stored span that carries a reconciling bar (its `breakdown` is present). */
+/** A stored span that carries a reconciling bar (its `breakdown` is present) */
 type BarSpan = Span & { breakdown: NonNullable<Span["breakdown"]> };
 
 /**
@@ -187,7 +187,7 @@ type BarSpan = Span & { breakdown: NonNullable<Span["breakdown"]> };
  * spans` overview row. Only the identity facts a bulk consumer reads without drilling; commitCount and
  * the server-phase rollup stay in the `query span` drill (SpanAnatomy.addons). `undefined` when the
  * span carried no react facts or neither identity field resolved, so a non-React overview row stays
- * addon-free.
+ * addon-free
  */
 function overviewAddons(addons: SpanAddons | undefined): SpanOverviewAddons | undefined {
   const react = addons?.react;
@@ -201,10 +201,10 @@ function overviewAddons(addons: SpanAddons | undefined): SpanOverviewAddons | un
 
 /** Project a stored span onto the bar-less counts row (`query spans` overview when no bar covers it):
  * wall/aggregation/index + Measured counts + INP, no slices. Shared by `buildSpanCounts` (the
- * all-bar-less overview) and `buildSpans` (the bar-less step/measure rows alongside a run bar). */
+ * all-bar-less overview) and `buildSpans` (the bar-less step/measure rows alongside a run bar) */
 function spanCountsEntry(span: Span, meta?: FloorMeta): SpanCountsEntry {
   // A bar-less row has no idle split, so pass a null wait share: only a sub-frame (single-frame) wall
-  // is tagged, never a multi-frame one (which needs the wait signal only a bar would carry).
+  // is tagged, never a multi-frame one (which needs the wait signal only a bar would carry)
   const frameFloor = overviewFrameFloor(span.wallMs, null, meta);
   const addons = overviewAddons(span.addons);
   return {
@@ -230,11 +230,11 @@ function entryFromSpan(span: BarSpan, iterations: number, meta?: FloorMeta): Spa
   // window as `windowMs` so the slices still reconcile against the window they tile. A
   // run/measure span's wall IS its bar window (the whole-loop run window, the merged measure
   // occurrence), so those report `breakdown.wallMs` and the slices reconcile to `wallMs` directly. Fall
-  // back to the bar window only when a step's median is unpriceable (a navigating step, wallMs null).
+  // back to the bar window only when a step's median is unpriceable (a navigating step, wallMs null)
   const isStep = span.kind === "step";
   const wallMs = isStep ? (span.wallMs ?? span.breakdown.wallMs) : span.breakdown.wallMs;
   // Judge the floor off the bar: a step by its work signal (its wall carries input dispatch), a
-  // run/measure by its wall value against the bar's idle share (matching the `query span` detail).
+  // run/measure by its wall value against the bar's idle share (matching the `query span` detail)
   const frameFloor = barFrameFloor(span.kind, wallMs, span.breakdown, meta);
   const addons = overviewAddons(span.addons);
   return {
@@ -243,18 +243,18 @@ function entryFromSpan(span: BarSpan, iterations: number, meta?: FloorMeta): Spa
     wallMs,
     ...(isStep ? { windowMs: span.breakdown.wallMs } : {}),
     // Derived from kind + occurrence count, identical to the `aggregation` buildRecordingSpans stored;
-    // deriving here keeps a hand-built bar (no stored aggregation) legible too.
+    // deriving here keeps a hand-built bar (no stored aggregation) legible too
     aggregation: spanAggregation(span.kind, span.samples),
     iterations,
     // A bar-carrying span still measured its exact rendering counts (chrome --breakdown windows
     // layout/style/paint; firefox measure spans window what the gecko markers gave): project them onto
     // the overview verbatim so `null` keeps meaning not-measured, never not-projected. The counts a
-    // consumer would otherwise have to drill each span for.
+    // consumer would otherwise have to drill each span for
     counts: span.counts,
     slices: slicesFromBreakdown(span.breakdown),
     ...(span.frames ? { frames: span.frames } : {}),
     ...(span.breakdown.residualMs != null ? { residualMs: span.breakdown.residualMs } : {}),
-    // Disclosure of a merged `measure` bar; absent (single occurrence) leaves an old-shape entry.
+    // Disclosure of a merged `measure` bar; absent (single occurrence) leaves an old-shape entry
     ...(span.samples != null ? { samples: span.samples } : {}),
     ...(span.wallMinMs != null ? { wallMinMs: span.wallMinMs } : {}),
     ...(span.wallMaxMs != null ? { wallMaxMs: span.wallMaxMs } : {}),
@@ -289,7 +289,7 @@ function runEntryFromCpuBreakdown(
     // The stored run span's counts, threaded through the synthesized entry so the overview reports
     // what the recording measured (firefox layout/style marker counts) rather than dropping them with
     // the run row. Default-chrome and node have no trace here, so those stay not-measured (null),
-    // never a fabricated 0.
+    // never a fabricated 0
     counts: counts ?? notMeasuredSpanCounts(),
     slices: slicesFromCpuBreakdown(cpu),
     ...(cpu.residualMs != null ? { residualMs: cpu.residualMs } : {}),
@@ -304,7 +304,7 @@ function runEntryFromCpuBreakdown(
  * `CpuModel.breakdown` so the verb never comes back empty when any bar exists. Returns null when the
  * recording holds neither (an old recording, or a sampler-off capture mode like --deep),
  * which the caller turns into a non-zero error. `iterations` (the recording's `meta.iterations`) is stamped on
- * every entry alongside its `aggregation`, so a consumer can read what a span's numbers represent.
+ * every entry alongside its `aggregation`, so a consumer can read what a span's numbers represent
  */
 export function buildSpans(
   spans: Span[] | undefined,
@@ -316,7 +316,7 @@ export function buildSpans(
   // Only spans the capture mode built a reconciling bar for carry slices; a step/run in the default or
   // --deep capture mode has counts but no bar, so it is not a `query spans` entry (the CpuModel run bar is the
   // fallback below). buildRecordingSpans always emits at least the run span, so `spans.length` alone
-  // is not the test -- a bar must be present.
+  // is not the test -- a bar must be present
   const barSpans = (spans ?? []).filter((span): span is BarSpan => span.breakdown != null);
   const barlessSpans = (spans ?? []).filter((span) => span.breakdown == null);
   const withBarless = (rows: SpanCountsEntry[]): { barlessSpans?: SpanCountsEntry[] } =>
@@ -327,12 +327,12 @@ export function buildSpans(
       source: "breakdowns",
       spans: barSpans.map((span) => entryFromSpan(span, iterations, meta)),
       // A step (or navigating span) with no bar of its own still belongs in the overview; carry it
-      // bar-less so the run/steps/measures listing stays complete.
+      // bar-less so the run/steps/measures listing stays complete
       ...withBarless(barlessSpans.map((span) => spanCountsEntry(span, meta))),
     };
   // The synthesized run entry carries no stored span of its own, so lift the stored run span's addon
   // facts (React detection rides the run span) AND its exact counts onto it, so a default/node/firefox
-  // overview still surfaces framework identity and whatever counts the recording measured.
+  // overview still surfaces framework identity and whatever counts the recording measured
   const runStored = (spans ?? []).find((span) => span.kind === "run");
   if (cpuBreakdown)
     return {
@@ -348,7 +348,7 @@ export function buildSpans(
         ),
       ],
       // The synthesized run bar stands in for the stored `run` span (which has no bar in this
-      // capture), so drop the run row here; the driver steps have no bar at all and must still show.
+      // capture), so drop the run row here; the driver steps have no bar at all and must still show
       ...withBarless(
         barlessSpans
           .filter((span) => span.kind !== "run")
@@ -358,13 +358,11 @@ export function buildSpans(
   return null;
 }
 
-// --- query spans: the bar-less counts overview ---
-
 /**
  * The `query spans` overview for a bar-less recording: counts + wall per span, no reconciling bar at
  * this capture. A separate shape from `SpansResult` on purpose -- a bar-less span has no honest
  * `slices`, so it carries `counts` (Measured, null = not-measured) instead of a fabricated all-zero
- * bar.
+ * bar
  */
 export interface SpanCountsOverview {
   target: TargetLane;
@@ -380,7 +378,7 @@ export interface SpanCountsOverview {
  * Project a recording's stored spans onto the bar-less counts overview -- what `query spans` shows
  * honestly when no reconciling bar was captured, so the documented overview -> drill flow works on a
  * --deep recording (its richest attribution) rather than refusing it. Returns null only when the
- * recording carries no spans at all (an empty artifact).
+ * recording carries no spans at all (an empty artifact)
  */
 export function buildSpanCounts(
   spans: Span[] | undefined,
@@ -397,12 +395,10 @@ export function buildSpanCounts(
   };
 }
 
-// --- query spans: filtering the overview ---
-
 /**
  * How `query spans` narrows a flooded overview. A production tag manager can emit hundreds of tiny
  * `performance.measure` spans that bury the run/steps/app measures; these two knobs cut the noise.
- * Both are optional and combine with AND. Read-only: filtering never mutates or re-stores a recording.
+ * Both are optional and combine with AND. Read-only: filtering never mutates or re-stores a recording
  */
 export interface SpanFilterOptions {
   /** hide spans whose wall is below this many ms (the sub-N-ms tracking noise) */
@@ -411,7 +407,7 @@ export interface SpanFilterOptions {
   labelIncludes?: string;
 }
 
-/** The kept spans plus how many the filter removed. `hidden` is always disclosed, never a silent cut. */
+/** The kept spans plus how many the filter removed. `hidden` is always disclosed, never a silent cut */
 export interface FilteredSpans {
   spans: SpanEntry[];
   hidden: number;
@@ -420,7 +416,7 @@ export interface FilteredSpans {
 /**
  * Whether one span survives the filter. Shared by the unified `query spans` view and its human bar
  * table so both hide exactly the same spans. An empty/absent `labelIncludes` matches everything; a
- * span whose wall equals `minWallMs` is kept (the threshold is a floor, not a strict cut).
+ * span whose wall equals `minWallMs` is kept (the threshold is a floor, not a strict cut)
  */
 export function spanPassesFilter(
   label: string,
@@ -433,18 +429,16 @@ export function spanPassesFilter(
   return true;
 }
 
-/** Apply `spanPassesFilter` across the unified entries, returning the survivors and the hidden count. */
+/** Apply `spanPassesFilter` across the unified entries, returning the survivors and the hidden count */
 export function filterSpanEntries(spans: SpanEntry[], filter: SpanFilterOptions): FilteredSpans {
   const kept = spans.filter((span) => spanPassesFilter(span.label, span.wallMs, filter));
   return { spans: kept, hidden: spans.length - kept.length };
 }
 
-// --- Slice reading: the vocabulary and ms accessor `assert --max-slice` and `diff` share ---
-
 /**
  * The seven unified slice names, in the reconciling bar's order (js first, idle last). This is the
  * valid vocabulary for `--max-slice <name>=<ms>` and the axis `diff` walks per matched span, so a
- * slice budget and a slice delta read the SAME shape `query spans` reports.
+ * slice budget and a slice delta read the SAME shape `query spans` reports
  */
 export const SLICE_NAMES = ["js", "style", "layout", "paint", "gc", "other", "idle"] as const;
 export type SliceName = (typeof SLICE_NAMES)[number];
@@ -456,22 +450,20 @@ export function isSliceName(name: string): name is SliceName {
 /**
  * The ms of one unified slice, honoring the Measured contract (model/measured.ts): a slice the lane
  * did not observe is `null` (never a fabricated 0), so a gate treats it as not-measured and a diff
- * refuses to invent a delta. A measured 0 stays 0, distinct from not-measured.
+ * refuses to invent a delta. A measured 0 stays 0, distinct from not-measured
  */
 export function sliceMs(slices: UnifiedSlices, slice: SliceName): Measured<number> {
   const value = slices[slice];
   return value == null ? null : value.ms;
 }
 
-// --- assert: per-slice budgets ---
-
-/** A slice->ms budget map parsed from repeated `--max-slice`. ms is wall-tier (~1%), directional. */
+/** A slice->ms budget map parsed from repeated `--max-slice`. ms is wall-tier (~1%), directional */
 export type SliceBudgets = Partial<Record<SliceName, number>>;
 
 /**
  * Parse repeated `--max-slice <name>=<ms>` entries into a budget map. Throws on a malformed entry or
  * an unknown slice name (the CLI surfaces it as a usage error listing the valid names). ms may be
- * fractional: a slice budget is a wall-tier directional gate, not a count.
+ * fractional: a slice budget is a wall-tier directional gate, not a count
  */
 export function parseSliceBudgets(entries: string[]): SliceBudgets {
   const budgets: SliceBudgets = {};
@@ -490,7 +482,7 @@ export function parseSliceBudgets(entries: string[]): SliceBudgets {
   return budgets;
 }
 
-/** One budget's verdict against the target span. `measured: false` is a loud FAIL, never a pass. */
+/** One budget's verdict against the target span. `measured: false` is a loud FAIL, never a pass */
 export interface SliceGateResult {
   target: string;
   slice: SliceName;
@@ -506,7 +498,7 @@ export interface SliceGateResult {
  * Gate a target span's slice ms against per-slice budgets. The target defaults to the run span;
  * `label` picks another by label. A budget on a slice the recording did not measure -- or on a label
  * that is not present -- is a loud FAIL (Measured contract: "cannot evaluate" is not "within
- * budget"), never a silent skip. Budgets are walked in insertion order (the order they were passed).
+ * budget"), never a silent skip. Budgets are walked in insertion order (the order they were passed)
  */
 export function gateSliceBudgets(
   spans: SpanEntry[] | null,
@@ -514,7 +506,7 @@ export function gateSliceBudgets(
   label: string,
 ): SliceGateResult[] {
   // Span identity is kind+label: resolve on both, so a `--label` collision (a user measure named
-  // "run" alongside the run span) is a loud error listing the qualified forms, never a silent join.
+  // "run" alongside the run span) is a loud error listing the qualified forms, never a silent join
   const span = spans ? resolveSpanSelector(spans, label) : null;
   const results: SliceGateResult[] = [];
   for (const [sliceKey, max] of Object.entries(budgets) as [SliceName, number][]) {
@@ -558,9 +550,7 @@ export function gateSliceBudgets(
   return results;
 }
 
-// --- diff: per-span slice deltas ---
-
-/** One slice's delta across two recordings. `delta` is null unless BOTH sides measured the slice. */
+/** One slice's delta across two recordings. `delta` is null unless BOTH sides measured the slice */
 export interface SliceDelta {
   slice: SliceName;
   base: number | null;
@@ -569,7 +559,7 @@ export interface SliceDelta {
   delta: number | null;
 }
 
-/** The per-span slice-delta section of a diff: matched spans, plus the labels present on one side only. */
+/** The per-span slice-delta section of a diff: matched spans, plus the labels present on one side only */
 export interface SpanSliceDiff {
   spans: { label: string; slices: SliceDelta[] }[];
   unmatchedBaseline: string[];
@@ -580,7 +570,7 @@ export interface SpanSliceDiff {
  * Match spans by label across two recordings and compute per-slice ms deltas. Advisory only: slice
  * ms is wall-tier (~1%), so these are directional, never a gate. A slice not measured on one side
  * yields a null delta (never a fabricated regression, per the Measured contract). Labels present on
- * only one side are reported, not errors.
+ * only one side are reported, not errors
  */
 export function diffSpanSlices(
   baseSpans: SpanEntry[] | null,
@@ -589,7 +579,7 @@ export function diffSpanSlices(
   const base = baseSpans ?? [];
   const current = currentSpans ?? [];
   // Join on kind+label, span identity: a user `performance.measure` named "run" must not collide with
-  // the run span. The displayed label is the qualified `kind:label` so a collision is visible.
+  // the run span. The displayed label is the qualified `kind:label` so a collision is visible
   const spanKey = (span: SpanEntry): string => `${span.kind}:${span.label}`;
   const currentByKey = new Map(current.map((span) => [spanKey(span), span]));
   const baseKeys = new Set(base.map(spanKey));

@@ -15,34 +15,34 @@ import type {
  * A step's trace window keyed by label instead of index. The one pass produces both the step
  * timings (wall/INP) and, when it captures a trace, the step windows; re-keying to the label is what
  * lets `mergeSteps` group a label's per-iteration samples (a repeated "mount" is samples, not a
- * collision), since a label recurs every iteration while its index does not.
+ * collision), since a label recurs every iteration while its index does not
  */
 export interface LabelledWindow {
   label: string;
   /** which timed iteration produced this window; only iteration 0 is used for counts/blame.
    * Optional for hand-built windows, where absent is read as 0. A prepare() step is iteration 0
-   * too (it runs once, before the loop), so this filter keeps its window without a phase of its own. */
+   * too (it runs once, before the loop), so this filter keeps its window without a phase of its own */
   iteration?: number;
   startTs: number;
   endTs: number | null;
 }
 
-/** A step merged across iterations: label/timing from the driver-side samples, window from the trace. */
+/** A step merged across iterations: label/timing from the driver-side samples, window from the trace */
 export interface MergedStep {
   index: number;
   label: string;
   /**
    * This step's wall for every timed iteration, in iteration order. Length 1 unless --iterations
    * repeated the flow. Raw samples, not just the aggregate: a median hides the bimodality that
-   * says "the first iteration was cold", which is usually the finding.
+   * says "the first iteration was cold", which is usually the finding
    */
   perIteration: number[];
   /** the median of `perIteration`; identical to the single sample when there is only one. Null when
-   * no iteration could be priced (a navigating step in a no-trace capture mode; see DriverStep.wallMs). */
+   * no iteration could be priced (a navigating step in a no-trace capture mode; see DriverStep.wallMs) */
   wallMs: number | null;
   /** the clock every walled sample shares: "trace" only when ALL are trace-priced; a single
    * page-clock sample (a lost step-end mark in one iteration) degrades the label to "page", since a
-   * median over mixed clocks reconciles with nothing. Absent when wallMs is null. */
+   * median over mixed clocks reconciles with nothing. Absent when wallMs is null */
   wallClock?: "trace" | "page";
   inpMs: number | null;
   /** each part medianed across the iterations that measured an interaction; null if none did */
@@ -50,13 +50,13 @@ export interface MergedStep {
   /**
    * Long Animation Frames from the FIRST timed iteration (Chrome only), matching the per-step counts
    * windowing: LoAF frames carry script attribution that cannot be medianed like a scalar, so the
-   * step reports iteration 0's frames rather than a synthetic merge. Absent when none were observed.
+   * step reports iteration 0's frames rather than a synthetic merge. Absent when none were observed
    */
   loaf?: StepLoaf;
   /**
    * The step's navigation classification + its before/after URLs, from the FIRST timed iteration
    * (iterations replay the same flow, so iteration 0's pair is the representative). Absent on a
-   * hand-built step that carried none. See NavigationKind.
+   * hand-built step that carried none. See NavigationKind
    */
   navigation?: NavigationKind;
   beforeUrl?: string;
@@ -64,26 +64,26 @@ export interface MergedStep {
   /**
    * Chrome's own soft-navigation verdict from the FIRST timed iteration (iterations replay the same
    * flow, so the engine fires the same verdict each time). Opportunistic and Chrome-only; absent when
-   * no entry fired or the browser has no support. See EngineSoftNav.
+   * no entry fired or the browser has no support. See EngineSoftNav
    */
   engineSoftNav?: EngineSoftNav;
   /**
    * Route-transition metrics for a soft-navigating step from the FIRST timed iteration (Chrome 151+),
    * matching the layoutShift/counts windowing: the route's navigationId changes per run and its LCP/CLS
    * attribution is a distribution that cannot be medianed. Absent when no engine soft-nav fired. See
-   * SoftNavRoute.
+   * SoftNavRoute
    */
   softNav?: SoftNavRoute;
   /**
    * Boot LCP for a hard-navigation step, grown across the timed iterations: identity from the
    * lower-median-by-render-time occurrence, `perIteration` the render-time series (null where an
-   * iteration fired no usable entry), `stats` the spread. Absent on a non-LCP step. See mergeLcp/StepLcp.
+   * iteration fired no usable entry), `stats` the spread. Absent on a non-LCP step. See mergeLcp/StepLcp
    */
   lcp?: StepLcp;
   /**
    * CLS (spec session-window max) from the FIRST timed iteration (Chrome only), matching the LoAF/counts
    * windowing: the shifting-element attribution is a distribution that cannot be medianed. Absent when
-   * no qualifying shift was observed. See LayoutShift.
+   * no qualifying shift was observed. See LayoutShift
    */
   layoutShift?: LayoutShift;
   startTs: number | null;
@@ -91,7 +91,7 @@ export interface MergedStep {
   /**
    * Raw per-step framework-addon probe payload from the FIRST timed iteration (keyed by addon name),
    * matching the per-step counts windowing: it describes iteration 0's work and an addon shapes it into
-   * `Span.addons`. Absent when no addon installed a per-step probe. See DriverStep.addons.
+   * `Span.addons`. Absent when no addon installed a per-step probe. See DriverStep.addons
    */
   addons?: Record<string, unknown>;
 }
@@ -103,7 +103,7 @@ function median(samples: number[]): number {
 }
 
 /** min/median/mean/max over the samples; null below 2. Same contract as summarize.ts's computeStats
- * (kept local so steps.ts stays dependency-light), so an LCP `stats` block matches a wall `stats` block. */
+ * (kept local so steps.ts stays dependency-light), so an LCP `stats` block matches a wall `stats` block */
 function statsOf(samples: number[]): BenchStats | null {
   if (samples.length < 2) return null;
   const sorted = [...samples].sort((left, right) => left - right);
@@ -118,7 +118,7 @@ function statsOf(samples: number[]): BenchStats | null {
 
 /** The LCP render time a merged series carries for one iteration: the entry's `renderTimeMs` when it
  * fired a usable, non-suppressed entry, else null (no entry, a suppressed anomaly, or a TAO-gated
- * resource with no render time). Never 0 for a miss -- null and 0 must stay distinct. */
+ * resource with no render time). Never 0 for a miss -- null and 0 must stay distinct */
 function iterationRenderTime(lcp: StepLcp | undefined): number | null {
   if (!lcp || lcp.suppressed) return null;
   return lcp.renderTimeMs ?? null;
@@ -133,7 +133,7 @@ function iterationRenderTime(lcp: StepLcp | undefined): number | null {
  * entry), `stats` summarises the non-null values, and the identity/timing fields are the
  * lower-median-by-render-time occurrence VERBATIM (a real sample, like mergeSpanOccurrences keeps a
  * real bar). Returns undefined for a step that carried no LCP at all (soft/none steps), and a bare
- * `{ suppressed: true }` when every iteration hit the headless clock anomaly (no usable identity).
+ * `{ suppressed: true }` when every iteration hit the headless clock anomaly (no usable identity)
  */
 export function mergeLcp(orderedSteps: { lcp?: StepLcp }[]): StepLcp | undefined {
   const attached = orderedSteps
@@ -142,10 +142,10 @@ export function mergeLcp(orderedSteps: { lcp?: StepLcp }[]): StepLcp | undefined
   if (!attached.length) return undefined;
   const perIteration = orderedSteps.map((step) => iterationRenderTime(step.lcp));
   const shaped = attached.filter((lcp) => !lcp.suppressed);
-  // Every iteration fired but hit the startTime anomaly: no honest identity to report.
+  // Every iteration fired but hit the startTime anomaly: no honest identity to report
   if (!shaped.length) return { suppressed: true };
   // Identity/timing from the lower-median-by-render-time occurrence (a real sample). Fall back to the
-  // first shaped occurrence when none carried a render time (all TAO-gated), so identity still lands.
+  // first shaped occurrence when none carried a render time (all TAO-gated), so identity still lands
   const withRender = shaped
     .filter((lcp) => lcp.renderTimeMs != null)
     .sort((left, right) => left.renderTimeMs! - right.renderTimeMs!);
@@ -158,7 +158,7 @@ export function mergeLcp(orderedSteps: { lcp?: StepLcp }[]): StepLcp | undefined
 
 /**
  * Shared by runDriver (which fails fast, on the offending measureStep call) and mergeSteps
- * (the library-boundary backstop), so both refuse a repeated label with the same explanation.
+ * (the library-boundary backstop), so both refuse a repeated label with the same explanation
  */
 export function duplicateLabelError(label: string): Error {
   return new Error(
@@ -176,7 +176,7 @@ export function duplicateLabelError(label: string): Error {
  *
  * Uniqueness is per ITERATION, not per run: with --iterations, "mount" legitimately appears once
  * per iteration and those are its samples. Two "mount"s in the SAME iteration are a collision:
- * one label would join the wrong timing to the wrong trace.
+ * one label would join the wrong timing to the wrong trace
  */
 function assertUniqueLabels(labelled: { label: string; iteration?: number }[]): void {
   const seen = new Set<string>();
@@ -192,13 +192,13 @@ function assertUniqueLabels(labelled: { label: string; iteration?: number }[]): 
  * work while presenting as one distribution. Ten "mount" samples where two iterations skipped it
  * is a median over 8 labelled 10, which is the kind of plausible-looking wrong number this repo
  * refuses to emit. Same idempotency requirement the cross-pass merge already has, checked here
- * because --iterations is what makes it a within-pass concern too.
+ * because --iterations is what makes it a within-pass concern too
  */
 function assertSameLabelsEachIteration(steps: DriverStep[]): void {
   const byIteration = new Map<number, string[]>();
   // prepare() runs once, before the loop, so a step it measured legitimately appears in no
   // iteration but the first. Counting it here would fail every repeated run whose prepare()
-  // measured anything, blaming the user's flow for a rule this check invented.
+  // measured anything, blaming the user's flow for a rule this check invented
   for (const step of steps.filter((entry) => entry.phase !== "prepare")) {
     const iterationIndex = step.iteration ?? 0;
     const labels = byIteration.get(iterationIndex) ?? [];
@@ -237,14 +237,14 @@ function assertSameLabelsEachIteration(steps: DriverStep[]): void {
  * Join one pass's trace windows to its own step labels. Sound only because both sides come from
  * the SAME runDriver call, where the index is a shared counter; this is the only place where
  * index-keyed pairing is valid. Windows whose index has no step are dropped: the trace can lose
- * marks (buffer overflow) but cannot invent them, so an unmatched window is not a step we ran.
+ * marks (buffer overflow) but cannot invent them, so an unmatched window is not a step we ran
  */
 export function labelWindows(steps: DriverStep[], windows: StepWindow[]): LabelledWindow[] {
   // Keyed by markIndex, not index: with --iterations the same `index` recurs every iteration,
   // while the mark name is what the trace actually carries and is unique within the pass. Falls
   // back to `index` for hand-built steps (see assertUniqueLabels): for a single-iteration flow the
   // two counters are identical, and defaulting keeps such a caller working instead of silently
-  // matching nothing and reporting every step as unwindowed.
+  // matching nothing and reporting every step as unwindowed
   const stepByMark = new Map(steps.map((step) => [step.markIndex ?? step.index, step]));
   const labelled: LabelledWindow[] = [];
   for (const window of windows) {
@@ -282,24 +282,24 @@ function describeDivergence(timingLabels: string[], tracedLabels: string[]): str
  *
  * `tracedWindows` of undefined is NOT divergence: it means the pass captured no trace at all (the
  * default capture mode, or firefox), so there is nothing to pair with and every step
- * legitimately has no window. That case is the caller's to detect and is reported as a note.
+ * legitimately has no window. That case is the caller's to detect and is reported as a note
  */
 export function mergeSteps(
   timingSteps: DriverStep[],
   tracedWindows: LabelledWindow[] | undefined,
   /** Chrome reported the trace buffer dropped events. When set, a step/window mismatch is KNOWN to be
-   * an overflow, so the message says so outright instead of also offering the idempotency cause. */
+   * an overflow, so the message says so outright instead of also offering the idempotency cause */
   traceDataLoss = false,
 ): MergedStep[] {
   assertUniqueLabels(timingSteps);
   assertSameLabelsEachIteration(timingSteps);
-  // Per-step counts and blame describe the FIRST timed iteration, so only its windows are paired.
+  // Per-step counts and blame describe the FIRST timed iteration, so only its windows are paired
   // Later iterations' windows exist (the one pass runs every iteration for wall) but are dropped:
-  // a step's trace-derived counts window to a single iteration so they never scale.
+  // a step's trace-derived counts window to a single iteration so they never scale
   // Iteration 0 covers both the first timed iteration and anything prepare() measured (it runs
   // once, before the loop, so its steps are iteration 0 as well). A prepare step's window is the
   // only one it has: dropping it would leave the step unwindowed and report its counts as 0,
-  // which reads as "clean" rather than "not measured".
+  // which reads as "clean" rather than "not measured"
   const isFirstPass = (entry: { iteration?: number }) => (entry.iteration ?? 0) === 0;
   const firstIterationWindows = tracedWindows?.filter(isFirstPass);
   const windowByLabel = new Map((firstIterationWindows ?? []).map((win) => [win.label, win]));
@@ -309,7 +309,7 @@ export function mergeSteps(
     const timingLabels = timingSteps.filter(isFirstPass).map((step) => step.label);
     const tracedLabels = (firstIterationWindows ?? []).map((window) => window.label);
     // Labels are unique on both sides, so set equality is enough: a label-keyed join does not
-    // care about order, which is exactly why the label survives across passes and the index does not.
+    // care about order, which is exactly why the label survives across passes and the index does not
     const diverged =
       timingLabels.length !== tracedLabels.length ||
       timingLabels.some((label) => !windowByLabel.has(label));
@@ -331,7 +331,7 @@ export function mergeSteps(
   }
 
   // One MergedStep per LABEL, not per measureStep call: with --iterations the same label recurs
-  // every iteration, and those repetitions are the samples that make its median mean anything.
+  // every iteration, and those repetitions are the samples that make its median mean anything
   const byLabel = new Map<string, DriverStep[]>();
   for (const step of timingSteps) {
     const group = byLabel.get(step.label) ?? [];
@@ -347,20 +347,20 @@ export function mergeSteps(
     const first = ordered[0];
     const window = tracedWindows == null ? undefined : windowByLabel.get(label);
     // A step whose wall could not be priced (navigation in a no-trace capture mode) contributes no sample,
-    // rather than a fabricated 0 or a null poisoning the median.
+    // rather than a fabricated 0 or a null poisoning the median
     const perIteration = ordered
       .map((step) => step.wallMs)
       .filter((wallMs): wallMs is number => wallMs != null);
     // INP is the median across iterations, not the worst: the worst would climb with --iterations
     // (more samples, more chances at a slow one), so raising --iterations to gain confidence would
-    // report a worse INP for unchanged code. Counts stay per-iteration for the same reason.
+    // report a worse INP for unchanged code. Counts stay per-iteration for the same reason
     const inpSamples = ordered
       .map((step) => step.inpMs)
       .filter((inpMs): inpMs is number => inpMs != null);
     // Each part medianed independently, for the same reason INP is: taking the worst would make
     // every part climb with --iterations. They can therefore sum to slightly more or less than the
     // INP median, which is honest -- three medians are not one interaction, and pretending
-    // otherwise would mean picking one iteration's breakdown and calling it typical.
+    // otherwise would mean picking one iteration's breakdown and calling it typical
     const measured = ordered
       .map((step) => step.interaction)
       .filter((entry): entry is InteractionTiming => entry != null);
@@ -389,17 +389,17 @@ export function mergeSteps(
       ...(first.loaf ? { loaf: first.loaf } : {}),
       // Navigation classification + URLs + boot LCP come from iteration 0, matching the per-step
       // counts/LoAF windowing: a URL pair and a nav kind cannot be medianed, and the flow replays the
-      // same navigation every iteration, so iteration 0's is the honest representative.
+      // same navigation every iteration, so iteration 0's is the honest representative
       ...(first.navigation ? { navigation: first.navigation } : {}),
       ...(first.engineSoftNav ? { engineSoftNav: first.engineSoftNav } : {}),
       ...(first.softNav ? { softNav: first.softNav } : {}),
       ...(first.beforeUrl != null ? { beforeUrl: first.beforeUrl } : {}),
       ...(first.afterUrl != null ? { afterUrl: first.afterUrl } : {}),
       // LCP grows across iterations (each boots a fresh document, capturing its own entry); CLS comes
-      // from iteration 0, matching LoAF/counts, since its shifting-element attribution cannot be medianed.
+      // from iteration 0, matching LoAF/counts, since its shifting-element attribution cannot be medianed
       ...(mergedLcp ? { lcp: mergedLcp } : {}),
       ...(first.layoutShift ? { layoutShift: first.layoutShift } : {}),
-      // Addon per-step payload from iteration 0, matching the per-step counts windowing.
+      // Addon per-step payload from iteration 0, matching the per-step counts windowing
       ...(first.addons ? { addons: first.addons } : {}),
       startTs: window?.startTs ?? null,
       endTs: window?.endTs ?? null,

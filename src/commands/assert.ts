@@ -14,10 +14,12 @@ import { isSteppedRecording, stepEntry, stepSpans } from "../model/step-view.js"
 import { runSpan } from "../model/span.js";
 import type { Recording, StepIndexEntry } from "../model/recording.js";
 
-// Every threshold gates a run-span count/timing field (the schema-5 count store). The off-thread
-// frame side track (SpanBreakdown.frames) is deliberately absent: its counts are scheduler noise (see
-// docs/dev/rendering-counts.md), so it is DISPLAY-ONLY and must never gate. It also lives on the
-// breakdown, not the run-span counts this file reads, so a frame threshold cannot be added by accident.
+/**
+ * Every threshold gates a run-span count/timing field (the schema-5 count store). The off-thread
+ * frame side track (SpanBreakdown.frames) is deliberately absent: its counts are scheduler noise (see
+ * docs/dev/rendering-counts.md), so it is DISPLAY-ONLY and must never gate. It also lives on the
+ * breakdown, not the run-span counts this file reads, so a frame threshold cannot be added by accident
+ */
 export interface Thresholds {
   forced?: number;
   layouts?: number;
@@ -32,7 +34,7 @@ export interface Thresholds {
 interface Metrics {
   /** Every gated metric is Measured (model/measured.ts): null when the capture mode did not observe it
    * (the default mode captures no counts; --breakdown drops forced; a bench run captures no interaction),
-   * which `gateMeasured` turns into a loud FAIL -- a gate you asked for but cannot evaluate has not passed. */
+   * which `gateMeasured` turns into a loud FAIL -- a gate you asked for but cannot evaluate has not passed */
   forcedLayoutCount: Measured<number>;
   layoutCount: Measured<number>;
   paintCount: Measured<number>;
@@ -56,7 +58,7 @@ const CHECKS: { label: string; key: keyof Metrics; opt: keyof Thresholds }[] = [
 
 /** Run-level metrics from the run span (schema-5 count/timing store); every not-measured field is a
  * Measured null, the same n/a-FAIL the summary path produced. Null run span (an empty artifact) makes
- * every axis n/a. */
+ * every axis n/a */
 function fromRunSpan(rec: Recording): Metrics {
   const run = runSpan(rec);
   const counts = run?.counts;
@@ -87,7 +89,7 @@ function fromStep(step: StepIndexEntry): Metrics {
 
 /** The count and count-derived thresholds: each gates a trace-derived rendering count. Kept apart
  * from the timing thresholds (inp/wall, which ride performance.now, not the trace counts) so the
- * count-integrity refusal below fires ONLY on the counts a split/data-loss run cannot be trusted for. */
+ * count-integrity refusal below fires ONLY on the counts a split/data-loss run cannot be trusted for */
 const COUNT_CHECK_OPTS: ReadonlySet<keyof Thresholds> = new Set([
   "forced",
   "layouts",
@@ -98,7 +100,7 @@ const COUNT_CHECK_OPTS: ReadonlySet<keyof Thresholds> = new Set([
 ]);
 
 /** The verdict for one count/timing threshold against one target: a not-gateable refusal (known
- * -incomplete counts), a not-measured n/a, or a measured ok/fail carrying its number. */
+ * -incomplete counts), a not-measured n/a, or a measured ok/fail carrying its number */
 type CheckOutcome =
   | { kind: "refuse"; reason: string }
   | { kind: "na" }
@@ -106,7 +108,7 @@ type CheckOutcome =
   | { kind: "fail"; value: number };
 
 /** Gate one Measured value: a count on a known-incomplete recording REFUSES; else the Measured gate
- * (null => n/a, number => ok/fail). `isCount` gates the refusal to the count axis (timing is exempt). */
+ * (null => n/a, number => ok/fail). `isCount` gates the refusal to the count axis (timing is exempt) */
 function evaluateCheck(
   value: Measured<number>,
   max: number,
@@ -119,7 +121,7 @@ function evaluateCheck(
   return gate.ok ? { kind: "ok", value: gate.value } : { kind: "fail", value: gate.value };
 }
 
-/** The value cell + verdict cell for a table row (a refusal and an n/a both render "n/a"/"FAIL"). */
+/** The value cell + verdict cell for a table row (a refusal and an n/a both render "n/a"/"FAIL") */
 function outcomeCells(outcome: CheckOutcome): { value: string | number; verdict: string } {
   switch (outcome.kind) {
     case "refuse":
@@ -133,7 +135,7 @@ function outcomeCells(outcome: CheckOutcome): { value: string | number; verdict:
 }
 
 /** The violation line for a failing/refused/na outcome, or null when it passed. `prefix` names the
- * target + metric (+ member, in a group), so a CI reader sees exactly which gate could not be met. */
+ * target + metric (+ member, in a group), so a CI reader sees exactly which gate could not be met */
 function outcomeViolation(outcome: CheckOutcome, prefix: string, max: number): string | null {
   switch (outcome.kind) {
     case "refuse":
@@ -149,7 +151,7 @@ function outcomeViolation(outcome: CheckOutcome, prefix: string, max: number): s
 
 /** Which member axis measures a given count/timing threshold, for a run-group's cross-member routing:
  * forced -> the deep member, the exact counts -> the counts member (deep preferred), INP/wall -> any
- * driver member (every member shares the group's lane). */
+ * driver member (every member shares the group's lane) */
 const CHECK_AXIS: Record<keyof Thresholds, MemberAxis> = {
   forced: "forced",
   layouts: "counts",
@@ -165,7 +167,7 @@ const CHECK_AXIS: Record<keyof Thresholds, MemberAxis> = {
  * Gate a recording, a step-index, or a run-group against thresholds; sets exit code 1 on violation.
  * Count/timing thresholds gate the run (or each step); `sliceBudgets` (`--max-slice`) gate the target
  * span's per-slice ms -- the run span by default, `label` picks another by label. A run-group routes
- * each threshold to the member that measured its axis (assertGroup).
+ * each threshold to the member that measured its axis (assertGroup)
  */
 export async function assertCmd(
   file: string,
@@ -174,7 +176,7 @@ export async function assertCmd(
   label?: string,
 ): Promise<void> {
   // A run-group routes each threshold to the member that measured its axis; a plain recording gates
-  // itself. The n/a-FAIL rule extends: no member measures the axis -> a loud FAIL, never a silent pass.
+  // itself. The n/a-FAIL rule extends: no member measures the axis -> a loud FAIL, never a silent pass
   const consumption = await resolveConsumption(file);
   if (consumption.kind === "group")
     return assertGroup(consumption.path, thresholds, sliceBudgets, label);
@@ -185,7 +187,7 @@ export async function assertCmd(
   // A stepped (driver) recording gates PER STEP, from its step spans: each step has its own wall,
   // INP and windowed counts, which is the per-interaction granularity a CI gate wants. A bench/node
   // run gates its run summary. A step whose wall could not be priced (navigated in a no-trace capture mode)
-  // is Measured null, so `--max-wall` there is a loud FAIL, not a silent pass.
+  // is Measured null, so `--max-wall` there is a loud FAIL, not a silent pass
   const rec = obj as Recording;
   const stepped = isSteppedRecording(rec);
   const targets: { label: string; m: Metrics }[] = [];
@@ -207,7 +209,7 @@ export async function assertCmd(
 
   // A cross-process split or a trace-buffer overflow leaves the counts known-incomplete: the count
   // thresholds below are then not gateable (a loud refusal, never a silent pass). Timing thresholds
-  // still gate. Null on a whole recording.
+  // still gate. Null on a whole recording
   const integrityRefusal = countIntegrityRefusal(rec.meta);
 
   const violations: string[] = [];
@@ -217,7 +219,7 @@ export async function assertCmd(
       const max = thresholds[check.opt]!;
       // A gate you asked for but can't evaluate must FAIL, not silently pass: a not-measured axis
       // (--max-inp on an in-page run that captured no interaction), or a count axis on a
-      // known-incomplete recording. Skipping it green is a CI gate that doesn't gate.
+      // known-incomplete recording. Skipping it green is a CI gate that doesn't gate
       const outcome = evaluateCheck(
         target.m[check.key],
         max,
@@ -232,9 +234,9 @@ export async function assertCmd(
   }
 
   // Slice budgets gate the target span's per-slice ms, a different axis from the count/timing
-  // targets above: they read the recording's breakdown bar (`query spans` shape), not the summary.
+  // targets above: they read the recording's breakdown bar (`query spans` shape), not the summary
   if (sliceBudgetKeys.length) {
-    // The slice data lives on the recording's spans (the run bar by default; `label` picks another).
+    // The slice data lives on the recording's spans (the run bar by default; `label` picks another)
     const spans = await loadSpanEntries(abs);
     const targetLabel = label ?? "run";
     for (const gate of gateSliceBudgets(spans, sliceBudgets, targetLabel)) {
@@ -268,7 +270,7 @@ export async function assertCmd(
  * budgets to the bar member. A member column names which member answered. When NO member measures an
  * axis, the row is a loud n/a FAIL, never a silent pass -- the Measured contract, extended to a group.
  * Run-level (summary) gating; the group's members share one workload, so a per-member summary is the
- * comparable unit.
+ * comparable unit
  */
 async function assertGroup(
   manifestPath: string,
@@ -288,7 +290,7 @@ async function assertGroup(
   const rows: (string | number)[][] = [];
   // Read a member's recording at most once, so a group with several thresholds routed to it does not
   // re-parse it. The full recording (not just the summary): a stepped driver member gates PER STEP,
-  // and meta.mainThread/dataLoss drive the count-integrity refusal.
+  // and meta.mainThread/dataLoss drive the count-integrity refusal
   const recCache = new Map<string, Recording>();
   const recOf = async (recordingPath: string): Promise<Recording> => {
     let rec = recCache.get(recordingPath);
@@ -320,7 +322,7 @@ async function assertGroup(
     // A stepped (driver) member gates PER STEP, from its step spans -- the same per-interaction
     // granularity the plain path uses -- rather than its run summary (whose driver wall is null by
     // design and whose counts total both steps). A bench/node member gates its run summary. Each row
-    // still names the member in its own column.
+    // still names the member in its own column
     const stepped = isSteppedRecording(rec);
     const memberTargets: { label: string; m: Metrics }[] = stepped
       ? stepSpans(rec).map((step) => {
@@ -378,7 +380,7 @@ async function assertGroup(
   );
   console.log(table(["metric", "member", "value", "max", ""], rows));
   // Group-level disclosures (count disagreement across members, partial formation): a CI reader must
-  // see them, since a routed threshold gates ONE member's number while the members may have disagreed.
+  // see them, since a routed threshold gates ONE member's number while the members may have disagreed
   for (const note of group.notes) console.log(`\n${note}`);
   if (violations.length) {
     console.log(`\n✗ ${violations.length} assertion(s) failed:`);

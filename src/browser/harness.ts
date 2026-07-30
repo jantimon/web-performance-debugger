@@ -14,7 +14,7 @@
  *               loop. Bench wall is the sum of the returned samples.
  *   - "cleanup" runs cleanup() AFTER tracing stops, so teardown work is never counted.
  * ctx is shared across the three page.evaluate calls via a page global; module-level
- * state already persists through the browser's module cache between calls.
+ * state already persists through the browser's module cache between calls
  */
 export interface HarnessArgs {
   moduleUrl: string;
@@ -55,7 +55,7 @@ export async function runHarness(arg: HarnessArgs): Promise<HarnessResult> {
   lifecycle.push("run");
   if (cleanup) lifecycle.push("cleanup");
 
-  // Shared context object passed to every hook, persisted across phases (page global).
+  // Shared context object passed to every hook, persisted across phases (page global)
   const store = ((globalThis as any).__wpdHarness ??= {});
   const ctx: Record<string, unknown> = (store.ctx ??= {});
 
@@ -91,7 +91,7 @@ export async function runHarness(arg: HarnessArgs): Promise<HarnessResult> {
   performance.measure("wpd:run", "wpd:run:start", "wpd:run:end");
 
   // Force a synchronous layout flush so the run's pending style/layout lands in the trace before
-  // tracing stops.
+  // tracing stops
   if (document.body) void document.body.offsetHeight;
 
   return { perIteration, lifecycle };

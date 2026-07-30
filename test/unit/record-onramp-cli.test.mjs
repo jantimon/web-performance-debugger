@@ -4,10 +4,10 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The zero-authoring on-ramp: `record` with no module runs a built-in load flow against --url.
+// The zero-authoring on-ramp: `record` with no module runs a built-in load flow against --url
 // These guards decide whether that flow can run, and all these ERROR cases fire before any browser
 // launches, so they stay browser-free unit tests (the positive --url path is the cli e2e). Assert on
-// the message, not just the exit code: a first-time user hits exactly these, so the wording matters.
+// the message, not just the exit code: a first-time user hits exactly these, so the wording matters
 const cli = path.join(fileURLToPath(new URL("../..", import.meta.url)), "dist", "cli.js");
 
 function runCli(args) {
@@ -35,7 +35,7 @@ test("record --target node with no module errors (node imports and profiles run(
 });
 
 test("--precise-wall is removed and fires before the no-module/target guards", () => {
-  // No module and no --url would otherwise hit the no-module guard; the retirement message must win.
+  // No module and no --url would otherwise hit the no-module guard; the retirement message must win
   const result = runCli(["record", "--precise-wall"]);
   assert.equal(result.status, 1, "exits non-zero");
   assert.match(result.stderr, /--precise-wall was removed/, "names the removal");
@@ -73,7 +73,7 @@ test("--disable-browser-sandbox with --user-data-dir is refused (unsandboxed ren
 
 test("--disable-browser-sandbox with a public --url warns loudly before launch", () => {
   // --iterations 0 aborts before any browser launches, so the warning is the only browser-free signal
-  // to assert on; a private/localhost --url stays quiet (only public content is the risk).
+  // to assert on; a private/localhost --url stays quiet (only public content is the risk)
   const result = runCli([
     "record",
     "--url",

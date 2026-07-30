@@ -8,12 +8,12 @@ import path from "node:path";
 // semver-covered surface, and the README "Consuming the JSON" table promises a type for every artifact
 // and structured output. tsc erases types at runtime, so this reads the emitted declaration file and
 // fails if any documented root type is not re-exported -- a dropped export is caught here, not by a
-// consumer's red build.
+// consumer's red build
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const declaration = readFileSync(path.join(here, "..", "..", "dist", "index.d.ts"), "utf8");
 
-// Every type the README type table and the run-group contract promise from the package root.
+// Every type the README type table and the run-group contract promise from the package root
 const DOCUMENTED_ROOT_TYPES = [
   // recording / cpu model artifacts
   "Recording",
@@ -46,7 +46,7 @@ const DOCUMENTED_ROOT_TYPES = [
 // `export { A, B } from "..."` / `export type { A, B } from "..."` clauses, so read the clause braces
 // rather than the whole file: a bare `\bName\b` would also match a name that merely appears inside
 // another type body, passing even when that name is not itself a root export. A renamed export
-// (`Local as Root`) is exported under the Root name, so take the identifier after `as`.
+// (`Local as Root`) is exported under the Root name, so take the identifier after `as`
 function collectRootExports(declarationSource) {
   const exported = new Set();
   for (const clause of declarationSource.matchAll(/export\s+(?:type\s+)?\{([^}]*)\}/g)) {

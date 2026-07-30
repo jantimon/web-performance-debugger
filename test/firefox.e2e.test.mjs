@@ -13,21 +13,21 @@ import puppeteer from "puppeteer";
 // separately (`npx puppeteer browsers install firefox`), so this self-skips when it is absent to
 // keep `npm test` and the browser-free CI job green. Set WPD_E2E_FIREFOX_REQUIRED=1 (as
 // `npm run test:e2e:firefox` does) to turn a missing Firefox into a hard failure instead of a
-// skip, so the scheduled Firefox job can never silently pass without exercising the gecko lane.
+// skip, so the scheduled Firefox job can never silently pass without exercising the gecko lane
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cli = path.join(repoRoot, "dist", "cli.js");
 const examples = path.join(repoRoot, "examples");
 
 // Schema 5 stores counts/timing on the run span (no `recording.summary`). Small readers back onto the
-// flat shape the assertions use.
+// flat shape the assertions use
 const runOf = (rec) => rec.spans.find((span) => span.kind === "run") ?? { counts: {} };
 const runForced = (rec) => runOf(rec).counts.forcedLayoutCount;
 
-// A `query blame --format json` row carries a structured location ({source, line, column}); reassemble it.
+// A `query blame --format json` row carries a structured location ({source, line, column}); reassemble it
 const blameAt = (row) => [row.source, row.line, row.column].filter((part) => part != null).join(":");
 
 // executablePath() mis-guesses the Firefox build path, so probe by actually launching it (the
-// e2e needs a working launch anyway); a failure means Firefox is not installed => skip.
+// e2e needs a working launch anyway); a failure means Firefox is not installed => skip
 async function firefoxAvailable() {
   try {
     const browser = await puppeteer.launch({ browser: "firefox", headless: true });
@@ -46,7 +46,7 @@ const e2e = ready
   ? test
   : (name, _opts, fn) => test(name, { skip: "Firefox not installed" }, fn ?? _opts);
 
-// Firefox launch + gecko shutdown dump + parse; generous so a slow CI runner does not flake.
+// Firefox launch + gecko shutdown dump + parse; generous so a slow CI runner does not flake
 const TIMEOUT_MS = 180_000;
 
 function runCli(args) {
@@ -62,7 +62,7 @@ function runCli(args) {
 
 // A local HTTP origin for the --url on-ramp, served from a SEPARATE process (spawnSync pins this
 // process's event loop, so an in-process server could not answer). Port is written to a file once
-// listening; poll it with a synchronous Atomics.wait sleep. No external network.
+// listening; poll it with a synchronous Atomics.wait sleep. No external network
 function startOnrampServer(html) {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-ff-srv-"));
   const portFile = path.join(dir, "port");
@@ -92,8 +92,8 @@ server.listen(0, "127.0.0.1", () => writeFileSync(${JSON.stringify(portFile)}, S
 }
 
 // A bare `--target firefox` run must carry real rendering detail: the gecko pass is not opt-in, so it
-// is the lane's only source of counts, and without it every rendering count would read a fake 0.
-// Assert on the counts, not just the pass list, so a regression to an opt-in profiler can't slip through.
+// is the lane's only source of counts, and without it every rendering count would read a fake 0
+// Assert on the counts, not just the pass list, so a regression to an opt-in profiler can't slip through
 e2e(
   "record --target firefox yields rendering detail with no extra flag",
   { timeout: TIMEOUT_MS },
@@ -111,11 +111,11 @@ e2e(
       "notes disclose the Firefox capability limits",
     );
     assert.ok(runOf(recording).wallMs != null && runOf(recording).wallMs >= 0, "wall time reported");
-    // The point of the change: these were 0 before, which was indistinguishable from a clean run.
+    // The point of the change: these were 0 before, which was indistinguishable from a clean run
     assert.ok(runForced(recording) > 0, "forced layout counted without --cpu-profile");
     // The bar footer is engine-conditioned: on firefox a forced layout bills to style/layout, so the
     // report must NOT repeat Chrome's "bills to the forcing frame" (js) sentence, and must disclose
-    // the ~1ms sampler granularity.
+    // the ~1ms sampler granularity
     assert.match(report, /bills to the style\/layout slices, not js/, "firefox footer, not the chrome one");
     assert.doesNotMatch(report, /bills to the forcing frame/, "the chrome js-fold sentence is absent on firefox");
     assert.match(report, /quantize to the ~1 ms Gecko sampler interval/, "sampler granularity disclosed");
@@ -124,7 +124,7 @@ e2e(
 
 // --breakdown has no meaning on firefox (the ONE gecko pass IS the lane) and is refused. --deep is
 // NOT refused: it is a reporting tier over that same pass. The guard fires before any browser
-// launches, so this runs everywhere (not gated on Firefox).
+// launches, so this runs everywhere (not gated on Firefox)
 test("record --target firefox --breakdown is refused (the gecko pass IS the lane)", () => {
   const result = spawnSync(process.execPath, [cli, "record", path.join(examples, "probes", "cpu-busywork.mjs"), "--bench", "--target", "firefox", "--breakdown"], { encoding: "utf8" });
   assert.notEqual(result.status, 0, "--breakdown exits non-zero");
@@ -133,8 +133,8 @@ test("record --target firefox --breakdown is refused (the gecko pass IS the lane
 
 // --deep --target firefox is the partial dirtied-by report: the SAME gecko pass, plus Gecko's native
 // cause-stack write identity surfaced as a first-invalidation-only dirtied-by report. It must NOT
-// fabricate the parity Gecko lacks: no thrash detector, no forced-by, no chrome-style full write set.
-// The read-site --forced blame is unchanged (it lives on the sampled events, not this report).
+// fabricate the parity Gecko lacks: no thrash detector, no forced-by, no chrome-style full write set
+// The read-site --forced blame is unchanged (it lives on the sampled events, not this report)
 e2e(
   "record --target firefox --deep emits the dirtied-by write report without faking chrome parity",
   { timeout: TIMEOUT_MS },
@@ -145,9 +145,9 @@ e2e(
     assert.ok(existsSync(out), "recording file written");
 
     const recording = JSON.parse(readFileSync(out, "utf8"));
-    // The reporting tier is recorded as its own capture-mode name; the capture is still the one gecko pass.
+    // The reporting tier is recorded as its own capture-mode name; the capture is still the one gecko pass
     assert.equal(recording.meta.capture, "gecko-deep", "the --deep reporting tier over the one gecko pass");
-    // The run span's anatomy carries the dirtied-by report, first-invalidation-only, with a WRITE line.
+    // The run span's anatomy carries the dirtied-by report, first-invalidation-only, with a WRITE line
     const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--format", "json"]));
     assert.ok(anatomy.firefoxDirtiedBy, "firefox dirtied-by report present");
     assert.equal(anatomy.firefoxDirtiedBy.semantic, "first-invalidation", "scope marked so it is never read as chrome's full set");
@@ -159,10 +159,10 @@ e2e(
         .map((write) => Number(write.at.match(/forces-layout\.mjs:(\d+)/)?.[1])),
     );
     assert.ok(writeLines.size > 0, "a write line attributed to forces-layout.mjs");
-    // Never-fake-parity: the thrash detector NEVER runs on firefox (it needs the full write set).
+    // Never-fake-parity: the thrash detector NEVER runs on firefox (it needs the full write set)
     assert.equal(anatomy.thrash, undefined, "no thrash rollup on firefox --deep (partial write set)");
 
-    // The read-site --forced blame is UNCHANGED by --deep: still the sampled read lines + properties.
+    // The read-site --forced blame is UNCHANGED by --deep: still the sampled read lines + properties
     const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
     assert.ok(Array.isArray(blame) && blame.length > 0, "read-site forced blame still present");
     const readLines = new Set(
@@ -173,10 +173,10 @@ e2e(
     assert.ok([...readLines].some((line) => line >= 46 && line <= 145), "a geometry-read line is still blamed");
     assert.equal(recording.meta.blameSemantic, "flush-site", "blame semantic stays the read site");
     // Write and read are DISJOINT concepts: at least one dirtied-by write line is not a read-site row
-    // (the dirtied-by report names the mutation; --forced names the geometry read that paid).
+    // (the dirtied-by report names the mutation; --forced names the geometry read that paid)
     assert.ok([...writeLines].some((line) => !readLines.has(line)), "a write line that is not a read-site row (write != read)");
 
-    // `query blame --dirtied` is the write report alone, with the semantic marker for JSON consumers.
+    // `query blame --dirtied` is the write report alone, with the semantic marker for JSON consumers
     const dirtied = JSON.parse(runCli(["query", "blame", out, "--dirtied", "--format", "json"]));
     assert.equal(dirtied.semantic, "first-invalidation", "the --dirtied JSON marks its scope");
     assert.ok(dirtied.writes.length > 0, "--dirtied lists the write rows");
@@ -185,7 +185,7 @@ e2e(
 
 // The zero-authoring on-ramp crosses the engine: `--url` with no module runs the SAME built-in driver
 // flow on firefox (the gecko pass drives the same driver), so the boot's layout/style counts and CPU
-// come from the one gecko pass. Served from a local origin (no external network).
+// come from the one gecko pass. Served from a local origin (no external network)
 e2e(
   "record --url with no module runs the built-in load flow on firefox",
   { timeout: TIMEOUT_MS },
@@ -206,24 +206,24 @@ e2e(
       const loadStep = recording.spans.find((span) => span.kind === "step" && span.label === "load");
       assert.ok(loadStep, "a 'load' step span is recorded");
       // Long Animation Frames are Chrome-only: Firefox has no such API, so the step stores nothing
-      // rather than a fabricated zero (the in-page supportedEntryTypes guard degrades honestly).
+      // rather than a fabricated zero (the in-page supportedEntryTypes guard degrades honestly)
       assert.equal(loadStep.loaf, undefined, "a firefox step carries no LoAF (no fake zero)");
       // Navigation classification is lane-independent (page.url() + timeOrigin, no CDP): the built-in
-      // load step is a hard navigation on firefox too.
+      // load step is a hard navigation on firefox too
       assert.equal(loadStep.navigation, "hard", "the load step is a hard navigation on firefox");
       // Boot LCP carries usable element/size attribution on the gecko lane (probed: tag/size/id/
-      // renderTime populate), so wpd ships it on firefox rather than storing a fake zero.
+      // renderTime populate), so wpd ships it on firefox rather than storing a fake zero
       assert.ok(loadStep.lcp, "the firefox load step carries boot LCP");
       assert.equal(loadStep.lcp.tag, "H1", "firefox names the LCP element tag");
       assert.ok(loadStep.lcp.size > 0, "firefox reports the LCP size");
-      // The gecko pass windows layout/style counts to the boot, so the load step carries real counts.
+      // The gecko pass windows layout/style counts to the boot, so the load step carries real counts
       assert.ok(loadStep.counts.layoutCount >= 1, "the boot's layout is counted from the gecko markers");
       assert.equal(runOf(recording).inpMs ?? null, null, "a page load has no interaction, so INP is null");
       assert.ok(
         recording.meta.notes.some((note) => /Built-in load flow/.test(note)),
         "the built-in flow is disclosed in the notes",
       );
-      // The one gecko pass still produced a CPU model for the boot.
+      // The one gecko pass still produced a CPU model for the boot
       assert.ok(existsSync(`${out}.cpu.json`), "the boot's CPU model is written");
     } finally {
       server.close();
@@ -232,11 +232,11 @@ e2e(
 );
 
 // --dirtied is refused off the firefox --deep lane: chrome has no such report (its write set is the
-// dirtied-by rows under `query blame` + the thrash rollup in `query span run`).
+// dirtied-by rows under `query blame` + the thrash rollup in `query span run`)
 test("query blame --dirtied is refused on a non-firefox-deep recording", () => {
   const chromeDir = mkdtempSync(path.join(tmpdir(), "wpd-ff-"));
   const out = path.join(chromeDir, "chrome-deep");
-  // A chrome --deep recording (no firefox needed): the guard is on the capture mode, not the browser launch.
+  // A chrome --deep recording (no firefox needed): the guard is on the capture mode, not the browser launch
   const rec = spawnSync(process.execPath, [cli, "record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", "1", "--out", out], { encoding: "utf8" });
   if (rec.status !== 0) return; // chrome not installed on this host; the unit test covers the guard
   const result = spawnSync(process.execPath, [cli, "query", "blame", out, "--dirtied"], { encoding: "utf8" });
@@ -281,22 +281,22 @@ e2e(
     const kinds = new Set(fromExample.flatMap((row) => row.kinds ?? []));
     assert.ok(kinds.has("layout") || kinds.has("style"), "kinds include layout or style");
 
-    // Read-site semantics: the geometry READ lines are named, never the bump()/style-write lines.
+    // Read-site semantics: the geometry READ lines are named, never the bump()/style-write lines
     const blamedLines = new Set(
       fromExample.map((row) => Number(blameAt(row).match(/forces-layout\.mjs:(\d+)/)?.[1])),
     );
     for (const writeLine of [13, 15, 16, 17, 19, 21])
       assert.ok(!blamedLines.has(writeLine), `write line ${writeLine} must never be blamed`);
-    // At least one line inside the reads block (46..145), where the geometry reads live.
+    // At least one line inside the reads block (46..145), where the geometry reads live
     assert.ok([...blamedLines].some((line) => line >= 46 && line <= 145), "a geometry-read line");
-    // The forcing DOM property is spelled out on the read-site rows.
+    // The forcing DOM property is spelled out on the read-site rows
     const properties = fromExample.flatMap((row) => row.properties ?? []);
     assert.ok(
       properties.some((property) => /offset|scroll|client|Height|Width|Rect|getComputed/.test(property)),
       "at least one forcing DOM property is named",
     );
 
-    // The recording's blame semantic is now read-site (flush-site), matching Chrome.
+    // The recording's blame semantic is now read-site (flush-site), matching Chrome
     const recording = JSON.parse(readFileSync(out, "utf8"));
     assert.equal(recording.meta.blameSemantic, "flush-site", "firefox now names the read site");
   },
@@ -322,7 +322,7 @@ e2e(
       breakdown.slices.gc.ms +
       breakdown.slices.idle.ms;
     assert.ok(Math.abs(sum - breakdown.wallMs) < 0.01, "slices tile the sampled window (reconciles)");
-    // A pure-wait run is dominated by idle.
+    // A pure-wait run is dominated by idle
     assert.ok(breakdown.slices.idle.ms / breakdown.wallMs > 0.8, "idle > 80% on a pure-wait run");
   },
 );
@@ -340,7 +340,7 @@ e2e(
     const bars = recording.spans.filter((entry) => entry.kind === "measure" && entry.label === "work");
     assert.equal(bars.length, 1, "the repeated 'work' label collapses to ONE stored bar");
     const span = bars[0];
-    // Repeated once per --iteration: the bar is the lower-median-by-wall occurrence, samples == iterations.
+    // Repeated once per --iteration: the bar is the lower-median-by-wall occurrence, samples == iterations
     assert.equal(span.samples, 5, "samples == iterations (one occurrence per iteration, all merged)");
     assert.ok(
       span.wallMinMs <= span.breakdown.wallMs && span.breakdown.wallMs <= span.wallMaxMs,
@@ -351,7 +351,7 @@ e2e(
       slices.js.ms + slices.style.ms + slices.layout.ms + slices.gc.ms + slices.other.ms + slices.idle.ms;
     assert.ok(Math.abs(sum - span.breakdown.wallMs) < 0.01, "the median bar tiles its own window (a real sample reconciles)");
     // Firefox paint is off-main-thread, so the stored bar reports it not-measured (null), never a
-    // fake 0 that a --max-slice paint gate would silently pass on (F04).
+    // fake 0 that a --max-slice paint gate would silently pass on (F04)
     assert.equal(slices.paint, null, "paint is not-measured (null) on firefox stored bars");
   },
 );
@@ -359,7 +359,7 @@ e2e(
 // Per-span hot functions on the firefox (gecko) lane: a measure pools its occurrences' samples and
 // ranks them off the same CpuModel the run-wide `query cpu` reads, so the ids/names cohere. A trivial
 // measure stays below the pooled floor and is suppressed. Gecko clamps the sampler to ~1ms, so this
-// gathers fewer samples than chrome; the heavy measure still clears the 10-sample floor.
+// gathers fewer samples than chrome; the heavy measure still clears the 10-sample floor
 e2e(
   "query span <measure>: firefox surfaces pooled per-span hot functions coherent with query cpu",
   { timeout: TIMEOUT_MS },
@@ -382,7 +382,7 @@ e2e(
     assert.ok(topFn.fn === "heavyWork" || topFn.source?.includes("measure-hot"), "the dominant work resolves to source");
 
     // Coherence with the run-wide model: the pooled hot list's top id/name is the same function the
-    // run-wide `query cpu` ranks (the ids index the one CpuModel), never a diverging join.
+    // run-wide `query cpu` ranks (the ids index the one CpuModel), never a diverging join
     const cpu = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
     const modelTop = cpu.hot.find((fn) => fn.id === topFn.id);
     assert.ok(modelTop, "the pooled ref's id indexes the run-wide model");
@@ -396,7 +396,7 @@ e2e(
 
 // `query spans` reads the SAME unified shape on firefox as on chrome: the run span plus the user
 // performance.measure, keyed by label. This is the cross-engine join the dogfooding report asked
-// for -- a firefox consumer no longer special-cases CpuModel.breakdown or misses per-measure spans.
+// for -- a firefox consumer no longer special-cases CpuModel.breakdown or misses per-measure spans
 e2e(
   "query spans: unified per-span shape over a firefox recording (run + performance.measure)",
   { timeout: TIMEOUT_MS },
@@ -412,13 +412,13 @@ e2e(
     assert.ok(runSpan, "the run span is present");
     const measure = spans.spans.find((span) => span.kind === "measure" && span.label === "work");
     assert.ok(measure, "the user performance.measure 'work' surfaces as a labeled span on firefox");
-    // Same superset shape as chrome: every slice key present, style/layout measured on firefox.
+    // Same superset shape as chrome: every slice key present, style/layout measured on firefox
     for (const key of ["js", "style", "layout", "paint", "gc", "other", "idle"])
       assert.ok(key in measure.slices, `slice '${key}' present in the unified shape`);
     assert.notEqual(measure.slices.style, null, "firefox splits style");
     assert.notEqual(measure.slices.layout, null, "firefox splits layout");
     // The aggregation contract crosses the engine unchanged: run = a total over the loop, a repeated
-    // measure = the median of its per-iteration occurrences, with identical spread disclosure to chrome.
+    // measure = the median of its per-iteration occurrences, with identical spread disclosure to chrome
     assert.equal(runSpan.aggregation, "sum", "the run span is a total across iterations");
     assert.equal(measure.aggregation, "median", "a repeated measure span reports its median sample");
     assert.equal(measure.samples, 5, "samples == iterations (recorded with --iterations 5)");
@@ -427,7 +427,7 @@ e2e(
     assert.equal(runSpan.iterations, 5, "the run span carries the recording's iteration count");
     assert.equal(measure.iterations, 5, "the measure span carries the recording's iteration count");
 
-    // The convergence hint: `query cpu --format json` points firefox consumers at this surface.
+    // The convergence hint: `query cpu --format json` points firefox consumers at this surface
     const cpu = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
     assert.ok(cpu.hints.some((hint) => /query spans/.test(hint)), "query cpu points at the spans surface");
   },

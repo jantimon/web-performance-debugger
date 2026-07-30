@@ -10,7 +10,7 @@ import {
 import * as notes from "../../dist/record/notes.js";
 
 // The one-pass capture modes: which capture config each flag combination yields. Every capture mode is
-// exactly one pass (one categories set, one cpu decision), so the whole capture story is this pure function.
+// exactly one pass (one categories set, one cpu decision), so the whole capture story is this pure function
 const opts = (over = {}) => ({ iterations: 1, driver: false, cpuProfile: true, ...over });
 
 test("captureFor: chrome default capture mode is the sampler alone, no trace", () => {
@@ -63,7 +63,7 @@ test("captureFor: firefox is always the one gecko pass (the capture modes are re
   assert.equal(config.mode, "gecko");
   assert.equal(config.gecko, true, "the gecko profiler runs");
   assert.equal(config.categories, null, "no DevTools trace on firefox");
-  // A programmatic cpuProfile:false yields a timing-only pass that counts nothing.
+  // A programmatic cpuProfile:false yields a timing-only pass that counts nothing
   const off = captureFor(opts({ cpuProfile: false }), "firefox");
   assert.equal(off.gecko, false);
 });
@@ -74,7 +74,7 @@ test("captureFor: firefox --deep is the SAME gecko capture, only the capture-mod
   assert.equal(deep.gecko, true, "the gecko profiler still runs (capture is unchanged)");
   assert.equal(deep.categories, null, "still no DevTools trace: --deep adds no .stack on firefox");
   // The capture is byte-identical to the default gecko pass apart from the capture-mode label, so what the
-  // pass can observe (capabilities) and what blame names are unchanged.
+  // pass can observe (capabilities) and what blame names are unchanged
   const dflt = captureFor(opts(), "firefox");
   assert.deepEqual(
     capabilitiesFor(deep, "firefox"),
@@ -85,7 +85,7 @@ test("captureFor: firefox --deep is the SAME gecko capture, only the capture-mod
 });
 
 // capabilitiesFor gates each count/duration to Measured. The HARD GUARD: durations are refusable on
-// a .stack trace (--deep counts yes, durations no), and the default capture mode measures nothing.
+// a .stack trace (--deep counts yes, durations no), and the default capture mode measures nothing
 test("capabilitiesFor: default capture mode measures nothing; --breakdown counts+durations; --deep counts, no durations", () => {
   const dflt = capabilitiesFor(captureFor(opts(), "chrome"), "chrome");
   assert.deepEqual(dflt, {
@@ -110,7 +110,7 @@ test("capabilitiesFor: default capture mode measures nothing; --breakdown counts
   assert.equal(deep.forced, true, ".stack drives forced detection");
   assert.equal(deep.invalidations, true, "invalidationTracking present");
   // No lane can honestly price the forced SUBSET's duration: chrome reads it only from `.stack`, which
-  // suppresses all durations. So forcedLayoutMs is structurally not-measured everywhere.
+  // suppresses all durations. So forcedLayoutMs is structurally not-measured everywhere
   assert.equal(deep.forcedDurations, false, "the forced-subset duration is never measurable");
   assert.equal(light.forcedDurations, false);
 });
@@ -133,7 +133,7 @@ test("blameSemanticFor: --deep, --breakdown, and firefox name the read (flush-si
   assert.equal(blameSemanticFor(captureFor(opts({ deep: true }), "chrome")), "flush-site");
   assert.equal(blameSemanticFor(captureFor(opts(), "firefox")), "flush-site");
   // --breakdown now names the read too, sampled from the CPU profile's per-sample executing line (the
-  // record path clears this when the trace carried no lines). --deep is exact, --breakdown is sampled.
+  // record path clears this when the trace carried no lines). --deep is exact, --breakdown is sampled
   assert.equal(
     blameSemanticFor(captureFor(opts({ breakdown: true }), "chrome")),
     "flush-site",
@@ -151,7 +151,7 @@ test("countScopeNote: null at one iteration or with no counts; a TOTAL disclosur
   const note = countScopeNote(light, opts({ breakdown: true, iterations: 8 }));
   assert.match(note, /TOTALS across all 8/);
   assert.match(note, /one pass/);
-  // Driver per-step counts window to iteration 0, so the note says they are unaffected.
+  // Driver per-step counts window to iteration 0, so the note says they are unaffected
   const driverNote = countScopeNote(light, opts({ breakdown: true, iterations: 8, driver: true }));
   assert.match(driverNote, /Per-step counts are unaffected/);
 });
@@ -166,8 +166,8 @@ test("capabilitiesAfterParse: a lost run window degrades every rendering capabil
 });
 
 // Drift guard: the not-measured NOTES must agree with capabilitiesFor and honor the Measured
-// contract. Under that contract unmeasured is `—`/null and 0 is measured-clean, so a note that tells
-// a reader "a 0 there means unmeasured" contradicts the model that already renders unmeasured as `—`.
+// contract. Under that contract unmeasured is `-`/null and 0 is measured-clean, so a note that tells
+// a reader "a 0 there means unmeasured" contradicts the model that already renders unmeasured as `-`
 test("notes: the breakdown invalidation note matches capabilitiesFor and never equates 0 with unmeasured", () => {
   const caps = capabilitiesFor(captureFor(opts({ breakdown: true }), "chrome"), "chrome");
   assert.equal(caps.invalidations, false, "precondition: --breakdown drops invalidationTracking");

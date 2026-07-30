@@ -8,11 +8,11 @@ export function isFormat(value: string): value is Format {
 
 // Decimal places kept on serialized numbers. 4 == 0.1us, far finer than any signal here
 // (CPU sampling noise is a few %, wall time is Chrome-clamped), and it strips binary-float
-// dust like 0.026000000000000002 -> 0.026, which is most of the output's wasted bytes.
+// dust like 0.026000000000000002 -> 0.026, which is most of the output's wasted bytes
 const SERIALIZED_DECIMALS = 4;
 const ROUND_FACTOR = 10 ** SERIALIZED_DECIMALS;
 
-/** Deep copy with every finite, non-integer number rounded; shrinks files, drops float dust. */
+/** Deep copy with every finite, non-integer number rounded; shrinks files, drops float dust */
 function roundNumbers(value: unknown): unknown {
   if (typeof value === "number") {
     if (!Number.isFinite(value) || Number.isInteger(value)) return value;
@@ -32,7 +32,7 @@ export function serialize(value: unknown, format: Format): string {
   return format === "toon" ? encode(rounded as any) : JSON.stringify(rounded, null, 2);
 }
 
-/** Parse a recording file body, auto-detecting JSON vs TOON. */
+/** Parse a recording file body, auto-detecting JSON vs TOON */
 export function deserialize(body: string, hintExt?: string): unknown {
   const trimmed = body.trimStart();
   if (hintExt === ".toon") return decode(body);
@@ -51,15 +51,15 @@ export function extFor(format: Format): string {
   return format === "toon" ? ".toon" : ".json";
 }
 
-/** The `--format` surface a query verb reads to decide structured-vs-human output. */
+/** The `--format` surface a query verb reads to decide structured-vs-human output */
 export interface StructuredOutOpts {
-  /** Hidden alias of `--format json`: kept working, kept out of help. `--format` is the documented spelling. */
+  /** Hidden alias of `--format json`: kept working, kept out of help. `--format` is the documented spelling */
   json?: boolean;
   format?: string;
 }
 
 /** The structured format a verb should emit, or null for the human report. `--format` wins over the
- * hidden `--json` alias; an unknown format name fails loudly. */
+ * hidden `--json` alias; an unknown format name fails loudly */
 export function structuredFormat(opts: StructuredOutOpts): Format | null {
   if (opts.format) {
     if (!isFormat(opts.format)) throw new Error("--format must be json or toon");
@@ -68,7 +68,7 @@ export function structuredFormat(opts: StructuredOutOpts): Format | null {
   return opts.json ? "json" : null;
 }
 
-/** Serialize one structured value to stdout in the chosen format. */
+/** Serialize one structured value to stdout in the chosen format */
 export function emit(value: unknown, fmt: Format): void {
   console.log(serialize(value, fmt));
 }

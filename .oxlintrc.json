@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "jsPlugins": ["./lint/id-length.ts", "./lint/no-comment-slop.ts"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "local/id-length": ["error", { "min": 2, "exceptions": ["i", "j", "n"], "properties": "never" }],
+    "no-comment-slop/no-trailing-period": "error",
+    "no-comment-slop/no-em-dash": "error",
+    "no-comment-slop/no-banner-comment": "error",
+    "no-comment-slop/no-foreign-syntax": "error",
+    "no-comment-slop/no-jargon": "error",
+    "no-comment-slop/prefer-jsdoc-for-exports": "error",
+    "no-comment-slop/max-comment-lines": ["error", { "max": 10, "headerMax": 10, "jsdocSectionMax": 10 }],
+    "no-comment-slop/no-trailing-comment": "off"
+  },
+  "env": {
+    "builtin": true
+  },
+  "overrides": [
+    {
+      "files": ["src/**", "scripts/**"],
+      "rules": {
+        "no-comment-slop/no-trailing-comment": "error"
+      }
+    }
+  ],
+  "ignorePatterns": ["lint/**", "dist/**", "examples/*/dist/**", "examples/*/node_modules/**"]
+}

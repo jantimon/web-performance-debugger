@@ -10,7 +10,7 @@ import {
 // The layout-thrashing detector as a pure function over a fixture event log (no browser). The event
 // shapes mirror what a Chrome --deep trace parses to: invalidation-kind writes with a reason + a
 // resolved `.at`, and forced layout/style flushes with a resolved read-site `.at`. All events sit on
-// one RunTask; without pid/tid the detector treats every event as main-thread.
+// one RunTask; without pid/tid the detector treats every event as main-thread
 
 let nextId = 0;
 function ev(fields) {
@@ -48,7 +48,7 @@ test("detects a write->read thrash step and names the dirtied-by write", () => {
   assert.deepEqual(report.steps[0].dirtiedBy, [
     { at: "app.js:10", reason: "Inline CSS style declaration was mutated" },
   ]);
-  // The dual annotation is also keyed by read-site, for the blame rollup.
+  // The dual annotation is also keyed by read-site, for the blame rollup
   assert.deepEqual(dirtiedByReadSite["app.js:20"], [
     { at: "app.js:10", reason: "Inline CSS style declaration was mutated" },
   ]);
@@ -57,7 +57,7 @@ test("detects a write->read thrash step and names the dirtied-by write", () => {
 // The judgment: the rule matches by KIND (a layout flush needs a layout write, a style flush a
 // style write). This is what makes the probe's focus() Layout re-read -- whose gap holds only a
 // :focus-recalc STYLE write, no layout write -- a genuine non-thrash. The looser "any layout|style
-// write" rule would count it (43/43 vs 42/43 on the probe) and over-report a clean re-read.
+// write" rule would count it (43/43 vs 42/43 on the probe) and over-report a clean re-read
 test("matches by kind: a :focus-style write before a LAYOUT flush is not a layout-thrash", () => {
   nextId = 0;
   const events = [task(0, 1000), styleWrite(10, "app.js:10", "PseudoClass"), layoutFlush(20, "app.js:20")];
@@ -74,7 +74,7 @@ test("a forced flush with no write in its gap is not a thrash step", () => {
 
 // A layout write DOES thrash a layout flush; but the layout-kind record's stack names the forcing
 // READ, not the write, so it is never surfaced as a dirtied-by (dirtied-by comes from style-kind
-// mutation records only). The step is real; its dirtiedBy is empty.
+// mutation records only). The step is real; its dirtiedBy is empty
 test("a layout write thrashes a layout flush, with an empty dirtied-by", () => {
   nextId = 0;
   const events = [
@@ -104,7 +104,7 @@ test('a removeChild detach ("Removed from layout") names the write from the layo
 // so its "Removed from layout" record is stamped with the geometry read on the stack and its `at` is
 // byte-equal (line:col) to the flush's own read-site. That self-referential entry is not a write, so
 // it is dropped from dirtied-by; the co-emitted style mutation (the genuine toggle) survives, and the
-// layout write still counts the thrash step.
+// layout write still counts the thrash step
 test('display:none "Removed from layout" at the flush read-site is dropped from dirtied-by, count unchanged', () => {
   nextId = 0;
   const events = [
@@ -125,7 +125,7 @@ test('display:none "Removed from layout" at the flush read-site is dropped from 
 
 // The classic style->layout thrash the probe produces: one write, then BOTH a forced style recalc
 // and a forced layout, both read at the same line. Both count; the read-site's dirtied-by rolls up
-// to the one genuine write, ignoring the layout record that names the read.
+// to the one genuine write, ignoring the layout record that names the read
 test("style->layout thrash: both flushes count, dirtied-by rolls up per read-site", () => {
   nextId = 0;
   const events = [
@@ -155,7 +155,7 @@ test("the gap resets at each flush: a write consumed by one flush does not thras
 
 // The enclosing RunTask begins just before the run:start mark (measured on the real probe), so the
 // detector must see the full stream: a pre-window write in the same task still dirties an in-window
-// flush, while a flush BEFORE the window start is not reported.
+// flush, while a flush BEFORE the window start is not reported
 test("windowing: a pre-window write counts, a pre-window flush does not", () => {
   nextId = 0;
   const inWindowFlush = [
@@ -224,7 +224,7 @@ test("cap behavior: steps are capped and `omitted` counts the rest", () => {
   assert.equal(capped.steps.length, 2);
   assert.equal(capped.omitted, 3);
 
-  // The default cap keeps THRASH_SEQUENCE_CAP steps and omits the rest.
+  // The default cap keeps THRASH_SEQUENCE_CAP steps and omits the rest
   const many = analyzeThrash(build(THRASH_SEQUENCE_CAP + 4), 0).report;
   assert.equal(many.steps.length, THRASH_SEQUENCE_CAP);
   assert.equal(many.omitted, 4);
@@ -235,7 +235,7 @@ test("the headline threshold N is a named constant", () => {
 });
 
 // No invalidation records at all (a lane that cannot observe them, e.g. Firefox / --breakdown):
-// the detector reads empty, never a fabricated thrash.
+// the detector reads empty, never a fabricated thrash
 test("no invalidation records yields an empty, not-available result", () => {
   nextId = 0;
   const events = [task(0, 1000), styleFlush(10, "app.js:10"), layoutFlush(20, "app.js:10")];

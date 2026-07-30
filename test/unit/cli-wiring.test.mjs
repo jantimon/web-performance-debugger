@@ -9,14 +9,14 @@ import { fileURLToPath } from "node:url";
 // stubs, which `program.error` before any browser launch, so a broken guard fails in the browser-free
 // `ci` job, not after a Chrome download. These take no measurement -- they assert an exit code and a
 // message -- so parallel unit workers are fine. The `--target node` tests that RECORD a real profile
-// moved to test/measurement/ (the serial lane), where nothing competes for the CPU mid-measurement.
+// moved to test/measurement/ (the serial lane), where nothing competes for the CPU mid-measurement
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const cli = path.join(repoRoot, "dist", "cli.js");
 const examples = path.join(repoRoot, "examples");
 
 // The removed `query digest` / `query index` verbs exit 1 with a message naming the replacement, not
 // commander's bare "unknown command" and not a stack trace. Browser-free, so a plain test (never
-// skipped): the stub errors before any recording is read.
+// skipped): the stub errors before any recording is read
 for (const removed of ["digest", "index"]) {
   test(`query ${removed} was removed and points at the replacement`, () => {
     const result = spawnSync(process.execPath, [cli, "query", removed, "latest", "--format", "json"], {
@@ -33,7 +33,7 @@ for (const removed of ["digest", "index"]) {
 
 // --headless-mode is removed: wpd always runs Chrome's built-in headless (or --no-headless). An
 // explicit flag fails with a clear removal message, not commander's generic unknown-option. The guard
-// rejects before any browser launches, so this runs everywhere (not gated on Chrome).
+// rejects before any browser launches, so this runs everywhere (not gated on Chrome)
 test("record --headless-mode errors with a clear removal message", () => {
   const result = spawnSync(
     process.execPath,
@@ -46,7 +46,7 @@ test("record --headless-mode errors with a clear removal message", () => {
 });
 
 // The capture modes are mutually exclusive: two capture modes are two captures / two questions, so wpd
-// points at running twice rather than fusing them. Guards fire before any browser launches.
+// points at running twice rather than fusing them. Guards fire before any browser launches
 const guardError = (args) =>
   spawnSync(process.execPath, [cli, "record", path.join(examples, "forces-layout.mjs"), ...args], {
     cwd: repoRoot,
@@ -69,7 +69,7 @@ test("record --precise-wall is retired and names the migration (fires before any
 test("record --breakdown on firefox is rejected (the gecko pass IS the firefox lane)", () => {
   // --deep on firefox is a reporting tier over the same gecko pass (its dirtied-by write report
   // is covered in test/firefox.e2e.test.mjs). --breakdown has no meaning on firefox and is
-  // refused before any browser launches.
+  // refused before any browser launches
   const result = guardError(["--target", "firefox", "--breakdown"]);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /unsupported/);

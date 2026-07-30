@@ -5,9 +5,9 @@ import { isToolFrameUrl } from "../../dist/trace/stacks.js";
 // F11: a driver-mode USER page.evaluate callback is stamped `pptr:evaluate;<user call site>` by
 // puppeteer, the same scheme wpd's own injected helpers carry. Dropping the whole `pptr:` family
 // silently erased the user's evaluated code from blame/cpu; the filter must drop only wpd's OWN
-// injection points (driver marks/observer/settle, bench harness) and let user frames survive.
+// injection points (driver marks/observer/settle, bench harness) and let user frames survive
 
-// puppeteer builds the sourceURL as `pptr:<fn>;<encodeURIComponent(call site)>`.
+// puppeteer builds the sourceURL as `pptr:<fn>;<encodeURIComponent(call site)>`
 const pptr = (site) => `pptr:evaluate;${encodeURIComponent(site)}`;
 
 test("isToolFrameUrl drops wpd's own injected page.evaluate frames", () => {
@@ -27,20 +27,20 @@ test("isToolFrameUrl drops wpd's injected frames when the call site is a Windows
 });
 
 test("isToolFrameUrl keeps a user's driver-mode page.evaluate callback (F11)", () => {
-  // The user's own module drives the page; its evaluated callback must reach blame/cpu.
+  // The user's own module drives the page; its evaluated callback must reach blame/cpu
   assert.equal(isToolFrameUrl(pptr("(/home/u/app/steps.mjs:12:20)")), false);
-  // Even a user file literally named driver.mjs (common) is not under wpd's browser/ dir, so it survives.
+  // Even a user file literally named driver.mjs (common) is not under wpd's browser/ dir, so it survives
   assert.equal(isToolFrameUrl(pptr("run (/home/u/app/driver.mjs:8:14)")), false);
-  // A plain served source url is never a tool frame.
+  // A plain served source url is never a tool frame
   assert.equal(isToolFrameUrl("http://127.0.0.1:5000/src/app.js"), false);
   assert.equal(isToolFrameUrl(undefined), false);
 });
 
-// Item 4: automation dispatch must not rank alongside the app's own JS.
+// Item 4: automation dispatch must not rank alongside the app's own JS
 test("isToolFrameUrl drops puppeteer's own page.evaluate machinery (item 4b)", () => {
   // puppeteer serializes its click/query helpers (isIntersectingViewport, clickableBox, ...) from
   // node_modules/puppeteer-core/lib; without dropping them their percent-encoded path leaks into the
-  // js-by-package rollup as a `%2Fpuppeteer-core...` bucket and ranks like app code.
+  // js-by-package rollup as a `%2Fpuppeteer-core...` bucket and ranks like app code
   assert.equal(
     isToolFrameUrl(
       pptr(
@@ -57,7 +57,7 @@ test("isToolFrameUrl drops puppeteer's own page.evaluate machinery (item 4b)", (
     ),
     true,
   );
-  // Anchored to node_modules/puppeteer-core/: a user's own file under a lookalike path survives.
+  // Anchored to node_modules/puppeteer-core/: a user's own file under a lookalike path survives
   assert.equal(
     isToolFrameUrl(pptr("visibleRatio (/home/u/app/src/puppeteer-core-shim.js:4:2)")),
     false,
@@ -67,9 +67,9 @@ test("isToolFrameUrl drops puppeteer's own page.evaluate machinery (item 4b)", (
 
 test("isToolFrameUrl drops Firefox's WebDriver-automation frames (item 4a)", () => {
   // Marionette/RemoteAgent/BiDi/EventUtils are hosted under chrome://remote/; they drive the page,
-  // never the user's JS.
+  // never the user's JS
   assert.equal(isToolFrameUrl("chrome://remote/content/external/EventUtils.js"), true);
   assert.equal(isToolFrameUrl("chrome://remote/content/components/Marionette.sys.mjs"), true);
-  // Firefox's own browser-UI chrome:// frames are NOT automation and are left untouched.
+  // Firefox's own browser-UI chrome:// frames are NOT automation and are left untouched
   assert.equal(isToolFrameUrl("chrome://browser/content/browser.js"), false);
 });

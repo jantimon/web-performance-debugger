@@ -1,5 +1,5 @@
 // Shared fixture builders and constants for the split unit suites. Each test/unit/*.test.mjs
-// imports what it needs from here; the test bodies are unchanged.
+// imports what it needs from here; the test bodies are unchanged
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
@@ -8,11 +8,12 @@ import os from "node:os";
 import path from "node:path";
 import { SCHEMA_VERSION } from "../../dist/schema.js";
 
-// --- The seven-slice breakdown engine (pure; fixtures, no browser) ---
-//
-// A nested main-thread flame chart, in microseconds. RunTask contains a FunctionCall (js), which
-// contains a Layout; the RunTask also contains a Paint. Disjoint self-time is standard flame-chart
-// self-time (children subtracted), so RunTask's own remainder is the `other` bucket.
+/**
+ *
+ * A nested main-thread flame chart, in microseconds. RunTask contains a FunctionCall (js), which
+ * contains a Layout; the RunTask also contains a Paint. Disjoint self-time is standard flame-chart
+ * self-time (children subtracted), so RunTask's own remainder is the `other` bucket
+ */
 export const NESTED_EVENTS = [
   { id: 0, name: "RunTask", ts: 0, dur: 100000, ph: "X", kind: "task" },
   { id: 1, name: "FunctionCall", ts: 10000, dur: 30000, ph: "X", kind: "scripting" },
@@ -22,9 +23,11 @@ export const NESTED_EVENTS = [
 
 export const NESTED_WINDOW = { startTs: 0, endTs: 100000 };
 
-// Property test: the reconciliation invariant (Σ slices + idle == wall, no residual) must hold for
-// ANY main-thread event set, not just the hand-built fixtures above. A tiny seeded LCG generates
-// nested flame charts deterministically (no unseeded Math.random), so a failure is reproducible.
+/**
+ * Property test: the reconciliation invariant (Σ slices + idle == wall, no residual) must hold for
+ * ANY main-thread event set, not just the hand-built fixtures above. A tiny seeded LCG generates
+ * nested flame charts deterministically (no unseeded Math.random), so a failure is reproducible
+ */
 export function lcg(seed) {
   let state = seed >>> 0;
   return () => {
@@ -35,8 +38,10 @@ export function lcg(seed) {
 
 export const BREAKDOWN_KINDS = ["task", "scripting", "layout", "style", "paint", "gc", "composite", "invalidation", "usertiming", "other"];
 
-// A depth-first tree of events whose children lie inside their parent's [start,end]; nesting is what
-// exercises the disjoint self-time sweep. Any shape must still tile the window exactly.
+/**
+ * A depth-first tree of events whose children lie inside their parent's [start,end]; nesting is what
+ * exercises the disjoint self-time sweep. Any shape must still tile the window exactly
+ */
 export function randomNestedEvents(rand) {
   const events = [];
   let id = 0;
@@ -67,8 +72,10 @@ export function randomNestedEvents(rand) {
   return { events, window: { startTs: 0, endTs: windowEnd } };
 }
 
-// A synthetic V8 profile: root -> alpha -> beta -> alpha (direct recursion), plus idle and gc.
-// node: urls keep frame resolution fully offline (no sourcemap/fs I/O).
+/**
+ * A synthetic V8 profile: root -> alpha -> beta -> alpha (direct recursion), plus idle and gc.
+ * node: urls keep frame resolution fully offline (no sourcemap/fs I/O)
+ */
 export function syntheticProfile() {
   const sys = (functionName) => ({ functionName, scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 });
   const app = (functionName, lineNumber) => ({ functionName, scriptId: "1", url: "node:app", lineNumber, columnNumber: 0 });
@@ -88,10 +95,12 @@ export function syntheticProfile() {
   };
 }
 
-// The four-slice CPU breakdown (js/browser/gc/idle) must tile the profile window EXACTLY: every
-// sample's delta is attributed to its node, every node classifies into one slice, so the slices
-// sum to wall with zero residual. This fixture exercises every synthetic frame plus a node_modules
-// split and an app frame, so classification and the js byPackage subdivision are both pinned.
+/**
+ * The four-slice CPU breakdown (js/browser/gc/idle) must tile the profile window EXACTLY: every
+ * sample's delta is attributed to its node, every node classifies into one slice, so the slices
+ * sum to wall with zero residual. This fixture exercises every synthetic frame plus a node_modules
+ * split and an app frame, so classification and the js byPackage subdivision are both pinned
+ */
 export function breakdownProfile() {
   const sys = (functionName) => ({ functionName, scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 });
   const fileFrame = (functionName, absFile, lineNumber) => ({
@@ -117,9 +126,11 @@ export function breakdownProfile() {
   };
 }
 
-// Pseudo-URLs (inline data: modules, blob:, wasm, V8/extension internals) are not on disk.
-// They must bucket by scheme, never fs-walk to a stray package.json (which would mis-blame
-// them on the tool's own cwd package, as seen profiling blob-iframe SPAs).
+/**
+ * Pseudo-URLs (inline data: modules, blob:, wasm, V8/extension internals) are not on disk.
+ * They must bucket by scheme, never fs-walk to a stray package.json (which would mis-blame
+ * them on the tool's own cwd package, as seen profiling blob-iframe SPAs)
+ */
 export function pseudoUrlProfile() {
   const frame = (functionName, url, lineNumber) => ({
     functionName,
@@ -145,13 +156,15 @@ export function pseudoUrlProfile() {
   };
 }
 
-// A minified bundle served over http is the case that matters most and was untested: every
-// existing test dodges the remote path via node:/pseudo urls or a dead FIXTURE_ORIGIN. These
-// serve real bundles and drive the real fetch.
-//
-// One segment ("AAAAA" = genCol 0 -> source 0, line 0, col 0, name 0) is enough: a CDP frame at
-// lineNumber 0 / columnNumber 0 becomes line 1 / column 1, and resolveFrame looks up line 1,
-// column 0 -- exactly this segment.
+/**
+ * A minified bundle served over http is the case that matters most and was untested: every
+ * existing test dodges the remote path via node:/pseudo urls or a dead FIXTURE_ORIGIN. These
+ * serve real bundles and drive the real fetch.
+ *
+ * One segment ("AAAAA" = genCol 0 -> source 0, line 0, col 0, name 0) is enough: a CDP frame at
+ * lineNumber 0 / columnNumber 0 becomes line 1 / column 1, and resolveFrame looks up line 1,
+ * column 0 -- exactly this segment
+ */
 export function sourcemapFor(source, name) {
   return JSON.stringify({
     version: 3,
@@ -162,13 +175,15 @@ export function sourcemapFor(source, name) {
   });
 }
 
-// server.close is callback-based; wrap it so a finally block can await the shutdown and not leak
-// the listener into the next test.
+/**
+ * server.close is callback-based; wrap it so a finally block can await the shutdown and not leak
+ * the listener into the next test
+ */
 export function closeServer(server) {
   return new Promise((resolve) => server.close(resolve));
 }
 
-/** Five bundles, each a different sourcemap-acquisition story. */
+/** Five bundles, each a different sourcemap-acquisition story */
 export async function startBundleServer() {
   const routes = {
     // the map is announced by the conventional trailing comment
@@ -232,7 +247,6 @@ export function remoteBundleProfile(origin) {
   };
 }
 
-// --- Step merge (label-keyed; step timings and trace windows come from the same one pass) ---
 
 export const driverStep = (index, label) => ({
   index,
@@ -247,12 +261,14 @@ export const geckoFixture = JSON.parse(
 
 export const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
-// A hand-built Gecko shutdown dump for the js,cpu mechanisms the trimmed real fixture predates: a
-// populated `threadCPUDelta` column (idle routing), Layout-category frames (style/layout slices), a
-// DOM accessor over a Reflow with a JS ancestor executing line (read-site blame), and a user
-// `performance.measure` interval marker (the mark bridge). Kept minimal and readable.
+/**
+ * A hand-built Gecko shutdown dump for the js,cpu mechanisms the trimmed real fixture predates: a
+ * populated `threadCPUDelta` column (idle routing), Layout-category frames (style/layout slices), a
+ * DOM accessor over a Reflow with a JS ancestor executing line (read-site blame), and a user
+ * `performance.measure` interval marker (the mark bridge). Kept minimal and readable
+ */
 export function syntheticGeckoDump() {
-  // Category names must match the ones parseGecko/sampleSlice look up by name.
+  // Category names must match the ones parseGecko/sampleSlice look up by name
   const categories = [
     { name: "Idle" },
     { name: "Other" },
@@ -273,7 +289,7 @@ export function syntheticGeckoDump() {
     "MinorGC", // 8 (unused name, kept for completeness)
   ];
   // frameTable {location, relevantForJS, innerWindowID, implementation, line, column, category,
-  // subcategory}; location holds a stringTable index.
+  // subcategory}; location holds a stringTable index
   const frameTable = {
     schema: {
       location: 0,
@@ -306,7 +322,7 @@ export function syntheticGeckoDump() {
       [0, 5], // 5 root->native  (idle-ish leaf)
     ],
   };
-  // samples {stack, time, threadCPUDelta}; times in ms, cpu in µs.
+  // samples {stack, time, threadCPUDelta}; times in ms, cpu in µs
   const samples = {
     schema: { stack: 0, time: 1, threadCPUDelta: 2 },
     data: [
@@ -354,26 +370,32 @@ export function syntheticGeckoDump() {
   };
 }
 
-// The fixture's frames carry this served origin (captured at record time); the resolver
-// rewrites it back to local source under repoRoot.
+/**
+ * The fixture's frames carry this served origin (captured at record time); the resolver
+ * rewrites it back to local source under repoRoot
+ */
 export const FIXTURE_ORIGIN = "http://127.0.0.1:60832";
 
-// --- CI-gating paths: write minimal recordings to a temp dir and drive the real commands. ---
+/**
+ * CI-gating paths: write minimal recordings to a temp dir and drive the real commands
+ */
 export const tmpDir = mkdtempSync(path.join(os.tmpdir(), "wpd-test-"));
 
-// A minimal recording carries a meta stamped with the CURRENT schema epoch, so the readers'
-// schema gate (model/artifact.ts) lets it through; the count/timing tests exercise the gate logic,
-// not the schema guard.
+/**
+ * A minimal recording carries a meta stamped with the CURRENT schema epoch, so the readers'
+ * schema gate (model/artifact.ts) lets it through; the count/timing tests exercise the gate logic,
+ * not the schema guard
+ */
 export function writeRecording(name, summaryOverrides) {
   return writeSchemaArtifact(name, SCHEMA_VERSION, summaryOverrides);
 }
 
 /**
  * A schema-5 run span (`kind: "run"`) carrying the run-level counts/timing, the sole count/timing
- * store. `values` set any of the counts, wallMs, inpMs, longestTaskMs, perIteration, stats.
+ * store. `values` set any of the counts, wallMs, inpMs, longestTaskMs, perIteration, stats
  */
 export function runSpanFixture(values = {}) {
-  const v = {
+  const fields = {
     wallMs: null, inpMs: null, longestTaskMs: null,
     layoutCount: 0, styleCount: 0, paintCount: 0, forcedLayoutCount: 0,
     layoutInvalidations: 0, paintInvalidations: 0, styleInvalidations: 0, longTaskCount: 0,
@@ -381,23 +403,23 @@ export function runSpanFixture(values = {}) {
   };
   return {
     label: "run", kind: "run", aggregation: "sum",
-    wallMs: v.wallMs,
-    ...(v.wallMs != null ? { wallClock: "page" } : {}),
+    wallMs: fields.wallMs,
+    ...(fields.wallMs != null ? { wallClock: "page" } : {}),
     counts: {
-      layoutCount: v.layoutCount, styleCount: v.styleCount, paintCount: v.paintCount,
-      forcedLayoutCount: v.forcedLayoutCount, layoutInvalidations: v.layoutInvalidations,
-      paintInvalidations: v.paintInvalidations, styleInvalidations: v.styleInvalidations,
-      longTaskCount: v.longTaskCount,
+      layoutCount: fields.layoutCount, styleCount: fields.styleCount, paintCount: fields.paintCount,
+      forcedLayoutCount: fields.forcedLayoutCount, layoutInvalidations: fields.layoutInvalidations,
+      paintInvalidations: fields.paintInvalidations, styleInvalidations: fields.styleInvalidations,
+      longTaskCount: fields.longTaskCount,
     },
-    ...(v.longestTaskMs != null ? { longestTaskMs: v.longestTaskMs } : {}),
-    ...(v.inpMs != null ? { inpMs: v.inpMs } : {}),
-    ...(v.perIteration.length ? { perIteration: v.perIteration } : {}),
-    ...(v.stats ? { stats: v.stats } : {}),
+    ...(fields.longestTaskMs != null ? { longestTaskMs: fields.longestTaskMs } : {}),
+    ...(fields.inpMs != null ? { inpMs: fields.inpMs } : {}),
+    ...(fields.perIteration.length ? { perIteration: fields.perIteration } : {}),
+    ...(fields.stats ? { stats: fields.stats } : {}),
   };
 }
 
 /** Like writeRecording, but the caller pins the schema epoch (to exercise the reject path).
- * `overrides` set the run-level counts/timing (schema 5 stores them on the run span). */
+ * `overrides` set the run-level counts/timing (schema 5 stores them on the run span) */
 export function writeSchemaArtifact(name, schemaVersion, overrides = {}) {
   const meta = {
     schemaVersion, capture: "default",
@@ -405,12 +427,14 @@ export function writeSchemaArtifact(name, schemaVersion, overrides = {}) {
     jsSelfMs: overrides.jsSelfMs ?? 0, totalEvents: overrides.totalEvents ?? 0,
   };
   const file = path.join(tmpDir, name);
-  // A minimal non-stepped recording: the run span carries the run-level counts/timing (no bar).
+  // A minimal non-stepped recording: the run span carries the run-level counts/timing (no bar)
   writeFileSync(file, JSON.stringify({ meta, spans: [runSpanFixture(overrides)] }), "utf8");
   return file;
 }
 
-// Run a command with console.log silenced and process.exitCode isolated; returns the exit code.
+/**
+ * Run a command with console.log silenced and process.exitCode isolated; returns the exit code
+ */
 export async function captureExitCode(run) {
   const priorExit = process.exitCode;
   const priorLog = console.log;
@@ -425,10 +449,12 @@ export async function captureExitCode(run) {
   }
 }
 
-// The sourcemap warning must fire when the package rollup is a lie and stay quiet when it is not.
-// These pin BOTH directions, which the previous version of this comment CLAIMED to do while
-// actually testing node builtins twice -- and that gap let a regression ship where the warning went
-// silent on exactly the local minified bundle it exists for.
+/**
+ * The sourcemap warning must fire when the package rollup is a lie and stay quiet when it is not.
+ * These pin BOTH directions, which the previous version of this comment CLAIMED to do while
+ * actually testing node builtins twice -- and that gap let a regression ship where the warning went
+ * silent on exactly the local minified bundle it exists for
+ */
 export function remoteProfile(url) {
   return {
     nodes: [
@@ -442,15 +468,19 @@ export function remoteProfile(url) {
   };
 }
 
-// Fixtures below are REAL captures from headless Chrome against test/fixtures/slow-handler.html
-// (a click handler that busy-waits a known 45ms), not hand-written shapes. An earlier version of
-// this test invented the numbers, labelled them measured, and asserted only two of the three parts
-// -- which let a negative presentation delay ship green. Assert all three, and assert the sum.
+/**
+ * Fixtures below are REAL captures from headless Chrome against test/fixtures/slow-handler.html
+ * (a click handler that busy-waits a known 45ms), not hand-written shapes. An earlier version of
+ * this test invented the numbers, labelled them measured, and asserted only two of the three parts
+ * -- which let a negative presentation delay ship green. Assert all three, and assert the sum
+ */
 export const eventTiming = (name, startTime, processingStart, processingEnd, duration, interactionId) => ({
   name, startTime, processingStart, processingEnd, duration, interactionId,
 });
 
-// A plain page.click: every event reaches the same paint, so all three share one duration.
+/**
+ * A plain page.click: every event reaches the same paint, so all three share one duration
+ */
 export const PLAIN_CLICK = [
   eventTiming("pointerover", 37.1, 37.3, 37.3, 64, 0),
   eventTiming("mouseover", 37.1, 37.3, 37.3, 64, 0),
@@ -461,8 +491,10 @@ export const PLAIN_CLICK = [
   eventTiming("click", 37.3, 37.7, 82.8, 64, 6694),
 ];
 
-// A HELD click (delay 250, i.e. an ordinary human press). The interaction spans TWO paints:
-// pointerdown painted at 43.3 (duration 24), pointerup/click at 336.1 (duration 64).
+/**
+ * A HELD click (delay 250, i.e. an ordinary human press). The interaction spans TWO paints:
+ * pointerdown painted at 43.3 (duration 24), pointerup/click at 336.1 (duration 64)
+ */
 export const HELD_CLICK = [
   eventTiming("pointerover", 19.3, 19.4, 19.5, 24, 0),
   eventTiming("pointerdown", 19.3, 19.5, 19.5, 24, 6747),

@@ -28,7 +28,7 @@ import { stableWorkloadPath } from "../model/compat.js";
 import { engineVersion } from "../model/engine-version.js";
 import { measureHostCpuIndex } from "../model/host-cpu.js";
 
-/** Promise wrapper around an inspector Session's callback-style post(). */
+/** Promise wrapper around an inspector Session's callback-style post() */
 function profilerSession() {
   const session = new Session();
   session.connect();
@@ -47,7 +47,7 @@ function profilerSession() {
  * returns the same .cpuprofile shape as CDP). Pure-JS only: no DOM, no layout/paint, so the
  * output is a CPU model (+ a CPU-only recording) and nothing else. The profiler is started
  * right before the timed loop and stopped right after, so only run() and its callees are
- * sampled; the orchestration frames in this file are dropped via isToolFrameUrl.
+ * sampled; the orchestration frames in this file are dropped via isToolFrameUrl
  */
 export async function recordNode(opts: RecordOptions): Promise<{
   recording: Recording;
@@ -58,7 +58,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
 }> {
   const root = process.cwd();
   // --target node always has a module (the CLI rejects a bare `record --target node`); the built-in
-  // on-ramp is driver-only, so there is nothing to synthesize here.
+  // on-ramp is driver-only, so there is nothing to synthesize here
   if (!opts.module) throw new Error("--target node needs a module to import and profile.");
   const absModule = path.resolve(opts.module);
   await fs.access(absModule).catch(() => {
@@ -91,10 +91,10 @@ export async function recordNode(opts: RecordOptions): Promise<{
   const ctx: Record<string, unknown> = {};
 
   // Price the host CPU before the profiled loop, so it prices the HOST and never rides the measured
-  // window (model/host-cpu.ts). prepare/warmup below also run outside the window.
+  // window (model/host-cpu.ts). prepare/warmup below also run outside the window
   const hostCpuIndex = measureHostCpuIndex();
 
-  // prepare + warmup run BEFORE the profiler starts, so they don't pollute the samples.
+  // prepare + warmup run BEFORE the profiler starts, so they don't pollute the samples
   if (prepare) await prepare(ctx);
   for (let iteration = 0; iteration < opts.warmup; iteration++) await run(ctx);
 
@@ -105,14 +105,14 @@ export async function recordNode(opts: RecordOptions): Promise<{
   // source with performance.now, offset by a stable constant. Read performance.now right before
   // Profiler.start: the profiler stamps startTime at the beginning of that call, so this pins the
   // offset (profile-clock minus perf.now) to under ~0.1 ms. The loop bounds below become the explicit
-  // application window the profile is clipped to, dropping the sampler-startup prefix.
+  // application window the profile is clipped to, dropping the sampler-startup prefix
   const nowBeforeProfilerStartMs = performance.now();
   await post("Profiler.start");
 
   const perIteration: number[] = [];
   // The timed loop's own bounds on the perf.now clock: windowStart is the first run()'s start,
   // windowEnd the last run()'s end. The ~9-30 ms the profiler spends warming up before the first
-  // run() falls BEFORE windowStart, so clipping to this window bills that prefix to no frame.
+  // run() falls BEFORE windowStart, so clipping to this window bills that prefix to no frame
   let windowStartNowMs: number | null = null;
   let windowEndNowMs = 0;
   let rawProfile: RawCpuProfile | undefined;
@@ -132,7 +132,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     runError = error;
   }
   // Teardown after the run, whether it succeeded or threw: stop the profiler, drop the inspector
-  // session, and run the user's cleanup so external resources (temp dirs, servers) are released.
+  // session, and run the user's cleanup so external resources (temp dirs, servers) are released
   const stopped = await post("Profiler.stop").catch(() => undefined);
   rawProfile = stopped?.profile as RawCpuProfile | undefined;
   try {
@@ -140,7 +140,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     if (cleanup) await cleanup(ctx);
   } catch (teardownError) {
     // A teardown failure must never mask a run failure: attach it as the run error's cause and let
-    // the run error surface. With no run failure, the teardown failure is the one to report.
+    // the run error surface. With no run failure, the teardown failure is the one to report
     if (runFailed) attachTeardownFailure(runError, teardownError);
     else throw teardownError;
   }
@@ -150,7 +150,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
   // Clip the profile to the timed loop's window on the profiler's own clock. The clock offset is the
   // gap between the profiler's startTime (captured at the start of Profiler.start) and the perf.now
   // read taken immediately before it; adding it converts the loop bounds into the profile clock. Skip
-  // when no run() executed (iterations 0), leaving the raw profile untouched.
+  // when no run() executed (iterations 0), leaving the raw profile untouched
   if (windowStartNowMs != null) {
     const clockOffsetMs = usToMs(rawProfile.startTime) - nowBeforeProfilerStartMs;
     const windowStartUs = msToUs(windowStartNowMs + clockOffsetMs);
@@ -189,9 +189,9 @@ export async function recordNode(opts: RecordOptions): Promise<{
     lifecycle,
     capture: "node-cpu",
     // The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
-    // nothing. A core fact; always stamped.
+    // nothing. A core fact; always stamped
     framework: opts.framework ?? "auto",
-    // The node lane runs in-process, so its "engine build" is this node runtime.
+    // The node lane runs in-process, so its "engine build" is this node runtime
     browserVersion: engineVersion(process.version),
     notes: [nodeRuntime()],
   };
@@ -215,10 +215,10 @@ export async function recordNode(opts: RecordOptions): Promise<{
     detailEvents: [],
     detailWindowStart: null,
     // No DOM: every rendering count is not-measured (NO_RENDERING_CAPTURE default). jsSelfMs is
-    // the in-process V8 profile's JS self-time.
+    // the in-process V8 profile's JS self-time
     jsSelfMs: cpuModel.jsSelfMs,
   });
-  // Cache the CPU headline on meta (schema-5 home of jsSelfMs), so `diff`/`query` read it without the model.
+  // Cache the CPU headline on meta (schema-5 home of jsSelfMs), so `diff`/`query` read it without the model
   meta.jsSelfMs = cpuModel.jsSelfMs;
   meta.totalEvents = summary.totalEvents;
   const recording: Recording = {
@@ -227,7 +227,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
     marks: [],
     events: [],
     // One run span; its reconciling bar lives on CpuModel.breakdown (js/native/gc/idle), which
-    // `query spans` synthesizes the run entry from, so no bar is stored on the span itself.
+    // `query spans` synthesizes the run entry from, so no bar is stored on the span itself
     spans: buildRecordingSpans({
       summary,
       detailEvents: [],
@@ -239,7 +239,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
 
   // Framework addons: the node lane has no page (no detection hook) and no trace event log, but the
   // resolved CpuModel carries react-dom server frames, so an addon can roll self-time onto the React
-  // server-phase anchors. A no-op under --framework off. See docs/dev/react-attribution.md.
+  // server-phase anchors. A no-op under --framework off. See docs/dev/react-attribution.md
   const addonNotes = runEnrich(activeAddons(opts.framework ?? "auto"), {
     meta,
     spans: recording.spans,
@@ -255,7 +255,7 @@ export async function recordNode(opts: RecordOptions): Promise<{
 
   // A plain node record owns `latest`; a --group record defers the pointer to recordAndReport, which
   // writes it ONLY AFTER the manifest join is accepted (a refused join leaves `latest` on the prior
-  // group, never downgraded to this orphan recording).
+  // group, never downgraded to this orphan recording)
   if (!opts.group)
     await writePointer({
       recording: outPath,

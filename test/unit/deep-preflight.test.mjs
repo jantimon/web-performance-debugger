@@ -9,7 +9,7 @@ import { deepEventLogOverflowError } from "../../dist/record/artifacts.js";
 
 // The --deep preflight refuses a trace too heavy for its stored event log to serialize, at capture
 // time (before the parse can OOM). It is pure over (mode, trace byte length), so it is unit-testable
-// without a browser or a giant fixture.
+// without a browser or a giant fixture
 
 test("storesFullTraceEventLog: only chrome --deep stores the full trace event log", () => {
   assert.equal(storesFullTraceEventLog("deep"), true, "--deep stores every event for blame");

@@ -10,7 +10,7 @@ export interface RecordOptions {
   browser?: BrowserName;
   html?: string;
   url?: string;
-  /** --url named a host with no scheme, so http:// was assumed for `url`; a note discloses it. */
+  /** --url named a host with no scheme, so http:// was assumed for `url`; a note discloses it */
   urlSchemeAssumed?: boolean;
   iterations: number;
   warmup: number;
@@ -19,7 +19,7 @@ export interface RecordOptions {
   /** persistent Chrome profile dir (resolved absolute); reuse one login across passes/runs */
   userDataDir?: string;
   /** chrome only: launch with --no-sandbox (reduced containment). Off by default; opt in only in a
-   * trusted, isolated environment. */
+   * trusted, isolated environment */
   disableSandbox?: boolean;
   /** ms to wait after run() for async paints to flush; internal default 200 (no user flag) */
   settleMs: number;
@@ -31,10 +31,10 @@ export interface RecordOptions {
   /** artificial slowdown: CPU throttling multiplier (e.g. 4 = 4x slower) */
   cpuThrottle?: number;
   /** skip bot-wall detection and measure the page even when it matches challenge-interstitial signals
-   * (--allow-bot-wall). A loud meta.notes entry records that the numbers describe the challenge page. */
+   * (--allow-bot-wall). A loud meta.notes entry records that the numbers describe the challenge page */
   allowBotWall?: boolean;
   /** capture a CPU sampling profile (writes .cpuprofile + .cpu model); on by default, off on --deep
-   * (the sampler cannot ride a `.stack` trace). */
+   * (the sampler cannot ride a `.stack` trace) */
   cpuProfile?: boolean;
   /** CPU sampler interval in microseconds (default DEFAULT_CPU_INTERVAL_US); internal, no user flag */
   cpuIntervalUs?: number;
@@ -45,42 +45,42 @@ export interface RecordOptions {
   /**
    * The --breakdown capture mode (chrome only): a light trace (no `.stack`, no invalidationTracking)
    * fused with the CPU sampler in ONE pass, producing a reconciling js/style/layout/paint/gc/other/idle
-   * bar per span. Cannot report forced-layout counts or blame (they need `.stack`).
+   * bar per span. Cannot report forced-layout counts or blame (they need `.stack`)
    */
   breakdown?: boolean;
   /**
    * The --deep capture mode (chrome only): ONE full-trace pass (`.stack` + invalidationTracking) with
    * the sampler OFF. The attribution report -- exact forced-layout blame, invalidation rollup, exact
-   * counts -- with slice durations suppressed (the `.stack` trace distorts them). No CPU model, no bar.
+   * counts -- with slice durations suppressed (the `.stack` trace distorts them). No CPU model, no bar
    */
   deep?: boolean;
   /**
    * The --alloc capture mode (`--target node` only): a dedicated allocation-attribution pass. V8's
    * heap SAMPLING profiler runs instead of the CPU profiler (the CPU sampler is OFF), attributing
    * allocated bytes to source/package. CPU self-time / a CpuModel are NOT measured here. Rejected on
-   * chrome/firefox and alongside --breakdown/--deep (those are chrome capture modes).
+   * chrome/firefox and alongside --breakdown/--deep (those are chrome capture modes)
    */
   alloc?: boolean;
   /** Opt-in variant label stamped on meta, so a diff/cpu-diff gate refuses across two techniques
-   * that run through one module path (env-switched). Absent by default. */
+   * that run through one module path (env-switched). Absent by default */
   variant?: string;
   /** Append this recording to a named run-group manifest (`--group <name>`), so a two-question flow
    * (e.g. --breakdown AND --deep) records as siblings under one manifest. The join refuses an
-   * incompatible member (see model/group.ts). Absent for a plain single recording. */
+   * incompatible member (see model/group.ts). Absent for a plain single recording */
   group?: string;
   /** The full set of capture modes a `--members` run asked for, set by the runner on every member so
    * each append derives partial status structurally. Internal (no CLI flag); absent for a plain
-   * single `--group` record, which is complete-by-construction. */
+   * single `--group` record, which is complete-by-construction */
   groupRequested?: string[];
   /** The filename stem the `--members` runner names this group's manifest and member recordings from,
    * taken from `--out`'s basename so the caller's `--out` locates the whole family (a single `--out`
    * file cannot BE the recording of an N-member group). Internal (the runner sets it); absent means
-   * the file stem falls back to the group name. The group's IDENTITY stays `group`, never this stem. */
+   * the file stem falls back to the group name. The group's IDENTITY stays `group`, never this stem */
   groupFileStem?: string;
   /**
    * Framework-addon mode (`--framework off|auto`, default `auto`). `off` runs zero addon code; `auto`
    * lets each registered addon's factual detection decide whether it contributes. Every lane accepts
-   * it; an addon no-ops where its signals are absent. Absent is read as `auto`. See model/addon.ts.
+   * it; an addon no-ops where its signals are absent. Absent is read as `auto`. See model/addon.ts
    */
   framework?: FrameworkMode;
 }

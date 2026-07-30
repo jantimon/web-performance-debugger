@@ -15,14 +15,14 @@ import { fileURLToPath } from "node:url";
 // concurrent test FILES to one so a measurement always runs alone. Within a file top-level tests are
 // already serial by default; the point of the flag is no PARALLEL SIBLING processes, not intra-file
 // ordering. Browser-free (--target node profiles in-process via node's own inspector), so it stays in
-// the fast browser-free `ci` job, after the unit step so it runs alone on the runner.
+// the fast browser-free `ci` job, after the unit step so it runs alone on the runner
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const cli = path.join(repoRoot, "dist", "cli.js");
 const examples = path.join(repoRoot, "examples");
 
 // Per-CLI-invocation ceiling, OS-enforced. spawnSync pins this process's event loop, so node's
 // per-test timeout timers cannot fire while a child runs; without this, a wedged child hangs the job
-// to the CI ceiling in silence. The OS kills the child instead, and the error names the invocation.
+// to the CI ceiling in silence. The OS kills the child instead, and the error names the invocation
 const CLI_KILL_MS = 150_000;
 
 function runCli(args) {
@@ -43,7 +43,7 @@ function runCli(args) {
 }
 
 // --target node profiles in-process via node's V8 inspector, so it needs no browser and
-// runs everywhere (not gated on Chrome).
+// runs everywhere (not gated on Chrome)
 test("record --target node resolves hot functions to source without a browser", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "nodecpu");
@@ -63,29 +63,29 @@ test("record --target node resolves hot functions to source without a browser", 
 // B-01 end-to-end on the node lane (no browser): the profiler-start prefix (~9-30 ms the sampler
 // spends warming up before the first run()) is windowed out, so a near-no-op workload reports ~0 JS
 // self-time and two runs of it do NOT manufacture a cpu-diff regression from prefix jitter. Plain
-// `test` (not the Chrome-gated `e2e`): --target node imports the module in-process, no browser.
+// `test` (not the Chrome-gated `e2e`): --target node imports the module in-process, no browser
 test("node lane: a near-no-op --target node run gates stable under cpu-diff (B-01)", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-node-e2e-"));
   const probe = path.join(examples, "probes", "near-zero.mjs");
   const base = path.join(dir, "base.json");
   // Record ONCE and self-diff. Recording twice made this flaky: two near-zero captures each land a
   // handful of samples, and sampler quantization jitters jsSelfMs 0.16-1.21ms between them against a
-  // 0.5ms gate floor (~2.5 samples), so identical code tripped --fail-on-regression ~3% of runs.
+  // 0.5ms gate floor (~2.5 samples), so identical code tripped --fail-on-regression ~3% of runs
   // Self-diffing pins netJsSelfMs=0 by construction, so the gate's exit-0 path stays covered without
-  // depending on where two independent runs' samples fell.
+  // depending on where two independent runs' samples fell
   runCli(["record", probe, "--target", "node", "--iterations", "20", "--out", base]);
 
   const baseModel = JSON.parse(readFileSync(`${base.replace(/\.json$/, "")}.cpu.json`, "utf8"));
   assert.ok(baseModel.jsSelfMs < 5, `a near-no-op reports ~0 JS self-time, got ${baseModel.jsSelfMs}`);
   // No `post (node:inspector)` prefix frame should top the list; the windowing removed it. The probe's
-  // console.log is load-bearing here: a bare-return probe lands `post` as functions[0].
+  // console.log is load-bearing here: a bare-return probe lands `post` as functions[0]
   const topFn = baseModel.functions[0];
   assert.ok(
     !topFn || !(topFn.fn === "post" && (topFn.file ?? "").includes("inspector")),
     `the profiler-start prefix must not be the hottest function, got ${topFn?.fn}`,
   );
 
-  // --fail-on-regression must exit 0: runCli throws on a non-zero exit, so no throw is the assertion.
+  // --fail-on-regression must exit 0: runCli throws on a non-zero exit, so no throw is the assertion
   const diff = JSON.parse(runCli(["cpu-diff", base, base, "--fail-on-regression", "--format", "json"]));
   assert.equal(diff.netJsSelfMs, 0, `a self-diff nets exactly 0, got ${diff.netJsSelfMs}`);
 });

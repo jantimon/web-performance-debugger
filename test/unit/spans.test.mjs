@@ -15,13 +15,12 @@ import {
 import { querySpans } from "../../dist/commands/query.js";
 import { tmpDir } from "./helpers.mjs";
 
-// --- Fixtures: the two stored breakdown shapes the adapter folds into one ---
 
 const slice = (ms) => ({ ms });
 const jsSlice = (ms, byPackage = {}) => ({ ms, byPackage });
 
 // A chrome --breakdown recording: seven-slice SpanBreakdowns, every slice measured. The measure
-// span also carries a frame side track (chrome-only), which must survive the adapter.
+// span also carries a frame side track (chrome-only), which must survive the adapter
 const chromeBreakdown = (wallMs) => ({
   wallMs,
   slices: {
@@ -44,7 +43,7 @@ const chromeBreakdowns = [
   },
 ];
 
-// A firefox CpuModel.breakdown: six slices (js/style/layout/browser/gc/idle), no paint concept.
+// A firefox CpuModel.breakdown: six slices (js/style/layout/browser/gc/idle), no paint concept
 const firefoxCpu = {
   wallMs: 21.8,
   slices: {
@@ -58,7 +57,7 @@ const firefoxCpu = {
 };
 
 // Firefox WITH user measures: stored as seven-slice Breakdowns on Recording.breakdowns, paint
-// not-measured (null) -- paint is off-main-thread on firefox, so the bar says so, never a fake 0.
+// not-measured (null) -- paint is off-main-thread on firefox, so the bar says so, never a fake 0
 const firefoxMeasureBreakdowns = [
   {
     label: "run",
@@ -94,7 +93,7 @@ const firefoxMeasureBreakdowns = [
   },
 ];
 
-// A node CPU-only model: four slices (js/browser/gc/idle) -- no DOM, so style/layout are not split.
+// A node CPU-only model: four slices (js/browser/gc/idle) -- no DOM, so style/layout are not split
 const nodeCpu = {
   wallMs: 10,
   slices: {
@@ -107,7 +106,6 @@ const nodeCpu = {
 
 const SUPERSET_KEYS = ["gc", "idle", "js", "layout", "other", "paint", "style"];
 
-// --- The unified shape: superset keys on every lane ---
 
 test("buildSpans: chrome breakdowns yield the superset shape, all slices measured, frames pass through", () => {
   const result = buildSpans(chromeBreakdowns, undefined, "chrome");
@@ -117,7 +115,7 @@ test("buildSpans: chrome breakdowns yield the superset shape, all slices measure
 
   const run = result.spans.find((span) => span.kind === "run");
   assert.deepEqual(Object.keys(run.slices).sort(), SUPERSET_KEYS);
-  // Chrome measures every slice, so none is the not-measured null.
+  // Chrome measures every slice, so none is the not-measured null
   for (const key of ["style", "layout", "paint"])
     assert.notEqual(run.slices[key], null, `${key} is measured on chrome`);
   assert.ok(run.slices.js.byPackage["react-dom"] > 0, "js keeps its by-package split");
@@ -126,11 +124,10 @@ test("buildSpans: chrome breakdowns yield the superset shape, all slices measure
   assert.ok(inp.frames, "the frame side track survives the adapter");
 });
 
-// --- Counts projection: the overview carries the exact counts a recording measured, not just the drill ---
 
 // A chrome --breakdown run span: layout/style/paint counts measured (exact, trace-derived); the forced
 // count + invalidations are not-measured on --breakdown (it drops the .stack + invalidationTracking
-// categories), so those stay null. A measured 0 (longTaskCount) stays 0, distinct from not-measured.
+// categories), so those stay null. A measured 0 (longTaskCount) stays 0, distinct from not-measured
 const measuredBreakdownCounts = {
   layoutCount: 10,
   styleCount: 10,
@@ -175,7 +172,7 @@ test("buildSpans: the CpuModel-synthesized run entry keeps the stored run span's
 
 // The aggregation contract: a recording mixes span kinds with different iteration semantics, so
 // every entry must self-declare what its numbers represent. run = a total over the loop ("sum");
-// step/measure = one iteration ("first"). iterations is stamped from the recording meta.
+// step/measure = one iteration ("first"). iterations is stamped from the recording meta
 test("buildSpans: aggregation is per-kind (run=sum, step/measure=first) and iterations propagates", () => {
   const bars = [
     { label: "run", kind: "run", breakdown: chromeBreakdown(7) },
@@ -194,14 +191,14 @@ test("buildSpans: aggregation is per-kind (run=sum, step/measure=first) and iter
 // A step's headline wall is the MEDIAN of its per-iteration samples (span.wallMs), never the bar's
 // iteration-0 window (span.breakdown.wallMs): on an outlier iteration 0 (a retry inside the timed
 // action) the window can be ~70x the median, and the median is the honest headline. The bar's window
-// rides windowMs so the slices still reconcile against what they tile.
+// rides windowMs so the slices still reconcile against what they tile
 test("buildSpans: a step entry reports the median wall, not the iteration-0 bar window", () => {
   const bars = [
     { label: "run", kind: "run", breakdown: chromeBreakdown(20) },
     {
       label: "add rows",
       kind: "step",
-      // The bar tiles an outlier iteration 0; the stored span wall is the median across iterations.
+      // The bar tiles an outlier iteration 0; the stored span wall is the median across iterations
       wallMs: 16.03,
       breakdown: chromeBreakdown(2023.43),
     },
@@ -210,7 +207,7 @@ test("buildSpans: a step entry reports the median wall, not the iteration-0 bar 
   const step = result.spans.find((span) => span.kind === "step");
   assert.equal(step.wallMs, 16.03, "the step headline is the median, not the 2023.43 ms window");
   assert.equal(step.windowMs, 2023.43, "the bar's own iteration-0 window rides windowMs");
-  // The slices tile the bar window, so Σ slices + idle reconciles to windowMs, not wallMs.
+  // The slices tile the bar window, so Σ slices + idle reconciles to windowMs, not wallMs
   const sliceSum =
     step.slices.js.ms +
     step.slices.style.ms +
@@ -223,7 +220,7 @@ test("buildSpans: a step entry reports the median wall, not the iteration-0 bar 
 });
 
 // A run/measure span's wall IS its bar window (the whole-loop run window / the merged occurrence), so
-// it stays breakdown.wallMs and carries no windowMs (nothing to disambiguate).
+// it stays breakdown.wallMs and carries no windowMs (nothing to disambiguate)
 test("buildSpans: run and measure entries keep the bar window as wall, with no windowMs", () => {
   const bars = [
     { label: "run", kind: "run", wallMs: 999, breakdown: chromeBreakdown(20) },
@@ -239,7 +236,7 @@ test("buildSpans: run and measure entries keep the bar window as wall, with no w
 });
 
 // A step whose median is unpriceable (a navigating step, wallMs null) falls back to the bar window so
-// the headline stays a number rather than null.
+// the headline stays a number rather than null
 test("buildSpans: a step with a null median wall falls back to the bar window", () => {
   const bars = [
     { label: "run", kind: "run", breakdown: chromeBreakdown(20) },
@@ -253,7 +250,7 @@ test("buildSpans: a step with a null median wall falls back to the bar window", 
 // The --min-wall flood filter reads a step's MEDIAN wall (SpanEntry.wallMs), never its iteration-0 bar
 // window (windowMs). On an outlier iteration 0 the two diverge, so filtering on the window would
 // hide/show a step differently from the median. The human bar table selects its raw bars from THIS kept
-// set (by kind:label), so `query spans --min-wall` hides the same spans in json and human output.
+// set (by kind:label), so `query spans --min-wall` hides the same spans in json and human output
 test("filterSpanEntries: a divergent step is filtered by its median wall, not its iteration-0 window", () => {
   const bars = [
     { label: "run", kind: "run", breakdown: chromeBreakdown(600) },
@@ -296,7 +293,7 @@ test("buildSpans: a merged measure surfaces aggregation median + samples + wall 
   assert.equal(measure.wallMinMs, 1, "the wall spread min passes through");
   assert.equal(measure.wallMaxMs, 9, "the wall spread max passes through");
   assert.ok(measure.wallMinMs <= measure.wallMs && measure.wallMs <= measure.wallMaxMs, "wall is within the spread");
-  // The run span carries no merge fields (unique label), so it is untouched.
+  // The run span carries no merge fields (unique label), so it is untouched
   const run = result.spans.find((span) => span.kind === "run");
   assert.equal(run.samples, undefined, "the run span carries no samples field");
   assert.equal(run.aggregation, "sum");
@@ -329,25 +326,25 @@ test("buildSpans: firefox CpuModel bar synthesizes the run span; paint is not-me
   assert.equal(run.label, "run");
   assert.equal(run.kind, "run");
   assert.deepEqual(Object.keys(run.slices).sort(), SUPERSET_KEYS);
-  // Firefox splits style/layout, so they are measured.
+  // Firefox splits style/layout, so they are measured
   assert.equal(run.slices.style.ms, 0.5);
   assert.equal(run.slices.layout.ms, 7);
-  // A CpuModel bar carries no main-thread paint concept: null, NOT a fabricated 0.
+  // A CpuModel bar carries no main-thread paint concept: null, NOT a fabricated 0
   assert.equal(run.slices.paint, null);
-  // browser -> the unified `other`.
+  // browser -> the unified `other`
   assert.equal(run.slices.other.ms, 4.3);
   assert.equal(run.wallMs, 21.8);
 });
 
 test("buildSpans: firefox stored measure breakdowns win over the CpuModel bar; paint is not-measured (null)", () => {
-  // Both a stored breakdowns array AND a cpu bar exist; the richer stored bars must be preferred.
+  // Both a stored breakdowns array AND a cpu bar exist; the richer stored bars must be preferred
   const result = buildSpans(firefoxMeasureBreakdowns, firefoxCpu, "firefox");
   assert.equal(result.source, "breakdowns");
   const work = result.spans.find((span) => span.label === "work");
   assert.ok(work, "the user performance.measure span is present");
   // F04: adding a performance.measure must NOT turn firefox paint into a measured 0. Paint is
   // off-main-thread on firefox, so a stored bar reports it not-measured (null), same as the
-  // synthesized run bar -- never a fake 0 that a --max-slice paint gate would pass on.
+  // synthesized run bar -- never a fake 0 that a --max-slice paint gate would pass on
   assert.equal(work.slices.paint, null);
   const run = result.spans.find((span) => span.label === "run");
   assert.equal(run.slices.paint, null, "the firefox run stored bar is also not-measured");
@@ -360,7 +357,7 @@ test("buildSpans: node CPU-only model splits nothing it cannot see; style/layout
   assert.equal(run.slices.style, null, "node does not split style");
   assert.equal(run.slices.layout, null, "node does not split layout");
   assert.equal(run.slices.paint, null, "node has no main-thread paint");
-  // The slices it CAN measure stay real numbers (incl. a real 0), never nulled.
+  // The slices it CAN measure stay real numbers (incl. a real 0), never nulled
   assert.equal(run.slices.js.ms, 8);
   assert.equal(run.slices.gc.ms, 0.5);
 });
@@ -371,16 +368,15 @@ test("buildSpans: an old recording with neither bars nor a cpu model returns nul
 });
 
 test("buildSpans: never empty when any bar exists (the run span is always synthesized)", () => {
-  // Empty stored breakdowns must fall back to the cpu bar rather than come back empty.
+  // Empty stored breakdowns must fall back to the cpu bar rather than come back empty
   assert.ok(buildSpans([], firefoxCpu, "firefox").spans.length >= 1);
   assert.ok(buildSpans(undefined, nodeCpu, "node").spans.length >= 1);
   assert.equal(buildSpans([], nodeCpu, "node").spans[0].kind, "run");
 });
 
-// --- Mixed overview: a run bar alongside bar-less driver steps (default capture) ---
 
 // On the sampler-only default capture a driver flow stores a bar-less run span (priced by the
-// CpuModel window) plus bar-less step spans. The overview must list the steps, not just the run.
+// CpuModel window) plus bar-less step spans. The overview must list the steps, not just the run
 const notMeasuredCounts = {
   layoutCount: null,
   styleCount: null,
@@ -454,7 +450,6 @@ test("buildSpans: a bar-less step in a breakdown recording (a navigating step) s
   assert.equal(result.barlessSpans[0].label, "navigate");
 });
 
-// --- Compact framework-addon presence on the overview row (React version + build) ---
 
 test("buildSpans: a bar span lifts the compact react addon (version + build), not commitCount", () => {
   const bars = [
@@ -552,7 +547,7 @@ test("query spans --label can target a bar-less step in a mixed recording (item 
 });
 
 test("recordingLane: the engine axis comes from browser + workload lane, not meta.target", () => {
-  // meta.target holds the recorded module path, so the lane must be derived from browser/workload.
+  // meta.target holds the recorded module path, so the lane must be derived from browser/workload
   assert.equal(recordingLane({ browser: "firefox" }), "firefox");
   assert.equal(recordingLane({ workload: { lane: "node" } }), "node");
   assert.equal(recordingLane({}), "chrome", "absent browser/workload => the chrome default");
@@ -562,7 +557,7 @@ test("recordingLane: the engine axis comes from browser + workload lane, not met
 // --- F32: span selectors and joins key on kind+label, so a user measure named "run" never
 // collides with the run span ---
 
-// A SpanEntry with just the slice(s) a budget/diff reads.
+// A SpanEntry with just the slice(s) a budget/diff reads
 const spanEntry = (label, kind, jsMs) => ({
   label,
   kind,
@@ -578,7 +573,7 @@ const spanEntry = (label, kind, jsMs) => ({
 test("resolveSpanSelector: a bare label colliding across kinds errors, listing the qualified forms (F32)", () => {
   const spans = [spanEntry("run", "run", 5), spanEntry("run", "measure", 2)];
   assert.throws(() => resolveSpanSelector(spans, "run"), /matches 2 spans of different kinds.*run:run.*measure:run/s);
-  // The qualified form picks exactly one.
+  // The qualified form picks exactly one
   assert.equal(resolveSpanSelector(spans, "measure:run").kind, "measure");
   assert.equal(resolveSpanSelector(spans, "run:run").kind, "run");
 });
@@ -592,7 +587,7 @@ test("resolveSpanSelector: a bare label that is unambiguous still resolves (F32)
 test("gateSliceBudgets: a colliding bare label errors instead of gating the wrong span (F32)", () => {
   const spans = [spanEntry("run", "run", 5), spanEntry("run", "measure", 2)];
   assert.throws(() => gateSliceBudgets(spans, { js: 3 }, "run"), /qualified form/);
-  // The qualified selector gates exactly the measure span (js 2 <= 3 => ok).
+  // The qualified selector gates exactly the measure span (js 2 <= 3 => ok)
   const [gate] = gateSliceBudgets(spans, { js: 3 }, "measure:run");
   assert.equal(gate.ok, true);
   assert.equal(gate.value, 2);
@@ -610,7 +605,6 @@ test("diffSpanSlices: joins on kind+label, never crossing a measure 'run' with t
   assert.equal(measureSpan.slices.find((slice) => slice.slice === "js").delta, 0, "measure js 2→2 = 0, not crossed");
 });
 
-// --- The command: --label filtering, the never-empty guarantee, and the empty-case error ---
 
 function writeRec(name, recording) {
   const file = path.join(tmpDir, name);
@@ -641,7 +635,7 @@ test("query spans --label keeps the exact match; a miss is an empty array, not a
   const hit = JSON.parse(await captureJson(() => querySpans(file, { format: "json", label: "inp" })));
   assert.equal(hit.spans.length, 1);
   assert.equal(hit.spans[0].label, "inp");
-  // meta.iterations reaches the entry, and a measure span declares itself the first occurrence.
+  // meta.iterations reaches the entry, and a measure span declares itself the first occurrence
   assert.equal(hit.spans[0].iterations, 4, "iterations comes from the recording meta");
   assert.equal(hit.spans[0].aggregation, "first", "a measure span is the first in-window occurrence");
 
@@ -654,7 +648,7 @@ test("query spans synthesizes the run span from a sibling cpu model (never empty
     meta: { schemaVersion: "5", target: "firefox", browser: "firefox" },
     spans: [],
   });
-  // loadCpuModel finds `<base>.cpu.json` beside the recording; it must carry a functions array.
+  // loadCpuModel finds `<base>.cpu.json` beside the recording; it must carry a functions array
   writeFileSync(
     path.join(tmpDir, "spans-ff.cpu.json"),
     JSON.stringify({ meta: { schemaVersion: "5" }, functions: [], breakdown: firefoxCpu }),
@@ -669,7 +663,7 @@ test("query spans synthesizes the run span from a sibling cpu model (never empty
 
 // A --deep recording carries no reconciling bar but DOES carry spans with exact counts. `query spans`
 // must render that overview -- label/kind/wall/aggregation/counts, bars not-measured -- so the
-// documented overview -> drill flow works on the capture with the richest attribution, never a refusal.
+// documented overview -> drill flow works on the capture with the richest attribution, never a refusal
 const deepSpans = [
   {
     label: "run",
@@ -713,7 +707,7 @@ test("buildSpanCounts projects a bar-less recording's spans onto counts + wall (
   assert.equal(run.aggregation, "sum");
   assert.equal(run.counts.forcedLayoutCount, 43, "exact --deep counts survive");
   assert.equal(run.slices, undefined, "no slices shape at all, never an all-zero bar");
-  // A spans-less artifact is the only true empty case.
+  // A spans-less artifact is the only true empty case
   assert.equal(buildSpanCounts([], "chrome", 1), null);
 });
 
@@ -727,7 +721,7 @@ test("query spans on a --deep recording renders the counts overview instead of e
   assert.equal(parsed.spans.length, 2);
   assert.equal(parsed.spans[0].counts.layoutCount, 22);
   assert.equal(parsed.spans[1].label, "mount");
-  // Human output shows the counts table + a not-measured-bar note, never a fabricated slice bar.
+  // Human output shows the counts table + a not-measured-bar note, never a fabricated slice bar
   const human = await captureJson(() => querySpans(file, {}));
   assert.match(human, /no reconciling bar at this capture/);
   assert.match(human, /forced/);
@@ -743,7 +737,7 @@ test("query spans errors (non-zero) only on a recording that holds no spans at a
 });
 
 // F35: a CORRUPT sibling CPU model must surface, not be swallowed into "no per-span breakdown" (which
-// reads as a capture mode that never sampled). Only the ENOCPUMODEL "no model here" case is the empty case.
+// reads as a capture mode that never sampled). Only the ENOCPUMODEL "no model here" case is the empty case
 test("query spans surfaces a corrupt sibling cpu model instead of reporting 'no breakdown' (F35)", async () => {
   const file = writeRec("spans-corrupt-sibling.json", {
     meta: { schemaVersion: "5", target: "chrome" },

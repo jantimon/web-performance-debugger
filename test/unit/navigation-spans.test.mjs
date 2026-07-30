@@ -4,7 +4,7 @@ import { mergeSteps } from "../../dist/trace/steps.js";
 import { buildSpans } from "../../dist/model/spans.js";
 
 // The navigation/URL/LCP fields thread driver step -> MergedStep -> Span -> query view. These pin the
-// two join points that are pure (mergeSteps and the model/spans adapter); the e2e covers the browser.
+// two join points that are pure (mergeSteps and the model/spans adapter); the e2e covers the browser
 
 const nullCounts = {
   layoutCount: null,
@@ -49,8 +49,8 @@ test("mergeSteps carries iteration 0's navigation/URLs/LCP onto the merged step"
   assert.equal(merged[0].navigation, "hard");
   assert.equal(merged[0].beforeUrl, "about:blank");
   assert.equal(merged[0].afterUrl, "https://site/");
-  // Identity verbatim from the (only) occurrence, now grown with the per-iteration render series.
-  // These fixtures carry no renderTimeMs, so the series is a lone null and stats stays degenerate.
+  // Identity verbatim from the (only) occurrence, now grown with the per-iteration render series
+  // These fixtures carry no renderTimeMs, so the series is a lone null and stats stays degenerate
   assert.deepEqual(merged[0].lcp, {
     tag: "IMG",
     size: 100,
@@ -74,7 +74,7 @@ test("a merged step reports iteration 0's classification, not a later iteration'
   const merged = mergeSteps(steps, undefined);
   assert.equal(merged[0].navigation, "hard", "iteration 0 is the representative");
   // With no render time to median on, the identity falls back to the first shaped occurrence
-  // (iteration 0's IMG), and the series is null for both un-timed iterations.
+  // (iteration 0's IMG), and the series is null for both un-timed iterations
   assert.deepEqual(merged[0].lcp, { tag: "IMG", perIteration: [null, null], stats: null });
 });
 
@@ -108,7 +108,7 @@ test("buildSpans threads navigation onto both the bar step entry and the bar-les
   const run = result.spans.find((span) => span.label === "run");
   assert.ok(!("navigation" in run), "the run span carries no navigation");
 
-  // The bar-less hash step lands in barlessSpans (its only bar is the run's), carrying its own nav.
+  // The bar-less hash step lands in barlessSpans (its only bar is the run's), carrying its own nav
   const hash = result.barlessSpans.find((span) => span.label === "hash");
   assert.equal(hash.navigation, "soft-hash");
   assert.equal(hash.afterUrl, "https://site/#panel");

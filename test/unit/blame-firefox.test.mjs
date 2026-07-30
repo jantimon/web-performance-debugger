@@ -7,7 +7,7 @@ import { tmpDir, runSpanFixture } from "./helpers.mjs";
 
 // Firefox counts forced flushes from Reflow/Styles markers but blames the READ by sampling it at the
 // ~1ms Gecko interval, so a cheap read can be missed. An empty `blame --forced` beside a nonzero
-// forcedLayoutCount is a sampling miss, NOT "no forced layout": the message must say which.
+// forcedLayoutCount is a sampling miss, NOT "no forced layout": the message must say which
 
 async function captureText(runner) {
   const priorLog = console.log;
@@ -51,7 +51,7 @@ function writeFirefoxRec(name, events) {
 }
 
 test("query blame --forced (firefox): an empty result beside a nonzero count says sampling missed the site", async () => {
-  // The gecko lane counted 1 forced flush from a marker, but the sampler caught no read-site event.
+  // The gecko lane counted 1 forced flush from a marker, but the sampler caught no read-site event
   const file = writeFirefoxRec("blame-ff-empty.json", []);
   const text = await captureText(() => queryBlame(file, { forced: true }));
   assert.doesNotMatch(text, /no layout thrashing/i, "does not claim there were no forced layouts");

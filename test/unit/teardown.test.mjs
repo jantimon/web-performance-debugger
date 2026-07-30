@@ -4,7 +4,7 @@ import { attachTeardownFailure } from "../../dist/model/teardown.js";
 import { finishLaunchOrClose } from "../../dist/browser/launch.js";
 
 // A teardown failure must never replace the primary error the caller is debugging: it is attached as
-// the primary's `cause` so the primary keeps propagating and the secondary stays recoverable.
+// the primary's `cause` so the primary keeps propagating and the secondary stays recoverable
 test("attachTeardownFailure: attaches the teardown failure as the primary error's cause", () => {
   const primary = new Error("primary run failure");
   const teardown = new Error("cleanup failure");
@@ -21,12 +21,12 @@ test("attachTeardownFailure: never overwrites a cause the primary error already 
 });
 
 test("attachTeardownFailure: a non-Error primary is left alone (nothing to attach to)", () => {
-  // A thrown string has no `cause` slot; the helper must not throw trying to set one.
+  // A thrown string has no `cause` slot; the helper must not throw trying to set one
   assert.doesNotThrow(() => attachTeardownFailure("string primary", new Error("teardown")));
 });
 
 // B-11: a launch that half-succeeds (browser up) and then fails setup (newPage / CDP session) must
-// close the browser so nothing is left running, and the setup error is the one that surfaces.
+// close the browser so nothing is left running, and the setup error is the one that surfaces
 test("finishLaunchOrClose: a setup failure closes the browser and re-throws the setup error", async () => {
   let closed = false;
   const browser = {

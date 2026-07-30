@@ -4,7 +4,7 @@ import { comparabilityMismatches } from "../../dist/model/compat.js";
 
 // A base meta with every comparability axis pinned, so overriding ONE field on one side leaves
 // `comparabilityMismatches` returning only that axis (every equal axis is filtered out). browser and
-// runtime are absent (default "chrome"), throttle absent ("off"), variant absent ("(none)").
+// runtime are absent (default "chrome"), throttle absent ("off"), variant absent ("(none)")
 function baseMeta() {
   return {
     capture: "breakdown",
@@ -19,17 +19,16 @@ function baseMeta() {
   };
 }
 
-/** The mismatch on a named axis, or undefined when the axis was filtered out (silent). */
+/** The mismatch on a named axis, or undefined when the axis was filtered out (silent) */
 function axis(base, current, name) {
   return comparabilityMismatches(base, current).find((entry) => entry.axis === name);
 }
 
-// Two identical metas differ on nothing: every axis (host-cpu within threshold included) is filtered.
+// Two identical metas differ on nothing: every axis (host-cpu within threshold included) is filtered
 test("comparabilityMismatches: identical metas produce no axes", () => {
   assert.deepEqual(comparabilityMismatches(baseMeta(), baseMeta()), []);
 });
 
-// --- host-cpu: a WARN-tier ratio boundary (docs/dev/cpu-profiling.md: more than 25% apart) ---
 
 test("host-cpu: just-under 25% apart is silent, just-over WARNS", () => {
   const under = axis(
@@ -50,7 +49,7 @@ test("host-cpu: just-under 25% apart is silent, just-over WARNS", () => {
   assert.equal(over.current, "1260");
 });
 
-// Exactly 25% apart is "25%", not "more than 25%", so the `<= threshold` boundary stays silent.
+// Exactly 25% apart is "25%", not "more than 25%", so the `<= threshold` boundary stays silent
 test("host-cpu: exactly 25% apart is silent (the boundary is not more-than)", () => {
   assert.equal(
     axis({ ...baseMeta(), hostCpuIndex: 1000 }, { ...baseMeta(), hostCpuIndex: 1250 }, "host-cpu"),
@@ -74,7 +73,6 @@ test("host-cpu: both-absent is silent; one-side-absent WARNS as unverifiable", (
   assert.equal(warn.current, "unmeasured");
 });
 
-// --- sampler-interval: the other WARN-tier axis; it moves sampling density, not a gated count ---
 
 test("sampler-interval: a mismatch WARNS, it does not block", () => {
   const entry = axis(baseMeta(), { ...baseMeta(), cpuIntervalUs: 150 }, "sampler-interval");
@@ -84,7 +82,6 @@ test("sampler-interval: a mismatch WARNS, it does not block", () => {
   assert.equal(entry.current, "150us");
 });
 
-// --- workload-identity: one side predates the structured workload field ---
 
 test("workload-identity: present-vs-absent WARNS (unverifiable), never the blocking workload axis", () => {
   const current = baseMeta();
@@ -99,7 +96,7 @@ test("workload-identity: present-vs-absent WARNS (unverifiable), never the block
     "it does NOT block under the workload axis",
   );
 
-  // Symmetric: base is the older side.
+  // Symmetric: base is the older side
   const base = baseMeta();
   delete base.workload;
   const reversed = axis(base, baseMeta(), "workload-identity");
@@ -107,7 +104,6 @@ test("workload-identity: present-vs-absent WARNS (unverifiable), never the block
   assert.equal(reversed.blocksGating, false);
 });
 
-// --- stableWorkloadHost: the ephemeral-loopback-port fold, via the workload axis ---
 
 function urlWorkload(host) {
   return { lane: "bench", host, module: "app.mjs" };
@@ -119,7 +115,7 @@ test("workload host: two ephemeral loopback ports FOLD to one workload (a non-bl
   const entry = axis(base, current, "workload");
   assert.ok(entry, "the differing raw ports keep the disclosure entry");
   assert.equal(entry.blocksGating, false, "the fold makes it the same workload: no block");
-  // The RAW hosts are surfaced so a reader sees why the gate did not refuse.
+  // The RAW hosts are surfaced so a reader sees why the gate did not refuse
   assert.match(entry.base, /:40001/);
   assert.match(entry.current, /:52000/);
 });
@@ -149,7 +145,7 @@ test("workload host: a NON-loopback host does not fold even on an ephemeral port
 });
 
 // The fold does not swallow a genuinely different loopback path: same folded port, different path
-// still blocks, so the ephemeral token never hides a different page.
+// still blocks, so the ephemeral token never hides a different page
 test("workload host: an ephemeral fold still blocks when the path differs", () => {
   const base = { ...baseMeta(), workload: urlWorkload("http://127.0.0.1:40001/a.html") };
   const current = { ...baseMeta(), workload: urlWorkload("http://127.0.0.1:52000/b.html") };

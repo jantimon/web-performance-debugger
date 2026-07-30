@@ -4,7 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 
 // A tool transcript can leak its own XML-ish wrappers into a doc when text is pasted from a session
 // (a stray `</content>`/`</invoke>` tail). These strings never belong in prose, so grep every
-// docs/dev/*.md for them: a recurrence fails the build here instead of shipping in the docs.
+// docs/dev/*.md for them: a recurrence fails the build here instead of shipping in the docs
 const FORBIDDEN = [
   "</content>",
   "<invoke",

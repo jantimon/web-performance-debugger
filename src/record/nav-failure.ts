@@ -9,7 +9,7 @@
  * so the caller leaves the underlying message alone.
  *
  * This is guidance appended to the failure, NOT a retry: wpd retries its own machinery's races (a
- * transient cross-process boot, a headless frame stall; browser/launch.ts), never the site's refusals.
+ * transient cross-process boot, a headless frame stall; browser/launch.ts), never the site's refusals
  */
 export function builtinFlowFailureGuidance(error: Error): string | null {
   const message = error.message;

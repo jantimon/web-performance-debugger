@@ -2,11 +2,11 @@
 // event) or recalculated (elementCount, an UpdateLayoutTree event). Read from the trace event's `args`,
 // which ride the light --breakdown trace (only beginData.stackTrace needs the .stack category). A
 // count-tier fact, aggregated as a distribution (p50/max) per span, NEVER a sum -- a thrash loop
-// re-dirties the same nodes every flush. docs/dev/rendering-counts.md.
+// re-dirties the same nodes every flush. docs/dev/rendering-counts.md
 
 import type { FlushScope, NormalizedEvent, ScopeStats, SpanScope } from "../model/recording.js";
 
-/** One Layout flush's scope, from `args.beginData` (+ the container root from `args.endData`). */
+/** One Layout flush's scope, from `args.beginData` (+ the container root from `args.endData`) */
 interface LayoutFlush {
   /** dirtyObjects: render-tree LayoutObjects relaid out (NOT DOM nodes) */
   dirty: number;
@@ -20,7 +20,7 @@ interface LayoutFlush {
 
 /**
  * A Layout event's scope, or undefined when the event is not a Layout flush or its trace `args` predate
- * the scope fields. Skips a sampled blame annotation (it names a read site, not a measured flush).
+ * the scope fields. Skips a sampled blame annotation (it names a read site, not a measured flush)
  */
 export function readLayoutScope(event: NormalizedEvent): LayoutFlush | undefined {
   if (event.kind !== "layout" || event.sampled) return undefined;
@@ -45,7 +45,7 @@ export function readLayoutScope(event: NormalizedEvent): LayoutFlush | undefined
 /**
  * An UpdateLayoutTree event's `elementCount` (elements recalculated), or undefined when the event is
  * not a style flush or carries no count. Reads the chrome `args.elementCount` and the firefox analog
- * `args.data.elementsStyled` (the Gecko `Styles` marker's own field), so one reader serves both lanes.
+ * `args.data.elementsStyled` (the Gecko `Styles` marker's own field), so one reader serves both lanes
  */
 export function readStyleScope(event: NormalizedEvent): number | undefined {
   if (event.kind !== "style" || event.sampled) return undefined;
@@ -72,7 +72,7 @@ function stats(values: number[]): ScopeStats {
  * Layout flushes, `elementCount` p50/max across the UpdateLayoutTree flushes, and a contained-flush note
  * when any flush was subtree-scoped. Never a sum. Layout scope stays absent when the window laid out
  * nothing (chrome only); style scope stays absent when it recalculated nothing. Returns undefined when
- * the window carried no scope-bearing flush at all, so a scope-less capture stores no field.
+ * the window carried no scope-bearing flush at all, so a scope-less capture stores no field
  */
 export function spanScope(events: NormalizedEvent[]): SpanScope | undefined {
   const dirtyObjects: number[] = [];
@@ -104,7 +104,7 @@ export function spanScope(events: NormalizedEvent[]): SpanScope | undefined {
  * `at`, each entry carries the WIDEST flush at that line -- the max-`dirtyObjects` Layout flush's
  * dirty/total, the max `elementCount`, and a contained-flush's container root -- so a blame row shows the
  * biggest relayout it caused. Only lines with a scope-bearing flush appear. --breakdown blame is sampled
- * (no flush args), so its rows carry no scope and this map is empty there.
+ * (no flush args), so its rows carry no scope and this map is empty there
  */
 export function scopeByReadSite(events: NormalizedEvent[]): Map<string, FlushScope> {
   const wide = new Map<

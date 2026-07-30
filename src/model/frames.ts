@@ -1,4 +1,4 @@
-/** Terminal verdict of a compositor frame, from PipelineReporter's `frame_reporter.state`. */
+/** Terminal verdict of a compositor frame, from PipelineReporter's `frame_reporter.state` */
 export type FrameState = "presented" | "presentedPartial" | "dropped" | "noUpdate";
 
 /**
@@ -7,7 +7,7 @@ export type FrameState = "presented" | "presentedPartial" | "dropped" | "noUpdat
  * DISPLAY-ONLY. These are scheduler/settle noise on unchanged code (compositor warmth + how many
  * vsync ticks the settle window happens to span), and 20 recolored boxes present as the same frame
  * count as 1 box, so a frame count does not even track paint work. Only main-thread `Paint` is exact
- * enough to gate. See docs/dev/rendering-counts.md.
+ * enough to gate. See docs/dev/rendering-counts.md
  */
 export interface FrameRecord {
   /** compositor `frame_sequence`: the frame's identity within the run */
@@ -29,7 +29,7 @@ export interface FrameRecord {
  * run-span counts) structurally cannot reach it. Nothing here is summed into any breakdown bar either -- the
  * wall is main-thread self-time and these frames run on compositor/viz threads (the §9 rule). The
  * counts are scheduler noise, the one reason they must not gate; see FrameRecord and
- * docs/dev/rendering-counts.md.
+ * docs/dev/rendering-counts.md
  */
 export interface FrameSideTrack {
   presented: number;

@@ -5,7 +5,7 @@
  * (trace/breakdown.ts) these slices come from the CPU samples alone: every sample's wall-delta is
  * attributed to exactly one slice, so `Σ slices === Σ timeDeltas` (the profile's own window) EXACTLY,
  * the same tiling promise as the four-slice chrome bar. The `js` slice is subdivided by owning
- * package from the sample's node, reusing the run's resolver via `packagesByProfileNode`.
+ * package from the sample's node, reusing the run's resolver via `packagesByProfileNode`
  */
 
 import { functionIdByNode, type RawCpuProfile } from "./raw.js";
@@ -22,7 +22,7 @@ import { reconcileResidual } from "../model/reconcile.js";
 import { mergeSpanOccurrences } from "../model/span-merge.js";
 import { spanScope } from "../trace/scope.js";
 
-/** Per-slice microsecond sums for one window, plus the js by-package subdivision. */
+/** Per-slice microsecond sums for one window, plus the js by-package subdivision */
 interface SliceSums {
   js: number;
   style: number;
@@ -36,7 +36,7 @@ interface SliceSums {
 /**
  * Sum sample wall-deltas by slice over the samples whose indices are in `[fromIndex, toIndex)`.
  * `packageByNode` maps a cpuprofile node id to its owning package (null for a node with no owner);
- * only js samples with a known owner contribute to the by-package split.
+ * only js samples with a known owner contribute to the by-package split
  */
 function sumSlices(
   raw: RawCpuProfile,
@@ -60,7 +60,7 @@ function sumSlices(
       case "js": {
         sums.js += deltaUs;
         // js.ms carries every js delta so the slice sum stays exact; byPackage is the subset whose
-        // owner is known (a native js leaf resolves to "(native)", so a null owner is rare).
+        // owner is known (a native js leaf resolves to "(native)", so a null owner is rare)
         const owner = packageByNode.get(raw.samples[index]) ?? null;
         if (owner != null)
           sums.byPackageUs.set(owner, (sums.byPackageUs.get(owner) ?? 0) + deltaUs);
@@ -86,7 +86,7 @@ function sumSlices(
   return sums;
 }
 
-/** Descending "package -> ms" map from the by-package microsecond sums. */
+/** Descending "package -> ms" map from the by-package microsecond sums */
 function byPackageMs(byPackageUs: Map<string, number>): Record<string, number> {
   const byPackage: Record<string, number> = {};
   for (const [owner, microseconds] of [...byPackageUs].sort((left, right) => right[1] - left[1]))
@@ -99,7 +99,7 @@ function byPackageMs(byPackageUs: Map<string, number>): Record<string, number> {
  * `wallMs` is the profile's own summed deltas (= `CpuModel.totalMs`), so the bar reconciles by
  * construction. It sums every sample `[0, length)`, the same bounds `buildGeckoSpanBreakdowns` gives
  * the run span, so the run-bar wall matches across `query cpu` and `query spans`. Requires
- * `raw.gecko` (present only when the CPU signal populated the idle slice).
+ * `raw.gecko` (present only when the CPU signal populated the idle slice)
  */
 export function computeGeckoCpuBreakdown(
   raw: RawCpuProfile,
@@ -130,7 +130,7 @@ export function computeGeckoCpuBreakdown(
   return breakdown;
 }
 
-/** A user `performance.measure` window on the Gecko profiler clock (microseconds). */
+/** A user `performance.measure` window on the Gecko profiler clock (microseconds) */
 export interface GeckoMeasureWindow {
   label: string;
   startTs: number;
@@ -140,7 +140,7 @@ export interface GeckoMeasureWindow {
 /** Sample index bounds `[from, to)` whose absolute profiler ts falls inside `[startTs, endTs]`.
  * The Gecko converter sets `startTime` to the FIRST windowed sample's own time, so `timeDeltas[0]`
  * (the gap from the last pre-window sample) is the one delta not to add: sample 0 is at `startTime`,
- * sample i at `startTime + Σ_{1..i} timeDeltas`. */
+ * sample i at `startTime + Σ_{1..i} timeDeltas` */
 function windowBounds(
   raw: RawCpuProfile,
   startTs: number,
@@ -160,7 +160,7 @@ function windowBounds(
 }
 
 /** One seven-slice `Breakdown` (paint is not-measured on Firefox: main-thread paint is off on the
- * compositor, a side track, never summed into the wall) for the samples in `[from, to)`. */
+ * compositor, a side track, never summed into the wall) for the samples in `[from, to)` */
 function spanBreakdown(
   raw: RawCpuProfile,
   packageByNode: Map<number, string | null>,
@@ -177,13 +177,13 @@ function spanBreakdown(
       layout: { ms: usToMs(sums.layout) },
       paint: null,
       gc: { ms: usToMs(sums.gc) },
-      // DOM-accessor time + Profiler self-overhead + everything non-work-classified.
+      // DOM-accessor time + Profiler self-overhead + everything non-work-classified
       other: { ms: usToMs(sums.browser) },
       idle: { ms: usToMs(sums.idle) },
     },
   };
-  // Every in-window delta lands in one slice, so this closes; the valve only catches float dust.
-  // paint is not-measured on firefox and contributes nothing to the sum.
+  // Every in-window delta lands in one slice, so this closes; the valve only catches float dust
+  // paint is not-measured on firefox and contributes nothing to the sum
   const residual = reconcileResidual(
     breakdown.wallMs,
     breakdown.slices.js.ms +
@@ -208,7 +208,7 @@ function spanBreakdown(
  * construction, the same wall `CpuModel.breakdown` reports. So the run-bar wall reconciles across
  * `query spans` and `query cpu`. Re-deriving the bounds with `windowBounds` would rebuild the
  * sample clock delta-by-delta and could trim the boundary sample, opening a one-sample-gap wall
- * difference between the two views; measure spans, which ARE sub-windows, still use `windowBounds`.
+ * difference between the two views; measure spans, which ARE sub-windows, still use `windowBounds`
  */
 export function buildGeckoSpanBreakdowns(
   raw: RawCpuProfile,
@@ -218,12 +218,12 @@ export function buildGeckoSpanBreakdowns(
   sampleIntervalUs: number,
   /** the Reflow/Styles marker events, for the STYLE-scope distribution (elementsStyled). Gecko markers
    * carry no layout scope, so the firefox bars get only the style side (never a fake layout zero). The
-   * marker ts share the profiler clock with the measure/run windows (both msToUs of the marker time). */
+   * marker ts share the profiler clock with the measure/run windows (both msToUs of the marker time) */
   renderingEvents: NormalizedEvent[] = [],
 ): SpanBreakdown[] {
   if (!raw.gecko || measures.length === 0) return [];
   // Style-scope distribution over the flushes that STARTED in [startTs, endTs]. Firefox only: layout
-  // scope stays absent (Gecko Reflow markers carry none), so spanScope yields elementsStyled alone.
+  // scope stays absent (Gecko Reflow markers carry none), so spanScope yields elementsStyled alone
   const scopeFor = (startTs: number, endTs: number): SpanBreakdown["scope"] =>
     spanScope(renderingEvents.filter((event) => event.ts >= startTs && event.ts < endTs));
   const spans: SpanBreakdown[] = [];
@@ -247,9 +247,9 @@ export function buildGeckoSpanBreakdowns(
     });
   }
 
-  // Per-measure hot functions, POOLED across every occurrence of a label (mirrors the chrome lane).
+  // Per-measure hot functions, POOLED across every occurrence of a label (mirrors the chrome lane)
   // Samples ride the profiler clock the same way windowBounds reconstructs it (sample 0 at startTime,
-  // sample i at startTime + Σ_{1..i} timeDeltas), so a hot sample and the bar's windowing agree.
+  // sample i at startTime + Σ_{1..i} timeDeltas), so a hot sample and the bar's windowing agree
   const functionByNode = functionIdByNode(raw);
   const hotSamples: SpanHotSample[] = [];
   let clock = raw.startTime;
@@ -268,7 +268,7 @@ export function buildGeckoSpanBreakdowns(
     hotByLabel.set(label, tallySpanHot(hotSamples, windows, "measure-pooled", sampleIntervalUs));
 
   // A measure label repeated once per --iteration produced one bar per occurrence above; collapse
-  // each label to its lower-median-by-wall real sample. The run span has a unique label -> unchanged.
+  // each label to its lower-median-by-wall real sample. The run span has a unique label -> unchanged
   const merged = mergeSpanOccurrences(spans);
   for (const bar of merged) {
     if (bar.kind !== "measure") continue;

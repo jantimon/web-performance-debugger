@@ -1,4 +1,4 @@
-// Example module for wpd.
+// Example module for wpd
 //
 // Lifecycle hooks (all optional except `run`), called with a shared `ctx` object:
 //   prepare(ctx)    -> once before timed iterations  (aliases: setup, beforeAll)
@@ -12,8 +12,10 @@ export function prepare(ctx) {
   ctx.host = host;
 }
 
-// Deliberately thrash layout: interleave style writes with forced reads so the
-// browser must run layout on every iteration of the inner loop (layout thrashing).
+/**
+ * Deliberately thrash layout: interleave style writes with forced reads so the
+ * browser must run layout on every iteration of the inner loop (layout thrashing)
+ */
 export function run(ctx) {
   const host = ctx.host;
   for (let i = 0; i < 200; i++) {

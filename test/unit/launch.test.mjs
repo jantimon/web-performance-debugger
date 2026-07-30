@@ -12,12 +12,12 @@ import {
 import { browserSandboxDisabled, navRetried, frameStallRetried } from "../../dist/record/notes.js";
 
 // S11: Chrome must launch sandboxed by DEFAULT. Neither sandbox-disabling flag may appear unless
-// --disable-browser-sandbox was explicitly requested.
+// --disable-browser-sandbox was explicitly requested
 test("chromeArgs: the default launch carries neither sandbox-disabling flag", () => {
   const args = chromeArgs(false, true);
   assert.ok(!args.includes("--no-sandbox"), "no --no-sandbox by default");
   assert.ok(!args.includes("--disable-setuid-sandbox"), "no --disable-setuid-sandbox by default");
-  // The unrelated perf/backgrounding flags stay.
+  // The unrelated perf/backgrounding flags stay
   assert.ok(args.includes("--enable-precise-memory-info"));
 });
 
@@ -28,14 +28,14 @@ test("chromeArgs: --disable-browser-sandbox adds both sandbox-disabling flags", 
 });
 
 // Headless launches software-composite (--disable-gpu) to dodge the intermittent GPU-process
-// BeginFrame stall; headed keeps the GPU (it drives a real window off a real display).
+// BeginFrame stall; headed keeps the GPU (it drives a real window off a real display)
 test("chromeArgs: --disable-gpu is set headless, absent headed", () => {
   assert.ok(chromeArgs(false, true).includes("--disable-gpu"), "headless software-composites");
   assert.ok(!chromeArgs(false, false).includes("--disable-gpu"), "headed keeps the GPU");
 });
 
 // A sandbox launch failure is detected by its known message shapes and re-thrown as guidance that
-// names the opt-in flag -- never a silent unsandboxed retry.
+// names the opt-in flag -- never a silent unsandboxed retry
 test("isSandboxLaunchError: recognizes the known Chrome sandbox failure shapes", () => {
   for (const message of [
     "No usable sandbox! Update your kernel or see https://...",
@@ -61,7 +61,7 @@ test("browserSandboxDisabled note warns about reduced containment", () => {
 });
 
 // F3: a cross-process --url boot can fail the top-level navigation transiently. Those errors earn a
-// bounded retry; a permanent failure (bad host, refused connection) does not.
+// bounded retry; a permanent failure (bad host, refused connection) does not
 test("isTransientNavError: retries the swap-race shapes, not a permanent failure", () => {
   for (const message of [
     "net::ERR_INVALID_HANDLE at https://www.example.com",
@@ -119,7 +119,7 @@ test("retryTransientNav: a permanent error is re-thrown immediately, not retried
 
 // ERR_HTTP2_PROTOCOL_ERROR is a permanent navigation failure (a retry fails identically), so it is
 // not in isTransientNavError; with chrome-headless-shell gone there is no mode remedy and it surfaces
-// as itself.
+// as itself
 test("ERR_HTTP2_PROTOCOL_ERROR is not treated as a transient (retriable) navigation error", () => {
   const error = new Error("net::ERR_HTTP2_PROTOCOL_ERROR at https://cdn.example.com");
   assert.ok(!isTransientNavError(error), "must not be retried: it fails identically on a retry");
@@ -134,7 +134,7 @@ test("navRetried note names the transient error and that a fresh browser recover
 });
 
 // A headless frame-production stall is retryable (a fresh browser recovers it), and distinguished
-// from a transient nav error so the caller notes the right cause.
+// from a transient nav error so the caller notes the right cause
 test("isFrameStallError recognizes the driver's frame-stall error, not a nav error", () => {
   assert.ok(isFrameStallError(frameStallError(3000)), "recognizes its own error");
   assert.ok(!isFrameStallError(new Error("net::ERR_INVALID_HANDLE at https://x")), "not a nav error");

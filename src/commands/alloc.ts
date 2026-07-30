@@ -7,11 +7,11 @@ import { loadAllocModel, packageAllocRollup, fileAllocRollup } from "../profile/
 import { shortSource, tailPath } from "../profile/cpuprofile.js";
 
 // Warm "heat" for an allocation share: the bigger the share, the louder the color. Same thresholds
-// as the CPU report, so the two read the same way.
+// as the CPU report, so the two read the same way
 const heat = (pct: number, text: string): string =>
   pct >= 25 ? red(text) : pct >= 10 ? yellow(text) : text;
 
-/** Bytes as a compact "12.3 MB" / "456.0 KB" / "789 B" cell. */
+/** Bytes as a compact "12.3 MB" / "456.0 KB" / "789 B" cell */
 function fmtBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${num(bytes / (1024 * 1024), 1)} MB`;
   if (bytes >= 1024) return `${num(bytes / 1024, 1)} KB`;
@@ -21,11 +21,11 @@ function fmtBytes(bytes: number): string {
 const HEAD = (labels: string[]): string[] => labels.map((label) => bold(label));
 
 /** The two-tier trust sentence, printed in the report footer (and stated in meta.notes + the README).
- * Shares/ratios are the signal; the absolute total is directional. */
+ * Shares/ratios are the signal; the absolute total is directional */
 const ALLOC_TRUST =
   "Allocated bytes are sampled (GC-inclusive) on V8's allocation clock. Trustworthy in aggregate as per-package shares and ratios (~5% ratio fidelity); the absolute byte total is directional (~10-20%), not exact.";
 
-/** Compact by-package headline, printed right after `record --alloc`. */
+/** Compact by-package headline, printed right after `record --alloc` */
 export function printAllocHeadline(model: AllocModel): void {
   const byPackage = packageAllocRollup(model);
   console.log(
@@ -55,7 +55,7 @@ interface OutOpts extends StructuredOutOpts {
 const DEFAULT_TOP = 25;
 const GROUPINGS = new Set(["package", "file", "function"]);
 
-/** Overview: where allocation goes, by package/file and by function. Bounded in size. */
+/** Overview: where allocation goes, by package/file and by function. Bounded in size */
 export async function queryAlloc(file: string, opts: OutOpts): Promise<void> {
   const by = opts.by ?? "package";
   if (!GROUPINGS.has(by)) throw new Error(`--by must be one of: package, file, function`);

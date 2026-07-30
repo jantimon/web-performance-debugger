@@ -1,7 +1,7 @@
 /** Ceiling (ms) on a single settle `requestAnimationFrame`. Well above any real frame gap (the worst
  * legit gap is ~24ms even under load [measured]) and well below the 180s protocol timeout, so a
  * frame-production stall -- where rAF never fires -- is caught in one ceiling and turned into a
- * retryable error instead of a protocol hang. See frameStallError in browser/launch.ts. */
+ * retryable error instead of a protocol hang. See frameStallError in browser/launch.ts */
 export const STALL_CEILING_MS = 3000;
 
 /**
@@ -9,7 +9,7 @@ export const STALL_CEILING_MS = 3000;
  * common state update -> rAF render -> microtask cleanup pattern. Each rAF is raced against
  * `ceilingMs`: if the compositor's BeginFrame source has stalled (rAF never fires, timers still do),
  * it resolves `{ stalled: true }` at the ceiling so the driver relaunches rather than hanging. A
- * healthy run resolves `{ stalled: false }` after the second frame + idle, unchanged.
+ * healthy run resolves `{ stalled: false }` after the second frame + idle, unchanged
  */
 export const SETTLE_SOURCE = (ceilingMs: number) =>
   new Promise<{ stalled: boolean }>((resolve) => {
@@ -20,7 +20,7 @@ export const SETTLE_SOURCE = (ceilingMs: number) =>
       win.requestIdleCallback
         ? win.requestIdleCallback(() => callback(), { timeout: 200 })
         : setTimeout(callback, 50);
-    // Request one frame; if it does not arrive within the ceiling, report a stall instead of waiting.
+    // Request one frame; if it does not arrive within the ceiling, report a stall instead of waiting
     const frameThen = (next: () => void) => {
       let done = false;
       const timer = setTimeout(() => {
@@ -40,7 +40,7 @@ export const SETTLE_SOURCE = (ceilingMs: number) =>
 
 /** Frames the start-of-flow health probe requests. The stall shows by the SECOND frame after a load
  * (the first rAF rides the load's own frame; the second needs a fresh BeginFrame, which is where the
- * source intermittently fails to arm), so three frames catch it with a margin [measured]. */
+ * source intermittently fails to arm), so three frames catch it with a margin [measured] */
 export const FRAME_PROBE_FRAMES = 3;
 
 /**
@@ -49,7 +49,7 @@ export const FRAME_PROBE_FRAMES = 3;
  * (permanent, browser-wide), which would hang any later rAF-based wait -- a settle, or a user
  * `page.waitForFunction` whose default polling is rAF -- to the protocol timeout. Resolving
  * `{ stalled: true }` at the ceiling lets the driver convert that into a retryable frame-stall error
- * before the flow can hang on it. A healthy browser resolves `{ stalled: false }` in ~3 frames.
+ * before the flow can hang on it. A healthy browser resolves `{ stalled: false }` in ~3 frames
  */
 export const FRAME_PROBE_SOURCE = (ceilingMs: number, frames: number) =>
   new Promise<{ stalled: boolean }>((resolve) => {
@@ -76,7 +76,7 @@ export const FRAME_PROBE_SOURCE = (ceilingMs: number, frames: number) =>
 
 /**
  * A bounded double `requestAnimationFrame` (the `paintFlush` after an explicit `until`): waits two
- * frames so a deferred paint lands, with the same per-frame stall ceiling as SETTLE_SOURCE.
+ * frames so a deferred paint lands, with the same per-frame stall ceiling as SETTLE_SOURCE
  */
 export const PAINT_FLUSH_SOURCE = (ceilingMs: number) =>
   new Promise<{ stalled: boolean }>((resolve) => {

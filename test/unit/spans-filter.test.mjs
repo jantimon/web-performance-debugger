@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spanPassesFilter, filterSpanEntries } from "../../dist/model/spans.js";
 
 // The flood filter for `query spans`: --min-wall <ms> and --filter <text> cut a tag manager's
-// hundreds of tiny performance.measure spans. Pure functions, so no browser and no recording.
+// hundreds of tiny performance.measure spans. Pure functions, so no browser and no recording
 
 const entry = (label, wallMs) => ({ label, kind: "measure", wallMs });
 

@@ -8,7 +8,7 @@ import {
 
 /** Fraction of the viewport an iframe must cover on BOTH axes to count as "dominant" (a full-viewport
  * challenge interstitial, not a small embedded widget). Generous on each axis so a challenge frame
- * with a little chrome around it still reads as dominant, tight enough that a form widget does not. */
+ * with a little chrome around it still reads as dominant, tight enough that a form widget does not */
 const DOMINANT_IFRAME_MIN_FRACTION = 0.6;
 
 /**
@@ -16,7 +16,7 @@ const DOMINANT_IFRAME_MIN_FRACTION = 0.6;
  * signals (title, iframes with their viewport coverage, interactive-element count, body text,
  * meta-refresh) and reads the top-document URL from the page handle (CDP-free, lane-neutral). A frame
  * that failed to load still has a `src` attribute and a layout rect, so a cross-origin challenge
- * iframe is measured by geometry without reading its (blocked) content.
+ * iframe is measured by geometry without reading its (blocked) content
  */
 export async function collectBotWallSignals(page: Page): Promise<BotWallSignals> {
   const dom = (await page.evaluate((minFraction: number) => {
@@ -38,7 +38,7 @@ export async function collectBotWallSignals(page: Page): Promise<BotWallSignals>
     ).length;
     const bodyTextLength = (document.body?.innerText || "").trim().length;
     // http-equiv="refresh" with a url=... target; the JS-redirect loop shows up as the settled URL,
-    // which mainDocumentUrl already carries.
+    // which mainDocumentUrl already carries
     let metaRefreshUrl: string | null = null;
     const meta = document.querySelector('meta[http-equiv="refresh" i]');
     const content = meta?.getAttribute("content") || "";
@@ -47,7 +47,7 @@ export async function collectBotWallSignals(page: Page): Promise<BotWallSignals>
     // Cloudflare inline managed-challenge tells (see record/bot-wall.ts): every script src (the .src
     // property is the resolved absolute URL, so a relative /cdn-cgi/... script reads same-origin), the
     // _cf_chl_opt page global the interstitial sets, and the __cf_chl_rt_tk runtime token in the served
-    // markup. Reading outerHTML once (returning only a boolean) keeps the whole document in-page.
+    // markup. Reading outerHTML once (returning only a boolean) keeps the whole document in-page
     const scriptSrcs = Array.from(document.querySelectorAll("script[src]"))
       .map((script) => (script as HTMLScriptElement).src || script.getAttribute("src") || "")
       .filter((src) => !!src);
@@ -75,7 +75,7 @@ export async function collectBotWallSignals(page: Page): Promise<BotWallSignals>
  * verdict is returned (a detected-but-allowed run stamps a loud note). When it is a wall and
  * `allow` is false, saves a screenshot as proof and throws a `BotWallError` -- failing BEFORE any
  * measurement pass, with no recording written. The screenshot is best-effort: if it cannot be
- * captured (a lane/driver that does not support it), the refusal still fires, naming the gap.
+ * captured (a lane/driver that does not support it), the refusal still fires, naming the gap
  */
 export async function inspectBotWall(
   page: Page,
@@ -89,7 +89,7 @@ export async function inspectBotWall(
     await page.screenshot({ path: config.screenshotPath as `${string}.png`, fullPage: false });
     savedPath = config.screenshotPath;
   } catch {
-    // A screenshot failure must never swallow the refusal: fall through and throw with a null path.
+    // A screenshot failure must never swallow the refusal: fall through and throw with a null path
     savedPath = null;
   }
   throw new BotWallError(verdict, savedPath);

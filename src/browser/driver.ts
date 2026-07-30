@@ -27,21 +27,21 @@ import type {
 /**
  * A `timeOrigin` delta above this (ms) is a document reload, below it is measurement jitter: a reload
  * moves `timeOrigin` by far more than jitter, so this cleanly separates a hard navigation from a
- * same-document one (docs/dev/navigation-and-lcp.md, [measured] byte-identical across every soft step).
+ * same-document one (docs/dev/navigation-and-lcp.md, [measured] byte-identical across every soft step)
  */
 export const HARD_NAV_ORIGIN_DELTA_MS = 0.5;
 
 /** How many times the default settle re-attaches to a new document when a hard navigation commits
  * mid-settle before giving up. A same-document reload / redirect commits its new context within a
  * frame or two, so a few attempts clear it; a page that keeps hard-redirecting exhausts these and the
- * destroyed-context error surfaces rather than looping. */
+ * destroyed-context error surfaces rather than looping */
 const SETTLE_REATTACH_LIMIT = 3;
 /** Pause (ms) before a settle re-attach: the new document's execution context is not ready the instant
  * the old one dies, so an immediate re-evaluate races the commit. Same value as until.ts's redirect
- * backoff. */
+ * backoff */
 const SETTLE_REATTACH_BACKOFF_MS = 50;
 
-/** Whether two URLs differ ONLY in their fragment (`#...`): origin + path + query equal, hash differs. */
+/** Whether two URLs differ ONLY in their fragment (`#...`): origin + path + query equal, hash differs */
 function differsOnlyInFragment(beforeUrl: string, afterUrl: string): boolean {
   try {
     const before = new URL(beforeUrl);
@@ -54,7 +54,7 @@ function differsOnlyInFragment(beforeUrl: string, afterUrl: string): boolean {
     );
   } catch {
     // A non-parseable URL (about:blank edge cases) cannot be shown to be fragment-only; fall back to
-    // plain soft rather than guess.
+    // plain soft rather than guess
     return false;
   }
 }
@@ -65,7 +65,7 @@ function differsOnlyInFragment(beforeUrl: string, afterUrl: string): boolean {
  * fixed per document, so a moved origin means a NEW document ("hard") even when the URL is unchanged
  * (a reload, a goto to the same URL). With the origin held, the URL splits the rest: unchanged is
  * "none", changed is a same-document route change ("soft"), or "soft-hash" when only the fragment
- * moved. See NavigationKind and docs/dev/navigation-and-lcp.md.
+ * moved. See NavigationKind and docs/dev/navigation-and-lcp.md
  */
 export function classifyNavigation(
   beforeUrl: string,
@@ -79,7 +79,7 @@ export function classifyNavigation(
   return "soft";
 }
 
-/** One `largest-contentful-paint` entry, serialized in-page (its `element` is a live node). */
+/** One `largest-contentful-paint` entry, serialized in-page (its `element` is a live node) */
 export interface RawLcpEntry {
   url: string;
   size: number;
@@ -92,7 +92,7 @@ export interface RawLcpEntry {
 }
 
 /** A `startTime` this far (ms) beyond the step's own window is the built-in-headless anomaly (~60s on
- * a ~40ms page), not real; suppress it rather than print it as fact. Generous, so real variance passes. */
+ * a ~40ms page), not real; suppress it rather than print it as fact. Generous, so real variance passes */
 export const LCP_STARTTIME_SLACK_MS = 1000;
 
 /**
@@ -102,7 +102,7 @@ export const LCP_STARTTIME_SLACK_MS = 1000;
  * frames (<=41ms even under 20x CPU throttle); this budget clears ~20 worst-case 24ms frames, an order
  * of magnitude of headroom, and stays an order of magnitude under the STALL_CEILING_MS backstop. A page
  * with no contentful paint queues nothing, so the wait ends here and absence stays honest. The wait
- * sits AFTER the step's end mark, so it never grows the measured window.
+ * sits AFTER the step's end mark, so it never grows the measured window
  */
 export const LCP_ENTRY_WAIT_MS = 500;
 
@@ -116,7 +116,7 @@ export const LCP_ENTRY_WAIT_MS = 500;
  * pass a regression the drain-then-wait closes. A trusted interaction that stayed under the spec's 16ms
  * floor produces no entry at all, so its flush waits the whole budget and ends empty -- bounded, and
  * AFTER the step's end mark, so absence stays absence and the wait never grows the measured window
- * (same shape as the LCP wait).
+ * (same shape as the LCP wait)
  */
 export const INP_ENTRY_WAIT_MS = 250;
 
@@ -127,7 +127,7 @@ export const INP_ENTRY_WAIT_MS = 250;
  *
  * `boundMs` is the step's own end-of-window page clock (`performance.now()` on the step's final
  * document); when the entry's `startTime` sits implausibly beyond it, the paint clock is the
- * built-in-headless anomaly and the entry is stored `suppressed` with no timing, never a 60s LCP as fact.
+ * built-in-headless anomaly and the entry is stored `suppressed` with no timing, never a 60s LCP as fact
  */
 export function shapeLcp(raw: RawLcpEntry | undefined, boundMs: number | null): StepLcp | null {
   if (!raw) return null;
@@ -145,7 +145,7 @@ export function shapeLcp(raw: RawLcpEntry | undefined, boundMs: number | null): 
   return lcp;
 }
 
-/** One `long-animation-frame` entry's script attribution, as read back out of the page. */
+/** One `long-animation-frame` entry's script attribution, as read back out of the page */
 export interface RawLoafScript {
   invoker: string;
   invokerType: string;
@@ -155,14 +155,14 @@ export interface RawLoafScript {
   forcedStyleLayoutMs: number;
 }
 
-/** One `long-animation-frame` entry, as read back out of the page. */
+/** One `long-animation-frame` entry, as read back out of the page */
 export interface RawLoafFrame {
   durationMs: number;
   blockingDurationMs: number;
   scripts: RawLoafScript[];
 }
 
-/** One Event Timing entry, as read back out of the page. */
+/** One Event Timing entry, as read back out of the page */
 export interface RawEventTiming {
   startTime: number;
   processingStart: number;
@@ -171,7 +171,7 @@ export interface RawEventTiming {
   /** 0 for events that are not part of an interaction (pointerover, mouseover, ...) */
   interactionId: number;
   /** the entry's `navigationId` (Chrome 151+): the interactions AFTER a soft nav carry the new id, the
-   * triggering interaction the pre-nav id, so route INP slices by it. NaN on a build that omits it. */
+   * triggering interaction the pre-nav id, so route INP slices by it. NaN on a build that omits it */
   navigationId: number;
 }
 
@@ -197,7 +197,7 @@ export interface RawEventTiming {
  *
  * Returns null when nothing carries an interactionId. That is not a failure and must not be 0: a
  * programmatic step (`page.evaluate`) fires untrusted events, which Event Timing does not observe at
- * all (measured: zero entries), and an interaction faster than the spec's 16ms floor produces none.
+ * all (measured: zero entries), and an interaction faster than the spec's 16ms floor produces none
  */
 export function interactionBreakdown(entries: RawEventTiming[]): InteractionTiming | null {
   const groups = new Map<number, RawEventTiming[]>();
@@ -218,12 +218,12 @@ export function interactionBreakdown(entries: RawEventTiming[]): InteractionTimi
   }
   if (!worstGroup) return null;
 
-  // Only the events that reached the paint this interaction is measured by.
+  // Only the events that reached the paint this interaction is measured by
   const atWorstPaint = worstGroup.filter((entry) => entry.duration === worstDuration);
   const startTime = Math.min(...atWorstPaint.map((entry) => entry.startTime));
   const processingStart = Math.min(...atWorstPaint.map((entry) => entry.processingStart));
   // max(): a handler that starts after its own frame deadline would otherwise push presentation
-  // delay negative. min(): processing cannot outlast the paint it is being measured against.
+  // delay negative. min(): processing cannot outlast the paint it is being measured against
   const paintTime = Math.max(startTime + worstDuration, processingStart);
   const processingEnd = Math.min(
     Math.max(...atWorstPaint.map((entry) => entry.processingEnd)),
@@ -236,10 +236,10 @@ export function interactionBreakdown(entries: RawEventTiming[]): InteractionTimi
   };
 }
 
-/** Keep the step's LoAF field small: the worst few frames, each naming its worst few scripts. */
+/** Keep the step's LoAF field small: the worst few frames, each naming its worst few scripts */
 export const LOAF_FRAME_CAP = 3;
 export const LOAF_SCRIPT_CAP = 5;
-/** Scripts shorter than this that forced no style/layout are noise, dropped from a frame's list. */
+/** Scripts shorter than this that forced no style/layout are noise, dropped from a frame's list */
 export const LOAF_SCRIPT_MIN_MS = 0.5;
 
 /**
@@ -250,7 +250,7 @@ export const LOAF_SCRIPT_MIN_MS = 0.5;
  * when only the worst frames keep their script lists. Frames are worst-first by duration; within each,
  * scripts are worst-first by duration and pruned of sub-`LOAF_SCRIPT_MIN_MS` noise that forced no
  * style/layout. Returns null when nothing was observed (the step ran no long frame, OR the browser has
- * no LoAF support), so the caller stores nothing rather than a fabricated zero.
+ * no LoAF support), so the caller stores nothing rather than a fabricated zero
  */
 export function summarizeLoaf(rawFrames: RawLoafFrame[]): StepLoaf | null {
   if (!rawFrames.length) return null;
@@ -280,7 +280,7 @@ export function summarizeLoaf(rawFrames: RawLoafFrame[]): StepLoaf | null {
   return { frames, totalDurationMs, totalBlockingMs, observedFrames: rawFrames.length };
 }
 
-/** One layout-shift source rect, as read back out of the page. */
+/** One layout-shift source rect, as read back out of the page */
 export interface RawLayoutShiftRect {
   x: number;
   y: number;
@@ -288,7 +288,7 @@ export interface RawLayoutShiftRect {
   height: number;
 }
 
-/** One `sources` entry of a `layout-shift`, serialized in-page (its `node` is a live element). */
+/** One `sources` entry of a `layout-shift`, serialized in-page (its `node` is a live element) */
 export interface RawLayoutShiftSource {
   tag: string;
   id: string;
@@ -297,22 +297,22 @@ export interface RawLayoutShiftSource {
   currentRect: RawLayoutShiftRect | null;
 }
 
-/** One `layout-shift` entry, as read back out of the page. */
+/** One `layout-shift` entry, as read back out of the page */
 export interface RawLayoutShiftEntry {
   value: number;
   hadRecentInput: boolean;
   startTimeMs: number;
   sources: RawLayoutShiftSource[];
   /** the entry's `navigationId` (Chrome 151+): a shift AFTER a soft nav carries the new id, so route CLS
-   * slices by it. NaN on a build that omits it (route CLS then matches nothing, staying absent). */
+   * slices by it. NaN on a build that omits it (route CLS then matches nothing, staying absent) */
   navigationId: number;
 }
 
-/** A new session window opens when a shift lands more than this (ms) after the PREVIOUS shift. Spec. */
+/** A new session window opens when a shift lands more than this (ms) after the PREVIOUS shift. Spec */
 export const LAYOUT_SHIFT_SESSION_GAP_MS = 1000;
-/** ...or more than this (ms) after the window's FIRST shift, whichever comes first. Spec. */
+/** ...or more than this (ms) after the window's FIRST shift, whichever comes first. Spec */
 export const LAYOUT_SHIFT_SESSION_MAX_MS = 5000;
-/** Keep only the top few shifting elements of the winning window; the rest are a long tail of noise. */
+/** Keep only the top few shifting elements of the winning window; the rest are a long tail of noise */
 export const LAYOUT_SHIFT_SOURCE_CAP = 3;
 
 function rectArea(rect: RawLayoutShiftRect | null): number {
@@ -321,7 +321,7 @@ function rectArea(rect: RawLayoutShiftRect | null): number {
 }
 
 /** A shifted element as `tag#id.firstClass`, lower-cased and truncated; "(anonymous)" when it carried
- * no identity. Built here (not in-page) so the pure function owns the descriptor and stays testable. */
+ * no identity. Built here (not in-page) so the pure function owns the descriptor and stays testable */
 function describeShiftNode(source: RawLayoutShiftSource): string {
   const tag = source.tag ? source.tag.toLowerCase() : "";
   const id = source.id ? `#${source.id}` : "";
@@ -343,7 +343,7 @@ function describeShiftNode(source: RawLayoutShiftSource): string {
  * an entry's value is split across its sources in proportion to their moved area (a ranking proxy for
  * "which element shifted most", never a spec quantity); each element keeps the rects from its largest
  * occurrence. Returns null when no qualifying shift was observed (no shift, or every shift excluded, or
- * no layout-shift support), so the caller stores nothing rather than a fabricated zero.
+ * no layout-shift support), so the caller stores nothing rather than a fabricated zero
  */
 export function computeLayoutShift(entries: RawLayoutShiftEntry[]): LayoutShift | null {
   const qualifying = entries
@@ -394,7 +394,7 @@ export function computeLayoutShift(entries: RawLayoutShiftEntry[]): LayoutShift 
       const share = totalWeight > 0 ? weights[at] / totalWeight : 1 / entry.sources.length;
       const tally = byNode.get(node) ?? { node, score: 0, area: -1 };
       tally.score += entry.value * share;
-      // Keep the rects from this element's largest occurrence in the window.
+      // Keep the rects from this element's largest occurrence in the window
       if (weights[at] > tally.area) {
         tally.area = weights[at];
         if (source.previousRect) tally.previousRect = source.previousRect;
@@ -423,7 +423,7 @@ export function computeLayoutShift(entries: RawLayoutShiftEntry[]): LayoutShift 
 /**
  * One `soft-navigation` entry, read back out of the page at the end-of-step flush (NOT eagerly in the
  * observer callback): the route's LICP identity is read then, off the retained live entry's
- * `getLargestInteractionContentfulPaint()`, so a paint that grows after the entry fires is still caught.
+ * `getLargestInteractionContentfulPaint()`, so a paint that grows after the entry fires is still caught
  */
 export interface RawSoftNavEntry {
   /** the route's URL (`entry.name`) */
@@ -450,7 +450,7 @@ export interface RawSoftNavEntry {
  * Shape a soft nav entry's route LICP into the stored `SoftNavRouteLcp`, anchoring the paint time to the
  * route's `startTime` (the route clock). Returns null when the entry carried no largest-interaction-
  * contentful-paint identity AND no usable render time (no route paint observed yet), so the caller omits
- * `routeLcp`. A TAO-gated paint keeps its identity but drops `routeMs` (its renderTime reads 0 by spec).
+ * `routeLcp`. A TAO-gated paint keeps its identity but drops `routeMs` (its renderTime reads 0 by spec)
  */
 function shapeSoftNavRouteLcp(entry: RawSoftNavEntry): SoftNavRouteLcp | null {
   const hasIdentity = !!entry.lcpUrl || !!entry.lcpTag || entry.lcpSize > 0;
@@ -483,7 +483,7 @@ function shapeSoftNavRouteLcp(entry: RawSoftNavEntry): SoftNavRouteLcp | null {
  *
  * A non-finite `navigationId` (a build that did not populate it) matches nothing, so route CLS/INP stay
  * absent rather than folding pre-nav work in. When more than one soft nav fired, the FIRST is reported
- * and the rest counted in `additionalSoftNavs`, never averaged into a synthetic route.
+ * and the rest counted in `additionalSoftNavs`, never averaged into a synthetic route
  */
 export function shapeSoftNavRoute(
   softNavs: RawSoftNavEntry[],
@@ -522,7 +522,7 @@ export function shapeSoftNavRoute(
  * or no trusted-interaction route in the window), so the caller stores nothing rather than a fabricated
  * zero -- absence stays absence. Keeps only the fields per-soft-step metrics slice by: the history op,
  * the numeric navigationId, and the interaction the engine tied the route to; each id array is dropped
- * when the build populated none of it.
+ * when the build populated none of it
  */
 export function shapeEngineSoftNav(raw: RawSoftNavEntry[]): EngineSoftNav | null {
   if (!raw.length) return null;
@@ -539,7 +539,7 @@ export function shapeEngineSoftNav(raw: RawSoftNavEntry[]): EngineSoftNav | null
   };
 }
 
-/** A timed iteration failed partway and --keep-partial salvaged the ones that completed. */
+/** A timed iteration failed partway and --keep-partial salvaged the ones that completed */
 export interface PartialRun {
   /** iterations the caller asked for */
   requested: number;
@@ -570,20 +570,20 @@ export interface DriverOptions {
   /**
    * Keep the iterations that completed when a LATER one fails, instead of aborting the whole run.
    * Only salvages when at least one full iteration completed; a failure in iteration 0 (a broken
-   * flow) still throws. The failed iteration's partial steps are discarded and disclosed loudly.
+   * flow) still throws. The failed iteration's partial steps are discarded and disclosed loudly
    */
   keepPartial?: boolean;
 }
 
-/** "Step is done" override: a selector to wait for, a predicate/async fn, or a promise. */
+/** "Step is done" override: a selector to wait for, a predicate/async fn, or a promise */
 export type Until = string | (() => unknown | Promise<unknown>) | Promise<unknown> | undefined;
 
-/** The options bag form of a step's third argument: currently just the `until` override. */
+/** The options bag form of a step's third argument: currently just the `until` override */
 export interface StepOpts {
   until?: Until;
 }
 
-/** Define one measured step, `measureStep(label, action, { until })` or the config-object form. */
+/** Define one measured step, `measureStep(label, action, { until })` or the config-object form */
 export interface MeasureStep {
   (label: string, action: () => unknown, opts?: StepOpts): Promise<void>;
   (config: { label: string; action: () => unknown; until?: Until }): Promise<void>;
@@ -593,30 +593,30 @@ export interface MeasureStep {
  * The argument driver mode hands `prepare`/`run`/`cleanup`. `waitForStable` is injected so a driver
  * module needs NO import from the package (it does not resolve under a bare `npx` run, whose cwd has
  * no node_modules for the package): `until: waitForStable(page, { selector, quietMs })`. The injected
- * helper is the same function the package exports, so the two forms are interchangeable.
+ * helper is the same function the package exports, so the two forms are interchangeable
  */
 export interface DriverContext {
-  /** The Puppeteer page under test; drive it (click, type, goto) inside a measureStep action. */
+  /** The Puppeteer page under test; drive it (click, type, goto) inside a measureStep action */
   page: Page;
   /** Empty object shared across prepare/run/cleanup: stash a handle or test data in prepare, read it
-   * in run. */
+   * in run */
   ctx: Record<string, unknown>;
   measureStep: MeasureStep;
   /** A `measureStep` `until` for streamed / soft-navigating transitions the default settle ends
-   * before. Injected so the module imports nothing; identical to the package's `waitForStable`. */
+   * before. Injected so the module imports nothing; identical to the package's `waitForStable` */
   waitForStable: typeof waitForStable;
 }
 
 /**
  * The built-in on-ramp flow (no user module): navigate to `navigateUrl` inside one measured step so
- * the page's own boot lands in the run window (goto-inside-a-step tracing). See docs/dev/driver-timing.md.
+ * the page's own boot lands in the run window (goto-inside-a-step tracing). See docs/dev/driver-timing.md
  */
 export interface OnrampFlow {
   navigateUrl: string;
   /**
    * Inspect the settled page for a bot-challenge interstitial, run ONCE right after the first
    * navigation (the built-in load step's own goto), before the timed measurement continues. Throws a
-   * BotWallError to refuse a wall; the driver lets it propagate so record aborts with no artifact.
+   * BotWallError to refuse a wall; the driver lets it propagate so record aborts with no artifact
    */
   afterFirstLoad?: () => Promise<void>;
 }
@@ -630,7 +630,7 @@ export interface OnrampFlow {
  *
  * Each step is wrapped in wpd:step:N marks, settled (or awaited via
  * `until`), and assigned a per-step INP. Per-step rendering counts come from the trace window this
- * pass captures (--breakdown/--deep), not from CDP: there is one pass, and the counters are gone.
+ * pass captures (--breakdown/--deep), not from CDP: there is one pass, and the counters are gone
  */
 export async function runDriver(
   page: Page,
@@ -647,7 +647,7 @@ export async function runDriver(
     // Built-in flow: one "load" step that navigates to the target. No prepare/cleanup. The default
     // settle (rAF+idle, twice) flushes the boot's paints after the load event, so the window is the
     // page's own load-to-settle. A navigating step has a null page-clock wall (the two marks sit on
-    // documents with different timeOrigins); a trace capture mode prices it off the trace window instead.
+    // documents with different timeOrigins); a trace capture mode prices it off the trace window instead
     run = ({
       measureStep,
     }: {
@@ -683,7 +683,7 @@ export async function runDriver(
   const mark = (markName: string) => page.evaluate((name) => performance.mark(name), markName);
   // Emit a step's edge mark AND read the page's own clock at that instant: `now` is
   // `performance.now()` (the page-clock timestamp of the mark) and `origin` is `timeOrigin` (which
-  // changes on navigation, so a step that navigated is detectable and its page-clock wall refused).
+  // changes on navigation, so a step that navigated is detectable and its page-clock wall refused)
   const stepClock = (markName: string) =>
     page.evaluate((name) => {
       performance.mark(name);
@@ -691,8 +691,8 @@ export async function runDriver(
     }, markName) as Promise<{ now: number; origin: number }>;
   // Both waits are bounded in-page: if the compositor's BeginFrame source has stalled (rAF never
   // fires, a browser-wide headless failure), the evaluate resolves { stalled: true } at the ceiling
-  // and we throw a frameStallError, which record.ts's retryTransientNav relaunches on a fresh browser.
-  // Without the ceiling an rAF-based settle would hang to the 180s protocol timeout.
+  // and we throw a frameStallError, which record.ts's retryTransientNav relaunches on a fresh browser
+  // Without the ceiling an rAF-based settle would hang to the 180s protocol timeout
   const settleOnce = async () => {
     const outcome = await page.evaluate(SETTLE_SOURCE, STALL_CEILING_MS);
     if (outcome.stalled) throw frameStallError(STALL_CEILING_MS);
@@ -705,7 +705,7 @@ export async function runDriver(
     // (until.ts). The re-attach backs off briefly first because the new context is not ready the instant
     // the old one dies -- an immediate re-evaluate races the still-committing navigation and destroys
     // again. Bounded to SETTLE_REATTACH_LIMIT attempts, so a page that keeps hard-redirecting surfaces
-    // the destroyed-context error honestly instead of looping.
+    // the destroyed-context error honestly instead of looping
     for (let attempt = 0; ; attempt++) {
       try {
         await settleOnce();
@@ -724,19 +724,19 @@ export async function runDriver(
   // Observe interaction event-timing so we can attribute INP per step. Installed via
   // evaluateOnNewDocument so it re-arms on every navigation (a step that navigates would
   // otherwise wipe the observer and lose INP for all later steps). durationThreshold:16
-  // is the spec floor for 'event'; sub-16ms interactions are not reported by the API.
+  // is the spec floor for 'event'; sub-16ms interactions are not reported by the API
   //
   // Every observer registers a drain closure in the shared `win.__wpdDrains` registry: an entry can be
   // QUEUED to its observer before the callback dispatches, so the end-of-step flush drains
   // takeRecords() on ALL observers before reading (a lost Event Timing entry reads INP lower, which
   // could pass a --max-inp regression). The registry is keyed by name so a navigation re-arm overwrites
-  // each closure rather than accumulating.
+  // each closure rather than accumulating
   const installInpObserver = () => {
     const win = window as any;
     win.__wpdInp = [];
     win.__wpdDrains = win.__wpdDrains || {};
     // The whole entry, not just duration: processingStart/End are what split the latency into input
-    // delay / processing / presentation, and unlike duration they are not rounded to 8ms.
+    // delay / processing / presentation, and unlike duration they are not rounded to 8ms
     const shape = (event: any) => ({
       startTime: event.startTime,
       processingStart: event.processingStart,
@@ -744,7 +744,7 @@ export async function runDriver(
       duration: event.duration,
       interactionId: event.interactionId ?? 0,
       // navigationId slices route INP: post-soft-nav interactions carry the new id, the triggering
-      // one the pre-nav id. NaN where the build omits it, so route INP matches nothing there.
+      // one the pre-nav id. NaN where the build omits it, so route INP matches nothing there
       navigationId: typeof event.navigationId === "number" ? event.navigationId : NaN,
     });
     try {
@@ -766,7 +766,7 @@ export async function runDriver(
   // its Event Timing entry rather than reading a race-empty INP. Only trusted input (a real
   // page.click / keyboard) produces an Event Timing entry; a synthetic page.evaluate click is
   // untrusted and observed by nothing, so it leaves the flag false and arms no wait -- absence stays
-  // absence. Same re-arm-on-navigation install as the observers; the per-step reset clears the flag.
+  // absence. Same re-arm-on-navigation install as the observers; the per-step reset clears the flag
   const installInteractionFlag = () => {
     const win = window as any;
     win.__wpdSawInteraction = false;
@@ -786,8 +786,8 @@ export async function runDriver(
 
   // Observe Long Animation Frames so we can attribute a step's slow frames to the scripts the browser
   // blamed. Same re-arm-on-navigation install as the INP observer. Chrome-only: `supportedEntryTypes`
-  // gates it, so on Firefox `win.__wpdLoaf` stays [] and the step stores no loaf (never a fake zero).
-  // A `PerformanceScriptTiming`'s fields must be read explicitly: its `toJSON()` returns {}.
+  // gates it, so on Firefox `win.__wpdLoaf` stays [] and the step stores no loaf (never a fake zero)
+  // A `PerformanceScriptTiming`'s fields must be read explicitly: its `toJSON()` returns {}
   const installLoafObserver = () => {
     const win = window as any;
     win.__wpdLoaf = [];
@@ -823,12 +823,12 @@ export async function runDriver(
   await page.evaluateOnNewDocument(installLoafObserver);
   await page.evaluate(installLoafObserver);
 
-  // Observe Largest Contentful Paint so a step that booted a fresh document can attribute its boot LCP.
+  // Observe Largest Contentful Paint so a step that booted a fresh document can attribute its boot LCP
   // Same re-arm-on-navigation install as the other two observers: LCP entries are per document, so a
   // cross-document navigation starts a fresh stream the re-armed observer picks up. `buffered: true`
   // replays the entries that fired before the observer registered. Keep the WHOLE stream; the last
   // entry is the largest (each LCP entry supersedes the previous). Cross-browser Baseline, so unlike
-  // LoAF this is not Chrome-gated; a browser without support leaves `win.__wpdLcp` [] and stores nothing.
+  // LoAF this is not Chrome-gated; a browser without support leaves `win.__wpdLcp` [] and stores nothing
   const installLcpObserver = () => {
     const win = window as any;
     win.__wpdLcp = [];
@@ -859,7 +859,7 @@ export async function runDriver(
       // The buffered entry can be QUEUED to the observer before its callback is dispatched: on a slow
       // compositor the end-of-step flush can read __wpdLcp before that dispatch, seeing a race-empty
       // list on a step that genuinely painted. takeRecords() delivers the queued entries synchronously
-      // through the same shaper, so the flush drains them (via __wpdDrains) rather than miss the paint.
+      // through the same shaper, so the flush drains them (via __wpdDrains) rather than miss the paint
       win.__wpdDrains.lcp = () => {
         for (const entry of observer.takeRecords()) win.__wpdLcp.push(shape(entry));
       };
@@ -875,7 +875,7 @@ export async function runDriver(
   // `supportedEntryTypes` gates it, so on Firefox `win.__wpdLs` stays [] and the step stores no CLS
   // (never a fake zero). A `layout-shift` entry is NOT replayed through `getEntriesByType` (measured:
   // the performance timeline buffer is empty for it), so the observer is the only way to read it; each
-  // source's `node`/`previousRect`/`currentRect` are read explicitly into a serializable shape.
+  // source's `node`/`previousRect`/`currentRect` are read explicitly into a serializable shape
   const installLayoutShiftObserver = () => {
     const win = window as any;
     win.__wpdLs = [];
@@ -891,7 +891,7 @@ export async function runDriver(
       hadRecentInput: !!shift.hadRecentInput,
       startTimeMs: shift.startTime,
       // navigationId slices route CLS: a shift after a soft nav carries the new id. NaN where the
-      // build omits it, so route CLS matches nothing there (absent, never folding pre-nav shifts).
+      // build omits it, so route CLS matches nothing there (absent, never folding pre-nav shifts)
       navigationId: typeof shift.navigationId === "number" ? shift.navigationId : NaN,
       sources: (shift.sources || []).map((source: any) => {
         const node = source.node;
@@ -923,15 +923,15 @@ export async function runDriver(
   // url+timeOrigin classifier AND its route-transition metrics. Same re-arm-on-navigation install as the
   // other observers. OPPORTUNISTIC: `supportedEntryTypes` gates registration, so an older Chrome or
   // Firefox (no `soft-navigation` type) leaves the retained list [] and the step stores nothing (never a
-  // fake zero, never a forced `--enable-features`). The entry is default-on from Chrome 151.
-  //
+  // fake zero, never a forced `--enable-features`). The entry is default-on from Chrome 151
+
   // The live entry objects are RETAINED (`win.__wpdSoftNavEntries`), not serialized in the callback,
   // because the route's largest paint is read at the end-of-step flush off each entry's
   // `getLargestInteractionContentfulPaint()`: reading in the callback would freeze it at the FCP the
   // entry fires on and miss a larger paint that lands after. `win.__wpdSoftNavRead()` produces the
   // serialized `RawSoftNavEntry[]` (route URL, history op, ids, startTime, and the LICP identity) at
   // flush time; the `__wpdDrains.softNav` drain delivers a queued entry synchronously, the same race
-  // the LCP observer guards (an entry can be queued before its callback dispatches).
+  // the LCP observer guards (an entry can be queued before its callback dispatches)
   const installSoftNavObserver = () => {
     const win = window as any;
     win.__wpdSoftNavEntries = [];
@@ -982,7 +982,7 @@ export async function runDriver(
   // 180s protocol timeout, an error the retry cannot classify. The stall shows by the second frame
   // after a load [measured], so probing a few frames here converts a born-dead browser into a
   // retryable frame-stall error that record relaunches on a fresh browser, before the flow can hang
-  // on it. Mid-run deaths (e.g. a later navigation) are caught by each step's bounded settle.
+  // on it. Mid-run deaths (e.g. a later navigation) are caught by each step's bounded settle
   const frameHealth = await page.evaluate(FRAME_PROBE_SOURCE, STALL_CEILING_MS, FRAME_PROBE_FRAMES);
   if (frameHealth.stalled) throw frameStallError(STALL_CEILING_MS);
 
@@ -997,7 +997,7 @@ export async function runDriver(
 
   const steps: DriverStep[] = [];
   // Labels must be unique within ONE iteration, not within the run: a repeated flow measures
-  // "mount" once per iteration, and those are the samples, not a collision. Reset per iteration.
+  // "mount" once per iteration, and those are the samples, not a collision. Reset per iteration
   let usedLabels = new Set<string>();
   let indexInIteration = 0;
   let markIndex = 0;
@@ -1006,16 +1006,16 @@ export async function runDriver(
   // Where each iteration's `index` counter restarts. prepare() may measure steps too, and those
   // keep the low indices for the whole run; resetting to 0 instead would give the first run step
   // the same index as a prepare step, and `window.measure` (built from index) would then name a
-  // mark belonging to the other one.
+  // mark belonging to the other one
   let timedIndexBase = 0;
   // Warmup runs the flow for its side effects only (JIT, caches, first-paint work), so steps are
-  // executed but not marked, snapshotted or recorded.
+  // executed but not marked, snapshotted or recorded
   let recording = true;
   // cleanup() is deliberately called by record.ts AFTER tracing stops, so a step measured there
-  // can never have a trace window; see the throw in measure().
+  // can never have a trace window; see the throw in measure()
   let inCleanup = false;
-  // The measureStep in progress, for --keep-partial's disclosure: which step an iteration died on.
-  // Set before the action runs, cleared once the step is recorded; null means "between steps".
+  // The measureStep in progress, for --keep-partial's disclosure: which step an iteration died on
+  // Set before the action runs, cleared once the step is recorded; null means "between steps"
   let activeStepLabel: string | null = null;
 
   async function measure(label: string, action: () => unknown, until: Until): Promise<void> {
@@ -1028,13 +1028,13 @@ export async function runDriver(
     }
     if (!recording) {
       // Warmup: do the work, measure nothing. The action still runs because the flow's later
-      // steps depend on it having happened.
+      // steps depend on it having happened
       await action();
       await waitDone(until);
       return;
     }
     // Fail here rather than at the cross-pass merge: this fires on the offending call, before
-    // the rest of the flow and the second pass have run.
+    // the rest of the flow and the second pass have run
     if (usedLabels.has(label)) throw duplicateLabelError(label);
     usedLabels.add(label);
     activeStepLabel = label;
@@ -1048,17 +1048,17 @@ export async function runDriver(
       win.__wpdLs = [];
       win.__wpdSoftNavEntries = [];
       // Clear the trusted-interaction flag so this step's flush only waits for an Event Timing entry
-      // when THIS step dispatched an interaction, not a prior one.
+      // when THIS step dispatched an interaction, not a prior one
       win.__wpdSawInteraction = false;
       // Reset any active framework-addon per-step counters (e.g. React commit count). Absent when no
-      // addon installed the channel (--framework off), so this is a no-op then.
+      // addon installed the channel (--framework off), so this is a no-op then
       const resetAddons = win.__wpdAddonStepReset;
       if (typeof resetAddons === "function") resetAddons();
     });
     const startClock = await stepClock(`wpd:step:${stepMark}:start`);
     // page.url() is CDP-free (Puppeteer reads it off the page handle). Read it at both marks so the
     // step's navigation is decidable without a browser flag; each step's pair is self-contained (a
-    // replaceState can fire between steps, so the end URL is not assumed to be the next start URL).
+    // replaceState can fire between steps, so the end URL is not assumed to be the next start URL)
     const beforeUrl = page.url();
     await action();
     await waitDone(until);
@@ -1067,14 +1067,14 @@ export async function runDriver(
     const navigation = classifyNavigation(beforeUrl, afterUrl, startClock.origin, endClock.origin);
     // The page's own view of [start mark, end mark]. Null across a navigation (the two marks are on
     // documents with different timeOrigins, so their performance.now() delta is not one interval);
-    // record.ts upgrades this to the trace-clock window when a trace was captured.
+    // record.ts upgrades this to the trace-clock window when a trace was captured
     const pageWallMs = startClock.origin === endClock.origin ? endClock.now - startClock.now : null;
     // Event-Timing entries reach the observer on a later task, after the frame is
     // presented. Flush a frame + a macrotask so a slow interaction's entry lands before
     // we read it, rather than being dropped or misattributed to the next step. null
-    // (not 0) means "no interaction measured"; keep them distinct.
+    // (not 0) means "no interaction measured"; keep them distinct
     // LoAF entries land on a later task too, so read them in the same frame+macrotask flush as the
-    // Event-Timing entries: one round trip, both signals settled.
+    // Event-Timing entries: one round trip, both signals settled
     const flushed = (await page.evaluate(
       (ceilingMs, waitLcp, waitSoftNav, entryBudgetMs, inpBudgetMs) =>
         new Promise<{
@@ -1089,7 +1089,7 @@ export async function runDriver(
           // One shared drain over EVERY observer: each install registered a takeRecords() closure in
           // `win.__wpdDrains`, so this delivers any queued-but-undispatched entry (INP, LoAF, LCP,
           // layout-shift, soft-nav) synchronously before the read. Without it an entry queued at this
-          // instant is silently lost -- and a lost Event Timing entry reads INP lower.
+          // instant is silently lost -- and a lost Event Timing entry reads INP lower
           const drainAll = () => {
             const drains = win.__wpdDrains || {};
             for (const key of Object.keys(drains)) {
@@ -1107,13 +1107,13 @@ export async function runDriver(
             ls: (win.__wpdLs as RawLayoutShiftEntry[]) ?? [],
             // The route LICP is read HERE (at the flush), off the retained live entries, so a paint that
             // grew after the soft-nav entry fired is caught. `__wpdSoftNavRead` is absent where the entry
-            // type is unsupported, so the list reads [] and the step stores no route metrics.
+            // type is unsupported, so the list reads [] and the step stores no route metrics
             softNav:
               typeof win.__wpdSoftNavRead === "function"
                 ? (win.__wpdSoftNavRead() as RawSoftNavEntry[])
                 : [],
-            // Framework-addon per-step payload (e.g. React commit count for this step's window).
-            // Null when no addon installed the channel.
+            // Framework-addon per-step payload (e.g. React commit count for this step's window)
+            // Null when no addon installed the channel
             addonStep:
               typeof win.__wpdAddonStepRead === "function"
                 ? (win.__wpdAddonStepRead() as Record<string, unknown>)
@@ -1127,16 +1127,16 @@ export async function runDriver(
             resolve(read());
           };
           // The settle already threw on a stalled compositor, so rAF normally fires here; the
-          // ceiling is a backstop that reads whatever landed rather than hanging if it does not.
+          // ceiling is a backstop that reads whatever landed rather than hanging if it does not
           setTimeout(finish, ceilingMs);
           // Base flush: one frame + a macrotask so INP/LoAF land, then drainAll delivers any
           // queued-but-undispatched entry. Three signals can still be not-yet-queued at this instant:
           // a hard-nav step's boot LCP, a soft-nav step's `soft-navigation` entry (whose route LICP the
-          // metrics need), and a dispatched interaction's Event Timing entry (whose loss reads INP low).
+          // metrics need), and a dispatched interaction's Event Timing entry (whose loss reads INP low)
           // For each, keep draining and waiting bounded frames while it is still missing. A step that
           // produced none (no contentful paint, no engine route, no trusted interaction) queues nothing,
           // so the wait ends at its budget and absence stays honest. All of this sits after the end
-          // mark, so it never grows the measured window.
+          // mark, so it never grows the measured window
           const drains = win.__wpdDrains || {};
           const canWaitLcp = waitLcp && typeof drains.lcp === "function";
           const canWaitSoftNav = waitSoftNav && typeof drains.softNav === "function";
@@ -1149,7 +1149,7 @@ export async function runDriver(
             const needSoftNav =
               canWaitSoftNav && (win.__wpdSoftNavEntries as unknown[]).length === 0;
             // An interaction entry is one carrying a real interactionId; the sequence's interactionId-0
-            // events (pointerover, ...) do not satisfy the wait.
+            // events (pointerover, ...) do not satisfy the wait
             const needInp =
               canWaitInp &&
               !(win.__wpdInp as RawEventTiming[]).some((entry) => entry.interactionId > 0);
@@ -1158,7 +1158,7 @@ export async function runDriver(
               const elapsedMs = performance.now() - entryWaitStartMs;
               // The families deliver on different budgets: a boot LCP / soft-nav entry within
               // entryBudgetMs, an Event Timing entry within the tighter inpBudgetMs. Keep waiting while
-              // any still-missing signal is inside its own budget.
+              // any still-missing signal is inside its own budget
               const stillWaiting =
                 ((needLcp || needSoftNav) && elapsedMs < entryBudgetMs) ||
                 (needInp && elapsedMs < inpBudgetMs);
@@ -1187,22 +1187,22 @@ export async function runDriver(
     const observed = flushed.inp;
     const loaf = summarizeLoaf(flushed.loaf);
     // The engine's own soft-navigation verdict for this window, opportunistic and beside `navigation`:
-    // present only where Chrome fired an entry (a trusted-interaction route on 151+), null otherwise.
+    // present only where Chrome fired an entry (a trusted-interaction route on 151+), null otherwise
     const engineSoftNav = shapeEngineSoftNav(flushed.softNav);
     // The route-transition metrics (LCP-equivalent / CLS / INP on the route clock) for a step the engine
     // soft-navigated, keyed by the soft nav's navigationId. Null where the engine fired no entry (a
-    // programmatic/untrusted route, older Chrome, Firefox), so it keys strictly on the engine's verdict.
+    // programmatic/untrusted route, older Chrome, Firefox), so it keys strictly on the engine's verdict
     const softNav = shapeSoftNavRoute(flushed.softNav, flushed.ls, flushed.inp);
     // CLS: the spec session-window maximum over the shifts observed in this step's window, with the
     // shifting elements attributed. Chrome-only (the observer stays empty on Firefox); a step with no
     // qualifying shift stores nothing (null), never a fake 0. The boot/load step is where it shows: a
-    // shift within 500ms of a user input is excluded by hadRecentInput, so a click step usually has none.
+    // shift within 500ms of a user input is excluded by hadRecentInput, so a click step usually has none
     const layoutShift = computeLayoutShift(flushed.ls);
     // LCP attaches ONLY to a step that started a fresh document (a hard navigation, which includes the
     // built-in load step): LCP freezes at the first trusted interaction and never re-fires on a soft
-    // navigation, so a per-soft-step LCP would be structurally empty. The last entry is the largest.
+    // navigation, so a per-soft-step LCP would be structurally empty. The last entry is the largest
     // The bound for the anomaly check is the step's own end-of-window page clock (endClock.now, on the
-    // post-navigation document, the same clock LCP's startTime rides).
+    // post-navigation document, the same clock LCP's startTime rides)
     const lcp =
       navigation === "hard" ? shapeLcp(flushed.lcp[flushed.lcp.length - 1], endClock.now) : null;
     // INP stays max-over-every-entry, deliberately: Chrome emits the whole pointer sequence with
@@ -1210,7 +1210,7 @@ export async function runDriver(
     // that did work, so this finds the interaction's latency in both. Verified in both engines:
     // docs/dev/gecko-profile-format.md. The breakdown below needs the interactionId grouping the
     // spec defines; the headline does not, and narrowing it here would change a measured behaviour
-    // for no gain.
+    // for no gain
     const inp = observed.length ? Math.max(...observed.map((entry) => entry.duration)) : null;
     const interaction = interactionBreakdown(observed);
     steps.push({
@@ -1233,7 +1233,7 @@ export async function runDriver(
       ...(lcp ? { lcp } : {}),
       ...(layoutShift ? { layoutShift } : {}),
       // Framework-addon per-step payload (keyed by addon name); an addon's enrich shapes it into
-      // Span.addons. Absent when no addon installed the per-step channel.
+      // Span.addons. Absent when no addon installed the per-step channel
       ...(flushed.addonStep ? { addons: flushed.addonStep } : {}),
     });
     activeStepLabel = null;
@@ -1251,18 +1251,18 @@ export async function runDriver(
 
   const ctx: Record<string, unknown> = {};
   // One arg object for every hook. ctx is the same reference throughout, so a handle prepare() stashes
-  // is visible in run()/cleanup(). waitForStable is injected so the module needs no package import.
+  // is visible in run()/cleanup(). waitForStable is injected so the module needs no package import
   const driverArg: DriverContext = { page, ctx, measureStep, waitForStable };
   if (prepare) await prepare(driverArg);
   // Anything prepare() measured owns indices 0..n-1 permanently; the timed loop starts after them
-  // and restarts there every iteration, so a label's index is the same in every iteration.
+  // and restarts there every iteration, so a label's index is the same in every iteration
   phase = "timed";
   timedIndexBase = indexInIteration;
 
   // Bot-wall detection runs ONCE, right after the first navigation lands (the built-in load step's
   // goto), before any timed measurement. A wall throws a BotWallError that propagates out of runDriver
   // to abort the whole record. The first navigation is the first run() call: a warmup iteration when
-  // --warmup > 0, else timed iteration 0.
+  // --warmup > 0, else timed iteration 0
   let onrampInspected = false;
   const inspectOnrampOnce = async () => {
     if (!onramp?.afterFirstLoad || onrampInspected) return;
@@ -1271,7 +1271,7 @@ export async function runDriver(
   };
 
   // Warmup, before the counters and marks: its DOM work must not land in the counts, and its
-  // wall must not land in the samples. prepare() already ran, so warmup repeats the flow itself.
+  // wall must not land in the samples. prepare() already ran, so warmup repeats the flow itself
   recording = false;
   for (let warm = 0; warm < options.warmup; warm++) {
     await run(driverArg);
@@ -1286,20 +1286,20 @@ export async function runDriver(
   // prepare() does ~80ms, JS self-time reads ~88ms with prepare as the top hot function. Starting it
   // after warmup makes the profile's lifetime the run window (the settle tail aside, which is idle),
   // symmetric with bench, where setup already runs before the sampler. The trace counts are windowed
-  // from the mark regardless, so the trace may start earlier; only the sampler must not.
+  // from the mark regardless, so the trace may start earlier; only the sampler must not
   if (beforeRunWindow) await beforeRunWindow();
 
   // prepare() and warmup have run; mark the run window so setup DOM work stays outside it (the
-  // trace counts, when a trace is captured, are windowed start-onward from this mark).
+  // trace counts, when a trace is captured, are windowed start-onward from this mark)
   await mark("wpd:run:start");
 
   // The loop that turns a single sample into a distribution. run() is called once per iteration
-  // and re-measures every step, so a label's samples are its own repetitions.
+  // and re-measures every step, so a label's samples are its own repetitions
   //
   // There is deliberately no reset hook: a flow that needs a fresh page per iteration expresses
   // it as a bare page.goto() inside run() outside any measureStep, which is strictly more
   // expressive than a boolean (it makes the fresh/in-place choice per step, not per run) and
-  // needs no API at all.
+  // needs no API at all
   let partial: PartialRun | undefined;
   for (iteration = 0; iteration < options.iterations; iteration++) {
     usedLabels = new Set<string>();
@@ -1310,11 +1310,11 @@ export async function runDriver(
       // A flow that never completed a full iteration (iteration 0 failed, or --keep-partial was not
       // set) has nothing honest to salvage: rethrow so a broken flow is a hard error, not a quietly
       // empty recording. When --keep-partial is set and an earlier iteration DID complete, keep those
-      // and disclose the failure loudly (record.ts turns `partial` into a note + stderr warning).
+      // and disclose the failure loudly (record.ts turns `partial` into a note + stderr warning)
       if (!options.keepPartial || iteration === 0) throw error;
       // Discard the failed iteration's partial steps: they are the trailing entries (steps push in
       // order), and a half-measured iteration would fail the same-labels-each-iteration check and
-      // skew a label's median with a sample that measured less work than it claims.
+      // skew a label's median with a sample that measured less work than it claims
       while (steps.length && steps[steps.length - 1].iteration === iteration) steps.pop();
       partial = {
         requested: options.iterations,
@@ -1326,13 +1326,13 @@ export async function runDriver(
       break;
     }
     // After iteration 0's navigation settled: refuse a bot-wall before more iterations run (a no-op
-    // once warmup already inspected). A BotWallError propagates out to abort the record.
+    // once warmup already inspected). A BotWallError propagates out to abort the record
     if (iteration === 0) await inspectOnrampOnce();
   }
   await mark("wpd:run:end");
 
   // Don't run cleanup here; return it so record.ts can call it after tracing stops,
-  // keeping teardown work out of the measured window.
+  // keeping teardown work out of the measured window
   return {
     steps,
     lifecycle,

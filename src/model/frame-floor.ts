@@ -7,21 +7,21 @@ import type { RecordingMeta } from "./recording.js";
  * sits on Chromium's synthetic ~60Hz BeginFrame default (16.6ms) when no display drives it (CI, an
  * idle panel). Firefox tracks the host display refresh, so on the idle-panel / display-less hosts wpd
  * runs on (CI, an un-driven dev panel) it sits on the same ~16.6ms floor as Chrome; the 8.3ms / 120Hz
- * reading is display-contingent, produced only by a live 120Hz panel, so it is not the floor to stamp.
+ * reading is display-contingent, produced only by a live 120Hz panel, so it is not the floor to stamp
  */
 export const CHROME_HEADLESS_FRAME_FLOOR_MS = 16.6;
 export const FIREFOX_FRAME_FLOOR_MS = 16.6;
 
 /** How far a value may sit from a cadence boundary (n frames) and still count as "on the floor": the
  * +0.1ms the floor adds, Firefox's whole-ms coarseness, and a little rAF jitter. Work a full frame
- * above the boundary (18 -> 18.1) reads through linearly, so it stays outside this band. */
+ * above the boundary (18 -> 18.1) reads through linearly, so it stays outside this band */
 const FRAME_FLOOR_TOLERANCE_MS = 1.2;
 
 /**
  * The highest multiple of the one-frame floor a wall/INP is checked against. n=1 is a sub-frame
  * measure/INP; n=2 covers a two-frame wall (e.g. a span that waits an extra vsync, the 33.2ms case);
  * up to 4 (~66ms at 60Hz). Past 4 a wall is long enough that its own work signal, not the frame
- * count, is the story, and a 1.2ms band around an exact multiple is more coincidence than signal.
+ * count, is the story, and a 1.2ms band around an exact multiple is more coincidence than signal
  */
 export const MAX_FRAME_FLOOR_MULTIPLE = 4;
 
@@ -32,7 +32,7 @@ export const MAX_FRAME_FLOOR_MULTIPLE = 4;
  * two-frame floor; `idleShareSuffix` (output/ascii.ts) tags a span wall `~N% idle` at the same cutoff.
  * [measured, docs/dev/frame-floor.md] on a 33ms two-frame wall 0.8 is 6.6ms of real work: a span with
  * 1.2ms of work (idle 0.96) is labeled a floor, one with 8.6ms (idle 0.74) keeps its real-work reading,
- * so the cutoff errs toward NOT claiming a floor and there is no realistic mislabel band.
+ * so the cutoff errs toward NOT claiming a floor and there is no realistic mislabel band
  */
 export const IDLE_DOMINANT_SHARE = 0.8;
 
@@ -40,7 +40,7 @@ export const IDLE_DOMINANT_SHARE = 0.8;
  * A wall/INP pinned to a whole number of frames because its VALUE lands within tolerance of n*floor.
  * The correct detector for a bench/in-page/measure wall and for INP, none of which carry a driver
  * input-dispatch offset, so their value sits on the boundary. `multiple` 1 = one frame, up to
- * MAX_FRAME_FLOOR_MULTIPLE.
+ * MAX_FRAME_FLOOR_MULTIPLE
  */
 export interface WallMultipleFloor {
   basis: "wall-multiple";
@@ -54,7 +54,7 @@ export interface WallMultipleFloor {
  * so a floored cheap step's wall lands off any exact n*floor (matchedFrameFloor misses it: a 41ms wall
  * sits between 2x=33.2 and 3x=49.8). The bar still proves the case: the summed real-work slices
  * (js+style+layout+paint+gc) are sub-frame and the window is idle-dominated, so the step did sub-frame
- * work and waited out the frame. `workMs` is that sub-frame work sum.
+ * work and waited out the frame. `workMs` is that sub-frame work sum
  */
 export interface WorkSignalFloor {
   basis: "work-signal";
@@ -66,7 +66,7 @@ export interface WorkSignalFloor {
  * How a span's wall/INP was found to sit on the one-frame cadence floor: by its value landing on a
  * whole multiple of the floor (`wall-multiple`), or by its bar showing sub-frame work in an
  * idle-dominated window (`work-signal`, a driver step whose wall carries input dispatch). Consumers
- * narrow on `basis`.
+ * narrow on `basis`
  */
 export type FrameFloor = WallMultipleFloor | WorkSignalFloor;
 
@@ -75,7 +75,7 @@ type FloorMeta = Pick<RecordingMeta, "headless" | "browser">;
 /**
  * The candidate one-frame floors for a lane. Empty when no deterministic floor applies: headed Chrome
  * flaps 120/60Hz run to run (frame-floor.md), so it declares none. Both headless Chrome and headless
- * Firefox sit on the single synthetic-60Hz / display-tracked ~16.6ms floor in wpd's environments.
+ * Firefox sit on the single synthetic-60Hz / display-tracked ~16.6ms floor in wpd's environments
  */
 export function frameFloorsMs(meta: FloorMeta): number[] {
   if (meta.headless === false) return [];
@@ -89,7 +89,7 @@ export function frameFloorsMs(meta: FloorMeta): number[] {
  * declares no floor). A value near n frames with n>=2 is as frame-dominated as a one-frame measure and
  * equally hides sub-frame work, so it earns the same surfacing. The CALLER additionally gates an
  * elevated multiple on the window's wait signal (see `frameFloorDominates`), so a busy multi-frame
- * wall (real work) is not claimed as a floor.
+ * wall (real work) is not claimed as a floor
  */
 export function matchedFrameFloor(
   ms: number | null | undefined,
@@ -109,7 +109,7 @@ export function matchedFrameFloor(
  * value IS the floor whatever it did. n>=2 fires only when the window is wait-dominated
  * (`waitShare >= IDLE_DOMINANT_SHARE`), so a genuinely busy two-frame wall (real work near 33ms) is
  * not mislabeled. `waitShare` null (no breakdown/interaction split to judge) declines an elevated
- * multiple rather than claim one it cannot justify.
+ * multiple rather than claim one it cannot justify
  */
 export function frameFloorDominates(match: WallMultipleFloor, waitShare: number | null): boolean {
   if (match.multiple === 1) return true;
@@ -124,7 +124,7 @@ export function frameFloorDominates(match: WallMultipleFloor, waitShare: number 
  * n*floor, so `matchedFrameFloor` cannot see it). [measured, docs/dev/frame-floor.md] a floored cheap
  * step reads work 0.63ms / idle share 0.90 -> flagged; a busy control reads work ~26ms / idle 0.55 ->
  * rejected (work over the frame). `idleShare` null (no bar to judge) declines, as does a lane with no
- * deterministic floor (headed).
+ * deterministic floor (headed)
  */
 export function workSignalFloor(
   meta: FloorMeta,

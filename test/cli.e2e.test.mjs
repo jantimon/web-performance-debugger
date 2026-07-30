@@ -20,18 +20,18 @@ import puppeteer from "puppeteer";
 // never downloaded (the unit CI job sets PUPPETEER_SKIP_DOWNLOAD), so `npm test` stays green and
 // browser-free there; a dedicated CI job installs Chrome and runs this for real. Set
 // WPD_E2E_REQUIRED=1 to turn a missing browser into a hard failure instead of a skip, so that
-// job can never silently pass without exercising the browser path.
+// job can never silently pass without exercising the browser path
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const cli = path.join(repoRoot, "dist", "cli.js");
 const examples = path.join(repoRoot, "examples");
 
 // A `query blame --format json` row now carries a structured location ({source, line, column})
-// instead of a single "file:line:col" `at` string. Reassemble it for the tests that match the old shape.
+// instead of a single "file:line:col" `at` string. Reassemble it for the tests that match the old shape
 const blameAt = (row) => [row.source, row.line, row.column].filter((part) => part != null).join(":");
 
 // Schema 5 stores counts/timing on the run span (no `recording.summary`). This projects the run span +
 // meta back onto the flat count/timing shape the assertions read, incl. the layout/style/paint slice ms
-// that now live on the run bar. The run window's step spans carry per-step timing.
+// that now live on the run bar. The run window's step spans carry per-step timing
 const runOf = (rec) => rec.spans.find((span) => span.kind === "run") ?? { counts: {} };
 const stepSpansOf = (rec) => rec.spans.filter((span) => span.kind === "step");
 function summaryLike(rec) {
@@ -55,7 +55,7 @@ function summaryLike(rec) {
 
 async function browserAvailable() {
   try {
-    // executablePath() is async in puppeteer v25 (it resolves the installed build).
+    // executablePath() is async in puppeteer v25 (it resolves the installed build)
     const executable = await puppeteer.executablePath();
     return typeof executable === "string" && existsSync(executable);
   } catch {
@@ -69,12 +69,12 @@ if (!ready && process.env.WPD_E2E_REQUIRED) {
 }
 const e2e = ready ? test : (name, _opts, fn) => test(name, { skip: "Chrome not installed" }, fn ?? _opts);
 
-// Chrome launch + one capture pass; generous so a slow CI runner does not flake.
+// Chrome launch + one capture pass; generous so a slow CI runner does not flake
 const TIMEOUT_MS = 180_000;
 // Per-CLI-invocation ceiling, OS-enforced. spawnSync pins this process's event loop, so node's
 // per-test timeout timers cannot fire while a child runs; without this, a CLI child wedged on a
 // stuck Chrome hangs the whole job to the CI ceiling in silence. The OS kills the child instead,
-// and the error names the invocation. Sits under TIMEOUT_MS so the test fails as itself.
+// and the error names the invocation. Sits under TIMEOUT_MS so the test fails as itself
 const CLI_KILL_MS = 150_000;
 
 function runCli(args, cwd = repoRoot) {
@@ -98,12 +98,12 @@ function runCli(args, cwd = repoRoot) {
 // with a blocking spawnSync, which pins this process's event loop, so an in-process http.server could
 // never answer the child's request. The child writes its assigned port to a file once listening; we
 // poll it with a synchronous Atomics.wait sleep (no event loop needed). No external network: CI serves
-// itself.
-// `host` binds AND is the returned hostname. Default "127.0.0.1" (an IP is its own isolation site).
+// itself
+// `host` binds AND is the returned hostname. Default "127.0.0.1" (an IP is its own isolation site)
 // Pass "localhost" to make the navigation from wpd's 127.0.0.1 blank host cross-SITE, which swaps the
 // renderer process (127.0.0.1 and localhost are different sites; a mere port change is not): that is
 // the cross-process boot the F1 re-anchor exists for. Binding and connecting on the same name avoids
-// an IPv4/IPv6 localhost-resolution mismatch.
+// an IPv4/IPv6 localhost-resolution mismatch
 function startOnrampServer(html, host = "127.0.0.1") {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-srv-"));
   const portFile = path.join(dir, "port");
@@ -137,7 +137,7 @@ server.listen(0, ${JSON.stringify(host)}, () => writeFileSync(${JSON.stringify(p
 // header is set on the bundle route). Same separate-process + poll-for-port design and reasons as
 // startOnrampServer. `routes` maps a request path to { contentType, body, headers? }. Default host is
 // "localhost" so the served origin differs by SITE from wpd's own 127.0.0.1 static server, which is
-// what flags the bundle's frames remote (a mere port change on 127.0.0.1 could prefix-match).
+// what flags the bundle's frames remote (a mere port change on 127.0.0.1 could prefix-match)
 function startRouteServer(routes, host = "localhost") {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-routes-"));
   const portFile = path.join(dir, "port");
@@ -170,7 +170,7 @@ server.listen(0, ${JSON.stringify(host)}, () => writeFileSync(${JSON.stringify(p
 
 // A boot that does real, countable rendering work: 200 absolutely-positioned boxes appended with a
 // forced synchronous layout read (offsetWidth while dirty) and a per-box background, so the load
-// window carries layout + style + paint the counts and bar must report.
+// window carries layout + style + paint the counts and bar must report
 const BOOT_WORK_HTML =
   "<!doctype html><meta charset=utf-8><title>boot</title>" +
   "<style>.box{position:absolute;width:40px;height:40px}</style><div id=root></div>" +
@@ -178,10 +178,10 @@ const BOOT_WORK_HTML =
   "for(let index=0;index<200;index++){const box=document.createElement('div');box.className='box';" +
   "box.style.left=(index*7%800)+'px';box.style.top=(index*11%500)+'px';" +
   "box.style.background='hsl('+(index*9%360)+',70%,50%)';root.appendChild(box);" +
-  "box.style.width=(box.offsetWidth>0?41:40)+'px';}<\/script>";
+  "box.style.width=(box.offsetWidth>0?41:40)+'px';}</script>";
 
 // Forced-layout blame is a --deep product: it needs the `.stack` trace category, which
-// only --deep captures (the default capture mode has no trace; --breakdown drops .stack).
+// only --deep captures (the default capture mode has no trace; --breakdown drops .stack)
 e2e("record --deep + query blame attributes forced layout to the source line", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "forced");
@@ -197,7 +197,7 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
   assert.ok(top.kinds.includes("layout"), "kinds include layout");
 
   // Surface 1: a --deep forced-blame row carries the flush's layout scope (`N/M layout objects`),
-  // read from the stored event log's trace args. At least one layout row names how much it relaid out.
+  // read from the stored event log's trace args. At least one layout row names how much it relaid out
   const withLayoutScope = fromExample.filter((row) => row.scope?.layoutObjects);
   assert.ok(withLayoutScope.length > 0, "a forced layout row carries layout-object scope");
   const scope = withLayoutScope[0].scope.layoutObjects;
@@ -205,20 +205,20 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
     Number.isInteger(scope.dirty) && scope.dirty > 0 && scope.total >= scope.dirty,
     `dirty/total is a plausible N/M (got ${scope.dirty}/${scope.total})`,
   );
-  // The human table renders it beside the source as `N/M layout objects`.
+  // The human table renders it beside the source as `N/M layout objects`
   const human = runCli(["query", "blame", out, "--forced"]);
   assert.match(human, /\d+\/\d+ layout objects/, "human blame rows carry the layout-object scope");
 
   // Each --deep blame row carries a representative eventId (the widest flush at the line), so the
   // reader hops straight to the raw event -- no manual re-filter through `query events`. The human
-  // table shows a dim `id` column and teaches the drill.
+  // table shows a dim `id` column and teaches the drill
   assert.ok(top.eventId != null && Number.isInteger(top.eventId), "a --deep blame row carries an eventId");
   assert.match(human, /^id\b/m, "the human blame table has an id column");
   assert.match(human, /query get <id>/, "the blame footer teaches the raw-flush drill");
 
   // The drill: the blame row's eventId -> `query get` returns THAT raw flush, and its source is the
   // blame row's own line (the widest flush at it). A --deep Layout flush carries its forcing stack
-  // under args.beginData.stackTrace.
+  // under args.beginData.stackTrace
   const drillRow = fromExample.find((row) => row.eventId != null);
   assert.ok(drillRow, "a forces-layout.mjs blame row has an eventId to drill");
   const raw = JSON.parse(runCli(["query", "get", out, String(drillRow.eventId)]));
@@ -229,7 +229,7 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
     "the raw flush carries its forcing stack (args.beginData.stackTrace)",
   );
 
-  // An unknown id fails loudly rather than returning an empty/undefined event.
+  // An unknown id fails loudly rather than returning an empty/undefined event
   assert.throws(
     () => runCli(["query", "get", out, "99999999"]),
     /No event with id 99999999/,
@@ -237,7 +237,7 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
   );
 
   // `query events` browses the raw classified log: id/kind/ms/source columns, a --kind filter, and a
-  // --top bound. The eventId above indexes into it, so this is the log the drill reads from.
+  // --top bound. The eventId above indexes into it, so this is the log the drill reads from
   const eventsHuman = runCli(["query", "events", out]);
   for (const column of ["id", "kind", "ms", "source"])
     assert.match(eventsHuman, new RegExp(`\\b${column}\\b`), `events table has a ${column} column`);
@@ -252,32 +252,32 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
 // stream carries a per-sample executing line (data.lines), and the sampler keeps sampling through a
 // synchronous forced layout, so `query blame --forced` answers with the SAMPLED read-site (the same
 // flush-site semantic as --deep + firefox). forces-layout.mjs reads each geometry property on its own
-// line (offsetWidth 46/56, offsetTop 52, ...), so a wide flush's sample lands on the forcing line.
+// line (offsetWidth 46/56, offsetTop 52, ...), so a wide flush's sample lands on the forcing line
 e2e("record --breakdown + query blame --forced returns sampled read-site attributions", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "sampled-blame");
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--breakdown", "--iterations", "5", "--out", out]);
   assert.ok(existsSync(out), "recording file written");
 
-  // The recording carries the sampled read-site log and declares the flush-site semantic.
+  // The recording carries the sampled read-site log and declares the flush-site semantic
   const recording = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(recording.meta.blameSemantic, "flush-site", "--breakdown declares the sampled read-site semantic");
   assert.ok(recording.meta.capture === "breakdown", "capture mode is breakdown");
   // Invariant: a counting-mode recording ALWAYS carries meta.mainThread, so countIntegrityRefusal can
   // read .split. countIntegrityRefusal returns "no refusal" when the field is absent, which is only
   // safe because a counting mode never omits it; a new counting mode that forgot to stamp it would
-  // silently pass an undercount (docs/dev/rendering-counts.md, the gate-field invariant).
+  // silently pass an undercount (docs/dev/rendering-counts.md, the gate-field invariant)
   assert.ok(
     recording.meta.mainThread && typeof recording.meta.mainThread.split === "boolean",
     "a counting-mode recording carries meta.mainThread with a boolean split",
   );
   // The host-CPU speed scalar is stamped on every lane (measured in node before the capture): a
-  // positive finite number, the fact a cross-host diff/cpu-diff warns on.
+  // positive finite number, the fact a cross-host diff/cpu-diff warns on
   assert.ok(
     typeof recording.meta.hostCpuIndex === "number" && recording.meta.hostCpuIndex > 0 && Number.isFinite(recording.meta.hostCpuIndex),
     `meta.hostCpuIndex is a positive number, got ${recording.meta.hostCpuIndex}`,
   );
-  // The forced COUNT stays not-measured on --breakdown (it needs .stack); only the blame is added.
+  // The forced COUNT stays not-measured on --breakdown (it needs .stack); only the blame is added
   assert.equal(summaryLike(recording).forcedLayoutCount, null, "forced COUNT is still not measured (— ), never a fake 0");
 
   const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
@@ -289,9 +289,9 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
     fromExample.some((row) => row.kinds.includes("layout") || row.kinds.includes("style")),
     "kinds include layout/style",
   );
-  // Each geometry property is read on its own line (offsetTop 52, offsetWidth 56, ..., scrollY 104).
+  // Each geometry property is read on its own line (offsetTop 52, offsetWidth 56, ..., scrollY 104)
   // A flush wider than one sampler interval lands exactly on the read line; a narrower one can lag one
-  // statement, so allow ±1. Assert several sampled sites land on/near the real read lines.
+  // statement, so allow ±1. Assert several sampled sites land on/near the real read lines
   const knownReadLines = [46, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108, 120, 124];
   const blamedLines = fromExample
     .map((row) => Number(blameAt(row).match(/forces-layout\.mjs:(\d+)/)?.[1]))
@@ -304,7 +304,7 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
     `sampled read-sites land on/near known geometry-read lines (±1 for the sampled lag), got ${JSON.stringify([...new Set(blamedLines)])}`,
   );
 
-  // The human output labels the semantic as SAMPLED (never presented as the exact --deep stack).
+  // The human output labels the semantic as SAMPLED (never presented as the exact --deep stack)
   const human = runCli(["query", "blame", out, "--forced"]);
   assert.match(human, /sampled/i, "the blame output labels the read-site as sampled");
 });
@@ -312,42 +312,42 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
 // The signature move: --deep detects layout thrashing (write->read->write->read) over the trace's
 // invalidation records, reports the count + interleave, and annotates each forced read with the
 // WRITE that dirtied it. examples/forces-layout.mjs is a known thrash: bump() writes inline style
-// (line 16), then each geometry property is read on its own line, so every read re-flushes.
+// (line 16), then each geometry property is read on its own line, so every read re-flushes
 e2e("record --deep detects layout thrashing and dual-annotates read + dirtied-by write", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "thrash");
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", "1", "--out", out]);
 
   // The thrash rollup rides the run span's anatomy. N = 3 is the headline threshold; this workload
-  // thrashes far over it (measured ~42 steps over ~21 geometry reads).
+  // thrashes far over it (measured ~42 steps over ~21 geometry reads)
   const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--format", "json"]));
   assert.ok(anatomy.thrash, "the run span carries a thrash rollup on --deep");
   assert.ok(anatomy.thrash.count >= 3, `thrashCount >= N=3, got ${anatomy.thrash.count}`);
   assert.ok(Array.isArray(anatomy.thrash.steps) && anatomy.thrash.steps.length > 0, "the interleave has steps");
-  // The anatomy also carries the forced read-sites, dual-annotated with the dirtied-by write.
+  // The anatomy also carries the forced read-sites, dual-annotated with the dirtied-by write
   assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length > 0, "forced read-sites present");
 
-  // The interleave names BOTH ends: a read line and the bump() write line (16).
+  // The interleave names BOTH ends: a read line and the bump() write line (16)
   const namesRead = anatomy.thrash.steps.some((step) => step.read?.includes("forces-layout.mjs"));
   assert.ok(namesRead, "a thrash step names a geometry read line in forces-layout.mjs");
-  const writeLines = anatomy.thrash.steps.flatMap((step) => step.dirtiedBy.map((w) => w.at));
+  const writeLines = anatomy.thrash.steps.flatMap((step) => step.dirtiedBy.map((write) => write.at));
   assert.ok(
     writeLines.some((at) => /forces-layout\.mjs:16\b/.test(at)),
     `a thrash step's dirtied-by names the bump() write line 16, got ${JSON.stringify([...new Set(writeLines)])}`,
   );
 
   // The dual annotation also hangs on `query blame --forced`: the read stays the headline, the write
-  // is attached as dirtiedBy with its Chrome invalidation reason.
+  // is attached as dirtiedBy with its Chrome invalidation reason
   const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
-  const annotated = blame.find((row) => row.dirtiedBy?.some((w) => /forces-layout\.mjs:16\b/.test(w.at)));
+  const annotated = blame.find((row) => row.dirtiedBy?.some((write) => /forces-layout\.mjs:16\b/.test(write.at)));
   assert.ok(annotated, "a forced read-site carries a dirtied-by write");
-  const bumpWrite = annotated.dirtiedBy.find((w) => /forces-layout\.mjs:16\b/.test(w.at));
+  const bumpWrite = annotated.dirtiedBy.find((write) => /forces-layout\.mjs:16\b/.test(write.at));
   assert.equal(bumpWrite.reason, "Inline CSS style declaration was mutated", "the write names its mutation reason");
   assert.ok(annotated.source.includes("forces-layout.mjs"), "the read (headline) is a forces-layout.mjs line");
 });
 
 // The browser-free `--target node` hot-functions test lives in test/unit/cli-wiring.test.mjs (the
-// node lane needs no Chrome, so it runs in the fast unit lane, not this Chrome-gated job).
+// node lane needs no Chrome, so it runs in the fast unit lane, not this Chrome-gated job)
 
 e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
@@ -356,7 +356,7 @@ e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
   assert.ok(existsSync(`${out}.cpu.json`), "cpu model written");
   assert.ok(existsSync(`${out}.cpuprofile`), "raw cpuprofile written");
 
-  // Query by the bare --out path (no extension): exercises the sibling .cpu.json resolution.
+  // Query by the bare --out path (no extension): exercises the sibling .cpu.json resolution
   const model = JSON.parse(runCli(["query", "cpu", out, "--format", "json"]));
   assert.ok(model.jsSelfMs > 0, "non-zero sampled JS self-time");
   assert.ok(model.sampleCount > 0, "profiler collected samples");
@@ -376,7 +376,7 @@ e2e("record resolves hot functions to source", { timeout: TIMEOUT_MS }, () => {
 // bundle's frames are remote. Under --breakdown the CPU samples come from the trace stream, which is
 // continuous across the blank-host -> localhost process swap (the CDP sampler resets there), so the
 // navigated bundle is reliably sampled. The map maps generated line 1 -> node_modules/pkg-alpha and
-// line 2 -> node_modules/pkg-beta, so a resolved rollup must split into BOTH packages.
+// line 2 -> node_modules/pkg-beta, so a resolved rollup must split into BOTH packages
 const HEADER_BUNDLE =
   "function pkgAlphaWork(iterations){let accumulator=0;for(let index=0;index<iterations;index++)accumulator+=Math.sqrt(index*1.7+1);return accumulator;}\n" +
   "function pkgBetaWork(iterations){let accumulator=0;for(let index=0;index<iterations;index++)accumulator+=Math.sin(index)+Math.cos(accumulator);return accumulator;}\n" +
@@ -385,7 +385,7 @@ const HEADER_BUNDLE =
 // four-field segments map generated line 1 col 0 -> source 0 and line 2 col 0 -> source 1. The line-2
 // segment "ACAA" decodes [genCol delta 0, sourceIndex delta +1, origLine delta 0, origCol delta 0], so
 // it resolves to the second source. One segment per line, so any sampled column on a line resolves to
-// that segment (never the ambiguous single-line-bundle case).
+// that segment (never the ambiguous single-line-bundle case)
 const HEADER_MAP = JSON.stringify({
   version: 3,
   file: "bundle.js",
@@ -413,7 +413,7 @@ e2e("record --url: a SourceMap response header (no comment) splits a minified bu
     const rec = JSON.parse(readFileSync(out, "utf8"));
 
     // The bundle's map was announced ONLY by the SourceMap header (the bundle body carries no comment),
-    // and it resolved: at least one of the run's remote scripts got a working map.
+    // and it resolved: at least one of the run's remote scripts got a working map
     assert.ok(rec.meta.sourcemaps, "sourcemap diagnostics are recorded on meta");
     assert.ok(
       rec.meta.sourcemaps.resolved >= 1,
@@ -422,7 +422,7 @@ e2e("record --url: a SourceMap response header (no comment) splits a minified bu
 
     // The payoff the header path exists to enable: the per-package rollup splits into BOTH fake
     // packages instead of collapsing to one bundle-shaped bucket. Without the header (or on a swallowed
-    // failure) both functions would bucket by the bundle's origin, and neither package name would show.
+    // failure) both functions would bucket by the bundle's origin, and neither package name would show
     const cpu = JSON.parse(runCli(["query", "cpu", out, "--by", "package", "--format", "json"]));
     const packages = new Set(cpu.byPackage.map((entry) => entry.key));
     assert.ok(
@@ -442,11 +442,11 @@ e2e("record --url: a SourceMap response header (no comment) splits a minified bu
 // counts and wall come from the SAME run. The default capture mode (sampler only, no trace) measures no
 // rendering counts at all -- Measured null, never a fake 0 -- while --deep captures the exact counts
 // (with slice durations suppressed, the .stack refusal). Wall is the axis that grows with
-// --iterations; the bench wall is exactly the sum of the timed samples.
+// --iterations; the bench wall is exactly the sum of the timed samples
 e2e("the capture modes: default has no counts; --deep has exact counts with suppressed durations", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
 
-  // Default capture mode: no trace, so every rendering count is not-measured (null), never 0.
+  // Default capture mode: no trace, so every rendering count is not-measured (null), never 0
   const dfltOut = path.join(dir, "default");
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--iterations", "1", "--out", dfltOut]);
   const dflt = summaryLike(JSON.parse(readFileSync(dfltOut, "utf8")));
@@ -455,7 +455,7 @@ e2e("the capture modes: default has no counts; --deep has exact counts with supp
   assert.equal(dflt.layoutMs, null, "and no durations");
   assert.ok(dflt.jsSelfMs > 0, "but the CPU model still measures JS self-time");
 
-  // --deep: exact counts are the product; slice durations are suppressed (.stack distorts them).
+  // --deep: exact counts are the product; slice durations are suppressed (.stack distorts them)
   const readDeep = (iterations) => {
     const out = path.join(dir, `deep-${iterations}`);
     runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--deep", "--iterations", String(iterations), "--out", out]);
@@ -469,7 +469,7 @@ e2e("the capture modes: default has no counts; --deep has exact counts with supp
   assert.equal(deep.styleMs, null);
 
   // Wall is the axis that grows with --iterations: one sample per timed iteration, all real, and the
-  // bench wall is EXACTLY their sum (no split, no bracket).
+  // bench wall is EXACTLY their sum (no split, no bracket)
   const many = readDeep(8);
   assert.equal(deep.perIteration.length, 1, "one iteration yields one wall sample");
   assert.equal(many.perIteration.length, 8, "eight iterations yield eight wall samples");
@@ -480,9 +480,9 @@ e2e("the capture modes: default has no counts; --deep has exact counts with supp
     Math.abs(many.wallMs - sum(many.perIteration)) < 0.001,
     "bench wallMs is exactly the sum of the timed samples",
   );
-  // Wall accumulates across iterations: the summed bench wall exceeds any single sample it summed.
+  // Wall accumulates across iterations: the summed bench wall exceeds any single sample it summed
   // A SEPARATE 1-iteration recording is not a stable baseline here: one sub-frame bench sample is a
-  // clamped-clock reading that ranges several-fold, so it can top the 8-sample sum by luck.
+  // clamped-clock reading that ranges several-fold, so it can top the 8-sample sum by luck
   const largestSample = Math.max(...many.perIteration);
   assert.ok(
     many.wallMs > largestSample,
@@ -493,15 +493,15 @@ e2e("the capture modes: default has no counts; --deep has exact counts with supp
 // The headline of driver --iterations: a real interaction measured once is a single sample of a
 // clock Chrome deliberately clamps, which cannot separate a regression from noise. Measured on
 // this flow, the n=1 reading of "first increment" was 87ms while the median over 6 was 40ms with
-// a 255ms outlier -- the single sample was not merely imprecise, it was 2x off the typical value.
+// a 255ms outlier -- the single sample was not merely imprecise, it was 2x off the typical value
 // Per-step counts window to iteration 0, so they must NOT move with --iterations; only the sample
-// count may. Run under --deep, the capture mode whose full trace carries exact per-step counts.
+// count may. Run under --deep, the capture mode whose full trace carries exact per-step counts
 e2e("driver --deep --iterations repeats the flow: per-step medians, per-step counts don't scale", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   // A committed fixture, not examples/react-counter, whose dist/ is git-ignored and never built in
   // CI: the test would have returned early and reported green without exercising anything. It has
   // to live under the repo because a local-file --url is served by a static server rooted at the cwd; the
-  // driver module is import()ed in Node, so that one can be written to a temp dir.
+  // driver module is import()ed in Node, so that one can be written to a temp dir
   const html = path.join(repoRoot, "test", "fixtures", "driver-probe.html");
   assert.ok(existsSync(html), "driver-probe.html is committed, so this test cannot silently skip");
   const flow = path.join(dir, "flow.mjs");
@@ -522,7 +522,7 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
       "--url", html, "--deep", "--iterations", String(iterations), "--out", out,
     ]);
     // The collapse: one artifact. Steps are spans of kind "step" on the recording -- there is no
-    // separate index file to read.
+    // separate index file to read
     const recording = JSON.parse(readFileSync(out, "utf8"));
     return { recording, steps: recording.spans.filter((span) => span.kind === "step") };
   };
@@ -531,7 +531,7 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
   const many = read(5);
 
   // Every step is re-measured per iteration and keeps its own samples, grouped by label rather
-  // than colliding on it (the label is what joins a step across passes).
+  // than colliding on it (the label is what joins a step across passes)
   const step = stepSpansOf(many.recording)[0];
   assert.equal(step.perIteration.length, 5, "each step carries one sample per iteration");
   assert.ok(step.stats && step.stats.samples === 5, "and gets real stats, not null");
@@ -542,13 +542,13 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
     "repeating the flow must not multiply the steps",
   );
 
-  // The headline is the median of the samples, so a cold first iteration cannot define the number.
+  // The headline is the median of the samples, so a cold first iteration cannot define the number
   const sorted = [...step.perIteration].sort((left, right) => left - right);
   assert.ok(Math.abs(step.stats.medianMs - sorted[2]) < 0.001, "wall headline is the median");
 
   // Per-step counts are the axis that must hold still: they window to the first timed iteration's
   // trace window, so they never scale with --iterations. Guard non-vacuity first: every equality
-  // below would hold at 0 === 0 on a page that did nothing.
+  // below would hold at 0 === 0 on a page that did nothing
   assert.ok(one.steps[0].counts.layoutCount > 0, "the fixture actually causes layout");
   assert.ok(one.steps[0].counts.forcedLayoutCount > 0, "and forces it synchronously");
   assert.equal(
@@ -567,7 +567,7 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
 // Synthetic web vitals: the built-in on-ramp boots a fixture that forces two input-free layout shifts
 // and paints a text LCP. The boot (a hard navigation) must carry ONE LCP render-time sample per
 // iteration (not a single object that hides a run-to-run swing) and a CLS whose session-window max is
-// attributed to the elements that moved. No module: this is the zero-authoring --url on-ramp.
+// attributed to the elements that moved. No module: this is the zero-authoring --url on-ramp
 e2e("web-vitals: the boot step carries per-iteration LCP samples and attributed CLS", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const html = path.join(repoRoot, "test", "fixtures", "layout-shift-probe.html");
@@ -580,7 +580,7 @@ e2e("web-vitals: the boot step carries per-iteration LCP samples and attributed 
   assert.ok(load, "the built-in on-ramp records a 'load' step");
 
   // LCP: one render-time sample per iteration, null-honest (a miss is null, never 0), and on this
-  // same-origin text LCP at least one iteration fires a real number.
+  // same-origin text LCP at least one iteration fires a real number
   assert.ok(load.lcp, "the load step (a hard navigation) carries boot LCP");
   assert.equal(load.lcp.perIteration.length, iterations, "one LCP render-time sample per iteration");
   for (const sample of load.lcp.perIteration)
@@ -593,7 +593,7 @@ e2e("web-vitals: the boot step carries per-iteration LCP samples and attributed 
     "the same-origin text LCP fires at least once",
   );
 
-  // CLS: the spec session-window maximum, above zero, with the shifting elements named.
+  // CLS: the spec session-window maximum, above zero, with the shifting elements named
   assert.ok(load.layoutShift, "the load step observed layout shifts");
   assert.ok(load.layoutShift.cls > 0, `cls > 0 (got ${load.layoutShift.cls})`);
   assert.ok(load.layoutShift.sources.length > 0, "CLS names the shifting elements, not just a score");
@@ -604,7 +604,6 @@ e2e("web-vitals: the boot step carries per-iteration LCP samples and attributed 
   );
 });
 
-// --- the fused --breakdown pass and the reconciling seven-slice bar ---
 
 const SLICE_NAMES = ["js", "style", "layout", "paint", "gc", "other", "idle"];
 const sliceSum = (breakdown) =>
@@ -613,7 +612,7 @@ const sliceSum = (breakdown) =>
 // Flagship reconciliation: on a forced-layout-heavy workload every span must tile its own window
 // (Σ slices + idle == wall) and the style+layout slices must carry real, substantial ms: the
 // forced-layout probe's cost is style recalc plus layout, ~5.5+2.0 ms measured, not one "forced
-// layout" number.
+// layout" number
 e2e("record --breakdown: every span reconciles, and style+layout carry real ms", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "bd-forced");
@@ -639,16 +638,16 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
   }
 
   // This workload dirties style + layout on every iteration; over 5 iterations their combined ms is
-  // several ms (measured single-iteration: style ~5.5 ms + layout ~2.0 ms).
+  // several ms (measured single-iteration: style ~5.5 ms + layout ~2.0 ms)
   const styleLayout = runSpan.breakdown.slices.style.ms + runSpan.breakdown.slices.layout.ms;
   assert.ok(styleLayout > 3, `style+layout should be several ms, got ${styleLayout}`);
 
-  // Forced-layout count is NOT measured in breakdown mode (no `.stack`): null, never a fake 0.
+  // Forced-layout count is NOT measured in breakdown mode (no `.stack`): null, never a fake 0
   assert.equal(summaryLike(rec).forcedLayoutCount, null, "forced is reported as not-measured, not 0");
 
   // Surface 2: the run span carries a layout/style scope DISTRIBUTION (p50/max), computed at record
   // time from the light trace. It is a distribution, never a sum, so max >= p50; and layout scope and
-  // style scope are separate (this workload dirties both).
+  // style scope are separate (this workload dirties both)
   assert.ok(runSpan.scope, "the run span carries a scope distribution on --breakdown");
   const layoutScope = runSpan.scope.layoutObjects;
   assert.ok(layoutScope, "layout-object scope is present (chrome layout scope)");
@@ -657,14 +656,14 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
     `distribution is plausible: max ${layoutScope.max} >= p50 ${layoutScope.p50} over ${layoutScope.flushes} flushes`,
   );
   assert.ok(runSpan.scope.elementsStyled, "style scope (elementCount) is present, a separate denominator");
-  // The `query span` JSON carries the same scope, and the human report prints the Scope block.
+  // The `query span` JSON carries the same scope, and the human report prints the Scope block
   const anatomy = JSON.parse(runCli(["query", "span", out, "run", "--format", "json"]));
   assert.deepEqual(anatomy.scope, runSpan.scope, "query span JSON carries the span scope");
   const spanHuman = runCli(["query", "span", out, "run"]);
   assert.match(spanHuman, /layout objects\s+p50/, "the human anatomy prints the scope distribution");
 
   // The `query spans` OVERVIEW (what an agent reads first) carries the exact counts this recording
-  // measured, identical to the drill -- so `null` reads as not-measured, never as not-projected.
+  // measured, identical to the drill -- so `null` reads as not-measured, never as not-projected
   const overview = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
   assert.equal(overview.source, "breakdowns", "a --breakdown recording overviews from its stored bars");
   const overviewRun = overview.spans.find((span) => span.kind === "run");
@@ -688,12 +687,12 @@ e2e("record --breakdown: every span reconciles, and style+layout carry real ms",
 // DOES bill to the forcing JS frame -- that sentence must be PRESENT. The reconciling tiled bar
 // (--breakdown) splits the flush into style/layout, so its js is trace scripting self-time and the
 // "forcing frame" sentence must be ABSENT; the report instead carries the reconciling footer and the
-// one bridging line that reconciles the sampler headline's js with the tiled bar's smaller js.
+// one bridging line that reconciles the sampler headline's js with the tiled bar's smaller js
 e2e("record: the forcing-frame footer rides the CPU bar, not the reconciling --breakdown bar", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
 
   // Four-slice CPU-model bar (default capture mode): the sampler folds the forced layout into the
-  // forcing frame, so the sentence is true and present.
+  // forcing frame, so the sentence is true and present
   const defaultReport = runCli([
     "record", path.join(examples, "forces-layout.mjs"),
     "--bench", "--iterations", "5", "--out", path.join(dir, "default"),
@@ -705,7 +704,7 @@ e2e("record: the forcing-frame footer rides the CPU bar, not the reconciling --b
   );
 
   // Reconciling seven-slice bar (--breakdown): the flush tiles into style/layout, so the fold sentence
-  // is false here and must be absent; the reconciling footer + the bridging line take its place.
+  // is false here and must be absent; the reconciling footer + the bridging line take its place
   const breakdownReport = runCli([
     "record", path.join(examples, "forces-layout.mjs"),
     "--bench", "--breakdown", "--iterations", "5", "--out", path.join(dir, "bd"),
@@ -730,12 +729,12 @@ e2e("record: the forcing-frame footer rides the CPU bar, not the reconciling --b
 // Per-driver-step CPU attribution: a measureStep that runs real in-page JS must carry a non-empty
 // js-by-package split AND an unsuppressed hot-function list on the CPU-sampler scripting axis, with
 // real sample counts. The regression: without the sampler covering the step's iteration-0 window,
-// steps report js ms with an empty package split and hot "suppressed" (the journey-profiling gap).
+// steps report js ms with an empty package split and hot "suppressed" (the journey-profiling gap)
 e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed hot list", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   // Committed host page with a heavy JS click handler (a temp-dir file could not be served: the
   // static server is rooted at the repo cwd). The driver module is import()ed in Node, so it can
-  // live in the temp dir.
+  // live in the temp dir
   const html = path.join(repoRoot, "test", "fixtures", "driver-cpu-probe.html");
   assert.ok(existsSync(html), "driver-cpu-probe.html is committed, so this test cannot silently skip");
   const flow = path.join(dir, "cpu-flow.mjs");
@@ -758,7 +757,7 @@ e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed
   assert.ok(step.breakdown.slices.js.ms > 5, `the step ran real JS, got ${step.breakdown.slices.js.ms} ms`);
 
   // The js slice must split by package (the flagship per-step signal), and the split must reconcile
-  // to the slice ms rather than being a fabricated or empty map.
+  // to the slice ms rather than being a fabricated or empty map
   const byPackage = step.breakdown.slices.js.byPackage;
   const packages = Object.keys(byPackage);
   assert.ok(packages.length > 0, "the step's js slice carries a non-empty by-package split");
@@ -768,19 +767,19 @@ e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed
     `by-package split sums to js ms: ${packageSum} vs ${step.breakdown.slices.js.ms}`,
   );
 
-  // The hot list must be present, unsuppressed, and backed by real sample counts (above the floor).
+  // The hot list must be present, unsuppressed, and backed by real sample counts (above the floor)
   assert.ok(step.hot, "the step span stores a hot tally");
   assert.notEqual(step.hot.suppressed, true, "the hot list is not suppressed on a JS-heavy step");
   assert.ok(step.hot.pooledSamples >= 10, `the step pooled real samples, got ${step.hot.pooledSamples}`);
   assert.ok(step.hot.functions.length > 0, "the step names at least one hot function");
   assert.ok(step.hot.functions[0].samples > 0, "a hot ref carries a real sample count");
 
-  // The full anatomy resolves the same unsuppressed hot list (names via the sibling CpuModel).
+  // The full anatomy resolves the same unsuppressed hot list (names via the sibling CpuModel)
   const anatomy = JSON.parse(runCli(["query", "span", out, "step:compute", "--format", "json"]));
   assert.notEqual(anatomy.hot.suppressed, true, "query span shows the step's hot list, unsuppressed");
   assert.ok(anatomy.hot.functions.length > 0, "and it resolves to named functions");
 
-  // No sampler-coverage-gap note on a non-navigating flow: the sampler covered every step.
+  // No sampler-coverage-gap note on a non-navigating flow: the sampler covered every step
   assert.ok(
     !(rec.meta.notes || []).some((note) => /Per-span CPU attribution.*empty/.test(note)),
     "a non-navigating flow raises no coverage-gap note",
@@ -790,11 +789,11 @@ e2e("record --breakdown: a driver step carries js-by-package and an unsuppressed
 // Per-step Long Animation Frame attribution: a step whose handler runs over the 50ms LoAF budget must
 // carry a StepLoaf naming the blamed script, in the DEFAULT capture mode (no trace, no per-step counts) -- the
 // in-page observer is ungated by any capture cap, which is the point (attribution where the sampler
-// and trace cannot reach). Chrome-only, so this rides the chrome lane.
+// and trace cannot reach). Chrome-only, so this rides the chrome lane
 e2e("record (default capture mode): a driver step carries LoAF script attribution", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   // Committed host page whose click handler busy-waits ~120ms and forces a synchronous layout, so the
-  // frame becomes a long animation frame with a non-zero forced style/layout duration.
+  // frame becomes a long animation frame with a non-zero forced style/layout duration
   const html = path.join(repoRoot, "test", "fixtures", "loaf-probe.html");
   assert.ok(existsSync(html), "loaf-probe.html is committed, so this test cannot silently skip");
   const flow = path.join(dir, "loaf-flow.mjs");
@@ -813,7 +812,7 @@ e2e("record (default capture mode): a driver step carries LoAF script attributio
      }`,
   );
   const out = path.join(dir, "loaf-step");
-  // No --breakdown/--deep: the default capture mode has no trace, so counts are null. LoAF must still land.
+  // No --breakdown/--deep: the default capture mode has no trace, so counts are null. LoAF must still land
   runCli(["record", flow, "--url", html, "--out", out]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
@@ -830,18 +829,18 @@ e2e("record (default capture mode): a driver step carries LoAF script attributio
   assert.ok(blamed.durationMs > 50, `the blamed script ran over the budget, got ${blamed.durationMs}`);
   assert.ok(blamed.forcedStyleLayoutMs > 0, "the handler forced synchronous style/layout, attributed to the script");
 
-  // The trivial step must not inherit the slow step's frames (the per-step reset works).
+  // The trivial step must not inherit the slow step's frames (the per-step reset works)
   const quick = rec.spans.find((span) => span.kind === "step" && span.label === "quick");
   assert.ok(quick, "the quick step span exists");
   assert.equal(quick.loaf, undefined, "a trivial step carries no LoAF: the slow step's frames did not leak forward");
 
-  // The full anatomy surfaces the same LoAF frames (JSON contract).
+  // The full anatomy surfaces the same LoAF frames (JSON contract)
   const anatomy = JSON.parse(runCli(["query", "span", out, "step:slow-click", "--format", "json"]));
   assert.ok(anatomy.loaf, "query span --format json carries the loaf field");
   assert.ok(anatomy.loaf.frames[0].scripts[0].invoker, "and it names the blamed script");
 
   // The overview lists the driver steps even though only the run carries a bar in this capture: the
-  // run bar (from the sibling CpuModel) plus every step bar-less, never the run alone.
+  // run bar (from the sibling CpuModel) plus every step bar-less, never the run alone
   const overview = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
   assert.equal(overview.source, "cpu-model", "the run bar comes from the sibling CpuModel");
   assert.deepEqual(
@@ -859,7 +858,7 @@ e2e("record (default capture mode): a driver step carries LoAF script attributio
 
 // waitForStable catches a streamed transition the default settle ends before. Two steps click the
 // same streamed injection: the default-settle step resolves during the stream, the waitForStable step
-// waits past the last chunk, so its wall is materially larger.
+// waits past the last chunk, so its wall is materially larger
 e2e("record (driver): waitForStable waits past a streamed transition the default settle misses", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const html = path.join(repoRoot, "test", "fixtures", "streamed-nav.html");
@@ -884,7 +883,7 @@ e2e("record (driver): waitForStable waits past a streamed transition the default
   const settle = rec.spans.find((span) => span.kind === "step" && span.label === "default-settle");
   const stable = rec.spans.find((span) => span.kind === "step" && span.label === "wait-stable");
   assert.ok(settle && stable, "both step spans exist");
-  // The stream runs ~170ms; the default settle resolves well before it, waitForStable well after.
+  // The stream runs ~170ms; the default settle resolves well before it, waitForStable well after
   assert.ok(
     stable.wallMs > settle.wallMs + 100,
     `waitForStable outlasts the default settle by the streamed tail: stable ${stable.wallMs} vs settle ${settle.wallMs}`,
@@ -896,17 +895,17 @@ e2e("record (driver): waitForStable waits past a streamed transition the default
 // location.replaces to another document while the quiet check is observing; the destroyed-context
 // rejection is caught, the wait re-attaches to the new document, and the run completes there instead
 // of failing the whole record. The redirect (80ms) lands well inside the quiet window (400ms), so it
-// is always mid-wait.
+// is always mid-wait
 e2e("record (driver): waitForStable survives a hard cross-document redirect mid-wait", { timeout: TIMEOUT_MS }, () => {
   const landing =
     "<!doctype html><meta charset=utf-8><title>landed</title><div id=landed>done</div>" +
     "<div id=root></div><script>const root=document.getElementById('root');" +
     "for(let index=0;index<80;index++){const box=document.createElement('div');" +
-    "box.textContent=String(index);root.appendChild(box);void box.offsetWidth;}<\/script>";
+    "box.textContent=String(index);root.appendChild(box);void box.offsetWidth;}</script>";
   const destination = startOnrampServer(landing, "127.0.0.1");
   const redirector = startOnrampServer(
     "<!doctype html><meta charset=utf-8><title>redir</title><div id=here>here</div>" +
-      `<script>setTimeout(()=>location.replace(${JSON.stringify(destination.url)}),80);<\/script>`,
+      `<script>setTimeout(()=>location.replace(${JSON.stringify(destination.url)}),80);</script>`,
     "localhost",
   );
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
@@ -915,7 +914,7 @@ e2e("record (driver): waitForStable survives a hard cross-document redirect mid-
     const flow = path.join(dir, "redir-flow.mjs");
     // No `selector`: the quiet check runs immediately on the REDIRECTOR, so the 80ms redirect destroys
     // ITS execution context mid-evaluate (the exact failure the fix catches). A selector would gate on
-    // the destination and wait for the redirect to finish first, never exercising the retry.
+    // the destination and wait for the redirect to finish first, never exercising the retry
     writeFileSync(
       flow,
       `import { waitForStable } from ${JSON.stringify(helper)};
@@ -928,13 +927,13 @@ e2e("record (driver): waitForStable survives a hard cross-document redirect mid-
     const out = path.join(dir, "redir");
     // The bug: the hard redirect destroys the quiet check's context and throws
     // "Execution context was destroyed", failing the whole record. runCli throws on a non-zero exit,
-    // so simply completing is the assertion; the destination's markup landing confirms re-attachment.
+    // so simply completing is the assertion; the destination's markup landing confirms re-attachment
     runCli(["record", flow, "--breakdown", "--iterations", "1", "--out", out]);
     const rec = JSON.parse(readFileSync(out, "utf8"));
     const open = rec.spans.find((span) => span.kind === "step" && span.label === "open");
     assert.ok(open, "the navigating step completed instead of failing the record");
     // waitForStable re-attached to the destination and waited for ITS content: the destination's 80
-    // laying-out boxes are counted, proving the wait followed the hard navigation across.
+    // laying-out boxes are counted, proving the wait followed the hard navigation across
     assert.ok(open.counts.layoutCount > 50, `the destination page's layout is counted, got ${open.counts.layoutCount}`);
   } finally {
     redirector.close();
@@ -944,11 +943,11 @@ e2e("record (driver): waitForStable survives a hard cross-document redirect mid-
 
 // waitForStable on a page that never stops mutating must fail FAST and LOUD within its cap, not run
 // until the protocol timeout. A small timeoutMs against a page that mutates every 20ms never yields a
-// quiet window, so the record exits non-zero with the specific "never went quiet" message.
+// quiet window, so the record exits non-zero with the specific "never went quiet" message
 e2e("record (driver): waitForStable fails loudly when the DOM never goes quiet within the cap", { timeout: TIMEOUT_MS }, () => {
   const server = startOnrampServer(
     "<!doctype html><meta charset=utf-8><title>busy</title><div id=app></div>" +
-      "<script>setInterval(()=>{document.getElementById('app').textContent=String(Date.now());},20);<\/script>",
+      "<script>setInterval(()=>{document.getElementById('app').textContent=String(Date.now());},20);</script>",
   );
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const helper = path.join(repoRoot, "dist", "index.js");
@@ -965,7 +964,7 @@ e2e("record (driver): waitForStable fails loudly when the DOM never goes quiet w
     );
     const out = path.join(dir, "busy");
     // runCli throws on a non-zero exit with stderr attached; the specific message must be there, not a
-    // protocol-timeout error and not a silent pass. Both knobs are named so the caller knows what to change.
+    // protocol-timeout error and not a silent pass. Both knobs are named so the caller knows what to change
     assert.throws(
       () => runCli(["record", flow, "--url", server.url, "--iterations", "1", "--out", out]),
       /the DOM never went 150ms without a mutation within the 2000ms cap/,
@@ -978,13 +977,13 @@ e2e("record (driver): waitForStable fails loudly when the DOM never goes quiet w
 
 // A driver module that imports NOTHING from the package still reaches waitForStable, because driver
 // mode injects it into run's argument. This is the bare-npx story: the module's cwd has no node_modules
-// for the package, so an `import` would fail; the injected helper needs none. The step completes.
+// for the package, so an `import` would fail; the injected helper needs none. The step completes
 e2e("record (driver): the injected waitForStable works with no package import", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const html = path.join(repoRoot, "test", "fixtures", "streamed-nav.html");
   assert.ok(existsSync(html), "streamed-nav.html is committed, so this test cannot silently skip");
   const flow = path.join(dir, "injected-flow.mjs");
-  // No import line at all: waitForStable comes only from run's argument.
+  // No import line at all: waitForStable comes only from run's argument
   writeFileSync(
     flow,
     `export async function run({ page, measureStep, waitForStable }) {
@@ -1006,7 +1005,7 @@ e2e("record (driver): the injected waitForStable works with no package import", 
 // windowed after the fact (no trace clock to slice it by in the default capture mode), so it opens at the run
 // mark, after prepare and warmup. Here prepare() and one warmup each burn ~70 ms of page-side JS while
 // the timed run() does ~6 ms: scriptingMs must price the run only. Opened before prepare instead, it
-// bills all ~146 ms to the run with the setup loop as the top hot function.
+// bills all ~146 ms to the run with the setup loop as the top hot function
 e2e("record (driver): prepare()/warmup page-side JS stays out of the CPU model", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const flow = path.join(dir, "lifecycle.mjs");
@@ -1023,7 +1022,7 @@ e2e("record (driver): prepare()/warmup page-side JS stays out of the CPU model",
      }`,
   );
   const out = path.join(dir, "lifecycle");
-  // One warmup so the warmup path is exercised too; both prepare and warmup precede the sampler.
+  // One warmup so the warmup path is exercised too; both prepare and warmup precede the sampler
   runCli(["record", flow, "--iterations", "1", "--warmup", "1", "--out", out]);
   const rec = JSON.parse(readFileSync(out, "utf8"));
 
@@ -1034,7 +1033,7 @@ e2e("record (driver): prepare()/warmup page-side JS stays out of the CPU model",
     `prepare()+warmup (~140 ms of page JS) must not leak into JS self-time, got ${jsSelfMs}`,
   );
 
-  // And no single function bills anywhere near the ~70 ms setup loop.
+  // And no single function bills anywhere near the ~70 ms setup loop
   const model = JSON.parse(readFileSync(`${out}.cpu.json`, "utf8"));
   const topSelfMs = Math.max(0, ...model.functions.map((fn) => fn.selfMs));
   assert.ok(topSelfMs < 35, `no function carries the setup loop's ~70 ms, top self ${topSelfMs} ms`);
@@ -1045,7 +1044,7 @@ e2e("record (driver): prepare()/warmup page-side JS stays out of the CPU model",
 // navigation, unlike the CDP sampler that restarts in the new renderer process. So a step that runs
 // page JS BEFORE the flow navigates keeps its CPU attribution -- the exact window the CDP sampler
 // drops (reported not-covered today). The start page is on 127.0.0.1 (wpd's static server) and the
-// flow navigates to a DIFFERENT SITE ("localhost"), which swaps the renderer process.
+// flow navigates to a DIFFERENT SITE ("localhost"), which swaps the renderer process
 e2e("record --breakdown: a navigating step keeps CPU attribution across the process swap", { timeout: TIMEOUT_MS }, () => {
   const workPage =
     "<!doctype html><meta charset=utf-8><title>nav-target</title><button id=work>work</button>" +
@@ -1053,11 +1052,11 @@ e2e("record --breakdown: a navigating step keeps CPU attribution across the proc
     "for(let inner=0;inner<iterations;inner++)accumulator+=Math.sqrt(inner*1.7+1)*Math.sin(inner)+Math.cos(accumulator);" +
     "return accumulator;}" +
     "document.getElementById('work').addEventListener('click',()=>{" +
-    "document.title=String(hotLoop(3000000));window.__done=(window.__done||0)+1;});<\/script>";
+    "document.title=String(hotLoop(3000000));window.__done=(window.__done||0)+1;});</script>";
   const second = startOnrampServer(workPage, "localhost");
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   try {
-    // The start page (127.0.0.1, served by wpd) also carries a #work hot loop; the committed fixture.
+    // The start page (127.0.0.1, served by wpd) also carries a #work hot loop; the committed fixture
     const html = path.join(repoRoot, "test", "fixtures", "driver-cpu-probe.html");
     assert.ok(existsSync(html), "driver-cpu-probe.html is committed, so this test cannot silently skip");
     const flow = path.join(dir, "nav-flow.mjs");
@@ -1083,7 +1082,7 @@ e2e("record --breakdown: a navigating step keeps CPU attribution across the proc
 
     // THE proof: the pre-navigation step carries real CPU attribution. Under the CDP sampler this
     // window is entirely lost (the later navigation resets the profiler), so its hot list would be
-    // suppressed with zero pooled samples. The trace stream keeps it.
+    // suppressed with zero pooled samples. The trace stream keeps it
     const before = rec.spans.find((span) => span.kind === "step" && span.label === "work-before-nav");
     assert.ok(before, "the pre-navigation step span exists");
     assert.ok(before.breakdown.slices.js.ms > 5, `the pre-nav step ran real JS, got ${before.breakdown.slices.js.ms} ms`);
@@ -1091,25 +1090,25 @@ e2e("record --breakdown: a navigating step keeps CPU attribution across the proc
     assert.ok(before.hot.pooledSamples >= 10, `the pre-nav step pooled real samples, got ${before.hot.pooledSamples}`);
     assert.ok(before.hot.functions.length > 0, "the pre-nav step names at least one hot function");
 
-    // And the post-navigation step still attributes (no regression on the covered window).
+    // And the post-navigation step still attributes (no regression on the covered window)
     const after = rec.spans.find((span) => span.kind === "step" && span.label === "work-after-nav");
     assert.ok(after, "the post-navigation step span exists");
     assert.notEqual(after.hot.suppressed, true, "the post-nav step's hot list is present too");
     assert.ok(after.hot.pooledSamples >= 10, `the post-nav step pooled real samples, got ${after.hot.pooledSamples}`);
 
-    // The continuous stream leaves no coverage gap to disclose.
+    // The continuous stream leaves no coverage gap to disclose
     assert.ok(
       !(rec.meta.notes || []).some((note) => /Per-span CPU attribution.*empty/.test(note)),
       "no sampler-coverage-gap note: the trace stream covered both documents",
     );
-    // The interval is read back from the stream (a fixed ~150us it sets itself), not the 200us default.
+    // The interval is read back from the stream (a fixed ~150us it sets itself), not the 200us default
     assert.ok(rec.meta.cpuIntervalUs > 0 && rec.meta.cpuIntervalUs < 200, `observed stream interval recorded, got ${rec.meta.cpuIntervalUs}`);
     assert.ok(
       (rec.meta.notes || []).some((note) => /v8\.cpu_profiler stream/.test(note)),
       "the CPU sample source is disclosed",
     );
     // The raw .cpuprofile still imports (DevTools/Speedscope): standard shape, no lane-only field, and
-    // a SINGLE root even though the run merged two renderer processes (DevTools assumes one root).
+    // a SINGLE root even though the run merged two renderer processes (DevTools assumes one root)
     assert.ok(existsSync(`${out}.cpuprofile`), "the raw .cpuprofile sibling is written");
     const raw = JSON.parse(readFileSync(`${out}.cpuprofile`, "utf8"));
     assert.ok(Array.isArray(raw.nodes) && Array.isArray(raw.samples), "raw profile has nodes + samples");
@@ -1127,7 +1126,7 @@ e2e("record --breakdown: a navigating step keeps CPU attribution across the proc
 // still follow the page to its new renderer. The stray count on the pre-nav thread would defeat a
 // strict zero-work re-anchor and anchor the whole run to the husk, reporting the navigated page's
 // layout/style/js as ~0 (js:0/idle:100%). The share re-anchor treats a vanishing pre-nav count as the
-// husk it is. The target is a DIFFERENT SITE ("localhost") so the renderer process swaps.
+// husk it is. The target is a DIFFERENT SITE ("localhost") so the renderer process swaps
 e2e("record --breakdown (driver): a stray pre-nav flush does not blank the navigated page's bar", { timeout: TIMEOUT_MS }, () => {
   const target = startOnrampServer(BOOT_WORK_HTML, "localhost");
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
@@ -1147,14 +1146,14 @@ e2e("record --breakdown (driver): a stray pre-nav flush does not blank the navig
     runCli(["record", flow, "--breakdown", "--iterations", "1", "--out", out]);
     const rec = JSON.parse(readFileSync(out, "utf8"));
     // The navigated page laid out ~200 boxes; the run counts and the load step's bar must reflect it,
-    // not the blank host's single stray flush. The whole bug is this reading 0/1.
+    // not the blank host's single stray flush. The whole bug is this reading 0/1
     assert.ok(summaryLike(rec).layoutCount > 20, `the navigated page's layout is counted, got ${summaryLike(rec).layoutCount}`);
     const load = rec.spans.find((span) => span.kind === "step" && span.label === "load");
     assert.ok(load?.breakdown, "the load step carries a reconciling bar");
     assert.ok(load.breakdown.slices.js.ms > 0, `the navigated step's js slice is non-zero, got ${load.breakdown.slices.js.ms}`);
     assert.ok(load.breakdown.slices.layout.ms > 0, `the navigated step's layout slice is non-zero, got ${load.breakdown.slices.layout.ms}`);
     assert.ok(load.counts.layoutCount > 20, `the navigated step's counts follow the process, got ${load.counts.layoutCount}`);
-    // The re-anchor is disclosed, not silent.
+    // The re-anchor is disclosed, not silent
     assert.ok(
       (rec.meta.notes || []).some((note) => /navigated to a new renderer process/.test(note)),
       "the cross-process re-anchor is disclosed in a note",
@@ -1168,7 +1167,7 @@ e2e("record --breakdown (driver): a stray pre-nav flush does not blank the navig
 // processes, so no single main thread holds the whole run. The second-process step cannot be tiled
 // from the selected thread and reads as idle -- that MUST be disclosed loudly, never a silent
 // js:0/idle:100%. Two different sites ("localhost" then "127.0.0.1", cross-site from each other) swap
-// the process twice.
+// the process twice
 e2e("record --breakdown (driver): successive cross-process navigations warn, never a silent zero bar", { timeout: TIMEOUT_MS }, () => {
   const siteA = startOnrampServer(BOOT_WORK_HTML, "localhost");
   const siteB = startOnrampServer(BOOT_WORK_HTML, "127.0.0.1");
@@ -1193,19 +1192,19 @@ e2e("record --breakdown (driver): successive cross-process navigations warn, nev
     // Whichever renderer swap Chrome actually performs, if the work landed on two processes the split
     // note fires loudly (recording + stderr). When a given CI keeps both navigations in one process
     // (no swap), there is one main thread and no split -- so the assertion is conditional on the swap,
-    // never flaky: it only checks that a split is DISCLOSED, never silent.
+    // never flaky: it only checks that a split is DISCLOSED, never silent
     const splitNoted = (rec.meta.notes || []).some((note) => /split across more than one renderer process/.test(note));
     if (splitNoted) {
       assert.match(result.stderr, /split across more than one renderer process/, "the split is loud on stderr too");
-      // The split is also a TYPED field the gate readers consume, not just prose.
+      // The split is also a TYPED field the gate readers consume, not just prose
       assert.equal(rec.meta.mainThread?.split, true, "the split is persisted as meta.mainThread.split");
-      // The step that ran on the un-selected process reports not-measured counts, never a fake 0.
+      // The step that ran on the un-selected process reports not-measured counts, never a fake 0
       const uncovered = rec.spans.find(
         (span) => span.kind === "step" && span.counts.layoutCount === null,
       );
       assert.ok(uncovered, "a split run's un-selected-process step reports null counts, never a fake 0");
     } else {
-      // No split: both navigations stayed in one process, so both steps' counts are real (never a fake 0).
+      // No split: both navigations stayed in one process, so both steps' counts are real (never a fake 0)
       assert.notEqual(rec.meta.mainThread?.split, true, "no split flag when the run stayed single-process");
       const loadB = rec.spans.find((span) => span.kind === "step" && span.label === "loadB");
       assert.ok(loadB?.counts.layoutCount > 0, "with no split, the second step's counts are real");
@@ -1218,7 +1217,7 @@ e2e("record --breakdown (driver): successive cross-process navigations warn, nev
 
 // prepare()/warmup page-side JS must stay out of the CPU model on --breakdown too. The trace (and its
 // v8.cpu_profiler stream) starts before prepare() in driver mode, so the assembled samples are
-// windowed to the run onward, the same run-mark scope the CDP sampler opens at in the default capture mode.
+// windowed to the run onward, the same run-mark scope the CDP sampler opens at in the default capture mode
 e2e("record --breakdown (driver): prepare()/warmup page JS stays out of the trace-sourced CPU model", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const flow = path.join(dir, "bd-lifecycle.mjs");
@@ -1246,7 +1245,7 @@ e2e("record --breakdown (driver): prepare()/warmup page JS stays out of the trac
 });
 
 // The idle edge probe C left untested: a run() that only awaits is ~pure waiting, so idle must
-// dominate the window and the sum must still close.
+// dominate the window and the sum must still close
 e2e("record --breakdown: a waiting-dominated span is mostly idle and still closes", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "bd-idle");
@@ -1269,7 +1268,7 @@ e2e("record --breakdown: a waiting-dominated span is mostly idle and still close
 // tool must disclose that rather than let it read as a bug. Here run() schedules a paint+layout burst
 // on a setTimeout(100) (well after run:end, inside the 200ms drain): its paints land in the run
 // paintCount but not the run bar's paint slice. Assert the gap is real AND that both the note and the
-// `query span run` anatomy disclose the two windows.
+// `query span run` anatomy disclose the two windows
 e2e("record --breakdown: run counts are start-onward and the window gap is disclosed", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const flow = path.join(dir, "drain.mjs");
@@ -1309,11 +1308,11 @@ e2e("record --breakdown: run counts are start-onward and the window gap is discl
   const runSpan = rec.spans.find((span) => span.kind === "run");
   assert.ok(runSpan, "a run span exists");
   // The late-drain burst dirtied 4 boxes past run:end. Only a start-onward count catches them:
-  // clipping the run counts to run:end (the bug this guards) would drop the burst below this floor.
+  // clipping the run counts to run:end (the bug this guards) would drop the burst below this floor
   const paintCount = runSpan.counts.paintCount;
   assert.ok(paintCount >= 4, `run paintCount should include the late-drain burst, got ${paintCount}`);
 
-  // Both surfaces disclose the two windows.
+  // Both surfaces disclose the two windows
   assert.ok(
     (rec.meta.notes ?? []).some((note) => note.includes("start-onward from wpd:run:start")),
     "meta.notes discloses the start-onward count window",
@@ -1325,7 +1324,7 @@ e2e("record --breakdown: run counts are start-onward and the window gap is discl
 // The mark bridge: a page-side performance.measure becomes a span with its own breakdown. Repeated
 // once per --iteration, its occurrences are its samples: the stored bar is the lower-median-by-wall
 // real occurrence (samples == iterations), NOT iteration 1's, and it still reconciles because it is a
-// real sample rather than a per-slice average.
+// real sample rather than a per-slice average
 e2e("record --breakdown: a repeated performance.measure merges to a median bar (samples == iterations)", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "bd-measure");
@@ -1340,7 +1339,7 @@ e2e("record --breakdown: a repeated performance.measure merges to a median bar (
   const measureSpan = measureBars[0];
   assert.equal(measureSpan.samples, 3, "samples == iterations (one occurrence per iteration, all merged)");
   assert.ok(measureSpan.breakdown.wallMs > 0, "the measure span has a positive wall");
-  // The kept bar is a real occurrence: its wall sits within the disclosed spread.
+  // The kept bar is a real occurrence: its wall sits within the disclosed spread
   assert.ok(
     measureSpan.wallMinMs <= measureSpan.breakdown.wallMs && measureSpan.breakdown.wallMs <= measureSpan.wallMaxMs,
     `wall ${measureSpan.breakdown.wallMs} within spread ${measureSpan.wallMinMs}..${measureSpan.wallMaxMs}`,
@@ -1351,13 +1350,13 @@ e2e("record --breakdown: a repeated performance.measure merges to a median bar (
     `the median bar reconciles exactly (residual 0): ${sum} vs ${measureSpan.breakdown.wallMs}`,
   );
   assert.equal(measureSpan.breakdown.residualMs, undefined, "a real reconciling sample carries no residual");
-  // The work inside the measure is a JS loop, so its js slice must be the dominant one.
+  // The work inside the measure is a JS loop, so its js slice must be the dominant one
   assert.ok(measureSpan.breakdown.slices.js.ms > 0, "the measured JS work lands in the js slice");
 });
 
 // `query spans`: the unified per-span surface. On chrome --breakdown it sources the stored
 // seven-slice bars, so a consumer reads the run span AND the user measure with one shape and one
-// access path (spans[], keyed by label) -- the label-keyed join a matrix consumer performs.
+// access path (spans[], keyed by label) -- the label-keyed join a matrix consumer performs
 e2e("query spans: unified per-span shape over a chrome --breakdown recording", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "spans-chrome");
@@ -1373,12 +1372,12 @@ e2e("query spans: unified per-span shape over a chrome --breakdown recording", {
   assert.ok(runSpan, "the run span is always present");
   const measure = spans.spans.find((span) => span.kind === "measure" && span.label === "user-span");
   assert.ok(measure, "the user performance.measure surfaces as a labeled span");
-  // The unified superset shape: every slice key present; chrome measures them all.
+  // The unified superset shape: every slice key present; chrome measures them all
   for (const key of ["js", "style", "layout", "paint", "gc", "other", "idle"])
     assert.ok(key in measure.slices, `slice '${key}' present in the unified shape`);
   assert.ok(measure.slices.js.byPackage, "js keeps its by-package split");
   // The aggregation contract: the run window spans every iteration (a sum), the repeated measure is
-  // the median of its per-iteration occurrences; both stamp the recording's iteration count.
+  // the median of its per-iteration occurrences; both stamp the recording's iteration count
   assert.equal(runSpan.aggregation, "sum", "the run span is a total across iterations");
   assert.equal(measure.aggregation, "median", "a repeated measure span reports its median sample");
   assert.equal(measure.samples, 2, "samples == iterations (recorded with --iterations 2)");
@@ -1387,7 +1386,7 @@ e2e("query spans: unified per-span shape over a chrome --breakdown recording", {
   assert.equal(runSpan.iterations, 2, "the run span carries the recording's iteration count");
   assert.equal(measure.iterations, 2, "the measure span carries the recording's iteration count");
 
-  // --label narrows to the exact span.
+  // --label narrows to the exact span
   const filtered = JSON.parse(runCli(["query", "spans", out, "--format", "json", "--label", "user-span"]));
   assert.equal(filtered.spans.length, 1);
   assert.equal(filtered.spans[0].label, "user-span");
@@ -1395,7 +1394,7 @@ e2e("query spans: unified per-span shape over a chrome --breakdown recording", {
 
 // `query span <label>`: one span's full anatomy. On a --breakdown run span it carries the reconciling
 // bar AND the run-window hot functions (the resolved CPU model IS the run window). A bare label
-// resolves the single matching span.
+// resolves the single matching span
 e2e("query span run: --breakdown recording shows the bar and the run-window hot functions", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "span-bd");
@@ -1409,18 +1408,18 @@ e2e("query span run: --breakdown recording shows the bar and the run-window hot 
   assert.ok(anatomy.slices, "the reconciling bar's unified slices are present");
   for (const key of SLICE_NAMES)
     assert.ok(key in anatomy.slices, `slice '${key}' present in the anatomy`);
-  // The run span's hot list comes from the sibling CPU model (the sampler brackets the whole loop).
+  // The run span's hot list comes from the sibling CPU model (the sampler brackets the whole loop)
   assert.ok(anatomy.hot, "hot functions are present for the run span");
   assert.equal(anatomy.hot.scope, "run-window");
   assert.ok(anatomy.hot.functions.length > 0, "at least one hot function in the run window");
-  // A --breakdown run drops the .stack forced count: not-measured, never a fake 0.
+  // A --breakdown run drops the .stack forced count: not-measured, never a fake 0
   assert.equal(anatomy.counts.forcedLayoutCount, null, "forced count is not-measured on --breakdown");
 });
 
 // Per-span hot functions (--breakdown chrome). A heavy user measure pools its per-occurrence samples
 // and surfaces a ranked hot list on the CPU-sampler scripting axis (shares of the span's pooled JS
 // samples, with the pooled + occurrence counts disclosed); a trivial measure stays below the
-// pooled-sample floor and is suppressed rather than fabricating a top-N.
+// pooled-sample floor and is suppressed rather than fabricating a top-N
 e2e("query span <measure>: --breakdown surfaces per-span hot functions, suppressing a trivial span", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "measure-hot");
@@ -1436,7 +1435,7 @@ e2e("query span <measure>: --breakdown surfaces per-span hot functions, suppress
   assert.equal(heavy.hot.occurrences, iterations, "every occurrence is pooled and disclosed");
   assert.ok(heavy.hot.pooledSamples >= 10, `pooled samples clear the floor: ${heavy.hot.pooledSamples}`);
   assert.ok(heavy.hot.functions?.length > 0, "the ranked hot list is present");
-  // Shares are of the span's pooled JS samples; the ranked subset cannot exceed the pooled scripting.
+  // Shares are of the span's pooled JS samples; the ranked subset cannot exceed the pooled scripting
   const sumSelf = heavy.hot.functions.reduce((total, fn) => total + fn.selfMs, 0);
   assert.ok(sumSelf <= heavy.hot.scriptingMs + 1e-6, "Σ per-function selfMs <= the span's pooled scripting");
   assert.ok(heavy.hot.functions.every((fn) => fn.selfPct > 0 && fn.selfPct <= 100), "each function reports a valid share");
@@ -1449,7 +1448,7 @@ e2e("query span <measure>: --breakdown surfaces per-span hot functions, suppress
   assert.ok(trivial.hot, "the trivial measure still reports a hot object");
   // Whether this window stays under the 10-sample floor depends on runner speed (a stalled CI
   // machine stretches even this loop across enough sampler ticks to rank), so assert the
-  // suppression contract both ways instead of one fixed outcome.
+  // suppression contract both ways instead of one fixed outcome
   if (trivial.hot.pooledSamples < 10) {
     assert.equal(trivial.hot.suppressed, true, "below the pooled floor: suppressed, never a fabricated top-N");
     assert.equal(trivial.hot.functions, undefined, "no functions when suppressed");
@@ -1462,7 +1461,7 @@ e2e("query span <measure>: --breakdown surfaces per-span hot functions, suppress
 // `query span <step-label>` on a --deep driver recording: the step's exact windowed counts plus the
 // forced read-sites (dual-annotated with the dirtied-by write) from the deep event log, scoped to the
 // step. A step span carries no run-window hot list (per-span CPU windowing is not reconstructed, and
-// --deep has no CPU model anyway).
+// --deep has no CPU model anyway)
 e2e("query span <step>: --deep driver recording shows the step's counts and forced/dirtied annotations", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const html = path.join(repoRoot, "test", "fixtures", "driver-probe.html");
@@ -1480,25 +1479,25 @@ e2e("query span <step>: --deep driver recording shows the step's counts and forc
 
   const anatomy = JSON.parse(runCli(["query", "span", out, "add rows", "--format", "json"]));
   assert.equal(anatomy.kind, "step", "a bare label resolves the single matching step span");
-  // Exact windowed counts (--deep).
+  // Exact windowed counts (--deep)
   assert.ok(anatomy.counts.layoutCount > 0, "the step's layout count is present");
   assert.ok(anatomy.counts.forcedLayoutCount > 0, "and it forced layout synchronously");
-  // Forced read-sites from the event log, each naming a resolved source line.
+  // Forced read-sites from the event log, each naming a resolved source line
   assert.ok(Array.isArray(anatomy.forced) && anatomy.forced.length > 0, "forced read-sites present");
   assert.ok(anatomy.forced.every((entry) => typeof entry.source === "string"), "each forced entry names a source line (structured source/line/column)");
   const dirtied = anatomy.forced.some((entry) => entry.dirtiedBy?.length > 0);
   assert.ok(dirtied, "a forced read-site is dual-annotated with the dirtied-by write");
-  // A step span carries no run-window hot list.
+  // A step span carries no run-window hot list
   assert.equal(anatomy.hot, null, "hot is not-available for a step span");
 });
 
 // The browser-free removed-verb stubs (`query digest`/`query index`) live in
-// test/unit/cli-wiring.test.mjs: the stub errors before any recording is read, so they need no browser.
+// test/unit/cli-wiring.test.mjs: the stub errors before any recording is read, so they need no browser
 
 // The off-thread frame side track (Chrome --breakdown). It is DISPLAY-ONLY -- the frame count is
 // scheduler/settle noise that swings 1->28 on unchanged code (FP-1), so this asserts PRESENCE and
 // SHAPE only, never exact counts: the field exists, tallies to `total`, and the compact line is
-// printed alongside the bar. Exact-count assertions would flake by design.
+// printed alongside the bar. Exact-count assertions would flake by design
 e2e("record --breakdown: a per-span frame side track is recorded and printed", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "bd-frames");
@@ -1512,7 +1511,7 @@ e2e("record --breakdown: a per-span frame side track is recorded and printed", {
   assert.ok(runSpan?.frames, "the run span carries a frame side track");
   const frames = runSpan.frames;
   // A painting workload produces at least one compositor frame in the run window (start-onward,
-  // so the settle-tail presentation is included). Only presence is asserted, not how many.
+  // so the settle-tail presentation is included). Only presence is asserted, not how many
   assert.ok(frames.total > 0, "the run span caught at least one frame");
   assert.equal(
     frames.presented + frames.presentedPartial + frames.dropped + frames.noUpdate,
@@ -1520,27 +1519,27 @@ e2e("record --breakdown: a per-span frame side track is recorded and printed", {
     "the four verdict tallies sum to total",
   );
   assert.equal(frames.frames.length, frames.total, "one raw record per frame");
-  // The side track is display-only: it never leaks into the summary the gates read.
+  // The side track is display-only: it never leaks into the summary the gates read
   assert.equal(
     Object.keys(summaryLike(rec)).some((key) => /frame/i.test(key) && !/forced/i.test(key)),
     false,
     "no frame field on summary, so assert/diff structurally cannot gate on it",
   );
-  // ...and it is printed alongside the bar.
+  // ...and it is printed alongside the bar
   assert.match(stdout, /frames: \d+ presented · \d+ partial · \d+ dropped/);
 });
 
 // The zero-authoring on-ramp: `record --url` with NO module runs a built-in driver flow that
 // navigates to the url inside one "load" step and settles, so the boot lands in the run window. Every
 // capture mode works unchanged over it. Served from a local origin (no external network), in the default
-// capture mode and --breakdown.
+// capture mode and --breakdown
 e2e("record --url with no module runs the built-in load flow (default + --breakdown)", { timeout: TIMEOUT_MS }, () => {
   const html = "<!doctype html><meta charset=utf-8><title>onramp</title><body><h1>hello</h1><p>on-ramp</p></body>";
   const server = startOnrampServer(html);
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   try {
     // Default capture mode: the built-in "load" step span exists, INP is null (a load has no interaction), and
-    // the no-trace capture mode reports no rendering counts (null, never a fake 0). The CPU model still runs.
+    // the no-trace capture mode reports no rendering counts (null, never a fake 0). The CPU model still runs
     const dfltOut = path.join(dir, "onramp-default");
     runCli(["record", "--url", server.url, "--out", dfltOut]);
     const dflt = JSON.parse(readFileSync(dfltOut, "utf8"));
@@ -1556,12 +1555,12 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
     );
     assert.ok(summaryLike(dflt).jsSelfMs != null, "the CPU model still measures JS self-time on the boot");
     // The built-in load step navigated a fresh document, so it is a HARD navigation and carries boot
-    // LCP (in-page observer, ungated by the no-trace capture mode). The <h1> is the contentful element.
+    // LCP (in-page observer, ungated by the no-trace capture mode). The <h1> is the contentful element
     assert.equal(loadStep.navigation, "hard", "the built-in load step is a hard navigation");
     assert.ok(loadStep.lcp, "the load step carries boot LCP");
     // Built-in headless occasionally reports the inflated-startTime anomaly, which shapeLcp suppresses
     // (navigation-and-lcp.md). A sane entry names the element and carries a paint timestamp; a
-    // suppressed one is the guard doing its job. Both are honest; a fabricated 60s LCP is not.
+    // suppressed one is the guard doing its job. Both are honest; a fabricated 60s LCP is not
     if (loadStep.lcp.suppressed) {
       assert.equal(Object.keys(loadStep.lcp).length, 1, "a suppressed LCP carries no timing, only the flag");
     } else {
@@ -1570,7 +1569,7 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
     }
 
     // --breakdown: the run span AND the load step carry a reconciling bar (Σ slices + idle == wall),
-    // counts are measured, and the navigating load step is priced on the trace clock (spans the nav).
+    // counts are measured, and the navigating load step is priced on the trace clock (spans the nav)
     const bdOut = path.join(dir, "onramp-breakdown");
     runCli(["record", "--url", server.url, "--breakdown", "--out", bdOut]);
     const bd = JSON.parse(readFileSync(bdOut, "utf8"));
@@ -1591,7 +1590,7 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
 
     // F4: --iterations in the default (no-trace) capture mode yields no wall and no median, because the
     // navigating load step resets the page clock and there is no trace clock to span it. The note must
-    // say so and steer to --breakdown, NOT the warm/cold note that would promise a median.
+    // say so and steer to --breakdown, NOT the warm/cold note that would promise a median
     const iterOut = path.join(dir, "onramp-iter-default");
     runCli(["record", "--url", server.url, "--iterations", "2", "--out", iterOut]);
     const iter = JSON.parse(readFileSync(iterOut, "utf8"));
@@ -1614,7 +1613,7 @@ e2e("record --url with no module runs the built-in load flow (default + --breakd
 // whose second step changes only the fragment. The goto step must classify "hard" and carry boot LCP
 // with a plausible element; the hash step must classify "soft-hash" and carry NO LCP (a soft
 // navigation freezes LCP, so a per-soft-step LCP would be structurally empty). Default capture mode
-// (no trace) is enough: the observers are in-page and ungated by the capture mode.
+// (no trace) is enough: the observers are in-page and ungated by the capture mode
 const NAV_HERO_HTML =
   "<!doctype html><meta charset=utf-8><title>nav-probe</title>" +
   "<h1 id=hero style='font-size:64px;margin:0'>Largest Contentful Heading For The LCP Probe</h1>" +
@@ -1626,7 +1625,7 @@ e2e("driver flow: step navigation classification + boot LCP on the hard-nav step
   // The host starts at server.url (module + --url pre-navigates there). Step "goto" reloads a DIFFERENT
   // path (a fresh document: url + timeOrigin both change -> hard). Step "hash" changes only the
   // fragment on the same document (soft-hash). location.hash is set via page.evaluate so it does not
-  // depend on a visible anchor.
+  // depend on a visible anchor
   const target = `${server.url}page-b`;
   writeFileSync(
     flow,
@@ -1643,19 +1642,19 @@ e2e("driver flow: step navigation classification + boot LCP on the hard-nav step
     const hash = rec.spans.find((span) => span.kind === "step" && span.label === "hash");
     assert.ok(goto && hash, "both steps are recorded");
 
-    // The goto step navigated cross-document: hard, with before/after URLs stored self-contained.
+    // The goto step navigated cross-document: hard, with before/after URLs stored self-contained
     assert.equal(goto.navigation, "hard", "a page.goto to a fresh document is a hard navigation");
     assert.equal(goto.afterUrl, target, "the goto step ended on the navigated URL");
     assert.notEqual(goto.beforeUrl, goto.afterUrl, "before/after differ across a navigation");
 
-    // The hash step changed only the fragment on the same document: soft-hash, no reload.
+    // The hash step changed only the fragment on the same document: soft-hash, no reload
     assert.equal(hash.navigation, "soft-hash", "a fragment-only change is soft-hash");
     assert.match(hash.afterUrl, /#section$/, "the hash step ended on the fragment URL");
 
     // Boot LCP rides ONLY the hard-nav step (a fresh document). Built-in headless occasionally reports
     // the inflated-startTime anomaly, which shapeLcp suppresses (navigation-and-lcp.md); a sane entry
     // names the hero element. Both outcomes are honest, so branch rather than assert a shell-only sane
-    // value.
+    // value
     assert.ok(goto.lcp, "the hard-nav step carries boot LCP");
     const lcpSane = !goto.lcp.suppressed;
     if (lcpSane) {
@@ -1665,11 +1664,11 @@ e2e("driver flow: step navigation classification + boot LCP on the hard-nav step
     }
     assert.ok(!hash.lcp, "a soft navigation carries no LCP (frozen, never a fake 0)");
 
-    // The anatomy view surfaces the same navigation + LCP a consumer reads via query span.
+    // The anatomy view surfaces the same navigation + LCP a consumer reads via query span
     const anatomy = JSON.parse(runCli(["query", "span", out, "step:goto", "--format", "json"]));
     assert.equal(anatomy.navigation, "hard", "query span carries the navigation classification");
     if (lcpSane) assert.equal(anatomy.lcp.tag, "H1", "query span carries the boot LCP");
-    // The human report prints the before -> after line, and the LCP element when it is not suppressed.
+    // The human report prints the before -> after line, and the LCP element when it is not suppressed
     const human = runCli(["query", "span", out, "step:goto"]);
     assert.match(human, /Navigation: hard/, "the human report names the hard navigation");
     if (lcpSane) assert.match(human, /LCP \(boot/, "the human report shows boot LCP");
@@ -1685,7 +1684,7 @@ e2e("driver flow: step navigation classification + boot LCP on the hard-nav step
 // pushState step (page.evaluate, no trusted interaction) fires no engine entry -- the probe-verified
 // false-negative class -- so the field stays ABSENT while the classifier still reads "soft", and
 // `query span` surfaces the disagreement note. No --enable-features anywhere: opportunistic. The
-// fixture's button handler streams contentful text so the heuristic sees a paint after the interaction.
+// fixture's button handler streams contentful text so the heuristic sees a paint after the interaction
 const SOFTNAV_SPA_HTML =
   "<!doctype html><meta charset=utf-8><title>softnav-spa</title>" +
   "<button id=go>go</button><div id=app></div>" +
@@ -1694,14 +1693,14 @@ const SOFTNAV_SPA_HTML =
   "history.pushState({},'','/clicked');" +
   "for(let index=0;index<20;index++){const para=document.createElement('p');" +
   "para.textContent='route content line '+index;para.style.fontSize='24px';app.appendChild(para);}});" +
-  "<\/script>";
+  "</script>";
 e2e("driver flow: opportunistic engine soft-nav verdict (agree) + the classifier-disagreement note", { timeout: TIMEOUT_MS }, () => {
   const server = startOnrampServer(SOFTNAV_SPA_HTML, "127.0.0.1");
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const flow = path.join(dir, "softnav-flow.mjs");
   // Step "route": a TRUSTED page.click drives pushState + a contentful paint (engine fires). Step
   // "programmatic": an UNTRUSTED page.evaluate pushState + DOM change (engine fires nothing), the
-  // disagreement case. Both are same-document (timeOrigin holds), so the classifier reads both "soft".
+  // disagreement case. Both are same-document (timeOrigin holds), so the classifier reads both "soft"
   writeFileSync(
     flow,
     `export async function run({ page, measureStep }) {
@@ -1726,7 +1725,7 @@ e2e("driver flow: opportunistic engine soft-nav verdict (agree) + the classifier
     const prog = rec.spans.find((span) => span.kind === "step" && span.label === "programmatic");
     assert.ok(route && prog, "both steps are recorded");
 
-    // AGREE path: the trusted click is a soft route on both verdicts.
+    // AGREE path: the trusted click is a soft route on both verdicts
     assert.equal(route.navigation, "soft", "the click's pushState is a same-document soft route");
     assert.ok(route.engineSoftNav, "the engine fired a soft-navigation entry for the trusted click");
     assert.ok(route.engineSoftNav.count >= 1, "the engine verdict carries at least one entry");
@@ -1736,12 +1735,12 @@ e2e("driver flow: opportunistic engine soft-nav verdict (agree) + the classifier
     );
 
     // DISAGREEMENT path: the classifier still reads soft, but the engine fired nothing (no trusted
-    // interaction), so the field is ABSENT -- never a fabricated zero.
+    // interaction), so the field is ABSENT -- never a fabricated zero
     assert.equal(prog.navigation, "soft", "the programmatic pushState is a same-document soft route");
     assert.ok(!prog.engineSoftNav, "no engine entry for a programmatic (untrusted) navigation");
 
     // query span surfaces both: the agree confirmation on the click step, the disagreement note on the
-    // programmatic step (stating both verdicts and the cause classes, picking no winner).
+    // programmatic step (stating both verdicts and the cause classes, picking no winner)
     const routeJson = JSON.parse(runCli(["query", "span", out, "step:route", "--format", "json"]));
     assert.ok(routeJson.engineSoftNav, "query span carries the engine soft-nav verdict on the agree path");
     const routeHuman = runCli(["query", "span", out, "step:route"]);
@@ -1765,7 +1764,7 @@ e2e("driver flow: opportunistic engine soft-nav verdict (agree) + the classifier
 // the route clock, keyed by the engine soft nav's navigationId. A PROGRAMMATIC pushState step fires no
 // engine entry, so it gets NO `softNav` object -- the feature keys strictly on the engine's verdict. No
 // --enable-features anywhere. The route LCP block is a styled text div (contentful, same-origin, so its
-// render time is populated); the late banner insertion pushes the content down for the route CLS.
+// render time is populated); the late banner insertion pushes the content down for the route CLS
 const SOFTNAV_ROUTE_HTML =
   "<!doctype html><meta charset=utf-8><title>softnav-route</title>" +
   "<style>#app p{font-size:24px}#hero{padding:40px;font-size:40px;background:#c00;color:#fff}</style>" +
@@ -1777,17 +1776,17 @@ const SOFTNAV_ROUTE_HTML =
   "hero.textContent='ROUTE HERO CONTENT BLOCK';app.appendChild(hero);" +
   "for(let index=0;index<8;index++){const para=document.createElement('p');" +
   "para.textContent='route content line '+index;app.appendChild(para);}" +
-  // Route CLS: a banner inserted >500ms later (past hadRecentInput) shifts the content down.
+  // Route CLS: a banner inserted >500ms later (past hadRecentInput) shifts the content down
   "setTimeout(()=>{const banner=document.createElement('div');banner.style.height='140px';" +
   "banner.style.background='#08f';banner.textContent='late banner';" +
   "app.insertBefore(banner,app.firstChild);},700);});" +
-  "<\/script>";
+  "</script>";
 e2e("driver flow: per-soft-step route metrics (routeLcp + routeCls) keyed by navigationId", { timeout: TIMEOUT_MS }, () => {
   const server = startOnrampServer(SOFTNAV_ROUTE_HTML, "127.0.0.1");
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const flow = path.join(dir, "route-flow.mjs");
   // Step "route": a TRUSTED click drives the soft nav; the until keeps the window open past the 700ms
-  // banner shift so the route CLS lands. Step "programmatic": an UNTRUSTED pushState (no engine entry).
+  // banner shift so the route CLS lands. Step "programmatic": an UNTRUSTED pushState (no engine entry)
   writeFileSync(
     flow,
     `export async function run({ page, measureStep }) {
@@ -1811,7 +1810,7 @@ e2e("driver flow: per-soft-step route metrics (routeLcp + routeCls) keyed by nav
     const prog = rec.spans.find((span) => span.kind === "step" && span.label === "programmatic");
     assert.ok(route && prog, "both steps are recorded");
 
-    // The trusted click's soft nav carries route metrics keyed by the engine's navigationId.
+    // The trusted click's soft nav carries route metrics keyed by the engine's navigationId
     assert.ok(route.softNav, "the soft-navigating step carries route metrics");
     assert.equal(
       route.softNav.navigationId,
@@ -1820,12 +1819,12 @@ e2e("driver flow: per-soft-step route metrics (routeLcp + routeCls) keyed by nav
     );
     assert.ok(route.softNav.routeLcp, "the route carries an LCP-equivalent (interaction-contentful-paint)");
     // routeMs is on the route clock (anchored to the soft nav startTime), so it is a small non-negative
-    // number, never the absolute document-clock renderTime.
+    // number, never the absolute document-clock renderTime
     assert.ok(
       route.softNav.routeLcp.routeMs >= 0 && route.softNav.routeLcp.routeMs < 5000,
       `route LCP is a plausible route-clock ms (got ${route.softNav.routeLcp.routeMs})`,
     );
-    // The banner shifted content >500ms after the click, so it scores a route CLS on the new id.
+    // The banner shifted content >500ms after the click, so it scores a route CLS on the new id
     assert.ok(route.softNav.routeCls, "the post-route banner shift scores a route CLS");
     assert.ok(
       route.softNav.routeCls.cls > 0,
@@ -1833,11 +1832,11 @@ e2e("driver flow: per-soft-step route metrics (routeLcp + routeCls) keyed by nav
     );
 
     // The programmatic step fires no engine entry, so it carries NO route metrics (keyed on the engine's
-    // verdict, never the classifier's) -- absent, never a fabricated 0.
+    // verdict, never the classifier's) -- absent, never a fabricated 0
     assert.equal(prog.navigation, "soft", "the programmatic pushState is still a same-document soft route");
     assert.ok(!prog.softNav, "no engine entry -> no route metrics on a programmatic navigation");
 
-    // query span renders the route block on the route step, labelled as the route transition.
+    // query span renders the route block on the route step, labelled as the route transition
     const routeHuman = runCli(["query", "span", out, "step:route"]);
     assert.match(routeHuman, /Route transition/, "the human report names the route transition");
     assert.match(routeHuman, /route LCP/, "the report prints the route LCP");
@@ -1855,13 +1854,13 @@ e2e("driver flow: per-soft-step route metrics (routeLcp + routeCls) keyed by nav
 // navigated INTO. The counts and the reconciling bar must FOLLOW the page to that process, not report
 // the pre-nav blank thread as ~100% idle with zero counts. The outcome (non-zero counts, a bar that is
 // not almost-all idle) holds whether or not a given CI actually swaps, so the test is not flaky: it
-// fails only on the bug it guards (counts wrongly 0).
+// fails only on the bug it guards (counts wrongly 0)
 e2e("record --url boot: counts/bar follow a cross-process navigation, not the blank host thread (F1/F2)", { timeout: TIMEOUT_MS }, () => {
   const server = startOnrampServer(BOOT_WORK_HTML, "localhost");
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   try {
     // --breakdown: the run bar tiles the post-navigation renderer, so layout/style are real and the
-    // bar is not the ~100% idle F1 produced. Both the run span and the load step carry the counts.
+    // bar is not the ~100% idle F1 produced. Both the run span and the load step carry the counts
     const bdOut = path.join(dir, "boot-breakdown");
     runCli(["record", "--url", server.url, "--breakdown", "--out", bdOut]);
     const bd = JSON.parse(readFileSync(bdOut, "utf8"));
@@ -1874,12 +1873,12 @@ e2e("record --url boot: counts/bar follow a cross-process navigation, not the bl
     // page loads, then sits), so idle sits ~94-95% even when the bar is correct -- an idle-fraction
     // threshold rides that natural band and reds on ordinary runs. The bug this guards (the bar tiling
     // the pre-nav blank thread) drives the layout slice to ~0; a real laying-out boot puts real ms
-    // there. So gate on the layout slice being present, which the F1 wrong-thread regression zeroes.
+    // there. So gate on the layout slice being present, which the F1 wrong-thread regression zeroes
     assert.ok(runSpan.breakdown.slices.layout.ms > 0, `the run bar attributes real layout time to the navigated process (layout ms was ${runSpan.breakdown.slices.layout.ms})`);
     assert.ok(bdLoad.counts.layoutCount > 0, "the load step's counts also follow the navigated process");
 
     // --deep: exact counts on the same cross-process boot must be > 0 (the F2 consequence: a real
-    // laying-out page must not pass a --max-layouts gate at 0).
+    // laying-out page must not pass a --max-layouts gate at 0)
     const deepOut = path.join(dir, "boot-deep");
     runCli(["record", "--url", server.url, "--deep", "--out", deepOut]);
     const deep = JSON.parse(readFileSync(deepOut, "utf8"));
@@ -1892,12 +1891,12 @@ e2e("record --url boot: counts/bar follow a cross-process navigation, not the bl
 
 // The browser-free flag-rejection guards (--headless-mode removal, --breakdown --deep, --precise-wall
 // retirement, --breakdown on firefox, --deep on node) live in test/unit/cli-wiring.test.mjs: each
-// `program.error`s before any browser launches, so they belong in the fast unit lane.
+// `program.error`s before any browser launches, so they belong in the fast unit lane
 
 // The documented regression workflow ("Did my change regress a budget"): forced counts and slice ms
 // come from different capture modes, so the README gates each on its own recording. This exercises that exact
 // sequence and both loud-n/a mistakes it steers users away from -- a forced budget on --breakdown, a
-// slice budget on --deep -- so the doc example and the fail-loud contract stay honest together.
+// slice budget on --deep -- so the doc example and the fail-loud contract stay honest together
 const runAssert = (args) =>
   spawnSync(process.execPath, [cli, "assert", ...args], { cwd: repoRoot, encoding: "utf8" });
 
@@ -1909,16 +1908,16 @@ e2e("the two-capture assert workflow gates each metric on the capture mode that 
   runCli(["record", probe, "--bench", "--breakdown", "--iterations", "1", "--out", breakdownOut]);
   runCli(["record", probe, "--bench", "--deep", "--iterations", "1", "--out", deepOut]);
 
-  // --breakdown measures layout counts and slice ms: generous budgets pass (exit 0), no n/a.
+  // --breakdown measures layout counts and slice ms: generous budgets pass (exit 0), no n/a
   const breakdownOk = runAssert([breakdownOut, "--max-layouts", "1000000", "--max-slice", "layout=1000000"]);
   assert.equal(breakdownOk.status, 0, `--breakdown counts+slice should pass:\n${breakdownOk.stdout}`);
 
-  // --deep measures forced counts: a generous budget passes (exit 0), no n/a.
+  // --deep measures forced counts: a generous budget passes (exit 0), no n/a
   const deepOk = runAssert([deepOut, "--max-forced", "1000000"]);
   assert.equal(deepOk.status, 0, `--deep forced budget should pass:\n${deepOk.stdout}`);
 
   // The cross-capture-mode mistakes fail LOUDLY, never a silent pass: --max-forced needs the --deep .stack
-  // trace, so it is n/a on --breakdown; --max-slice needs --breakdown, so it is n/a on --deep.
+  // trace, so it is n/a on --breakdown; --max-slice needs --breakdown, so it is n/a on --deep
   const forcedOnBreakdown = runAssert([breakdownOut, "--max-forced", "0"]);
   assert.equal(forcedOnBreakdown.status, 1, "forced budget on a --breakdown recording must fail");
   assert.match(forcedOnBreakdown.stdout, /was not measured/);
@@ -1930,7 +1929,7 @@ e2e("the two-capture assert workflow gates each metric on the capture mode that 
 
 // --keep-partial: a flaky production site can fail one iteration. The flag keeps the iterations that
 // completed instead of discarding the whole run; examples/probes/flaky-iteration.mjs throws partway through
-// the iteration named by FAIL_AT (1-based). run() imports once in Node, so its counter survives.
+// the iteration named by FAIL_AT (1-based). run() imports once in Node, so its counter survives
 const recordFlaky = (args, failAt) =>
   spawnSync(process.execPath, [cli, "record", path.join(examples, "probes", "flaky-iteration.mjs"), ...args], {
     cwd: repoRoot,
@@ -1942,7 +1941,7 @@ const recordFlaky = (args, failAt) =>
 e2e("record --keep-partial salvages the completed iterations when a later one fails", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "partial");
-  // Fail on iteration 2 of 3: iteration 1 completed, so it is salvaged.
+  // Fail on iteration 2 of 3: iteration 1 completed, so it is salvaged
   const result = recordFlaky(["--iterations", "3", "--keep-partial", "--out", out], 2);
   assert.equal(result.status, 0, `--keep-partial exits 0\n${result.stderr}`);
   assert.match(result.stderr, /--keep-partial: iteration 2 of 3 failed at step 'maybe-fail'/);
@@ -1973,7 +1972,7 @@ e2e("record --keep-partial still hard-fails when the FIRST iteration fails (noth
   assert.ok(!existsSync(out), "no recording is written");
 });
 
-// query spans --min-wall / --filter cut a tag-manager flood; the hidden count is always disclosed.
+// query spans --min-wall / --filter cut a tag-manager flood; the hidden count is always disclosed
 e2e("query spans --min-wall and --filter narrow the overview and disclose the hidden count", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "spans");
@@ -1982,13 +1981,13 @@ e2e("query spans --min-wall and --filter narrow the overview and disclose the hi
   const all = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
   assert.ok(all.spans.length >= 2, "the recording has a run span and at least one measure span");
 
-  // A threshold above every span's wall hides them all and reports the count.
+  // A threshold above every span's wall hides them all and reports the count
   const filtered = JSON.parse(runCli(["query", "spans", out, "--min-wall", "100000", "--format", "json"]));
   assert.equal(filtered.spans.length, 0, "--min-wall hides everything above the threshold");
   assert.equal(filtered.hidden, all.spans.length, "the hidden count equals what was removed");
   assert.deepEqual(filtered.filter, { minWallMs: 100000 });
 
-  // A label filter keeps only the run span; the measure spans are hidden and counted.
+  // A label filter keeps only the run span; the measure spans are hidden and counted
   const byLabel = JSON.parse(runCli(["query", "spans", out, "--filter", "run", "--format", "json"]));
   assert.ok(byLabel.spans.every((span) => /run/i.test(span.label)), "only labels containing 'run' survive");
   assert.equal(byLabel.hidden, all.spans.length - byLabel.spans.length, "hidden count is disclosed");
@@ -1997,33 +1996,32 @@ e2e("query spans --min-wall and --filter narrow the overview and disclose the hi
 // A --breakdown driver step whose iteration 0 is an outlier: its bar tiles that window (~500 ms) while
 // its headline wall is the median across iterations (~a few ms). A --min-wall threshold between the two
 // must hide the step by its MEDIAN in BOTH json and human output -- filtering the human bar on the
-// iteration-0 window instead would show a step the structured overview omits.
+// iteration-0 window instead would show a step the structured overview omits
 e2e("query spans --min-wall hides a divergent step by its median in json and human alike", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "spans");
   runCli(["record", path.join(examples, "probes", "divergent-iteration-wall.mjs"), "--breakdown", "--iterations", "3", "--out", out]);
 
-  // Unfiltered, the step is present and its iteration-0 window dwarfs its median headline.
+  // Unfiltered, the step is present and its iteration-0 window dwarfs its median headline
   const all = JSON.parse(runCli(["query", "spans", out, "--format", "json"]));
   const step = all.spans.find((span) => span.kind === "step" && span.label === "slow-once");
   assert.ok(step, "the driver step is in the overview");
   assert.ok(step.windowMs > step.wallMs * 5, "iteration 0 is an outlier: the bar window dwarfs the median wall");
   const threshold = String((step.wallMs + step.windowMs) / 2);
 
-  // The structured overview hides the step by its median.
+  // The structured overview hides the step by its median
   const filtered = JSON.parse(runCli(["query", "spans", out, "--min-wall", threshold, "--format", "json"]));
   assert.ok(!filtered.spans.some((span) => span.label === "slow-once"), "json hides the step below its median wall");
 
-  // The human overview must hide the SAME step -- not show it on the iteration-0 window.
+  // The human overview must hide the SAME step -- not show it on the iteration-0 window
   const human = runCli(["query", "spans", out, "--min-wall", threshold, "--color", "never"]);
   assert.ok(!/slow-once/.test(human), "human output hides the same step, using the same median wall as json");
 });
 
-// --- Run groups: N unfused captures of ONE workload as siblings under a manifest ---
 
 // The sanctioned two-question path: `--members breakdown,deep --group` records both captures back to
 // back, and `query span` STITCHES them -- the bar+hot from the breakdown member, the exact counts +
-// forced-layout blame from the deep member -- every panel tagged, walls per member, never combined.
+// forced-layout blame from the deep member -- every panel tagged, walls per member, never combined
 e2e("record --members breakdown,deep forms a group and query span stitches across its members", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "perf.json");
@@ -2034,12 +2032,12 @@ e2e("record --members breakdown,deep forms a group and query span stitches acros
   const group = JSON.parse(readFileSync(manifest, "utf8"));
   assert.equal(group.meta.kind, "run-group", "the manifest is a run-group artifact");
   assert.deepEqual(group.members.map((member) => member.mode), ["breakdown", "deep"], "both captures recorded as members");
-  // Structurally no aggregate: the manifest can carry no summary/wall of its own, so no output implies one number for the group.
+  // Structurally no aggregate: the manifest can carry no summary/wall of its own, so no output implies one number for the group
   assert.ok(!("summary" in group) && !("wallMs" in group), "the manifest holds no summary or wall of its own");
-  // The deep member differs from breakdown only in capture mode + sampler interval, which ANNOTATES (never refuses).
+  // The deep member differs from breakdown only in capture mode + sampler interval, which ANNOTATES (never refuses)
   assert.ok(group.members[1].annotations.some((note) => /sampler-interval/.test(note)), "the interval difference annotated rather than refused the join");
 
-  // The stitch: one anatomy drawing each panel from the member that measures it.
+  // The stitch: one anatomy drawing each panel from the member that measures it
   const stitch = JSON.parse(runCli(["query", "span", manifest, "run", "--format", "json"]));
   assert.equal(stitch.members.length, 2, "each member's own wall is listed separately");
   assert.ok(stitch.members.every((member) => member.wallMs > 0), "each member reports its OWN wall, never one combined number");
@@ -2055,10 +2053,10 @@ e2e("record --members breakdown,deep forms a group and query span stitches acros
 // --out locates a --members group: its DIRECTORY holds every member + the manifest, and its BASENAME
 // stem names them, so a path the caller derives from --out exists (a single --out file cannot BE one
 // of N members). The group's IDENTITY still comes from --group (meta.name), not the stem, so `latest`
-// and the group name resolve unchanged.
+// and the group name resolve unchanged
 e2e("record --members names the group's files from --out, keeping --group as the identity", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
-  // The --out stem ("mybench") differs from --group ("perf"): files follow --out, identity follows --group.
+  // The --out stem ("mybench") differs from --group ("perf"): files follow --out, identity follows --group
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--members", "breakdown,deep", "--group", "perf", "--iterations", "1", "--out", path.join(dir, "mybench.json")]);
 
   const manifest = path.join(dir, "mybench.group.json");
@@ -2074,13 +2072,13 @@ e2e("record --members names the group's files from --out, keeping --group as the
 
 // Two ad-hoc `--group` records sharing ONE `--out` would make the second overwrite the first member's
 // recording, leaving two manifest entries pointing at one file. The preflight refuses the second
-// before it launches a browser, naming the collision and the fix.
+// before it launches a browser, naming the collision and the fix
 e2e("record --group refuses a second member whose --out collides with an existing member", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const shared = path.join(dir, "base.json");
-  // First member (default capture mode) forms the group and writes base.json.
+  // First member (default capture mode) forms the group and writes base.json
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--group", "collide", "--iterations", "1", "--out", shared]);
-  // Second member, a DIFFERENT capture mode, pointed at the SAME --out: refuse before launching.
+  // Second member, a DIFFERENT capture mode, pointed at the SAME --out: refuse before launching
   const clash = spawnSync(
     process.execPath,
     [cli, "record", path.join(examples, "forces-layout.mjs"), "--bench", "--breakdown", "--group", "collide", "--iterations", "1", "--out", shared],
@@ -2090,25 +2088,25 @@ e2e("record --group refuses a second member whose --out collides with an existin
   const message = clash.stdout + clash.stderr;
   assert.match(message, /overwrite that member/, "the refusal explains the overwrite");
   assert.match(message, /distinct --out|--members/, "the refusal names the fix");
-  // The manifest still holds exactly the first member (nothing was clobbered).
+  // The manifest still holds exactly the first member (nothing was clobbered)
   const manifest = JSON.parse(readFileSync(path.join(dir, "collide.group.json"), "utf8"));
   assert.equal(manifest.members.length, 1, "the refused member was never added");
 });
 
 // assert routes each threshold to the member that measured its axis; an axis NO member measures is a
-// loud n/a FAIL, never a silent pass -- the Measured contract extended across a group.
+// loud n/a FAIL, never a silent pass -- the Measured contract extended across a group
 e2e("assert on a group routes each threshold to its member, with a loud n/a FAIL where no member measures the axis", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--members", "breakdown,deep", "--group", "g", "--iterations", "1", "--out", path.join(dir, "g.json")]);
   const manifest = path.join(dir, "g.group.json");
 
-  // forced routes to the deep member, the js slice to the breakdown member: generous budgets pass (exit 0).
+  // forced routes to the deep member, the js slice to the breakdown member: generous budgets pass (exit 0)
   const ok = runAssert([manifest, "--max-forced", "1000000", "--max-slice", "js=1000000"]);
   assert.equal(ok.status, 0, `routed budgets should pass:\n${ok.stdout}`);
   assert.match(ok.stdout, /forced layout\/style\s+deep/, "the forced threshold is answered by the deep member");
   assert.match(ok.stdout, /slice js\s+breakdown/, "the js slice budget is answered by the breakdown member");
 
-  // A breakdown-only group has NO member measuring forced: a loud n/a FAIL, never a silent green.
+  // A breakdown-only group has NO member measuring forced: a loud n/a FAIL, never a silent green
   runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--breakdown", "--group", "baronly", "--iterations", "1", "--out", path.join(dir, "bar.json")]);
   const noMember = runAssert([path.join(dir, "baronly.group.json"), "--max-forced", "0"]);
   assert.equal(noMember.status, 1, "an axis no member measures fails loudly");
@@ -2118,7 +2116,7 @@ e2e("assert on a group routes each threshold to its member, with a loud n/a FAIL
 // F1: a stepped driver recording gates PER STEP (each step has its own windowed counts). A run-group
 // must gate the same way: routing --max-layouts to the deep member and reading its RUN SUMMARY (which
 // totals every step) fails a per-step budget the plain recording passes. So the group gates the routed
-// member's STEP spans, and the plain and group verdicts match, target for target.
+// member's STEP spans, and the plain and group verdicts match, target for target
 e2e("assert gates a driver run-group per step, matching the plain recording's verdict (F1)", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const html = path.join(repoRoot, "test", "fixtures", "driver-probe.html");
@@ -2140,7 +2138,7 @@ e2e("assert gates a driver run-group per step, matching the plain recording's ve
   assert.ok(existsSync(manifest), "the group manifest was written");
 
   // Per-step layout counts from the plain deep recording drive the budgets: sum-1 clears every step
-  // yet sits below the run total (a run-summary gate would fail it); maxStep-1 fails the busiest step.
+  // yet sits below the run total (a run-summary gate would fail it); maxStep-1 fails the busiest step
   const steps = JSON.parse(readFileSync(plain, "utf8")).spans.filter((span) => span.kind === "step");
   const counts = steps.map((span) => span.counts.layoutCount);
   assert.equal(counts.length, 2, "the flow has two steps");
@@ -2152,7 +2150,7 @@ e2e("assert gates a driver run-group per step, matching the plain recording's ve
   const layoutsAt = (target, budget) => runAssert([target, "--max-layouts", budget]);
 
   // Passing budget: per-step gating passes on BOTH; the group gated the deep member's STEPS (a
-  // run-summary gate would have failed this budget), naming the member in each row.
+  // run-summary gate would have failed this budget), naming the member in each row
   const plainPass = layoutsAt(plain, passBudget);
   const groupPass = layoutsAt(manifest, passBudget);
   assert.equal(plainPass.status, 0, `plain per-step passes sum-1:\n${plainPass.stdout}`);
@@ -2161,7 +2159,7 @@ e2e("assert gates a driver run-group per step, matching the plain recording's ve
   assert.match(groupPass.stdout, /first/, "the step label rides the row");
   assert.match(groupPass.stdout, /deep/, "and the member column names who answered");
 
-  // Failing budget: the busiest step exceeds it on BOTH, identical non-zero verdicts.
+  // Failing budget: the busiest step exceeds it on BOTH, identical non-zero verdicts
   const plainFail = layoutsAt(plain, failBudget);
   const groupFail = layoutsAt(manifest, failBudget);
   assert.equal(plainFail.status, 1, `plain fails the busiest step at maxStep-1:\n${plainFail.stdout}`);
@@ -2169,7 +2167,7 @@ e2e("assert gates a driver run-group per step, matching the plain recording's ve
   assert.match(groupFail.stdout, /step/, "the group failure is reported per step");
 });
 
-// diff over two groups fans out over members paired by capture mode (each pair diffed unchanged).
+// diff over two groups fans out over members paired by capture mode (each pair diffed unchanged)
 e2e("diff of two run-groups fans out over members paired by capture mode", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const probe = path.join(examples, "forces-layout.mjs");
@@ -2185,7 +2183,7 @@ e2e("diff of two run-groups fans out over members paired by capture mode", { tim
 // D1: a re-run of an identical, COMPLETE --members group must refuse BEFORE any browser launch or
 // write, so every member artifact AND the latest pointer stay byte-for-byte unchanged. The old order
 // (write, downgrade the pointer, THEN reject the duplicate) overwrote a good group and hid it from
-// `latest`; the preflight makes the refusal the first thing that happens.
+// `latest`; the preflight makes the refusal the first thing that happens
 function hashTree(root) {
   const hash = createHash("sha256");
   const walk = (dir) => {
@@ -2211,11 +2209,11 @@ e2e("record --members: a rerun of a complete group refuses (exit 1) and touches 
   const prevXdg = process.env.XDG_STATE_HOME;
   process.env.XDG_STATE_HOME = stateHome;
   try {
-    // Form the complete group (breakdown + deep), then snapshot every artifact and the pointer.
+    // Form the complete group (breakdown + deep), then snapshot every artifact and the pointer
     runCli(args);
     const before = `${hashTree(outDir)}|${hashTree(pointersDir)}`;
 
-    // Re-run the identical command: both members are duplicates, so the preflight refuses.
+    // Re-run the identical command: both members are duplicates, so the preflight refuses
     const rerun = spawnSync(process.execPath, [cli, ...args], {
       cwd: repoRoot,
       encoding: "utf8",
@@ -2238,7 +2236,7 @@ e2e("record --members: a rerun of a complete group refuses (exit 1) and touches 
 // D1 (pointer ordering, the post-run refusal path): a --group join refused by the formation check
 // (a workload/iterations mismatch, caught AFTER the member's own artifacts are written, not by the
 // pre-run preflight) must NOT downgrade `latest`. The pointer is written only after the join is
-// accepted, so `latest` stays on the prior, intact group.
+// accepted, so `latest` stays on the prior, intact group
 e2e("record --group: a refused formation join leaves latest on the prior group", { timeout: TIMEOUT_MS }, () => {
   const stateHome = mkdtempSync(path.join(tmpdir(), "wpd-state-"));
   const outDir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
@@ -2246,11 +2244,11 @@ e2e("record --group: a refused formation join leaves latest on the prior group",
   const prevXdg = process.env.XDG_STATE_HOME;
   process.env.XDG_STATE_HOME = stateHome;
   try {
-    // Form the group at iterations 2; `latest` now resolves to it.
+    // Form the group at iterations 2; `latest` now resolves to it
     runCli(["record", probe, "--bench", "--breakdown", "--group", "perf", "--iterations", "2", "--out", path.join(outDir, "a.json")]);
 
     // A second member at a DIFFERENT iterations count passes the preflight (not a duplicate) but fails
-    // formation after its own files are written.
+    // formation after its own files are written
     const mismatch = spawnSync(process.execPath, [cli, "record", probe, "--bench", "--deep", "--group", "perf", "--iterations", "3", "--out", path.join(outDir, "b.json")], {
       cwd: repoRoot,
       encoding: "utf8",
@@ -2260,7 +2258,7 @@ e2e("record --group: a refused formation join leaves latest on the prior group",
     assert.equal(mismatch.status, 1, `a mismatched join must exit 1:\n${mismatch.stdout}\n${mismatch.stderr}`);
     assert.match(`${mismatch.stdout}\n${mismatch.stderr}`, /iterations|Refusing to add/, "the refusal names the mismatch");
 
-    // `latest` still resolves to the intact group, not the orphan b.json.
+    // `latest` still resolves to the intact group, not the orphan b.json
     const spans = JSON.parse(runCli(["query", "spans", "latest", "--format", "json"]));
     assert.ok(spans.group, "latest still resolves to a group after the refused join");
     assert.equal(spans.group.name, "perf", "and it is the prior group, not downgraded to an orphan recording");
@@ -2271,7 +2269,7 @@ e2e("record --group: a refused formation join leaves latest on the prior group",
 });
 
 // D1 (plain --group path, distinct from --members): record()'s own per-member preflight refuses a
-// duplicate capture-mode member BEFORE writing that member's artifacts.
+// duplicate capture-mode member BEFORE writing that member's artifacts
 e2e("record --group: a duplicate capture-mode member refuses before writing anything", { timeout: TIMEOUT_MS }, () => {
   const stateHome = mkdtempSync(path.join(tmpdir(), "wpd-state-"));
   const outDir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
@@ -2282,7 +2280,7 @@ e2e("record --group: a duplicate capture-mode member refuses before writing anyt
     runCli(["record", probe, "--bench", "--breakdown", "--group", "perf", "--iterations", "1", "--out", path.join(outDir, "a.json")]);
     const before = hashTree(outDir);
 
-    // A second --breakdown into the same group is a duplicate (mode already present).
+    // A second --breakdown into the same group is a duplicate (mode already present)
     const dup = spawnSync(process.execPath, [cli, "record", probe, "--bench", "--breakdown", "--group", "perf", "--iterations", "1", "--out", path.join(outDir, "b.json")], {
       cwd: repoRoot,
       encoding: "utf8",
@@ -2299,14 +2297,14 @@ e2e("record --group: a duplicate capture-mode member refuses before writing anyt
 });
 
 // The browser-free B-01 node-lane cpu-diff stability test lives in test/unit/cli-wiring.test.mjs
-// (--target node imports the module in-process, no browser).
+// (--target node imports the module in-process, no browser)
 
 // Bot-wall detection: when wpd's OWN navigation (the built-in --url load flow) lands on a
 // bot-challenge interstitial, wpd refuses BEFORE measuring, saves a screenshot as proof, and points
 // at the skip flag. The fixture mimics Cloudflare's managed-challenge shape: a "Just a moment..."
 // title plus a full-viewport same-origin /cdn-cgi/challenge-platform/ iframe (served locally, so the
 // test needs no external network and never hangs). Detection reads the RENDERED interstitial, so a
-// live challenge origin is not required. Live sites are never in tests.
+// live challenge origin is not required. Live sites are never in tests
 const BOT_WALL_FIXTURE =
   "<!doctype html><meta charset=utf-8><title>Just a moment...</title>" +
   "<style>html,body{margin:0}iframe{width:100vw;height:100vh;border:0}</style>" +
@@ -2317,7 +2315,7 @@ e2e("record --url refuses a bot-wall interstitial with a screenshot, and --allow
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-botwall-"));
   try {
     // 1. Refusal: non-zero exit, evidence-listed error naming the signals + the skip flag, a
-    //    screenshot saved as proof, and NO recording written.
+    //    screenshot saved as proof, and NO recording written
     const out = path.join(dir, "botwall");
     const refusal = spawnSync(process.execPath, [cli, "record", "--url", server.url, "--out", out], {
       cwd: repoRoot,
@@ -2340,7 +2338,7 @@ e2e("record --url refuses a bot-wall interstitial with a screenshot, and --allow
     assert.ok(!existsSync(out), "no recording is written for a refused run");
 
     // 2. Override: --allow-bot-wall measures it anyway and stamps a loud note that the numbers
-    //    describe the challenge page.
+    //    describe the challenge page
     const allowed = path.join(dir, "allowed.json");
     const ok = spawnSync(process.execPath, [cli, "record", "--url", server.url, "--allow-bot-wall", "--out", allowed], {
       cwd: repoRoot,
@@ -2365,7 +2363,7 @@ e2e("record --url refuses a bot-wall interstitial with a screenshot, and --allow
 // The end-of-step flush drains EVERY observer's takeRecords() and, on a step that dispatched a trusted
 // interaction, waits (bounded) for its Event Timing entry. A 45ms handler crosses the 16ms spec floor,
 // so the step MUST carry a non-null INP: an entry queued-but-undispatched at the read would read INP
-// null and could pass a --max-inp gate on a real regression.
+// null and could pass a --max-inp gate on a real regression
 e2e("record (driver): a trusted interaction's INP survives the entry-delivery race", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const html = path.join(repoRoot, "test", "fixtures", "slow-handler.html");
@@ -2397,7 +2395,7 @@ e2e("record (driver): a trusted interaction's INP survives the entry-delivery ra
 // is in flight, destroying its context ("Execution context was destroyed", which isTransientNavError
 // does NOT match). Without the re-attach the record hard-fails; with it, the settle re-runs on the
 // reloaded document and the step completes as a hard navigation. The reload is scheduled from the
-// ACTION, not the page's own script, so the reloaded document does not schedule another (no loop).
+// ACTION, not the page's own script, so the reloaded document does not schedule another (no loop)
 e2e("record (driver): the default settle re-attaches when a hard navigation commits mid-settle", { timeout: TIMEOUT_MS }, () => {
   const server = startOnrampServer(
     "<!doctype html><meta charset=utf-8><title>reloader</title><h1 id=hero>reload me</h1>",
@@ -2415,7 +2413,7 @@ e2e("record (driver): the default settle re-attaches when a hard navigation comm
     );
     const out = path.join(dir, "reload");
     // runCli throws on a non-zero exit, so completing IS the assertion: the destroyed-context family is
-    // caught and the settle re-attaches. The hard classification confirms the reload actually committed.
+    // caught and the settle re-attaches. The hard classification confirms the reload actually committed
     runCli(["record", flow, "--url", server.url, "--iterations", "1", "--out", out]);
     const rec = JSON.parse(readFileSync(out, "utf8"));
     const step = rec.spans.find((span) => span.kind === "step" && span.label === "reload-mid-settle");

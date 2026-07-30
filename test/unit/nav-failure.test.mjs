@@ -4,7 +4,7 @@ import { builtinFlowFailureGuidance } from "../../dist/record/nav-failure.js";
 
 // The built-in --url load flow, failing on a SITE-BEHAVIOR class, names the class and points at the
 // driver-module escape hatch (no --nav-timeout / no site-level retry: a retry is a measurement
-// decision). A non-site-behavior error gets no guidance (a retry only makes those fail slower).
+// decision). A non-site-behavior error gets no guidance (a retry only makes those fail slower)
 
 test("navigation timeout gets the escape-hatch guidance", () => {
   const guidance = builtinFlowFailureGuidance(new Error("Navigation timeout of 30000 ms exceeded"));

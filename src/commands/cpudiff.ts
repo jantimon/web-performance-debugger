@@ -13,7 +13,7 @@ import {
 import { comparabilityMismatches, CPU_DIFF_BLOCKING_AXES } from "../model/compat.js";
 import { resolveVerbTarget } from "./group.js";
 
-/** Self-time deltas below this are treated as sampling noise. */
+/** Self-time deltas below this are treated as sampling noise */
 const NOISE_MS = 0.5;
 const TOP_FUNCTIONS = 25;
 
@@ -24,11 +24,11 @@ const TOP_FUNCTIONS = 25;
  * jitter their net delta wider than that floor purely from where the samples landed (measured jitter
  * 0.16-1.21ms on a near-zero probe). "Two identical runs must gate green" is the promise, so below
  * resolving power the gate reports the delta as not evaluable rather than fabricating a regression.
- * Derived from the interval so it scales if the interval changes. See docs/dev/cpu-profiling.md.
+ * Derived from the interval so it scales if the interval changes. See docs/dev/cpu-profiling.md
  */
 const RESOLVING_FLOOR_SAMPLES = 10;
 
-/** ms of JS self-time below which a model's sampler cannot resolve signal from quantization. */
+/** ms of JS self-time below which a model's sampler cannot resolve signal from quantization */
 function resolvingFloorMs(model: CpuModel): number {
   const intervalUs = model.sampleIntervalUs > 0 ? model.sampleIntervalUs : DEFAULT_CPU_INTERVAL_US;
   return usToMs(RESOLVING_FLOOR_SAMPLES * intervalUs);
@@ -40,7 +40,7 @@ function resolvingFloorMs(model: CpuModel): number {
  * `functionJoinKey` joins on the bare file, not the line, so a line shift does not split the join).
  * A plain `new Map(...)` would keep only the last, silently dropping the other's self-time from the
  * delta; summing makes the row reflect the whole line. The first entry is copied so the loaded model
- * is never mutated.
+ * is never mutated
  */
 function functionsByJoinKey(functions: CpuFunction[]): Map<string, CpuFunction> {
   const byKey = new Map<string, CpuFunction>();
@@ -61,10 +61,10 @@ interface DiffOpts extends StructuredOutOpts {
   failOnRegression?: boolean;
 }
 
-/** Compare two CPU models: per-package and per-function self-time deltas, noise-filtered. */
+/** Compare two CPU models: per-package and per-function self-time deltas, noise-filtered */
 export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOpts): Promise<void> {
   // A run-group routes to its CPU-bearing member (breakdown preferred), so two groups compare their
-  // CPU-bearing members; a plain recording/model resolves to itself.
+  // CPU-bearing members; a plain recording/model resolves to itself
   const [baseTarget, currentTarget] = await Promise.all([
     resolveVerbTarget(baseline, "cpu", "CPU sampling"),
     resolveVerbTarget(current, "cpu", "CPU sampling"),
@@ -77,7 +77,7 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
   // Comparability: a cpu-diff joins per-function self-time across two models as if they measured the
   // same JS on the same lane. Warn on every capture axis that differs (to stderr, so structured
   // output stays clean), and REFUSE to gate across an incompatible browser/runtime/workload, where a
-  // self-time "regression" would be an artifact of the config, not the code.
+  // self-time "regression" would be an artifact of the config, not the code
   const mismatches = comparabilityMismatches(baseModel.meta, currentModel.meta);
   if (mismatches.length) {
     console.error("\n⚠ WARNING: baseline and current were captured differently:");
@@ -87,7 +87,7 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
   }
   // Gate on BOTH the axis membership and its `blocksGating`: the workload axis can be non-blocking
   // when an ephemeral loopback port was folded (same workload, disclosed raw ports), and a folded
-  // port must not refuse a cpu-diff any more than it refuses a diff.
+  // port must not refuse a cpu-diff any more than it refuses a diff
   const blocking = mismatches.filter(
     (mismatch) => mismatch.blocksGating && CPU_DIFF_BLOCKING_AXES.has(mismatch.axis),
   );
@@ -143,7 +143,7 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
 
   // Gate on JS self-time (the JS-only headline), NOT the non-idle sampled total: a change that is
   // entirely gc/engine/native, or sampler-startup jitter that never lands on a JS frame, must not trip
-  // a JS-cost gate. This is the axis the per-function/package movers below sum to.
+  // a JS-cost gate. This is the axis the per-function/package movers below sum to
   const jsSelfDelta = currentModel.jsSelfMs - baseModel.jsSelfMs;
   const jsSelfPct = baseModel.jsSelfMs > 0 ? (jsSelfDelta / baseModel.jsSelfMs) * 100 : 0;
 
@@ -151,7 +151,7 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
   // jsSelfMs sit under RESOLVING_FLOOR_SAMPLES samples, the JS-self gate is not evaluable and does not
   // fire whatever the net delta, and the output discloses it. The two recordings can carry different
   // intervals (chrome default 200us vs the ~150us breakdown stream vs firefox ~1ms), so the larger
-  // implied floor wins. Other gated axes are unaffected.
+  // implied floor wins. Other gated axes are unaffected
   const floorMs = Math.max(resolvingFloorMs(baseModel), resolvingFloorMs(currentModel));
   const belowResolvingFloor = baseModel.jsSelfMs < floorMs && currentModel.jsSelfMs < floorMs;
   const resolvingFloorNote = belowResolvingFloor

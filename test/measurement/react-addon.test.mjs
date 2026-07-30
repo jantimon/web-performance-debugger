@@ -8,10 +8,10 @@ import { fileURLToPath } from "node:url";
 
 // The serial MEASUREMENT lane (browser-free --target node; records a real CPU profile, so it runs
 // alone). This exercises the `react` addon's node-lane server-phase rollup end-to-end through the
-// built CLI, plus the `--framework off` guarantee, on a self-contained fixture (no install, no browser).
+// built CLI, plus the `--framework off` guarantee, on a self-contained fixture (no install, no browser)
 // Browser-lane detection/commit-count and the react-dev TimeStamp classifier are covered at unit level
 // (test/unit/react-addon.test.mjs): a real React browser bundle cannot be produced without a network
-// install, which a test must never do.
+// install, which a test must never do
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const cli = path.join(repoRoot, "dist", "cli.js");
 const fixture = path.join(repoRoot, "test", "fixtures", "react-addon", "ssr.mjs");
@@ -50,7 +50,7 @@ test("react addon (node lane): server-phase self-time rolls onto the react-dom a
   assert.ok(react.phases.totalMs > 0, `phases.totalMs is non-zero, got ${react.phases.totalMs}`);
   const names = react.phases.anchors.map((anchor) => anchor.name);
   assert.ok(names.includes("renderWithHooks"), `anchors include renderWithHooks, got ${names}`);
-  // Detection is honestly absent on node (no page hook), never a fabricated zero.
+  // Detection is honestly absent on node (no page hook), never a fabricated zero
   assert.equal(react.detected, undefined, "node lane reports no detection (no page hook)");
 });
 

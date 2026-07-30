@@ -5,7 +5,7 @@ import { sampledForcedBlameEvents } from "../../dist/trace/sampled-blame.js";
 // The pure join behind chrome --breakdown sampled read-site forced-layout blame: it pairs a
 // main-thread layout/style flush window with an in-window CPU sample and emits a sampled blame event
 // carrying the sample's executing line (docs/dev/blame-semantics.md). Raw output only (pre-resolution):
-// runpass runs attachStacks + markForced on it afterward.
+// runpass runs attachStacks + markForced on it afterward
 
 const flush = (kind, ts, dur, extra = {}) => ({
   id: 0,
@@ -17,7 +17,7 @@ const flush = (kind, ts, dur, extra = {}) => ({
   ...extra,
 });
 
-/** A stream with one sample per (nodeId, ts, line) triple, and a url per node. */
+/** A stream with one sample per (nodeId, ts, line) triple, and a url per node */
 const streamOf = (rows, intervalUs, urls) => ({
   urlByNode: new Map(Object.entries(urls).map(([id, url]) => [Number(id), url])),
   samples: rows.map((row) => row.node),
@@ -47,7 +47,7 @@ test("sampledForcedBlameEvents: emits the leaf function's callFrame fallback (1-
   const events = [flush("layout", 1000, 500)];
   const stream = {
     ...streamOf([{ node: 1, ts: 1100, line: 42 }], 150, { 1: APP }),
-    // 0-based CDP callFrame position; the join shifts it +1 to the trace-stack convention.
+    // 0-based CDP callFrame position; the join shifts it +1 to the trace-stack convention
     frameByNode: new Map([[1, { line: 7, column: 28454 }]]),
   };
   const out = sampledForcedBlameEvents(events, stream, null, null);
@@ -77,7 +77,7 @@ test("sampledForcedBlameEvents: style flush emits a RecalcStyles event", () => {
 
 test("sampledForcedBlameEvents: no event when no sample lands in the flush window", () => {
   const events = [flush("layout", 5000, 100)];
-  // samples sit before and after the window, none inside [5000, 5100].
+  // samples sit before and after the window, none inside [5000, 5100]
   const stream = streamOf(
     [
       { node: 1, ts: 4000, line: 10 },
@@ -99,7 +99,7 @@ test("sampledForcedBlameEvents: a sub-interval flush is marked low-confidence", 
 
 test("sampledForcedBlameEvents: a tool-frame leaf is skipped, a later user sample is picked", () => {
   const events = [flush("layout", 1000, 500)];
-  // First in-window sample is a puppeteer/harness frame; the join keeps scanning to the user frame.
+  // First in-window sample is a puppeteer/harness frame; the join keeps scanning to the user frame
   const stream = streamOf(
     [
       { node: 2, ts: 1050, line: 99 }, // tool frame (debugger://) -> skipped
@@ -139,7 +139,7 @@ test("sampledForcedBlameEvents: a sample line <= 0 (no position) is skipped", ()
 
 // The boundary of the "no position" guard is line <= 0, so line 0 is NOT a position and yields no
 // blame -- 0 is the CDP no-line sentinel, not the first line. Pins the `<= 0` boundary (a `< 0`
-// off-by-one would blame a definition-less sample on line 0).
+// off-by-one would blame a definition-less sample on line 0)
 test("sampledForcedBlameEvents: a sample line of exactly 0 is skipped, never blamed as line 0", () => {
   const events = [flush("layout", 1000, 500)];
   const stream = streamOf([{ node: 1, ts: 1100, line: 0 }], 150, { 1: APP });
@@ -148,7 +148,7 @@ test("sampledForcedBlameEvents: a sample line of exactly 0 is skipped, never bla
 
 // The low-confidence flag is for a flush NARROWER than one sampler interval (docs/dev/blame-semantics.md):
 // `dur < intervalUs`. A flush EXACTLY one interval wide is not narrower, so it is confident. Pins the
-// strict `<` boundary (a `<=` would wrongly flag an interval-wide flush low-confidence).
+// strict `<` boundary (a `<=` would wrongly flag an interval-wide flush low-confidence)
 test("sampledForcedBlameEvents: a flush exactly one interval wide is confident (not low-confidence)", () => {
   const events = [flush("layout", 1000, 150)]; // dur == intervalUs 150, not narrower
   const stream = streamOf([{ node: 1, ts: 1100, line: 42 }], 150, { 1: APP });
@@ -181,7 +181,7 @@ test("sampledForcedBlameEvents: windows to the run start and the main thread", (
 // parallel). A main-thread flush must be blamed only on a sample that ran on THAT thread: a worker
 // sample that overlaps the flush window carries an unrelated source line and must be skipped, even when
 // it is the FIRST in-window sample. Without the per-sample thread guard the worker's line would be
-// attributed to the main-thread flush.
+// attributed to the main-thread flush
 test("sampledForcedBlameEvents: a same-timestamp worker sample is not attributed to a main-thread flush", () => {
   const events = [{ ...flush("layout", 1000, 500), pid: 1, tid: 1 }]; // main thread pid1/tid1
   const WORKER = "http://127.0.0.1:5000/worker.js";
@@ -190,7 +190,7 @@ test("sampledForcedBlameEvents: a same-timestamp worker sample is not attributed
       [1, APP],
       [2, WORKER],
     ]),
-    // The worker sample lands FIRST inside the window; the main-thread sample follows.
+    // The worker sample lands FIRST inside the window; the main-thread sample follows
     samples: [2, 1],
     timestampsUs: [1100, 1300],
     lines: [99, 42],
@@ -211,7 +211,7 @@ test("sampledForcedBlameEvents: a same-timestamp worker sample is not attributed
 });
 
 // A flush whose ONLY in-window sample ran on another thread yields no blame (the same cheap-read miss
-// as no sample at all), never a fabricated cross-thread line.
+// as no sample at all), never a fabricated cross-thread line
 test("sampledForcedBlameEvents: a flush with only an off-thread sample yields nothing", () => {
   const events = [{ ...flush("layout", 1000, 500), pid: 1, tid: 1 }];
   const stream = {

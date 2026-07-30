@@ -10,7 +10,7 @@ import type { EngineSoftNav, NavigationKind } from "./recording.js";
  *    or a route with no qualifying paint), which the engine is blind to by design.
  *  - "engine-only": the engine fired but the classifier read the step none/hard -- unexpected; both
  *    are recorded.
- *  - "none": neither read a soft navigation, so there is nothing to reconcile.
+ *  - "none": neither read a soft navigation, so there is nothing to reconcile
  */
 export type SoftNavAgreement = "agree" | "classifier-only" | "engine-only" | "none";
 
@@ -29,7 +29,7 @@ export interface SoftNavVerdict {
  * The two ask different questions -- one diffs the URL and the document clock, the other watches for a
  * trusted interaction that drove a same-document route to a contentful paint -- so a split is not an
  * error but two facts about two definitions. wpd states both and picks no winner. See
- * docs/dev/navigation-and-lcp.md.
+ * docs/dev/navigation-and-lcp.md
  */
 export function classifySoftNavAgreement(
   navigation: NavigationKind | undefined,

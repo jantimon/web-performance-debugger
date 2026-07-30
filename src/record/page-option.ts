@@ -2,7 +2,7 @@ import fs from "node:fs";
 
 /**
  * The resolved meaning of the host-page option (`--url <value>`): either a live URL to navigate to,
- * or a local HTML file to serve and load. The option discovers which one from the value.
+ * or a local HTML file to serve and load. The option discovers which one from the value
  */
 export type PageResolution =
   | { kind: "url"; url: string; schemeAssumed: boolean }
@@ -10,7 +10,7 @@ export type PageResolution =
 
 // A host-only value we accept as a URL with http:// assumed: localhost / loopback / an explicit
 // host:port, each with an optional port and an optional path. A bare word ("nope") is deliberately
-// NOT host-ish -- it must fall through to the dual file/URL error rather than become http://nope.
+// NOT host-ish -- it must fall through to the dual file/URL error rather than become http://nope
 const HOST_ISH =
   /^(?:(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?|[a-zA-Z0-9.-]+:\d+)(?:\/[^\s]*)?$/;
 
@@ -22,7 +22,7 @@ const HOST_ISH =
  *   4. else -> error naming BOTH interpretations tried.
  *
  * `fileExists` is injected so the pure detection order is unit-testable without touching the disk.
- * Requiring `://` for the scheme branch is what keeps `C:\path` / `C:/path` out of it.
+ * Requiring `://` for the scheme branch is what keeps `C:\path` / `C:/path` out of it
  */
 export function resolvePageOption(
   value: string,

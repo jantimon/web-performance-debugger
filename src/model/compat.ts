@@ -4,7 +4,7 @@ import { recordingRuntime } from "./meta.js";
 /**
  * One capture axis that differs between two recordings being compared. `blocksGating` axes make a
  * gate (`diff --fail-on-regression`, `cpu-diff --fail-on-regression`) meaningless: the delta reflects
- * the capture config, not a code change, so gating across one would fabricate a pass/fail.
+ * the capture config, not a code change, so gating across one would fabricate a pass/fail
  */
 import path from "node:path";
 
@@ -12,7 +12,7 @@ import path from "node:path";
  * A workload path stabilized for cross-run identity: resolved against the recording root, then
  * relative to it when it lives underneath (the same module recorded from a different cwd or via a
  * different spelling joins instead of spuriously refusing a gate). Paths outside the root stay
- * absolute; URLs never come through here.
+ * absolute; URLs never come through here
  */
 export function stableWorkloadPath(root: string, rawPath: string): string {
   const resolved = path.resolve(root, rawPath);
@@ -27,7 +27,7 @@ export interface CompatMismatch {
   blocksGating: boolean;
 }
 
-/** The one capture mode this recording captured. */
+/** The one capture mode this recording captured */
 function captureModeOf(meta: RecordingMeta): string {
   return meta.capture;
 }
@@ -35,7 +35,7 @@ function captureModeOf(meta: RecordingMeta): string {
 /** Headless frame cadence, which sets the wall/INP floor: "headed" | "new" (chrome built-in headless,
  * ~60Hz) | "shell" (an older ~120Hz recording). Differing values refuse a gate, so an old shell
  * recording never diffs against a new-headless one as if the floor were the same. See
- * docs/dev/frame-floor.md. */
+ * docs/dev/frame-floor.md */
 function headlessFlavour(meta: RecordingMeta): string {
   if (meta.headless === false) return "headed";
   return meta.headlessMode ?? "shell";
@@ -53,21 +53,21 @@ function throttleOf(meta: RecordingMeta): string {
  * carries no cross-run identity. Shared by `stableWorkloadHost` here and `unmappedOriginBucket`
  * (cpuprofile.ts) for the same reason: an ephemeral port must not split a cross-run identity or a
  * cpu-diff join. Trade: a deliberate service on a 32768-49151 port loses its port; accepted for the
- * same reason the range exists.
+ * same reason the range exists
  */
 export const EPHEMERAL_PORT_MIN = 32768;
 export const EPHEMERAL_PORT_MAX = 65535;
 
 /** A loopback host literal (127.0.0.0/8, ::1, localhost), by hostname or IP. The narrow set the
  * ephemeral-port fold applies to: a real service on :8080 vs :9090 can be a genuinely different
- * deployment, so only loopback hosts drop their port. */
+ * deployment, so only loopback hosts drop their port */
 function isLoopbackHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
   if (host === "localhost" || host.endsWith(".localhost")) return true;
   if (host === "::1") return true;
   // A full dotted-quad in 127.0.0.0/8, anchored so a DNS name like "127.0.x.example.com" (or any
   // host with a non-numeric label) is not read as loopback. Node normalizes short forms (127.1) to
-  // the quad before this sees them.
+  // the quad before this sees them
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
@@ -78,7 +78,7 @@ function isLoopbackHostname(hostname: string): boolean {
  * workload rather than refusing a gate that is actually fine. The token stays IN the canonical so a
  * reader who sees the host understands the port was folded. Non-loopback hosts and registered ports
  * pass through unchanged: those name a service the user runs on purpose. Non-URL hosts (a
- * root-relative HTML path) and null are returned as-is.
+ * root-relative HTML path) and null are returned as-is
  */
 function stableWorkloadHost(host: string | null): string | null {
   if (host == null) return host;
@@ -92,14 +92,14 @@ function stableWorkloadHost(host: string | null): string | null {
   const port = Number(parsed.port);
   if (port < EPHEMERAL_PORT_MIN || port > EPHEMERAL_PORT_MAX) return host;
   if (!isLoopbackHostname(parsed.hostname)) return host;
-  // URL.hostname already carries the brackets for an IPv6 literal (`[::1]`), so use it verbatim.
+  // URL.hostname already carries the brackets for an IPv6 literal (`[::1]`), so use it verbatim
   return `${parsed.protocol}//${parsed.hostname}:<ephemeral>${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 /** One line naming lane + host + module, so two flows differ here whenever any of the three does. A
  * real value is quoted (JSON.stringify), a null one is the bare word `null`, so a host page or module
  * literally named "null" cannot read as absent and collide with a blank-page run. `stableHost` folds
- * an ephemeral loopback port to `<ephemeral>` (identity comparison); the raw form is for disclosure. */
+ * an ephemeral loopback port to `<ephemeral>` (identity comparison); the raw form is for disclosure */
 function workloadCanonical(identity: WorkloadIdentity, stableHost = false): string {
   const rawHost = stableHost ? stableWorkloadHost(identity.host) : identity.host;
   const host = rawHost === null ? "null" : JSON.stringify(rawHost);
@@ -121,7 +121,7 @@ function workloadCanonical(identity: WorkloadIdentity, stableHost = false): stri
  * Host identity folds an ephemeral loopback port (stableWorkloadHost): the same page served on a
  * fresh `listen(0)` port each run is ONE workload. When that fold makes two otherwise-identical
  * workloads match, the raw hosts (with their differing ports) are surfaced as a NON-blocking note, so
- * a reader sees why the gate did not refuse rather than a silent pass.
+ * a reader sees why the gate did not refuse rather than a silent pass
  */
 function workloadMismatch(base: RecordingMeta, current: RecordingMeta): CompatMismatch {
   if (base.workload && current.workload) {
@@ -131,7 +131,7 @@ function workloadMismatch(base: RecordingMeta, current: RecordingMeta): CompatMi
       return { axis: "workload", base: baseStable, current: currentStable, blocksGating: true };
     // Same workload once the ephemeral loopback port is folded. Report the RAW hosts so a differing
     // port is visible (base !== current keeps the entry) but does not block; an exact match (raw
-    // hosts equal too) collapses to base === current and is filtered out upstream.
+    // hosts equal too) collapses to base === current and is filtered out upstream
     return {
       axis: "workload",
       base: workloadCanonical(base.workload, false),
@@ -155,7 +155,7 @@ function workloadMismatch(base: RecordingMeta, current: RecordingMeta): CompatMi
  * Two host-CPU indices more than 25% apart (a ratio of the larger to the smaller) read as
  * different-class hosts. The within-host measurement noise is ~2-3% [measured, docs/dev/cpu-profiling.md];
  * 25% clears that and normal thermal drift by a wide margin while a genuinely faster/slower machine
- * (M-series vs a shared CI runner differ several-fold) trips it.
+ * (M-series vs a shared CI runner differ several-fold) trips it
  */
 const HOST_CPU_RATIO_THRESHOLD = 0.25;
 
@@ -173,7 +173,7 @@ const HOST_CPU_RATIO_THRESHOLD = 0.25;
  * fully wpd's doing. The host index is an ENVIRONMENTAL observation with its own few-% noise: blocking
  * on it would refuse a legitimate same-machine gate whenever a laptop thermally drifts between two
  * runs. So it advises loudly (self-time is host-scaled here), the same tier as `sampler-interval`,
- * and leaves the gate to the caller.
+ * and leaves the gate to the caller
  */
 function hostCpuMismatch(base: RecordingMeta, current: RecordingMeta): CompatMismatch | null {
   const baseIndex = base.hostCpuIndex;
@@ -207,7 +207,7 @@ function hostCpuMismatch(base: RecordingMeta, current: RecordingMeta): CompatMis
  * never blocks -- like host-cpu, it is an environmental observation, not a config wpd applied. Fires
  * only on a MILESTONE difference (a patch/build bump within one milestone is not comparability
  * -relevant); when a milestone is missing on one side (older recording, unparsed format) it falls back
- * to a raw-string comparison so the reader still sees the two builds. Both-absent returns null (silent).
+ * to a raw-string comparison so the reader still sees the two builds. Both-absent returns null (silent)
  */
 function browserVersionMismatch(
   base: RecordingMeta,
@@ -238,7 +238,7 @@ function browserVersionMismatch(
       blocksGating: false,
     };
   }
-  // At least one side carries no parsed milestone: compare the raw strings so a difference is still surfaced.
+  // At least one side carries no parsed milestone: compare the raw strings so a difference is still surfaced
   if (baseVersion.raw === currentVersion.raw) return null;
   return {
     axis: "browser-version",
@@ -264,6 +264,7 @@ function browserVersionMismatch(
  *     5 makes every count 5x and manufactures "regressions".
  *   - headless flavour / throttle: the frame cadence and the artificial slowdown both shift the
  *     numbers the gate reads (wall/INP floor; slice and paint cadence).
+ *
  *   - warmup: the untimed runs before the timed window carry workload state (cache priming, JIT
  *     tiers, lazy CSS, memoization, first-render code). Moving a call across that boundary changes
  *     which counts land in the timed window, so a first-call layout can read as 0 -> 1 from a
@@ -279,7 +280,7 @@ function browserVersionMismatch(
  * exact counts. The host-CPU index (hostCpuMismatch) flags that the two ran on materially different
  * hardware, so a self-time delta is host-scaled. The browser version (browserVersionMismatch) flags an
  * engine-milestone difference, past which directional numbers can shift while exact counts survive.
- * All three are advisory: environmental observations, not a config wpd applied.
+ * All three are advisory: environmental observations, not a config wpd applied
  */
 export function comparabilityMismatches(
   base: RecordingMeta,
@@ -344,9 +345,9 @@ export function comparabilityMismatches(
       blocksGating: false,
     },
     // Beyond-threshold or one-side-unmeasured only; within-threshold (and both-absent) is silent, so
-    // it is a maybe-entry rather than a fixed axis the final base!==current filter would keep.
+    // it is a maybe-entry rather than a fixed axis the final base!==current filter would keep
     ...(hostCpu ? [hostCpu] : []),
-    // Milestone difference only (or one-side-unmeasured); same-milestone and both-absent are silent.
+    // Milestone difference only (or one-side-unmeasured); same-milestone and both-absent are silent
     ...(browserVersion ? [browserVersion] : []),
   ];
   return axes.filter((entry) => entry.base !== entry.current);
@@ -359,10 +360,11 @@ export function comparabilityMismatches(
  * throttling stretches the same self-time clock. `warmup` moves the workload's first-call state
  * (JIT tiers, caches, first-render code) into or out of the timed window, so an expensive first call
  * lands in the samples under `--warmup 0` and not under `--warmup 1` though the code is identical.
+ *
  * Each fabricates a self-time "regression" from pure config. A differing `variant` is a different
  * technique behind one module path, so a self-time delta across it is not a code change either.
  * Capture mode and headless move rendering counts and the wall/INP floor, not the profiler's own
- * self-time clock, so cpu-diff only WARNS on those. */
+ * self-time clock, so cpu-diff only WARNS on those */
 export const CPU_DIFF_BLOCKING_AXES = new Set([
   "browser",
   "runtime",

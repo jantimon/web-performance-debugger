@@ -8,7 +8,7 @@ export default function App() {
       <p data-testid="count" style={{ fontSize: "2rem" }}>
         {count}
       </p>
-      <button data-testid="inc" onClick={() => setCount((c) => c + 1)}>
+      <button data-testid="inc" onClick={() => setCount((count) => count + 1)}>
         +1
       </button>
     </div>

@@ -1,6 +1,6 @@
 // Shapes emitted by the `query`/`cpu-diff` verbs under `--format json|toon`. These are
 // derived views over the on-disk artifacts (model/recording.ts), kept here so the command
-// call sites can be annotated and the JSON contract cannot silently drift.
+// call sites can be annotated and the JSON contract cannot silently drift
 
 import type {
   CpuBreakdown,
@@ -36,7 +36,7 @@ import type { SoftNavVerdict } from "./soft-nav.js";
 import type { FrameFloor, WallMultipleFloor } from "./frame-floor.js";
 import type { AllocFunction, AllocGroupStat, AllocSamplingConfig } from "./alloc.js";
 
-/** Functions below the `--top` cutoff in an allocation overview, rolled up. */
+/** Functions below the `--top` cutoff in an allocation overview, rolled up */
 export interface AllocDropped {
   frames: number;
   selfBytes: number;
@@ -45,7 +45,7 @@ export interface AllocDropped {
 /**
  * `query alloc` output: the total sampled bytes headline, the by-package/by-file rollups, and the hot
  * (top-allocating) functions. The allocation analog of `CpuOverview`. `totalBytes` is directional
- * (~10-20%); the byPackage/byFile SHARES denominate on it and are the trustworthy signal (~5%).
+ * (~10-20%); the byPackage/byFile SHARES denominate on it and are the trustworthy signal (~5%)
  */
 export interface AllocOverview {
   /** path to the raw .heapprofile (absolute back-pointer) */
@@ -62,13 +62,13 @@ export interface AllocOverview {
   hints: string[];
 }
 
-/** Functions below the `--top` cutoff in a CPU overview, rolled up. */
+/** Functions below the `--top` cutoff in a CPU overview, rolled up */
 export interface CpuDropped {
   frames: number;
   selfMs: number;
 }
 
-/** `query cpu` output: JS self-time headline, by-package/by-file rollups, and the hot list. */
+/** `query cpu` output: JS self-time headline, by-package/by-file rollups, and the hot list */
 export interface CpuOverview {
   /** path to the raw .cpuprofile (absolute back-pointer) */
   profile: string;
@@ -90,14 +90,14 @@ export interface CpuOverview {
   hints: string[];
 }
 
-/** One caller or callee of a function, with the time on that edge. */
+/** One caller or callee of a function, with the time on that edge */
 export interface CpuEdgeRef {
   id: number;
   fn: string;
   ms: number;
 }
 
-/** `query frame <id>` output: the function plus its top callers and callees. */
+/** `query frame <id>` output: the function plus its top callers and callees */
 export interface FrameQueryResult {
   function: CpuFunction;
   callers: CpuEdgeRef[];
@@ -109,7 +109,7 @@ export interface FrameQueryResult {
  * (`source` + `line` + `column`) to match the human table's columns, so a consumer reads the fields
  * directly instead of parsing a `file:line:col` string (the old `at` shape). `source` is relative to
  * root for a local file, or the origin/url for a remote frame; `line`/`column` are absent when the
- * frame carried no position.
+ * frame carried no position
  */
 export interface BlameEntry {
   /** bare source path/url of the read site (no `:line:col`); relative to root for a local file */
@@ -126,13 +126,13 @@ export interface BlameEntry {
   /**
    * The DOM properties read at this line (Firefox read-site forced blame), e.g.
    * "HTMLElement.offsetWidth". Absent on lanes that do not name the forcing property (Chrome, which
-   * names the read line but not the accessor).
+   * names the read line but not the accessor)
    */
   properties?: string[];
   /**
    * The WRITE end of the forced-flush dual annotation: the mutation(s) that dirtied the DOM so this read forced
    * a synchronous flush. Chrome `--deep` only (its invalidation records name the write); absent on
-   * every other lane. `at` is the read (who paid), `dirtiedBy` the write (who caused).
+   * every other lane. `at` is the read (who paid), `dirtiedBy` the write (who caused)
    */
   dirtiedBy?: DirtiedByWrite[];
   /**
@@ -140,7 +140,7 @@ export interface BlameEntry {
    * (max-duration) flush at this source line, the same flush `scope` describes. Drill it with
    * `query get <eventId>` for the raw event (its stack + args); `query events` browses/filters the
    * rest. Absent on the chrome `--breakdown` sampled rows (their events are synthesized with id 0, not
-   * addressable), so absent means "no addressable raw event", never a fake id.
+   * addressable), so absent means "no addressable raw event", never a fake id
    */
   eventId?: number;
   /**
@@ -152,7 +152,7 @@ export interface BlameEntry {
    *     interval, so the read line is confident.
    *   - `true`: a chrome `--breakdown` sampled row every flush of which was NARROWER than one interval,
    *     so the read line can lag one statement or land on an adjacent line.
-   * See docs/dev/blame-semantics.md and model/capture-mode.ts `blameRowLowConfidence`.
+   * See docs/dev/blame-semantics.md and model/capture-mode.ts `blameRowLowConfidence`
    */
   lowConfidence?: boolean;
   /**
@@ -160,7 +160,7 @@ export interface BlameEntry {
    * (`layoutObjects` dirty/total) or recalculated (`elementsStyled`), and the container root of a
    * subtree-contained flush. A count-tier fact beside `durMs`, never a proxy for it. Chrome `--deep`
    * only (its stored flush events carry the trace `args`); absent on the sampled `--breakdown` and
-   * firefox rows, which have no flush args. See FlushScope.
+   * firefox rows, which have no flush args. See FlushScope
    */
   scope?: FlushScope;
 }
@@ -177,7 +177,7 @@ export interface BlameEntry {
  * `CpuModel.breakdown` (that bar carries no main-thread paint concept at all) AND on firefox stored
  * breakdowns, where paint is off-main-thread (a compositor side track, never summed into the wall).
  * So `paint` is null on every firefox span, stored bar or synthesized, and a consumer must treat it
- * as not-measured, never coerce it to 0.
+ * as not-measured, never coerce it to 0
  */
 export interface UnifiedSlices {
   /** scripting self-time, split by owning package; measured on every lane */
@@ -202,7 +202,7 @@ export interface UnifiedSlices {
  * object. The full facts -- commitCount, the node-lane server-phase rollup -- stay on the `query span`
  * drill (SpanAnatomy.addons). Present only where the stored span carried the addon's facts (detection
  * rides the run span); a version/build the lane did not observe is absent, never a fabricated value.
- * See docs/dev/react-attribution.md.
+ * See docs/dev/react-attribution.md
  */
 export interface SpanOverviewAddons {
   react?: {
@@ -218,7 +218,7 @@ export interface SpanOverviewAddons {
  * `Σ measured slices + idle` reconciles to the tiled window (up to on-disk rounding dust or a
  * `residualMs`), the same closure the stored breakdowns promise: on a run/measure span that window IS
  * `wallMs`; on a STEP span it is `windowMs` (the bar tiles iteration 0, while `wallMs` is the
- * median headline).
+ * median headline)
  */
 export interface SpanEntry {
   label: string;
@@ -231,14 +231,14 @@ export interface SpanEntry {
    * The human header labels that case `sampled window`. On a STEP span it is the MEDIAN of the step's
    * per-iteration walls, NOT the tiled window: the bar tiles iteration 0 (`windowMs`), so on an outlier
    * iteration 0 the two diverge and the median is the honest headline. On a `measure` span the wall IS
-   * the tiled window (a single occurrence, or the lower-median-by-wall pick of a repeated label).
+   * the tiled window (a single occurrence, or the lower-median-by-wall pick of a repeated label)
    */
   wallMs: number;
   /**
    * The bar's own trace-clock window (ms) the slices tile, present ONLY on a STEP span (where it can
    * differ from the page-clock median `wallMs`). The bar tiles iteration 0, so `Σ measured slices +
    * idle` reconciles to this, not to the median headline. Absent on run/measure spans, whose `wallMs`
-   * IS the tiled window.
+   * IS the tiled window
    */
   windowMs?: number;
   /**
@@ -251,7 +251,7 @@ export interface SpanEntry {
    * `performance.measure` label that recurred, reported as the lower-median-by-wall occurrence (a real
    * reconciling sample, not per-slice averages); `samples`/`wallMinMs`/`wallMaxMs` disclose the merge.
    * At `iterations === 1` with no repeated measures the labels coincide; the label is still the
-   * truthful one for the span.
+   * truthful one for the span
    */
   aggregation: SpanAggregation;
   /** timed iterations behind this recording (`meta.iterations`); 1 unless `--iterations` repeated run() */
@@ -262,23 +262,23 @@ export interface SpanEntry {
    * bar-less `SpanCountsEntry` carries and the `query span` drill exposes. A bar-carrying overview row
    * (chrome --breakdown, firefox measure) measured its layout/style/paint counts alongside its slices,
    * so the overview reports them here rather than making a consumer drill each span for a count the
-   * recording already holds. See SpanCounts and model/measured.ts.
+   * recording already holds. See SpanCounts and model/measured.ts
    */
   counts: SpanCounts;
   slices: UnifiedSlices;
-  /** off-thread compositor frame side track (chrome --breakdown only; absent otherwise). Display-only. */
+  /** off-thread compositor frame side track (chrome --breakdown only; absent otherwise). Display-only */
   frames?: FrameSideTrack;
   /** carried through when the source breakdown did not fully close (lost events/clock skew) */
   residualMs?: number;
   /**
    * Real occurrences merged into this bar when `aggregation` is `"median"` (a repeated
    * `performance.measure` label). Absent for run/step spans and single-occurrence measures. Counts
-   * real occurrences, not lookups: the bar IS one of these samples.
+   * real occurrences, not lookups: the bar IS one of these samples
    */
   samples?: number;
-  /** wall (ms) of the shortest merged occurrence; disclosed with `samples`. `wallMinMs <= wallMs <= wallMaxMs`. */
+  /** wall (ms) of the shortest merged occurrence; disclosed with `samples`. `wallMinMs <= wallMs <= wallMaxMs` */
   wallMinMs?: number;
-  /** wall (ms) of the longest merged occurrence; disclosed with `samples`. */
+  /** wall (ms) of the longest merged occurrence; disclosed with `samples` */
   wallMaxMs?: number;
   /** a driver step's navigation classification (none/hard/soft/soft-hash); absent on run/measure spans */
   navigation?: NavigationKind;
@@ -290,7 +290,7 @@ export interface SpanEntry {
    * Layout/style scope distribution across this span window's flushes (chrome --breakdown; firefox
    * style only). A count-tier distribution beside the slice ms, never a proxy for it. Absent when the
    * capture stored none. The `query spans` HUMAN table omits it to stay legible; drill with `query
-   * span` for the block. See SpanScope.
+   * span` for the block. See SpanScope
    */
   scope?: SpanScope;
   /**
@@ -300,14 +300,14 @@ export interface SpanEntry {
    * floors by its BAR (`work-signal`: sub-frame real work in an idle-dominated window, since its wall
    * carries input dispatch off any exact multiple). Absent when the span is real work, unmeasured, or
    * the lane declares no floor. The same tag `query span` carries in its detail (SpanAnatomy.frameFloor),
-   * surfaced on the overview so a consumer reads flooring off the row instead of recomputing it.
+   * surfaced on the overview so a consumer reads flooring off the row instead of recomputing it
    */
   frameFloor?: FrameFloor;
   /**
    * Compact framework-addon presence (React version + build) lifted onto the overview row, so a bulk
    * `query spans` consumer reads framework identity without drilling each span. Present only where the
    * stored span carried addon facts (detection rides the run span); absent otherwise. The full
-   * per-span facts (commitCount, server phases) stay on SpanAnatomy.addons. See SpanOverviewAddons.
+   * per-span facts (commitCount, server phases) stay on SpanAnatomy.addons. See SpanOverviewAddons
    */
   addons?: SpanOverviewAddons;
 }
@@ -317,7 +317,7 @@ export interface SpanEntry {
  * that navigated): its wall, aggregation and windowed Measured counts, with no
  * slices. The `slices`-less counterpart to `SpanEntry`, kept honest by the Measured contract -- a
  * count the capture did not take is `null`, never a fabricated 0. `--deep` carries exact counts here;
- * the sampling capture modes carry only the wall + INP.
+ * the sampling capture modes carry only the wall + INP
  */
 export interface SpanCountsEntry {
   label: string;
@@ -340,11 +340,11 @@ export interface SpanCountsEntry {
    * The one-frame cadence floor this span's `wallMs` pins to, present only when frame-dominated (see
    * SpanEntry.frameFloor). A bar-less row carries no bar and no idle split, so it is always a
    * `wall-multiple` floor and only a sub-frame (single-frame) wall is tagged here; a multi-frame wall
-   * needs the wait signal a bar would carry.
+   * needs the wait signal a bar would carry
    */
   frameFloor?: WallMultipleFloor;
   /** Compact framework-addon presence (React version + build); see SpanEntry.addons. Present only
-   * where the stored span carried addon facts (detection rides the run span), absent otherwise. */
+   * where the stored span carried addon facts (detection rides the run span), absent otherwise */
   addons?: SpanOverviewAddons;
 }
 
@@ -353,7 +353,7 @@ export interface SpanCountsEntry {
  * says where the spans came from -- `breakdowns` (the recording's stored per-span bars: chrome
  * --breakdown, or firefox with user measures) or `cpu-model` (a single `run` span synthesized from
  * `CpuModel.breakdown` when no per-span bars were stored: firefox/node without measures, default-mode
- * chrome). The `run` span is always present when any bar exists, so this never comes back empty.
+ * chrome). The `run` span is always present when any bar exists, so this never comes back empty
  */
 export interface SpansResult {
   /** the --target axis this recording was produced on: chrome | firefox | node */
@@ -365,15 +365,15 @@ export interface SpansResult {
    * capture (whose only bar is the run's CpuModel bar), or a step that navigated. They
    * carry wall/INP/aggregation + Measured counts, slices not-measured, so the overview lists EVERY
    * span (the documented run + steps + measures) even when only the run has a bar, rather than
-   * dropping the steps. Absent when every span already appears in `spans`.
+   * dropping the steps. Absent when every span already appears in `spans`
    */
   barlessSpans?: SpanCountsEntry[];
   /** how many spans the `query spans` flood filter (--min-wall/--filter) hid; 0 when no filter was
    * passed. The `query spans` emitter always sets it (0 included), so a filtered result is never a
-   * silent cut; optional only because the intermediate builder result omits it before emit. */
+   * silent cut; optional only because the intermediate builder result omits it before emit */
   hidden?: number;
   /** the flood filter that produced `spans` (`{}` when none was passed). Set by the `query spans`
-   * emitter alongside `hidden`; optional for the same reason. */
+   * emitter alongside `hidden`; optional for the same reason */
   filter?: { minWallMs?: number; labelIncludes?: string };
 }
 
@@ -381,7 +381,7 @@ export interface SpansResult {
  * The source block `query spans` adds when the target is a RUN-GROUP: which member the overview
  * bar came from, and which members answer the counts/blame axes a single bar cannot. Its presence is
  * what distinguishes a `GroupSpansResult` from a plain `SpansResult` -- a consumer reads the bar as one
- * member's real sample, never as the whole group's, and knows where to drill for the rest.
+ * member's real sample, never as the whole group's, and knows where to drill for the rest
  */
 export interface GroupSpansProvenance {
   /** the run-group's name (its manifest identity) */
@@ -396,7 +396,7 @@ export interface GroupSpansProvenance {
   notes: string[];
 }
 
-/** `query spans` on a run-group: a `SpansResult` plus the `group` source block. */
+/** `query spans` on a run-group: a `SpansResult` plus the `group` source block */
 export interface GroupSpansResult extends SpansResult {
   group: GroupSpansProvenance;
 }
@@ -404,7 +404,7 @@ export interface GroupSpansResult extends SpansResult {
 /**
  * The `query spans` output shape: a plain recording yields a `SpansResult`; a run-group yields a
  * `GroupSpansResult`. The presence of the `group` field discriminates the two, so a JSON/TOON consumer
- * branches on it rather than guessing.
+ * branches on it rather than guessing
  */
 export type SpansOutput = SpansResult | GroupSpansResult;
 
@@ -412,7 +412,7 @@ export type SpansOutput = SpansResult | GroupSpansResult;
  * One forced (synchronous) layout/style read-site within a span, with the write(s) that dirtied it.
  * The read location is structured (`source` + `line` + `column`), the same shape `query blame
  * --forced` emits (BlameEntry), so a consumer reads the fields directly instead of parsing a
- * `file:line:col` string.
+ * `file:line:col` string
  */
 export interface SpanForced {
   /** bare source path/url of the geometry read that forced the flush (no `:line:col`); relative to root for a local file */
@@ -424,11 +424,11 @@ export interface SpanForced {
   count: number;
   durMs: number;
   /** id of the widest flush at this line for the `query get <eventId>` drill; absent on the chrome
-   * --breakdown sampled rows (synthesized id 0, not addressable). See BlameEntry.eventId. */
+   * --breakdown sampled rows (synthesized id 0, not addressable). See BlameEntry.eventId */
   eventId?: number;
   /** the mutation(s) that dirtied the DOM so this read forced a flush (chrome --deep only) */
   dirtiedBy?: DirtiedByWrite[];
-  /** layout/style scope of the widest flush at this read site (chrome --deep only). See FlushScope. */
+  /** layout/style scope of the widest flush at this read site (chrome --deep only). See FlushScope */
   scope?: FlushScope;
 }
 
@@ -446,7 +446,7 @@ export interface SpanForced {
  *
  * `suppressed` is true when the span had fewer than the pooled-sample floor: `functions` is omitted
  * (raise --iterations) rather than a fabricated top-N. A span whose CPU windowing is not
- * reconstructable at its capture-mode/kind reports `hot: null` instead of this shape.
+ * reconstructable at its capture-mode/kind reports `hot: null` instead of this shape
  */
 export interface SpanHotFunctions {
   scope: "run-window" | "step-window" | "measure-pooled";
@@ -456,7 +456,7 @@ export interface SpanHotFunctions {
   pooledSamples: number;
   /** occurrences pooled: N for a repeated measure, 1 for run/step */
   occurrences: number;
-  /** true when no ranking was emitted: `functions` omitted. `suppressionReason` says why. */
+  /** true when no ranking was emitted: `functions` omitted. `suppressionReason` says why */
   suppressed?: boolean;
   /**
    * Why a suppressed tally carries no `functions`, so the reader gets the right next step instead of a
@@ -467,12 +467,12 @@ export interface SpanHotFunctions {
    *    missed it. In driver mode the V8 CPU profiler resets on each cross-document navigation, so a
    *    window that ran before the run's last navigation carries no samples; raising --iterations
    *    cannot recover them.
-   * Present only when `suppressed`.
+   * Present only when `suppressed`
    */
   suppressionReason?: "below-floor" | "no-js" | "not-covered";
   /** top functions by self time, length bounded by `--top`; absent when suppressed. Stored
    * per-span rows carry span-local selfMs/selfPct and no totalMs (a run-wide total beside a
-   * span-local self would read as the span's own); the run-window list keeps CpuFunction whole. */
+   * span-local self would read as the span's own); the run-window list keeps CpuFunction whole */
   functions?: (Omit<CpuFunction, "totalMs"> & { totalMs?: number })[];
 }
 
@@ -484,7 +484,7 @@ export interface SpanHotFunctions {
  * rollup, chrome --deep only. `hot` is the span-windowed hot functions, or null when the CPU
  * windowing is not reconstructable at this capture-mode/kind (see SpanHotFunctions). Span identity is
  * kind+label; a bare label matching more than one kind is a collision the caller resolves, never a
- * silent join.
+ * silent join
  */
 export interface SpanAnatomy {
   /** absolute back-pointer to the recording this anatomy was read from */
@@ -497,7 +497,7 @@ export interface SpanAnatomy {
   /** timed iterations behind this recording (`meta.iterations`) */
   iterations: number;
   /** headline wall (ms). On a STEP span the MEDIAN of its per-iteration walls, not the tiled window
-   * (that is `windowMs`); on run/measure spans the tiled window itself. See SpanEntry.wallMs. */
+   * (that is `windowMs`); on run/measure spans the tiled window itself. See SpanEntry.wallMs */
   wallMs: number | null;
   /**
    * The frame-cadence floor this span sits on (a `FrameFloor`, discriminated by `basis`), set only when
@@ -505,16 +505,16 @@ export interface SpanAnatomy {
    * than parse the human note. A run/measure span floors by its wall VALUE (`wall-multiple`); a driver
    * STEP by its BAR (`work-signal`: sub-frame real work in an idle-dominated window, its wall carrying
    * input dispatch). Absent when the span is real work or the lane declares no floor (headed). The
-   * human report surfaces the faster sample / js slice beside it. See docs/dev/frame-floor.md.
+   * human report surfaces the faster sample / js slice beside it. See docs/dev/frame-floor.md
    */
   frameFloor?: FrameFloor;
   /** the frame-cadence floor `inpMs` pins to (always `wall-multiple`: INP carries no input-dispatch
    * offset); a floored INP is the frame boundary, not the interaction's own cost (the sub-frame cost
    * is `interaction.processingMs`). Absent when INP is real work, unmeasured, or the lane declares no
-   * floor. See SpanAnatomy.frameFloor. */
+   * floor. See SpanAnatomy.frameFloor */
   inpFrameFloor?: WallMultipleFloor;
   /** the bar's own iteration-0 window (ms) the slices tile, present only on a STEP span (its bar tiles
-   * iteration 0, which can diverge from the page-clock median `wallMs`). See SpanEntry.windowMs. */
+   * iteration 0, which can diverge from the page-clock median `wallMs`). See SpanEntry.windowMs */
   windowMs?: number;
   /** real occurrences merged into this span when `aggregation` is `"median"` (a repeated measure) */
   samples?: number;
@@ -524,10 +524,10 @@ export interface SpanAnatomy {
   slices: UnifiedSlices | null;
   /** carried through when the source breakdown did not fully close (lost events/clock skew) */
   residualMs?: number;
-  /** off-thread compositor frame side track (chrome --breakdown only). Display-only. */
+  /** off-thread compositor frame side track (chrome --breakdown only). Display-only */
   frames?: FrameSideTrack;
   /** per-span layout/style scope distribution (chrome --breakdown; firefox style only); absent when
-   * the capture stored none. A count-tier distribution beside the slice ms. See SpanScope. */
+   * the capture stored none. A count-tier distribution beside the slice ms. See SpanScope */
   scope?: SpanScope;
   /** exact rendering counts windowed to this span's representative occurrence; Measured throughout */
   counts: SpanCounts;
@@ -536,7 +536,7 @@ export interface SpanAnatomy {
   /** in-page CWV split of `inpMs` (a driver step); absent when no interaction was observed */
   interaction?: InteractionTiming | null;
   /** Long Animation Frames observed in a driver step's window (Chrome only); absent otherwise. Names
-   * the scripts that made a frame slow, so a step attributes to source even with no CPU sampler. */
+   * the scripts that made a frame slow, so a step attributes to source even with no CPU sampler */
   loaf?: StepLoaf;
   /** a driver step's navigation classification (none/hard/soft/soft-hash); absent on run/measure spans */
   navigation?: NavigationKind;
@@ -546,15 +546,15 @@ export interface SpanAnatomy {
   afterUrl?: string;
   /** Chrome's own soft-navigation verdict (default-on Chrome 151), read opportunistically beside
    * `navigation`; absent when the engine fired no entry or the browser has no support. `query span`
-   * reconciles it with `navigation` (see model/soft-nav.ts). */
+   * reconciles it with `navigation` (see model/soft-nav.ts) */
   engineSoftNav?: EngineSoftNav;
   /** How the url+timeOrigin `navigation` classifier and Chrome's `engineSoftNav` heuristic relate
    * (agree / classifier-only / engine-only) with a non-alarmist note. The same reconciliation the human
    * report prints, exposed to `--format json`; absent when there is nothing to reconcile ("none"). See
-   * model/soft-nav.ts. */
+   * model/soft-nav.ts */
   softNavAgreement?: SoftNavVerdict;
   /** route-transition metrics (LCP-equivalent / CLS / INP on the route clock) for a step the engine
-   * soft-navigated (Chrome 151+), keyed by the soft nav's navigationId; absent otherwise. See SoftNavRoute. */
+   * soft-navigated (Chrome 151+), keyed by the soft nav's navigationId; absent otherwise. See SoftNavRoute */
   softNav?: SoftNavRoute;
   /** boot LCP for a step that started a fresh document (a hard-navigation step); absent otherwise */
   lcp?: StepLcp;
@@ -573,14 +573,14 @@ export interface SpanAnatomy {
    * Framework-addon facts for this span, keyed by addon name (`react`, `react-dev`). Present only when
    * a framework addon was active (`--framework auto`) and its factual signals were present for this
    * span; absent otherwise. Additive: a consumer that ignores it reads the anatomy exactly as before.
-   * See docs/dev/react-attribution.md.
+   * See docs/dev/react-attribution.md
    */
   addons?: SpanAddons;
   hints: string[];
 }
 
 /** One member's own numbers for a stitched span, tagged by its capture mode. Walls are shown PER
- * member and never combined -- a group holds N captures of one workload, not one measurement. */
+ * member and never combined -- a group holds N captures of one workload, not one measurement */
 export interface GroupSpanMember {
   mode: CaptureMode;
   variant?: string;
@@ -589,7 +589,7 @@ export interface GroupSpanMember {
   iterations: number;
 }
 
-/** Which member each stitched panel was drawn from, so every number carries its source and trust tier. */
+/** Which member each stitched panel was drawn from, so every number carries its source and trust tier */
 export interface GroupSpanSources {
   slices?: string;
   counts?: string;
@@ -604,7 +604,7 @@ export interface GroupSpanSources {
  * exact counts + forced read-sites + thrash from the deep member -- with every panel tagged in
  * `sources` and each member's own wall listed in `members` (never combined). A group NEVER averages:
  * the bar is ONE member's real reconciling sample, the counts ONE member's exact figures. A panel no
- * member measured is null/absent (a loud gap), never fabricated.
+ * member measured is null/absent (a loud gap), never fabricated
  */
 export interface GroupSpanStitch {
   group: string;
@@ -636,7 +636,7 @@ export interface GroupSpanStitch {
    * absent when there is nothing to reconcile */
   softNavAgreement?: SoftNavVerdict;
   /** route-transition metrics for a soft-navigating step (from whichever member observed them); absent
-   * when no engine soft-nav fired. See SoftNavRoute. */
+   * when no engine soft-nav fired. See SoftNavRoute */
   softNav?: SoftNavRoute;
   /** boot LCP for a hard-navigation step (identical across members); absent otherwise */
   lcp?: StepLcp;
@@ -657,7 +657,7 @@ export interface GroupSpanStitch {
   hints: string[];
 }
 
-/** Per-package self-time delta in a CPU diff. */
+/** Per-package self-time delta in a CPU diff */
 export interface CpuPackageDelta {
   package: string;
   baseMs: number;
@@ -665,7 +665,7 @@ export interface CpuPackageDelta {
   delta: number;
 }
 
-/** Per-function self-time delta in a CPU diff. */
+/** Per-function self-time delta in a CPU diff */
 export interface CpuFunctionDelta {
   fn: string;
   source?: string;
@@ -679,7 +679,7 @@ export interface CpuFunctionDelta {
 /**
  * `cpu-diff` output: net JS-self-time delta plus per-package and per-function movers. The gated axis is
  * `netJsSelfMs` (the JS-only headline the per-function/package rows sum to), so a change that is
- * entirely gc/engine/native or sampler noise on the non-idle total cannot trip the gate.
+ * entirely gc/engine/native or sampler noise on the non-idle total cannot trip the gate
  */
 export interface CpuDiffResult {
   baseline: { file: string; jsSelfMs: number };
@@ -694,7 +694,7 @@ export interface CpuDiffResult {
   /**
    * Disclosures that qualify the gate verdict; empty in the normal case. Carries the resolving-floor
    * note when BOTH sides' jsSelfMs sit below the sampler's resolving power, where the JS-self net gate
-   * is quantization-bound and does not fire.
+   * is quantization-bound and does not fire
    */
   notes: string[];
 }
@@ -702,7 +702,7 @@ export interface CpuDiffResult {
 /**
  * The run-level count/timing fields `diff` compares, one per DiffMetricRow. These are the same field
  * names the run span and meta carry (`layoutCount`, `wallMs`, `jsSelfMs`), so a consumer joins a row
- * to a field by `key` without parsing the human label.
+ * to a field by `key` without parsing the human label
  */
 export type DiffMetricKey =
   | "layoutCount"
@@ -721,7 +721,7 @@ export type DiffMetricKey =
  * Measured contract's `null` when a side did not measure the field (never a fabricated 0), and `delta`
  * is `null` whenever either side is null. `gated` marks a field that participates in
  * `--fail-on-regression` (the exact counts); `regression` is true only for a gated field whose delta
- * worsened, so the advisory rows (INP/wall/JS self) always report `regression: false`.
+ * worsened, so the advisory rows (INP/wall/JS self) always report `regression: false`
  */
 export interface DiffMetricRow {
   key: DiffMetricKey;
@@ -737,7 +737,7 @@ export interface DiffMetricRow {
 
 /**
  * One capture axis that differs between the two diffed recordings. A `blocksGating` axis refuses a
- * `--fail-on-regression` gate, since a delta on it reflects the capture change, not the code.
+ * `--fail-on-regression` gate, since a delta on it reflects the capture change, not the code
  */
 export interface DiffComparabilityAxis {
   axis: string;
@@ -753,7 +753,7 @@ export interface DiffComparabilityAxis {
  * `gateRefusal`, when present, is why a requested `--fail-on-regression` gate could not be evaluated
  * (an incompatible capture, or known-incomplete counts): the gate then exits 1 on the refusal, not on
  * a fabricated verdict. `failed` is the process verdict this view corresponds to (exit 1), so a
- * consumer reads it off the view rather than the exit code. The human report serializes the same data.
+ * consumer reads it off the view rather than the exit code. The human report serializes the same data
  */
 export interface DiffView {
   baseline: string;
@@ -769,7 +769,7 @@ export interface DiffView {
 
 /**
  * One member pairing in a `diff` of two run-groups: the per-mode `DiffView` when both groups carry the
- * member, else the side it appeared on (not compared).
+ * member, else the side it appeared on (not compared)
  */
 export interface GroupDiffMember {
   /** the member's capture-mode + variant label */
@@ -784,7 +784,7 @@ export interface GroupDiffMember {
  * `diff` output on two RUN-GROUPS: members paired by capture mode + variant, each pair diffed with the
  * same per-recording `DiffView`. `refusal`, when present, is why the whole diff was declined (the two
  * groups measured different workloads). `failed` is the process verdict (exit 1). The presence of
- * `members` (vs a plain `DiffView`) discriminates the two shapes.
+ * `members` (vs a plain `DiffView`) discriminates the two shapes
  */
 export interface GroupDiffView {
   /** the baseline group's name */
@@ -800,6 +800,6 @@ export interface GroupDiffView {
 /**
  * The `diff` output shape: a plain-recording diff yields a `DiffView`; a run-group diff yields a
  * `GroupDiffView`. The presence of the `members` field discriminates the two, so a JSON/TOON consumer
- * branches on it rather than guessing.
+ * branches on it rather than guessing
  */
 export type DiffOutput = DiffView | GroupDiffView;
