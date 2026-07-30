@@ -28,7 +28,19 @@ import type { BlameSemantic } from "../model/recording.js";
 import type { CaptureCapabilities } from "../metrics/summarize.js";
 import type { RecordOptions } from "./options.js";
 
-export type CaptureMode = "default" | "breakdown" | "deep" | "gecko" | "gecko-deep";
+// Every capture-mode name a schema-5 recording stamps into `meta.capture`. The first five are the
+// browser passes a `CaptureConfig` names; `node-cpu`/`node-alloc` are the in-process node lanes
+// (runtime/node.ts, runtime/node-alloc.ts), which build a recording directly without a CaptureConfig.
+// There is no "precise-wall" arm: that flag is retired and the schema epoch gate rejects any
+// pre-5 recording that could have carried it.
+export type CaptureMode =
+  | "default"
+  | "breakdown"
+  | "deep"
+  | "gecko"
+  | "gecko-deep"
+  | "node-cpu"
+  | "node-alloc";
 
 /** The single capture that runs for an invocation. `categories: null` means no DevTools trace. */
 export interface CaptureConfig {

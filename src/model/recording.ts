@@ -7,8 +7,8 @@ import type { SpanAddons } from "./addon.js";
 
 // The model is split across focused domain files by domain; this module keeps the Recording/Span core
 // and RE-EXPORTS the moved types every reader consumes through it, so `../model/recording.js` stays the
-// one import path. (WorkloadLane has no consumer through the barrel, so it is not re-exported; import it
-// from ./meta.js if one ever needs it.)
+// one import path.
+export type { Measured } from "./measured.js";
 export type { EventKind, StackFrame, NormalizedEvent, InvalidationRecord } from "./events.js";
 export type {
   CpuFunction,
@@ -32,7 +32,7 @@ export type {
   FirefoxDirtiedByReport,
 } from "./attribution.js";
 export type { SourceMapFailure, SourceMapDiagnostics } from "./sourcemap-meta.js";
-export type { WorkloadIdentity, RecordingMeta } from "./meta.js";
+export type { WorkloadIdentity, WorkloadLane, RecordingMeta, TargetLane } from "./meta.js";
 export type { EngineVersion } from "./engine-version.js";
 export type { FrameworkMode, SpanAddons } from "./addon.js";
 

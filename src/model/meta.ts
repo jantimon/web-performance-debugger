@@ -2,6 +2,15 @@ import type { BlameSemantic } from "./attribution.js";
 import type { SourceMapDiagnostics } from "./sourcemap-meta.js";
 import type { Measured } from "./measured.js";
 import type { EngineVersion } from "./engine-version.js";
+import type { CaptureMode } from "../record/capture.js";
+
+/**
+ * The `--target` engine lane a recording was produced on, the axis the query views tag their spans
+ * with. Derived from `meta.browser` + the workload lane (model/spans.ts `recordingLane`), NOT from
+ * `meta.target` (which holds the recorded module/url/html path, a display string). Distinct from
+ * `WorkloadLane`: two chrome lanes (driver/bench/builtin-load) share the one "chrome" target.
+ */
+export type TargetLane = "chrome" | "firefox" | "node";
 
 /**
  * Which way the run executed the flow:
@@ -28,6 +37,11 @@ export interface WorkloadIdentity {
   module: string | null;
 }
 
+/**
+ * A recording's meta. It carries NO `kind` discriminant: the sibling run-group manifest (`GroupMeta`)
+ * stamps `kind: "run-group"` to mark itself, so a reader tells the two artifact kinds apart at the same
+ * schema epoch by the presence of that field (absent here = a plain recording).
+ */
 export interface RecordingMeta {
   tool: string;
   /** the package version that wrote this artifact (e.g. "0.1.0") */
@@ -80,7 +94,7 @@ export interface RecordingMeta {
    * not measured). Every invocation is exactly one pass (one browser launch, one run of the flow), so
    * this is a scalar naming the capture mode, not a multi-pass plan.
    */
-  capture: string;
+  capture: CaptureMode;
   /** JS self-time from the sibling CpuModel (`CpuModel.jsSelfMs`), cached here so a reader gets the
    * headline without opening the model; `Measured`, null/absent on `--deep` (sampler off, no model) and
    * `--alloc`. NOT the non-idle sampled total: gc/engine/native are excluded. */
