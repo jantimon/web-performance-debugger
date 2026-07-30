@@ -19,8 +19,8 @@
     width="900">
 </p>
 
-`wpd` is a precision measurement instrument for professionals and the orchestrators working for them:
-an agent, a CI script, or the person at the terminal. It drives real Chrome or Firefox (or pure Node)
+`wpd` measures where a page's time actually goes and names the source line responsible; every number
+carries its provenance. It drives real Chrome or Firefox (or pure Node)
 and attributes **layout, paint, style, and invalidation work — plus CPU self-time — back to the source
 line that caused it**. It **finds and
 investigates**; it does not grade, rank, or recommend. So it is not Lighthouse and not a
@@ -57,7 +57,7 @@ dominate; on a typical interaction most of the wall is `idle` (the frame wait) a
 
 ```bash
 npm i -g @jantimon/web-performance-debugger   # installs the `wpd` command (long form: `web-performance-debugger`)
-# or run without installing:
+# or run without installing, against your dev server (5173 is Vite's default port):
 npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown
 ```
 
@@ -919,7 +919,8 @@ bugs.
 
 ### Requirements
 
-- **Node 24+**.
+- **Node 24+.** wpd builds on Node 24's built-ins — the in-process profiler lane today, `node:sqlite`
+  for the deep event log in the next major — rather than carrying compatibility shims for older runtimes.
 - **Chrome** is downloaded automatically by Puppeteer on install. To skip the browser entirely, use
   the `--target node` lane (CPU profiling only, no DOM/layout/paint).
 - **chrome-headless-shell is dead weight.** wpd runs full Chrome (built-in headless or `--no-headless`),
