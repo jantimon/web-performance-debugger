@@ -53,7 +53,17 @@ layout carry real milliseconds, and the part that was just waiting for the next 
 a vague "browser" bucket that reads like work. Above is a real forced-layout probe, so style + layout
 dominate; on a typical interaction most of the wall is `idle` (the frame wait) and `wpd` says so.
 
-Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use the short `wpd`.
+## Install
+
+```bash
+npm i -g @jantimon/web-performance-debugger   # installs the `wpd` and `web-performance-debugger` bins
+# or run without installing:
+npx @jantimon/web-performance-debugger record --url http://localhost:5173 --breakdown
+```
+
+Needs **Node 24+**. Chrome downloads on install (skip it with the CPU-only `--target node` lane);
+Firefox is optional. The pnpm caveats and how to point wpd at your own browser are in
+[Requirements](#requirements).
 
 ## At a glance
 
@@ -81,6 +91,7 @@ Run it with `npx @jantimon/web-performance-debugger ...`, or install it and use 
 - [Repetition and CI gating](#repetition-and-ci-gating)
   - [Gating a budget: assert, diff, cpu-diff](#gating-a-budget-assert-diff-cpu-diff)
 - [What one record writes](#what-one-record-writes)
+- [Troubleshooting](#troubleshooting)
 - [Reference](#reference)
   - [The query verbs](#the-query-verbs)
   - [The numbers, and how far to trust them](#the-numbers-and-how-far-to-trust-them)
@@ -234,7 +245,8 @@ question with different instrumentation, and wanting two answers means running `
   per span (`js·style·layout·paint·gc·other·idle`, `Σ + idle = wall`) plus exact layout/style/paint
   counts. It also answers `query blame --forced` with the read that forced each flush, **sampled** from
   the CPU profile's per-sample executing line (a sampled estimate; a sub-interval flush is marked
-  low-confidence). The exact forced **count** still needs the `.stack` trace — record `--deep` for that.
+  low-confidence). The exact forced **count** still needs the `.stack` trace (a Chrome trace option that
+  records the JS stack on every layout/style event) — record `--deep` for that.
 - **`--deep`** — the full trace (`.stack` + invalidations) with the CPU sampler off: the
   **attribution report** — forced-by read-sites, dirtied-by writes, the thrash detector, invalidation
   rollup, exact counts, long tasks. Span wall but no slice ms, and no CPU model. On heavy production
@@ -307,9 +319,10 @@ a CPU-only lane with the four-slice bar. See [what each target gives you](#what-
 **Read `query spans` first, then drill in — never the multi-MB recording file.** `query spans` is the
 compact overview; `query span <label>` is one span's full anatomy; `query cpu` / `query blame` answer
 the CPU and forced-layout questions; `query get <id>` returns a raw event. Every verb accepts `latest`
-in place of a file path, and **every verb emits `--format toon` (compact, token-efficient) or
-`--format json`** — agents and scripts should consume those, reading `query spans` then drilling with
-`query span`, not parsing the recording.
+in place of a file path, and **every verb emits `--format toon` or `--format json`** — agents and
+scripts should consume those, reading `query spans` then drilling with `query span`, not parsing the
+recording. ([TOON](https://github.com/toon-format/toon) is a compact, JSON-shaped text format that
+spends fewer tokens than JSON, so an agent pays less to read the same shape.)
 
 ### The reconciling bar, and reading idle
 
@@ -545,7 +558,8 @@ carries its **boot LCP** (`step.lcp`): the largest contentful paint's element (`
 frozen at the first interaction. LCP swings run to run, so under `--iterations N` it is **per-iteration
 sampled** — `lcp.perIteration` is the render-time series (an iteration that fired no entry stays
 `null`, never 0) and `lcp.stats` its min/median/max, the same treatment `wall` gets; `query span`
-prints the spread beside the median. A step also carries **CLS** (`step.layoutShift`, Chrome only): the
+prints the spread beside the median. A step also carries **CLS** (Cumulative Layout Shift,
+`step.layoutShift`, Chrome only): the
 spec **session-window maximum** (session windows gap-capped at 1 s, window-capped at 5 s, shifts within
 500 ms of an input excluded), **on the step's own window** — not the page lifetime — with the top
 shifting elements attributed (`tag#id`, the rects they moved). The boot/load step is where CLS shows;
@@ -569,8 +583,9 @@ the moment it resolves — compose your waits inside the function (or wait on la
 built-in headless (full Chrome, ~60 Hz), and about the same on Firefox on a CI or idle-panel host,
 whose cadence tracks the display refresh (~60 Hz there, not the 120 Hz a live ProMotion panel shows).
 `wall`/`INP` carry the one-frame ~16.6 ms floor, so a sub-frame re-render reads as the frame time; read
-the counts, the bar, or `interaction.processingMs` for the work itself
-([docs/dev/frame-floor.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/frame-floor.md)).
+the counts, the bar, or `interaction.processingMs` for the work itself. (How the floor is set, for
+maintainers: [docs/dev/frame-floor.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/frame-floor.md),
+internal engineering notes.)
 
 **Streamed / soft navigations.** The default settle resolves the moment the page goes briefly idle,
 which on a streamed SPA route change can be *before* the content lands. Wait on the landed content, or
@@ -713,8 +728,9 @@ steps only under chrome `--breakdown`, measures under chrome `--breakdown` and f
 `--deep`. On the CPU-only lanes (chrome default, `--target node`, Firefox without user
 measures) there is no stored per-span bar, so `query spans` synthesizes the run span from the CPU
 model's sampled window (labeled `sampled window`, JSON `source: "cpu-model"`), whose `wallMs` differs
-from the sum of the timed `run()` samples. See
-[docs/dev/cpu-attribution.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/cpu-attribution.md#which-spans-get-cpu-attribution).
+from the sum of the timed `run()` samples. (How the sampled window is built, for maintainers:
+[docs/dev/cpu-attribution.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/cpu-attribution.md#which-spans-get-cpu-attribution),
+internal engineering notes.)
 
 ### Framework addons (React)
 
@@ -742,8 +758,9 @@ plainly:
   a shipped build (as it should be) and only appears when the React addon detected a development build.
 
 The facts surface under `query span <label>` in a clearly-labeled `React (addon)` block, and additively
-in the `--format json` anatomy under `addons`. See
-[docs/dev/react-attribution.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/react-attribution.md).
+in the `--format json` anatomy under `addons`. (How each fact is detected and classified, for
+maintainers: [docs/dev/react-attribution.md](https://github.com/jantimon/web-performance-debugger/blob/main/docs/dev/react-attribution.md),
+internal engineering notes.)
 
 ## Repetition and CI gating
 
@@ -880,6 +897,23 @@ The pointer is keyed by the resolved cwd and stored out-of-tree, so recording wi
 never drops a `recordings/` dir into a consumer's cwd. `latest` resolves through it, never by mtime;
 when the newest run formed or extended a group, `latest` resolves to the group manifest.
 
+## Troubleshooting
+
+Each common failure has a home in the sections above; find your symptom here, then read the linked
+section for the fix. wpd refuses rather than fake a number, so most of these are deliberate stops, not
+bugs.
+
+| Symptom | Cause | Where to read |
+| --- | --- | --- |
+| `record --url` exits non-zero before measuring and saves a `.wall.png` | it navigated onto a bot-challenge wall (Cloudflare, DataDome) and will not report that page as the site | [Your first run](#your-first-run) |
+| A step reports `wall: —` | a hard navigation across two documents; the default clock cannot span it — record `--breakdown` or `--deep` | [Driving a real interaction](#driving-a-real-interaction) |
+| `inpMs` is `null` after a click | a synthetic `element.click()` produces no INP entry; use `page.click` on a stable id | [Driving a real interaction](#driving-a-real-interaction) |
+| The interaction split shows `—` or `0 ms` | no interaction crossed the 16 ms Event Timing floor, so nothing was measured | [Driving a real interaction](#driving-a-real-interaction) |
+| Chrome will not launch (sandbox error) | the sandbox cannot start here — pass `--disable-browser-sandbox` only in a trusted, isolated environment | [Requirements](#requirements) |
+| No Chrome downloaded under pnpm | pnpm blocks Puppeteer's install step; you must allow the build | [Requirements](#requirements) |
+| Minified names, one `app` bucket, or a `Sourcemaps: 0/1 resolved` line | a sourcemap could not be fetched | [When per-package attribution can't work](#when-per-package-attribution-cant-work) |
+| A `diff`/`cpu-diff` or `assert` refuses instead of returning a number | the two recordings are not comparable, or a gate hit a metric the capture mode did not measure — the message names it | [Gating a budget](#gating-a-budget-assert-diff-cpu-diff) |
+
 ## Reference
 
 ### Requirements
@@ -933,7 +967,7 @@ overlapping regions distinct labels). When a tag manager floods the overview, cu
 | Signal | Source | Trust |
 | --- | --- | --- |
 | Counts (layout / style / paint / forced / invalidation) | DevTools trace, windowed to the main thread | exact: bit-identical across repeated runs; compare freely |
-| Slice ms on a `--breakdown` bar (`style` / `layout` / `paint`) | trace `base::TimeTicks`, light trace only | wall-tier (~1%, directional); reconciles to `wall` exactly |
+| Slice ms on a `--breakdown` bar (`style` / `layout` / `paint`) | trace `base::TimeTicks` (Chromium's internal monotonic clock), light trace only | wall-tier (~1%, directional); reconciles to `wall` exactly |
 | Wall and INP times | `performance.now()`, browser-clamped | directional: good for "~2x worse?", not "1.3 ms". Carry the one-frame floor |
 | CPU self-time | the sampler's own clock (V8 microsecond; Gecko ~1 ms floor on Firefox) | real: trustworthy in aggregate (a few % noise) |
 | Allocated bytes (`--alloc`, node) | V8 heap sampler, GC-inclusive | per-package shares/ratios trustworthy (~5%); the absolute byte total is directional (~10-20%) |

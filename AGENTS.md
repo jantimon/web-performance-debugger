@@ -27,13 +27,14 @@ query spans <file>              # overview: one row per span, one shape across c
 
 ## Output format
 
-- **Always pass `--format json` or `--format toon`.** Both are plain: no ANSI, regardless of TTY. TOON
-  is compact and token-efficient; JSON is the same shape.
+- **Always pass `--format json` or `--format toon`.** Both are plain: no ANSI, regardless of TTY.
+  [TOON](https://github.com/toon-format/toon) is a compact, JSON-shaped text format that spends fewer
+  tokens than JSON; JSON is the same shape.
 - Structured output never colorizes, so you do not need `--color never`.
 - The view shapes are typed and exported from the package root (`SpansResult`, `SpanAnatomy`,
   `CpuOverview`, `BlameEntry`, `DiffView`, `CpuDiffResult`, ...). Import them; do not hand-roll the shape.
 
-## Field names that are not the obvious ones (schema 5)
+## Field names that are not the obvious ones
 
 - A function's display name is **`fn`**, not `name` (`CpuOverview.hot[].fn`, `CpuFunctionDelta.fn`).
   Its self time is `selfMs`/`selfPct`; its source is `source` (`file:line`) and `file`.
@@ -49,7 +50,7 @@ query spans <file>              # overview: one row per span, one shape across c
 - Per-span slices are one **`UnifiedSlices`** shape (`js.byPackage`, `style`, `layout`, `paint`, `gc`,
   `other`, `idle`) across every target.
 - **`meta.capture`** is a scalar naming the one capture mode: `"default"` | `"breakdown"` | `"deep"` |
-  `"gecko"` | `"gecko-deep"` | `"node-cpu"` | `"node-alloc"`. (There is no `meta.passes` array.)
+  `"gecko"` | `"gecko-deep"` | `"node-cpu"` | `"node-alloc"`. It is a single scalar, not an array.
 - **`aggregation`** on a span says what its numbers mean: `"sum"` (run span, total across iterations),
   `"first"` (a step or unrepeated measure, one iteration), `"median"` (a repeated measure, with
   `samples`/`wallMinMs`/`wallMaxMs`). Read it before comparing two spans.
