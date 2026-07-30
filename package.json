@@ -1,7 +1,7 @@
 {
   "name": "@jantimon/web-performance-debugger",
   "version": "1.3.0",
-  "description": "Drive Chrome, Firefox, or Node (Puppeteer) to attribute layout, style, and paint work, rendering counts, CPU self-time, and allocation back to source lines, with isolated timing and CI gating",
+  "description": "Drive Chrome or Firefox (Puppeteer), or profile Node in-process, to attribute layout, style, and paint work, rendering counts, CPU self-time, and allocation back to source lines, with isolated timing and CI gating",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
