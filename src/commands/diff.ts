@@ -1,6 +1,11 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { deserialize } from "../output/format.js";
+import {
+  deserialize,
+  serialize,
+  structuredFormat,
+  type StructuredOutOpts,
+} from "../output/format.js";
 import { assertRecordingArtifact } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget, resolveConsumption } from "./resolve.js";
@@ -13,6 +18,18 @@ import { loadSpanEntries } from "./spanSource.js";
 import { runSpan } from "../model/span.js";
 import type { GroupMember } from "../model/group.js";
 import type { Recording } from "../model/recording.js";
+import type {
+  DiffMetricKey,
+  DiffMetricRow,
+  DiffView,
+  GroupDiffMember,
+  GroupDiffView,
+  SpanEntry,
+} from "../model/query.js";
+
+interface DiffCmdOpts extends StructuredOutOpts {
+  failOnRegression?: boolean;
+}
 
 // `gated` metrics participate in --fail-on-regression; `advisory` ones are printed but never
 // fail the build. A metric gates only if it is REPRODUCIBLE on unchanged code, which is not the
@@ -34,17 +51,6 @@ import type { Recording } from "../model/recording.js";
 // counts are scheduler noise (see docs/dev/rendering-counts.md), so it is display-only and would
 // manufacture regressions. This diff reads only the run-span counts + meta headline, where the side
 // track does not live, so no frame delta can be produced.
-type DiffMetricKey =
-  | "layoutCount"
-  | "styleCount"
-  | "paintCount"
-  | "forcedLayoutCount"
-  | "layoutInvalidations"
-  | "styleInvalidations"
-  | "longTaskCount"
-  | "inpMs"
-  | "wallMs"
-  | "jsSelfMs";
 
 /** The run-level metrics diff compares, read from the run span (counts/wall/INP) and meta (jsSelfMs) --
  * the schema-5 count/timing store. Every not-measured field is a Measured null, so a metric absent on
@@ -125,14 +131,163 @@ function printSliceDiff(diff: SpanSliceDiff): void {
     console.log(`spans only in current (not compared): ${diff.unmatchedCurrent.join(", ")}`);
 }
 
-/** Compare two recordings OR two run-groups field-by-field; optionally fail on regression. A group
- * pairs its members by (mode, variant) and diffs each pair; a group vs a plain recording is refused
- * (one shape at a time). */
-export async function diffCmd(
+/**
+ * Compute the field-by-field diff of two loaded recordings into a `DiffView`: the run-level metric
+ * rows, the advisory per-span slice deltas, the capture-axis mismatches, and the gated regressions.
+ * Pure -- no printing, no process.exitCode. `gateRefusal` is set (only under `--fail-on-regression`)
+ * when the gate cannot be evaluated: an incompatible blocking axis, or known-incomplete counts on
+ * either side. `failed` is the process verdict (exit 1): a refusal or a real gated regression, only
+ * ever under the gate.
+ */
+function buildDiffView(
   baseline: string,
   current: string,
-  opts: { failOnRegression?: boolean },
-): Promise<void> {
+  baselineRec: Recording,
+  currentRec: Recording,
+  baselineSpans: SpanEntry[] | null,
+  currentSpans: SpanEntry[] | null,
+  failOnRegression: boolean,
+): DiffView {
+  const baselineMetrics = diffMetrics(baselineRec);
+  const currentMetrics = diffMetrics(currentRec);
+
+  // Comparability: name every capture axis that differs, so a reader never reads a config-driven
+  // delta as a code change. Directional by default; a --fail-on-regression gate REFUSES across an
+  // incompatible browser/runtime/capture-mode, where an exact-count "regression" would be an artifact
+  // of the config, not the code.
+  const mismatches = comparabilityMismatches(baselineRec.meta, currentRec.meta);
+
+  // Refusal (only under the gate): a blocking axis first, then known-incomplete counts. A blocking
+  // mismatch would make a count delta an artifact of the config; a cross-process split or dropped
+  // trace events would make it an artifact of the missing work. Either way, refuse rather than
+  // fabricate a verdict -- the same honest refusal assert makes.
+  let gateRefusal: string | undefined;
+  if (failOnRegression) {
+    const blocking = mismatches.filter((mismatch) => mismatch.blocksGating);
+    if (blocking.length) {
+      const axes = blocking.map((mismatch) => mismatch.axis).join(", ");
+      gateRefusal =
+        `Refusing to gate (--fail-on-regression) across an incompatible capture (${axes} differ): ` +
+        `a count delta would reflect the capture change, not a code regression. Re-record both sides ` +
+        `on the same lane and capture mode to gate.`;
+    } else {
+      const integrityIssues = [
+        ["baseline", countIntegrityRefusal(baselineRec.meta)],
+        ["current", countIntegrityRefusal(currentRec.meta)],
+      ].filter((entry): entry is [string, string] => entry[1] != null);
+      if (integrityIssues.length)
+        gateRefusal =
+          `Refusing to gate (--fail-on-regression) on known-incomplete counts:\n` +
+          integrityIssues.map(([side, reason]) => `    ${side}: ${reason}`).join("\n");
+    }
+  }
+
+  const metrics: DiffMetricRow[] = [];
+  const regressions: string[] = [];
+  for (const metric of METRICS) {
+    const baseValue = baselineMetrics[metric.key];
+    const currentValue = currentMetrics[metric.key];
+    // Don't conflate "not measured" (null) with 0; a null on either side means no delta (never a
+    // fabricated 0 -> 45 regression or 300 -> 0 improvement).
+    const delta = baseValue == null || currentValue == null ? null : currentValue - baseValue;
+    // Only exact CDP counts gate the build; wall/INP/scripting are directional, not numbers to fail
+    // CI on (see METRICS note).
+    const regression = metric.gated && metric.higherIsWorse && delta != null && delta > 0;
+    metrics.push({
+      key: metric.key,
+      label: metric.label,
+      gated: metric.gated,
+      base: baseValue,
+      current: currentValue,
+      delta,
+      regression,
+    });
+    if (regression)
+      regressions.push(
+        `${metric.label}: ${num(baseValue!)} → ${num(currentValue!)} (+${num(delta!)})`,
+      );
+  }
+
+  const sliceDeltas = diffSpanSlices(baselineSpans, currentSpans);
+  const failed = failOnRegression && (gateRefusal != null || regressions.length > 0);
+  return {
+    baseline,
+    current,
+    comparability: mismatches,
+    metrics,
+    sliceDeltas,
+    regressions,
+    gateRefusal,
+    failOnRegression,
+    failed,
+  };
+}
+
+/** Render a `DiffView` as the human report: the comparability warning, then either the gate refusal
+ * or the metric table + advisory slice deltas + regression verdict. */
+function renderDiffHuman(view: DiffView): void {
+  if (view.comparability.length) {
+    console.log("\n⚠ WARNING: baseline and current were captured differently:");
+    for (const mismatch of view.comparability)
+      console.log(`    ${mismatch.axis}: ${mismatch.base} → ${mismatch.current}`);
+    console.log(
+      "  Their counts/durations may not describe the same thing; treat this diff as directional.",
+    );
+  }
+  // A refused gate stops before the table: the whole point is to not show a delta the config, not
+  // the code, produced.
+  if (view.gateRefusal) {
+    console.log(`\n${view.gateRefusal}`);
+    return;
+  }
+
+  const rows: (string | number)[][] = view.metrics.map((metric) => {
+    if (metric.base == null || metric.current == null)
+      return [
+        metric.label,
+        formatMeasured(metric.base, (value) => num(value), "n/a"),
+        formatMeasured(metric.current, (value) => num(value), "n/a"),
+        "—",
+      ];
+    const delta = metric.delta!;
+    const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "=";
+    return [
+      metric.gated ? metric.label : `${metric.label} (advisory)`,
+      num(metric.base),
+      num(metric.current),
+      `${delta >= 0 ? "+" : ""}${num(delta)} ${arrow}`,
+    ];
+  });
+
+  console.log(`baseline: ${view.baseline}\ncurrent:  ${view.current}\n`);
+  console.log(table(["metric", "baseline", "current", "delta"], rows));
+
+  // Additive per-span slice section: shown only when either recording carries a breakdown bar.
+  // Advisory, so it never touches `regressions` or the exit code.
+  const sliceDiff = view.sliceDeltas;
+  if (
+    sliceDiff.spans.length ||
+    sliceDiff.unmatchedBaseline.length ||
+    sliceDiff.unmatchedCurrent.length
+  )
+    printSliceDiff(sliceDiff);
+
+  if (view.regressions.length) {
+    console.log(`\n${view.regressions.length} regression(s):`);
+    for (const regression of view.regressions) console.log(`  ▲ ${regression}`);
+  } else {
+    // Scoped to what actually gates: the advisory rows (wall/INP) and the slice deltas above are
+    // directional and never counted here, so claiming "no regressions" outright would overclaim.
+    console.log(
+      "\nNo exact-count regressions in the gated set. Directional deltas (wall, INP, slices) above are advisory.",
+    );
+  }
+}
+
+/** Compare two recordings OR two run-groups field-by-field; optionally fail on regression. A group
+ * pairs its members by (mode, variant) and diffs each pair; a group vs a plain recording is refused
+ * (one shape at a time). `--format json|toon` serializes the same data the human report shows. */
+export async function diffCmd(baseline: string, current: string, opts: DiffCmdOpts): Promise<void> {
   const [baselineConsumption, currentConsumption] = await Promise.all([
     resolveConsumption(baseline),
     resolveConsumption(current),
@@ -149,123 +304,37 @@ export async function diffCmd(
   return diffRecordings(baseline, current, opts);
 }
 
-/** Compare two recordings field-by-field; optionally fail the process on regression. */
-async function diffRecordings(
+/** Load two recordings + their spans and build the `DiffView`. Shared by the plain-recording path and
+ * each run-group member pair. */
+async function pairDiffView(
   baseline: string,
   current: string,
-  opts: { failOnRegression?: boolean },
-): Promise<void> {
+  failOnRegression: boolean,
+): Promise<DiffView> {
   const [baselineRec, currentRec, baselineSpans, currentSpans] = await Promise.all([
     loadRecording(baseline),
     loadRecording(current),
     loadSpanEntries(baseline),
     loadSpanEntries(current),
   ]);
-  const baselineMetrics = diffMetrics(baselineRec);
-  const currentMetrics = diffMetrics(currentRec);
+  return buildDiffView(
+    baseline,
+    current,
+    baselineRec,
+    currentRec,
+    baselineSpans,
+    currentSpans,
+    failOnRegression,
+  );
+}
 
-  // Comparability: name every capture axis that differs, so a reader never reads a config-driven
-  // delta as a code change. Warn (not refuse) by default so cross-config exploration stays possible;
-  // but a --fail-on-regression gate REFUSES across an incompatible browser/runtime/capture-mode, where
-  // an exact-count "regression" would be an artifact of the config, not the code.
-  const mismatches = comparabilityMismatches(baselineRec.meta, currentRec.meta);
-  if (mismatches.length) {
-    console.log("\n⚠ WARNING: baseline and current were captured differently:");
-    for (const mismatch of mismatches)
-      console.log(`    ${mismatch.axis}: ${mismatch.base} → ${mismatch.current}`);
-    console.log(
-      "  Their counts/durations may not describe the same thing; treat this diff as directional.",
-    );
-  }
-  if (opts.failOnRegression && mismatches.some((mismatch) => mismatch.blocksGating)) {
-    const blocking = mismatches
-      .filter((mismatch) => mismatch.blocksGating)
-      .map((mismatch) => mismatch.axis)
-      .join(", ");
-    console.log(
-      `\nRefusing to gate (--fail-on-regression) across an incompatible capture (${blocking} differ): ` +
-        `a count delta would reflect the capture change, not a code regression. Re-record both sides ` +
-        `on the same lane and capture mode to gate.`,
-    );
-    process.exitCode = 1;
-    return;
-  }
-
-  // One (or both) sides has known-incomplete counts (a cross-process split, or dropped trace events):
-  // the gated count deltas would compare an undercount, so a "regression" or "improvement" could be an
-  // artifact of the missing work. Refuse to gate rather than fabricate a verdict -- the same honest
-  // refusal assert makes, and the same shape as the comparability refusal above.
-  if (opts.failOnRegression) {
-    const integrityIssues = [
-      ["baseline", countIntegrityRefusal(baselineRec.meta)],
-      ["current", countIntegrityRefusal(currentRec.meta)],
-    ].filter((entry): entry is [string, string] => entry[1] != null);
-    if (integrityIssues.length) {
-      console.log(
-        `\nRefusing to gate (--fail-on-regression) on known-incomplete counts:\n` +
-          integrityIssues.map(([side, reason]) => `    ${side}: ${reason}`).join("\n"),
-      );
-      process.exitCode = 1;
-      return;
-    }
-  }
-
-  const rows: (string | number)[][] = [];
-  const regressions: string[] = [];
-  for (const metric of METRICS) {
-    const baseValue = baselineMetrics[metric.key];
-    const currentValue = currentMetrics[metric.key];
-    // Don't conflate "not measured" (null) with 0; that invents fake regressions
-    // (0 → 45) and fake improvements (300 → 0) when a metric is absent on one side.
-    if (baseValue == null || currentValue == null) {
-      rows.push([
-        metric.label,
-        formatMeasured(baseValue, (value) => num(value), "n/a"),
-        formatMeasured(currentValue, (value) => num(value), "n/a"),
-        "—",
-      ]);
-      continue;
-    }
-    const delta = currentValue - baseValue;
-    const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "=";
-    rows.push([
-      metric.gated ? metric.label : `${metric.label} (advisory)`,
-      num(baseValue),
-      num(currentValue),
-      `${delta >= 0 ? "+" : ""}${num(delta)} ${arrow}`,
-    ]);
-    // Only exact CDP counts gate the build; wall/INP/scripting are directional, not numbers
-    // to fail CI on (see METRICS note).
-    if (metric.gated && metric.higherIsWorse && delta > 0)
-      regressions.push(
-        `${metric.label}: ${num(baseValue)} → ${num(currentValue)} (+${num(delta)})`,
-      );
-  }
-
-  console.log(`baseline: ${baseline}\ncurrent:  ${current}\n`);
-  console.log(table(["metric", "baseline", "current", "delta"], rows));
-
-  // Additive per-span slice section: shown only when either recording carries a breakdown bar.
-  // Advisory, so it never touches `regressions` or the exit code.
-  const sliceDiff = diffSpanSlices(baselineSpans, currentSpans);
-  if (
-    sliceDiff.spans.length ||
-    sliceDiff.unmatchedBaseline.length ||
-    sliceDiff.unmatchedCurrent.length
-  )
-    printSliceDiff(sliceDiff);
-
-  if (regressions.length) {
-    console.log(`\n${regressions.length} regression(s):`);
-    for (const regression of regressions) console.log(`  ▲ ${regression}`);
-    if (opts.failOnRegression) process.exitCode = 1;
-  } else {
-    // Scoped to what actually gates: the advisory rows (wall/INP) and the slice deltas above are
-    // directional and never counted here, so claiming "no regressions" outright would overclaim.
-    console.log(
-      "\nNo exact-count regressions in the gated set. Directional deltas (wall, INP, slices) above are advisory.",
-    );
-  }
+/** Compare two recordings field-by-field; optionally fail the process on regression. */
+async function diffRecordings(baseline: string, current: string, opts: DiffCmdOpts): Promise<void> {
+  const view = await pairDiffView(baseline, current, !!opts.failOnRegression);
+  const fmt = structuredFormat(opts);
+  if (fmt) console.log(serialize(view, fmt));
+  else renderDiffHuman(view);
+  if (view.failed) process.exitCode = 1;
 }
 
 /** A member's pairing key across two groups: capture mode + variant (span identity's group analogue). */
@@ -283,15 +352,18 @@ function memberPairKey(member: GroupMember): string {
 async function diffGroups(
   baselineManifest: string,
   currentManifest: string,
-  opts: { failOnRegression?: boolean },
+  opts: DiffCmdOpts,
 ): Promise<void> {
+  const fmt = structuredFormat(opts);
+  const failOnRegression = !!opts.failOnRegression;
   const [baselineGroup, currentGroup] = await Promise.all([
     loadGroup(baselineManifest),
     loadGroup(currentManifest),
   ]);
-  console.log(
-    `diff run-group '${baselineGroup.meta.name}' -> '${currentGroup.meta.name}' (members paired by capture mode + variant)`,
-  );
+  if (!fmt)
+    console.log(
+      `diff run-group '${baselineGroup.meta.name}' -> '${currentGroup.meta.name}' (members paired by capture mode + variant)`,
+    );
 
   // Group-level workload refusal: read each group's first member's meta and reuse the comparability
   // gate's workload axis. Different workloads make every per-pair count delta a program difference, not
@@ -304,11 +376,23 @@ async function diffGroups(
     (mismatch) => mismatch.axis === "workload" && mismatch.blocksGating,
   );
   if (workloadRefusal) {
-    console.log(
-      `\nRefusing to diff these run-groups: they measured different workloads ` +
-        `(${workloadRefusal.base} vs ${workloadRefusal.current}). A per-mode diff would subtract two ` +
-        `programs, not a code change.`,
-    );
+    const refusal =
+      `Refusing to diff these run-groups: they measured different workloads ` +
+      `(${workloadRefusal.base} vs ${workloadRefusal.current}). A per-mode diff would subtract two ` +
+      `programs, not a code change.`;
+    if (fmt) {
+      const view: GroupDiffView = {
+        baseline: baselineGroup.meta.name,
+        current: currentGroup.meta.name,
+        refusal,
+        members: [],
+        failOnRegression,
+        failed: true,
+      };
+      console.log(serialize(view, fmt));
+    } else {
+      console.log(`\n${refusal}`);
+    }
     process.exitCode = 1;
     return;
   }
@@ -317,30 +401,51 @@ async function diffGroups(
     currentGroup.members.map((member) => [memberPairKey(member), member]),
   );
   const baselineKeys = new Set(baselineGroup.members.map(memberPairKey));
+  const members: GroupDiffMember[] = [];
   let comparedAny = false;
+  let anyFailed = false;
   for (const baselineMember of baselineGroup.members) {
     const currentMember = currentByKey.get(memberPairKey(baselineMember));
     if (!currentMember) {
-      console.log(`\nmember '${memberLabel(baselineMember)}' only in baseline (not compared).`);
+      if (!fmt)
+        console.log(`\nmember '${memberLabel(baselineMember)}' only in baseline (not compared).`);
+      members.push({ member: memberLabel(baselineMember), onlyIn: "baseline" });
       continue;
     }
     comparedAny = true;
-    console.log(`\n=== member ${memberLabel(baselineMember)} ===`);
-    // The per-pair diff sets process.exitCode on a gated regression; that verdict rides through.
-    await diffRecordings(
+    const view = await pairDiffView(
       memberRecordingPath(baselineManifest, baselineMember),
       memberRecordingPath(currentManifest, currentMember),
-      opts,
+      failOnRegression,
     );
+    if (view.failed) anyFailed = true;
+    if (!fmt) {
+      console.log(`\n=== member ${memberLabel(baselineMember)} ===`);
+      renderDiffHuman(view);
+    }
+    members.push({ member: memberLabel(baselineMember), diff: view });
   }
   for (const currentMember of currentGroup.members)
-    if (!baselineKeys.has(memberPairKey(currentMember)))
-      console.log(`\nmember '${memberLabel(currentMember)}' only in current (not compared).`);
-  if (!comparedAny) {
+    if (!baselineKeys.has(memberPairKey(currentMember))) {
+      if (!fmt)
+        console.log(`\nmember '${memberLabel(currentMember)}' only in current (not compared).`);
+      members.push({ member: memberLabel(currentMember), onlyIn: "current" });
+    }
+  if (!comparedAny && !fmt)
     console.log(
       "\nNo members matched by capture mode + variant; nothing was compared. Record the groups with the same members.",
     );
-    // A gate you asked for but could not evaluate must fail loudly, never pass silently on an empty diff.
-    if (opts.failOnRegression) process.exitCode = 1;
+  // A gate you asked for but could not evaluate must fail loudly, never pass silently on an empty diff.
+  const failed = anyFailed || (!comparedAny && failOnRegression);
+  if (fmt) {
+    const view: GroupDiffView = {
+      baseline: baselineGroup.meta.name,
+      current: currentGroup.meta.name,
+      members,
+      failOnRegression,
+      failed,
+    };
+    console.log(serialize(view, fmt));
   }
+  if (failed) process.exitCode = 1;
 }

@@ -31,6 +31,7 @@ import type {
 } from "./recording.js";
 import type { CaptureMode } from "../record/capture.js";
 import type { Measured } from "./measured.js";
+import type { SpanSliceDiff } from "./spans.js";
 import type { SoftNavVerdict } from "./soft-nav.js";
 import type { FrameFloorMatch } from "./frame-floor.js";
 import type { AllocFunction, AllocGroupStat, AllocSamplingConfig } from "./alloc.js";
@@ -656,3 +657,108 @@ export interface CpuDiffResult {
    */
   notes: string[];
 }
+
+/**
+ * The run-level count/timing fields `diff` compares, one per DiffMetricRow. These are the same field
+ * names the run span and meta carry (`layoutCount`, `wallMs`, `jsSelfMs`), so a consumer joins a row
+ * to a field by `key` without parsing the human label.
+ */
+export type DiffMetricKey =
+  | "layoutCount"
+  | "styleCount"
+  | "paintCount"
+  | "forcedLayoutCount"
+  | "layoutInvalidations"
+  | "styleInvalidations"
+  | "longTaskCount"
+  | "inpMs"
+  | "wallMs"
+  | "jsSelfMs";
+
+/**
+ * One metric row of a `diff`: base and current values with their delta. `base`/`current` keep the
+ * Measured contract's `null` when a side did not measure the field (never a fabricated 0), and `delta`
+ * is `null` whenever either side is null. `gated` marks a field that participates in
+ * `--fail-on-regression` (the exact counts); `regression` is true only for a gated field whose delta
+ * worsened, so the advisory rows (INP/wall/JS self) always report `regression: false`.
+ */
+export interface DiffMetricRow {
+  key: DiffMetricKey;
+  /** human label, e.g. "forced layout", "INP ms" */
+  label: string;
+  gated: boolean;
+  base: number | null;
+  current: number | null;
+  /** current - base; null when either side did not measure the field */
+  delta: number | null;
+  regression: boolean;
+}
+
+/**
+ * One capture axis that differs between the two diffed recordings. A `blocksGating` axis refuses a
+ * `--fail-on-regression` gate, since a delta on it reflects the capture change, not the code.
+ */
+export interface DiffComparabilityAxis {
+  axis: string;
+  base: string;
+  current: string;
+  blocksGating: boolean;
+}
+
+/**
+ * `diff` output: two recordings compared field-by-field. `metrics` are the run-level count/timing
+ * rows; `sliceDeltas` the advisory per-span slice-ms deltas; `comparability` the capture axes that
+ * differ. `regressions` lists the gated count rows that worsened, as `"metric: base -> current (+delta)"`.
+ * `gateRefusal`, when present, is why a requested `--fail-on-regression` gate could not be evaluated
+ * (an incompatible capture, or known-incomplete counts): the gate then exits 1 on the refusal, not on
+ * a fabricated verdict. `failed` is the process verdict this view corresponds to (exit 1), so a
+ * consumer reads it off the view rather than the exit code. The human report serializes the same data.
+ */
+export interface DiffView {
+  baseline: string;
+  current: string;
+  comparability: DiffComparabilityAxis[];
+  metrics: DiffMetricRow[];
+  sliceDeltas: SpanSliceDiff;
+  regressions: string[];
+  gateRefusal?: string;
+  failOnRegression: boolean;
+  failed: boolean;
+}
+
+/**
+ * One member pairing in a `diff` of two run-groups: the per-mode `DiffView` when both groups carry the
+ * member, else the side it appeared on (not compared).
+ */
+export interface GroupDiffMember {
+  /** the member's capture-mode + variant label */
+  member: string;
+  /** the pair diff; absent when the member was on one side only */
+  diff?: DiffView;
+  /** the side a one-sided member appeared on (not compared); absent when it was paired */
+  onlyIn?: "baseline" | "current";
+}
+
+/**
+ * `diff` output on two RUN-GROUPS: members paired by capture mode + variant, each pair diffed with the
+ * same per-recording `DiffView`. `refusal`, when present, is why the whole diff was declined (the two
+ * groups measured different workloads). `failed` is the process verdict (exit 1). The presence of
+ * `members` (vs a plain `DiffView`) discriminates the two shapes.
+ */
+export interface GroupDiffView {
+  /** the baseline group's name */
+  baseline: string;
+  /** the current group's name */
+  current: string;
+  refusal?: string;
+  members: GroupDiffMember[];
+  failOnRegression: boolean;
+  failed: boolean;
+}
+
+/**
+ * The `diff` output shape: a plain-recording diff yields a `DiffView`; a run-group diff yields a
+ * `GroupDiffView`. The presence of the `members` field discriminates the two, so a JSON/TOON consumer
+ * branches on it rather than guessing.
+ */
+export type DiffOutput = DiffView | GroupDiffView;

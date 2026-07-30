@@ -31,7 +31,7 @@ query spans <file>              # overview: one row per span, one shape across c
   is compact and token-efficient; JSON is the same shape.
 - Structured output never colorizes, so you do not need `--color never`.
 - The view shapes are typed and exported from the package root (`SpansResult`, `SpanAnatomy`,
-  `CpuOverview`, `BlameEntry`, `CpuDiffResult`, ...). Import them; do not hand-roll the shape.
+  `CpuOverview`, `BlameEntry`, `DiffView`, `CpuDiffResult`, ...). Import them; do not hand-roll the shape.
 
 ## Field names that are not the obvious ones (schema 5)
 
