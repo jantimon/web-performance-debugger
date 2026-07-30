@@ -77,9 +77,9 @@ const TIMEOUT_MS = 180_000;
 // and the error names the invocation. Sits under TIMEOUT_MS so the test fails as itself.
 const CLI_KILL_MS = 150_000;
 
-function runCli(args) {
+function runCli(args, cwd = repoRoot) {
   const result = spawnSync(process.execPath, [cli, ...args], {
-    cwd: repoRoot,
+    cwd,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     timeout: CLI_KILL_MS,
@@ -2031,6 +2031,26 @@ e2e("record --members breakdown,deep forms a group and query span stitches acros
   assert.ok(stitch.counts.forcedLayoutCount > 0, "the deep member's exact forced count is stitched in");
   assert.ok(Array.isArray(stitch.forced) && stitch.forced.length > 0, "forced read-sites are stitched from the deep member");
   assert.ok(stitch.hot?.functions?.length > 0, "hot functions come from the breakdown member");
+});
+
+// --out locates a --members group: its DIRECTORY holds every member + the manifest, and its BASENAME
+// stem names them, so a path the caller derives from --out exists (a single --out file cannot BE one
+// of N members). The group's IDENTITY still comes from --group (meta.name), not the stem, so `latest`
+// and the group name resolve unchanged.
+e2e("record --members names the group's files from --out, keeping --group as the identity", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  // The --out stem ("mybench") differs from --group ("perf"): files follow --out, identity follows --group.
+  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--members", "breakdown,deep", "--group", "perf", "--iterations", "1", "--out", path.join(dir, "mybench.json")]);
+
+  const manifest = path.join(dir, "mybench.group.json");
+  assert.ok(existsSync(manifest), "the manifest is named from --out's stem, so a path derived from --out exists");
+  assert.ok(existsSync(path.join(dir, "mybench.breakdown.json")), "the breakdown member is named from --out's stem");
+  assert.ok(existsSync(path.join(dir, "mybench.deep.json")), "the deep member too");
+  assert.ok(!existsSync(path.join(dir, "perf.group.json")), "the group name does not drive the filenames when --out is given");
+
+  const group = JSON.parse(readFileSync(manifest, "utf8"));
+  assert.equal(group.meta.name, "perf", "the group's identity is still --group, not the --out stem");
+  assert.deepEqual(group.members.map((member) => member.mode), ["breakdown", "deep"], "both members recorded under the --out stem");
 });
 
 // Two ad-hoc `--group` records sharing ONE `--out` would make the second overwrite the first member's

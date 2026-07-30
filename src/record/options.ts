@@ -72,6 +72,11 @@ export interface RecordOptions {
    * each append derives partial status structurally. Internal (no CLI flag); absent for a plain
    * single `--group` record, which is complete-by-construction. */
   groupRequested?: string[];
+  /** The filename stem the `--members` runner names this group's manifest and member recordings from,
+   * taken from `--out`'s basename so the caller's `--out` locates the whole family (a single `--out`
+   * file cannot BE the recording of an N-member group). Internal (the runner sets it); absent means
+   * the file stem falls back to the group name. The group's IDENTITY stays `group`, never this stem. */
+  groupFileStem?: string;
   /**
    * Framework-addon mode (`--framework off|auto`, default `auto`). `off` runs zero addon code; `auto`
    * lets each registered addon's factual detection decide whether it contributes. Every lane accepts

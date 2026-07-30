@@ -302,7 +302,13 @@ async function resolveSetup(opts: RecordOptions): Promise<RecordSetup> {
   // or downgrading the `latest` pointer (D1/D2). captureFor is pure, so capture.mode is known here.
   // The --members runner also preflights the whole set upfront; this covers a plain single --group.
   if (opts.group) {
-    const preflightManifest = groupManifestPathFor(outDir, opts.group, opts.format);
+    // The --members runner names the manifest from --out's stem (groupFileStem); a plain --group falls
+    // back to the group name. The append below uses the same stem, so both land on one manifest.
+    const preflightManifest = groupManifestPathFor(
+      outDir,
+      opts.groupFileStem ?? opts.group,
+      opts.format,
+    );
     await preflightGroup(
       preflightManifest,
       opts.format,
@@ -1085,7 +1091,8 @@ async function writeAllArtifacts(
   // (and clears any prior `group` pointer), so it writes the recording-only pointer directly.
   let groupManifestPath: string | undefined;
   if (opts.group) {
-    groupManifestPath = groupManifestPathFor(outDir, opts.group, opts.format);
+    // Same stem as the preflight above: --out's basename for a --members member, else the group name.
+    groupManifestPath = groupManifestPathFor(outDir, opts.groupFileStem ?? opts.group, opts.format);
     await appendMember({
       name: opts.group,
       manifestPath: groupManifestPath,
