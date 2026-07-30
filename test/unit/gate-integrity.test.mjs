@@ -33,7 +33,9 @@ const baseMeta = () => ({
   driver: false,
 });
 
-// A minimal schema-current recording with a measured layout count, optionally flagged split/dataLoss.
+// A minimal schema-5 recording with a measured layout count, optionally flagged split/dataLoss. The
+// spans array is the sole count/timing store (there is no summary/window/marks block), so assert/diff
+// read the counts off the run span exactly as they do from a real recording.
 function recording({ split = false, dataLoss = false, layoutCount = 300, wallMs = 10 } = {}) {
   const meta = baseMeta();
   if (split) meta.mainThread = { via: "reanchored", split: true };
@@ -49,31 +51,7 @@ function recording({ split = false, dataLoss = false, layoutCount = 300, wallMs 
   };
   return {
     meta,
-    window: { measure: "wpd:run", startTs: 0, endTs: 100, wallMs },
-    marks: [],
     events: [],
-    summary: {
-      wallMs,
-      inpMs: null,
-      layoutCount,
-      layoutMs: null,
-      styleCount: layoutCount,
-      styleMs: null,
-      paintCount: 5,
-      paintMs: null,
-      layoutInvalidations: 0,
-      paintInvalidations: 0,
-      styleInvalidations: 0,
-      forcedLayoutCount: 2,
-      forcedLayoutMs: null,
-      longTaskCount: 0,
-      longestTaskMs: null,
-      jsSelfMs: null,
-      totalEvents: 0,
-      perIteration: [],
-      stats: null,
-      perStep: [],
-    },
     spans: [{ label: "run", kind: "run", aggregation: "sum", wallMs, counts }],
   };
 }
