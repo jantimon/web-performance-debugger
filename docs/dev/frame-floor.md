@@ -115,6 +115,12 @@ No supported flag pins headless Chrome to a higher rate. **[measured]**
 change it to **uncapped** (~0 ms, an unbounded busy-loop that draws as fast as the CPU allows), not a
 clean higher frame rate. That is a meaningless number for a latency floor, so wpd does not set it.
 
+**[measured] `--run-all-compositor-stages-before-draw` is a do-not-adopt as a capture flag.** It cuts
+per-frame input latency (8.85 -> 7.05 ms) and presentation delay (15.1 -> 7.4 ms), but it explodes the
+PipelineReporter event stream **from 89 to 3223 events with a 1058ms stall** on a trivial flow; the
+rendering counts stay clean (Layout 24/24, Paint 48/48), so the cadence and the counts are not the
+motive to reach for it, and the stall alone rules it out. wpd does not pass it.
+
 **[measured]** Passing a configured stock Chrome via `PUPPETEER_EXECUTABLE_PATH` does not change the
 floor: it also runs the synthetic 60 Hz interval headless. The 60 Hz cap is the headless compositor's
 synthetic default, not a Chrome-for-Testing build property.
@@ -235,14 +241,23 @@ debugging tool, not a field-RUM predictor, and its own trust tier calls `wall`/`
 `model/frame-floor.ts` maps a recording's lane to its floor: headless Chrome ->
 `CHROME_HEADLESS_FRAME_FLOOR_MS` (16.6), Firefox headless -> `FIREFOX_FRAME_FLOOR_MS` (16.6, the same
 value — the display-tracked reading on CI / an idle panel, [display-contingent](#the-firefox-floor-is-display-contingent)),
-headed -> none (it flaps, so no floor can be claimed). `matchedFrameFloor` decides when a wall/INP
-median sits on a WHOLE MULTIPLE of its floor (within ~1.2 ms, `n` up to 4): `n = 1` is a sub-frame
-measure/INP, `n >= 2` a value that waited a whole number of extra frames (a 33.2 ms two-frame wall).
-It returns `{ floorMs, multiple }`, exposed on the `query span` JSON view as `frameFloor` so a consumer
-can detect flooring programmatically. `frameFloorDominates` gates an elevated multiple on the window's
-wait share (idle for a wall, presentation delay for an INP): a busy 33 ms wall (real work near two
-frames) is not mislabeled a floor, while a wait-dominated one is. `query span` surfaces the faster
-sample and the js slice beside a floored median so it does not read as "no difference".
+headed -> none (it flaps, so no floor can be claimed). There are two detectors, and `frameFloor`
+carries a `basis` discriminator naming which fired.
+
+**`wall-multiple`** (`matchedFrameFloor`): the value sits on a WHOLE MULTIPLE of its floor (within ~1.2
+ms, `n` up to 4): `n = 1` is a sub-frame measure/INP, `n >= 2` a value that waited a whole number of
+extra frames (a 33.2 ms two-frame wall). It returns `{ basis: "wall-multiple", floorMs, multiple }`,
+exposed on the `query span` JSON view as `frameFloor` so a consumer can detect flooring programmatically.
+`frameFloorDominates` gates an elevated multiple on the window's wait share (idle for a wall,
+presentation delay for an INP): a busy 33 ms wall (real work near two frames) is not mislabeled a floor,
+while a wait-dominated one is. This is the right detector for a bench/in-page/measure wall and for INP,
+whose VALUE lands on the boundary because it carries no driver input-dispatch offset.
+
+**`work-signal`** (`workSignalFloor`): a `--breakdown` driver STEP is judged by its reconciling BAR
+instead, because its wall does NOT land on an exact multiple (below). It returns
+`{ basis: "work-signal", floorMs, workMs }`. `query span` surfaces the faster sample and the js slice
+beside a floored median so it does not read as "no difference", the same for both bases; the human
+table need not print the basis, but the JSON carries it.
 
 ### Why the wait-share cutoff is 0.8
 
@@ -264,6 +279,34 @@ a floor — the safe direction, since the frame-floor doc's whole point is to pr
 on the work axis rather than let a floor label swallow it. The same 0.8 is the `idleShareSuffix`
 threshold (`output/ascii.ts`) that tags a span wall `~N% idle`: both answer "is this window
 wait-dominated," so they share one exported constant.
+
+The sweep above is driven synthetically (the action spins the page's own main thread, no trusted
+input), so its wall lands on an exact multiple. A **trusted** `page.click` does not — the next section.
+
+### The work-signal floor on a `--breakdown` driver step
+
+**[measured]** A trusted `page.click` step carries **~8ms of input dispatch** inside the `measureStep`
+window: a floored cheap step reads wall **~41.3 ms** (33.2 settle + ~8 dispatch), while a synthetic
+settle-only step (`el.click()`, untrusted) reads **~33.0 ms** and floors clean at `n=2`. The offset is
+session-constant, stable ±1 ms across 10 launches, load 17-127, Chrome 150 and 151 alike; it is the
+same ~8 ms the node-side bound shows as `page.click` 40.5 vs `page.evaluate` 31.9
+([driver-timing.md](./driver-timing.md)). It is **not** a draw tail: `ReceiveCompositorFrameToStartDraw`
+is 0.094 ms median headless, ruled out as a source.
+
+So a floored trusted-click step's wall (41.3) sits BETWEEN `2x = 33.2` and `3x = 49.8`, and
+`matchedFrameFloor` misses it: on the probe it fired for 2 of 52 genuinely-floored steps. The
+reconciling bar still proves the case. On a floored cheap step the summed real-work slices
+(js+style+layout+paint+gc) are **0.63 ms** (sub-frame) and the idle share is **0.90**; the ~8 ms of
+input dispatch lands in the bar's `other`/idle, not the work slices. So `workSignalFloor` flags a step
+floored when its **work is under one frame AND its idle share reaches `IDLE_DOMINANT_SHARE` (0.8)** --
+independent of where the wall landed. [measured] `work 0.63ms / idle share 0.90` is flagged; the busy
+~25 ms control (`work ~26ms`, over one frame, idle 0.53-0.60) is rejected. The detector flags all cheap
+steps and rejects all busy steps in the probe data.
+
+**On the default capture mode this cannot be confirmed, and `frameFloor` stays null.** A sub-16 ms
+trusted interaction produces no Event Timing entry (the spec's 16 ms `durationThreshold`), so there is
+no INP to floor either; a default-mode driver step has no bar and no INP, and its wall alone carries the
+~8 ms dispatch off any multiple, so flooring cannot be shown without `--breakdown`.
 
 The comparability gate (`model/compat.ts`) keys on `meta.headlessMode`: a current headless chrome
 recording stamps `"new"`, an older one may carry `"shell"`, and a headed one carries nothing. A diff

@@ -49,7 +49,10 @@ instead:
   subtract.
 - **`page.click` alone costs ~20 ms** of Puppeteer/CDP input dispatch (mouse move, hit test,
   dispatch). It is not a round-trip cost: an empty `page.evaluate` round trip is **~0.5 ms**, i.e.
-  noise. Driving identical work two ways moves that bound by 8 ms.
+  noise. Driving identical work two ways moves that bound by 8 ms. That same **~8ms of input dispatch**
+  lands INSIDE the `measureStep` window on the page clock, so a floored trusted-click step's wall (~41
+  ms) sits off any exact frame multiple; that is why the frame-floor detector reads a step's flooring
+  off its bar's work signal, not its wall value ([frame-floor.md](./frame-floor.md#the-work-signal-floor-on-a---breakdown-driver-step)).
 - **The settle floor is ~31 ms**, two animation frames, and it is *deliberate* (`inWindow` is
   start-onward by design; async paints land after `run:end`). It is most of a fast step's wall.
 

@@ -30,6 +30,7 @@ import {
   recordingLane,
   parseSpanKindLabel,
   filterSpanEntries,
+  barFrameFloor,
 } from "../model/spans.js";
 import {
   isFirefoxDeep,
@@ -68,7 +69,7 @@ import {
   routingNote,
 } from "./group.js";
 import { pickMember, type GroupMember, type RunGroup } from "../model/group.js";
-import { matchedFrameFloor, frameFloorDominates } from "../model/frame-floor.js";
+import { matchedFrameFloor, frameFloorDominates, type FrameFloor } from "../model/frame-floor.js";
 import { classifySoftNavAgreement } from "../model/soft-nav.js";
 import { usToMs } from "../model/time.js";
 import { EVENT_KINDS, isEventKind } from "../trace/classify.js";
@@ -355,16 +356,19 @@ function buildSpanAnatomy(
 
   const residualMs = entry?.residualMs ?? span.breakdown?.residualMs;
 
-  // Frame-cadence floor: a wall/INP pinned to n whole frames hides sub-frame work (frame-floor.md).
-  // Surface it structurally so a --format json consumer can detect flooring, and gate an elevated
-  // multiple (n>=2) on the window's wait share so a busy multi-frame wall is not mislabeled a floor.
+  // Frame-cadence floor: a span pinned to the one-frame cadence hides sub-frame work (frame-floor.md).
+  // Surface it structurally so a --format json consumer can detect flooring. A span with a bar goes
+  // through barFrameFloor: a driver step by its work signal (its wall carries input dispatch, off any
+  // exact multiple), a run/measure by its wall value gated on the bar's idle share. A bar-less span
+  // has only its wall value and no wait signal, so only a sub-frame (1x) wall is claimed.
   const wallMs = entry?.wallMs ?? span.wallMs;
-  const wallMatch = matchedFrameFloor(wallMs, rec.meta);
-  const idleShare =
-    span.breakdown && span.breakdown.wallMs > 0
-      ? span.breakdown.slices.idle.ms / span.breakdown.wallMs
-      : null;
-  const frameFloor = wallMatch && frameFloorDominates(wallMatch, idleShare) ? wallMatch : undefined;
+  let frameFloor: FrameFloor | undefined;
+  if (span.breakdown) {
+    frameFloor = barFrameFloor(span.kind, wallMs, span.breakdown, rec.meta);
+  } else {
+    const barlessMatch = matchedFrameFloor(wallMs, rec.meta);
+    frameFloor = barlessMatch && frameFloorDominates(barlessMatch, null) ? barlessMatch : undefined;
+  }
   const inpMatch = matchedFrameFloor(span.inpMs, rec.meta);
   // An INP's "wait" is its presentation delay (handler end -> next paint), the frame-boundary cost;
   // its work is input delay + processing. A floored INP is presentation-dominated.

@@ -297,17 +297,19 @@ export function printSpanAnatomy(
   // beside it so the floored number is not read as "no difference". The n>= gate lives in
   // buildSpanAnatomy (frameFloor is set only when the window is frame-dominated).
   if (anatomy.frameFloor) {
-    const { floorMs, multiple } = anatomy.frameFloor;
+    const floor = anatomy.frameFloor;
     const minMs = span.stats?.minMs ?? span.wallMinMs;
     const belowFloor: string[] = [];
     if (minMs != null && anatomy.wallMs != null && minMs < anatomy.wallMs - 0.5)
       belowFloor.push(`min sample ${num(minMs, 1)} ms`);
     if (anatomy.slices?.js) belowFloor.push(`js ${num(anatomy.slices.js.ms, 1)} ms`);
     const detail = belowFloor.length ? `; sub-frame work reads on ${belowFloor.join(" / ")}` : "";
+    // A work-signal floor (a driver step whose wall carries input dispatch) reads as one frame: the
+    // work is sub-frame whatever the wall landed on. A wall-multiple floor names its n frames.
     const where =
-      multiple === 1
-        ? `the ~${num(floorMs, 1)} ms frame floor`
-        : `~${multiple}x the ${num(floorMs, 1)} ms frame floor (${num(floorMs * multiple, 1)} ms)`;
+      floor.basis === "work-signal" || floor.multiple === 1
+        ? `the ~${num(floor.floorMs, 1)} ms frame floor`
+        : `~${floor.multiple}x the ${num(floor.floorMs, 1)} ms frame floor (${num(floor.floorMs * floor.multiple, 1)} ms)`;
     console.log(dim(`  wall sits on ${where}${detail} (frame-floor.md)`));
   }
 
