@@ -256,6 +256,15 @@ export interface SpanEntry {
   aggregation: SpanAggregation;
   /** timed iterations behind this recording (`meta.iterations`); 1 unless `--iterations` repeated run() */
   iterations: number;
+  /**
+   * Exact rendering counts windowed to this span's representative occurrence, Measured throughout: a
+   * count the capture mode could not observe is `null` (never a fabricated 0), the SAME projection the
+   * bar-less `SpanCountsEntry` carries and the `query span` drill exposes. A bar-carrying overview row
+   * (chrome --breakdown, firefox measure) measured its layout/style/paint counts alongside its slices,
+   * so the overview reports them here rather than making a consumer drill each span for a count the
+   * recording already holds. See SpanCounts and model/measured.ts.
+   */
+  counts: SpanCounts;
   slices: UnifiedSlices;
   /** off-thread compositor frame side track (chrome --breakdown only; absent otherwise). Display-only. */
   frames?: FrameSideTrack;
