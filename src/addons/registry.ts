@@ -1,7 +1,8 @@
 // The addon registry: the ONE wiring point the core imports to reach the framework addons. The core
 // calls addons only through `activeAddons()` + the `Addon` interface (model/addon.ts); it imports no
 // addon internals. This list is the sole coupling -- clearing it (or `--framework off`) makes no addon
-// code run and every recording byte-identical to one wpd wrote before addons existed.
+// code run and no addon facts enter any recording (the `Span.addons` slot stays absent); `meta.framework`
+// still records the resolved mode as core provenance.
 
 import type { Addon, FrameworkMode } from "../model/addon.js";
 import { reactAddon } from "./react/index.js";

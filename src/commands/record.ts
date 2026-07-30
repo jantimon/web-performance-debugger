@@ -684,6 +684,9 @@ function buildMeta(
     lifecycle: detail.lifecycle,
     // The one capture that ran, by capture-mode name (there is no multi-pass plan).
     capture: capture.mode,
+    // The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
+    // nothing (both carry no Span.addons). Core provenance; always stamped.
+    framework: opts.framework ?? "auto",
     notes,
     // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome".
     browser: browserName === "firefox" ? "firefox" : undefined,

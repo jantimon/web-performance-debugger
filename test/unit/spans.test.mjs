@@ -407,6 +407,63 @@ test("buildSpans: a bar-less step in a breakdown recording (a navigating step) s
   assert.equal(result.barlessSpans[0].label, "navigate");
 });
 
+// --- Compact framework-addon presence on the overview row (React version + build) ---
+
+test("buildSpans: a bar span lifts the compact react addon (version + build), not commitCount", () => {
+  const bars = [
+    {
+      label: "run",
+      kind: "run",
+      breakdown: chromeBreakdown(7),
+      addons: {
+        react: { detected: true, version: "19.2.0", build: "production", commitCount: 4 },
+      },
+    },
+  ];
+  const run = buildSpans(bars, undefined, "chrome").spans[0];
+  assert.deepEqual(
+    run.addons,
+    { react: { version: "19.2.0", build: "production" } },
+    "only version + build ride the overview; commitCount/detected stay in the drill",
+  );
+});
+
+test("buildSpans: the CpuModel-synthesized run entry surfaces the stored run span's react facts", () => {
+  const spans = [
+    {
+      label: "run",
+      kind: "run",
+      aggregation: "sum",
+      wallMs: null,
+      counts: notMeasuredCounts,
+      addons: { react: { detected: true, version: "18.3.1", build: "development" } },
+    },
+  ];
+  const run = buildSpans(spans, firefoxCpu, "chrome", 1).spans[0];
+  assert.equal(run.kind, "run");
+  assert.deepEqual(run.addons, { react: { version: "18.3.1", build: "development" } });
+});
+
+test("buildSpans: react facts with no version/build (node phases only) leave the overview addon-free", () => {
+  const spans = [
+    {
+      label: "run",
+      kind: "run",
+      aggregation: "sum",
+      wallMs: null,
+      counts: notMeasuredCounts,
+      addons: { react: { phases: { totalMs: 3, anchors: [{ name: "renderWithHooks", selfMs: 3 }] } } },
+    },
+  ];
+  const run = buildSpans(spans, nodeCpu, "node", 1).spans[0];
+  assert.equal(run.addons, undefined, "no version/build to show -> no compact addon (never a fabricated field)");
+});
+
+test("buildSpans: a non-React span carries no addons field on the overview row", () => {
+  const run = buildSpans(chromeBreakdowns, undefined, "chrome").spans[0];
+  assert.equal(run.addons, undefined);
+});
+
 test("query spans on a default-capture driver flow shows the run bar + every step (item 3)", async () => {
   const file = writeRec("spans-mixed.json", {
     meta: { schemaVersion: "5", target: "chrome", capture: "default", iterations: 1 },

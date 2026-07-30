@@ -56,6 +56,7 @@ import {
   printGroupSpanStitch,
   printSpanAnatomy,
   printSpanFilterNote,
+  printSpansReactMarker,
 } from "./query-view.js";
 import { loadCpuModel } from "../profile/cpuprofile.js";
 import { resolveTarget, hintTarget, resolveConsumption } from "./resolve.js";
@@ -898,6 +899,9 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
     }
     printSpanFilterNote(totalHidden);
   }
+  // Framework identity (React version + build) once, off whichever rows carry it, so a bulk reader
+  // sees it without opening each span. Silent on a non-React recording.
+  printSpansReactMarker([...spans, ...barlessSelected]);
   // Point drill-down at one span's full anatomy (bar + counts + forced/dirtied + hot functions) and
   // at the event log, where one exists. The hint target is `latest` when this IS the latest recording,
   // else a cwd-relative path, so a pasted command carries no absolute home/scratch path. For a group,

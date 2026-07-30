@@ -3,6 +3,7 @@ import type { SourceMapDiagnostics } from "./sourcemap-meta.js";
 import type { Measured } from "./measured.js";
 import type { EngineVersion } from "./engine-version.js";
 import type { CaptureMode } from "../record/capture.js";
+import type { FrameworkMode } from "./addon.js";
 
 /**
  * The `--target` engine lane a recording was produced on, the axis the query views tag their spans
@@ -95,6 +96,14 @@ export interface RecordingMeta {
    * this is a scalar naming the capture mode, not a multi-pass plan.
    */
   capture: CaptureMode;
+  /**
+   * The resolved framework-addon mode this run selected (`--framework off|auto`, default `auto`), so a
+   * consumer distinguishes a deliberate `off` from an `auto` run that detected no framework (both carry
+   * no `Span.addons`). Core provenance, not addon output: it records the choice regardless of whether
+   * any addon contributed. Display-only (no gate branches on it), so optional per the gate-field
+   * invariant. Absent only on recordings written before this field. See model/addon.ts.
+   */
+  framework?: FrameworkMode;
   /** JS self-time from the sibling CpuModel (`CpuModel.jsSelfMs`), cached here so a reader gets the
    * headline without opening the model; `Measured`, null/absent on `--deep` (sampler off, no model) and
    * `--alloc`. NOT the non-idle sampled total: gc/engine/native are excluded. */

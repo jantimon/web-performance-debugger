@@ -3,7 +3,8 @@
 // this ONE narrow interface the core calls; the core never imports an addon's internals, only the
 // registry (src/addons/registry.ts). An addon READS what the capture already recorded and enriches
 // spans; it never changes what is captured. With `--framework off` (or an empty registry) no addon
-// code runs and the recording is byte-identical to one wpd wrote before addons existed.
+// code runs and no addon facts enter the recording: the `Span.addons` slot stays absent on every span.
+// (`meta.framework` records the resolved mode either way -- core provenance, not addon output.)
 
 import type { ReactFacts } from "../addons/react/facts.js";
 import type { ReactDevFacts } from "../addons/react-dev/facts.js";
