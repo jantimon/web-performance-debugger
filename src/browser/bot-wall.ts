@@ -16,27 +16,72 @@ const DOMINANT_IFRAME_MIN_FRACTION = 0.6;
  * signals (title, iframes with their viewport coverage, interactive-element count, body text,
  * meta-refresh) and reads the top-document URL from the page handle (CDP-free, lane-neutral). A frame
  * that failed to load still has a `src` attribute and a layout rect, so a cross-origin challenge
- * iframe is measured by geometry without reading its (blocked) content
+ * iframe is measured by geometry without reading its (blocked) content.
+ *
+ * Every read here is layout-non-forcing. This collector can run while the measured `wpd:run` window is
+ * open: a driver module's own hard navigation is inspected mid-flow (the on-ramp site is kept outside
+ * the window in `driver.ts`, but this one has no out-of-window moment). A synchronous forced flush
+ * would land in the run span's layout/style counts, so iframe coverage comes from an
+ * `IntersectionObserver` (the browser hands each rect from its own post-layout rendering step) and the
+ * near-empty-DOM signal from `textContent`, never `getBoundingClientRect` or `innerText`, both of which
+ * force a flush. [measured] a page storming layout every task gains no layout/style event from this
+ * pass, and no frame of this file reaches the `--deep` event log.
  */
 export async function collectBotWallSignals(page: Page): Promise<BotWallSignals> {
-  const dom = (await page.evaluate((minFraction: number) => {
-    const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+  const dom = (await page.evaluate(async (minFraction: number) => {
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const viewportArea = Math.max(1, viewportWidth * viewportHeight);
     const iframeSrcs: string[] = [];
-    const dominantIframeSrcs: string[] = [];
+    const framed: { element: Element; src: string }[] = [];
     for (const frame of Array.from(document.querySelectorAll("iframe"))) {
       const src = frame.getAttribute("src") || (frame as HTMLIFrameElement).src || "";
       if (!src) continue;
       iframeSrcs.push(src);
-      const rect = frame.getBoundingClientRect();
-      const coversWidth = rect.width >= window.innerWidth * minFraction;
-      const coversHeight = rect.height >= window.innerHeight * minFraction;
-      const coversArea = (rect.width * rect.height) / viewportArea >= minFraction;
-      if (coversWidth && coversHeight && coversArea) dominantIframeSrcs.push(src);
+      framed.push({ element: frame, src });
     }
+    // Viewport coverage via IntersectionObserver, resolved once every observed iframe has reported (or
+    // a bounded timeout, so a page that never renders a frame cannot hang the inspection). window.inner*
+    // is a cached viewport read (non-forcing); entry.boundingClientRect is the browser's own value, so
+    // the coverage test matches the geometry a getBoundingClientRect would return without forcing it
+    const dominant = new Set<string>();
+    await new Promise<void>((resolve) => {
+      if (framed.length === 0) {
+        resolve();
+        return;
+      }
+      let done = false;
+      const reported = new Set<Element>();
+      const finish = () => {
+        if (done) return;
+        done = true;
+        observer.disconnect();
+        resolve();
+      };
+      const observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          reported.add(entry.target);
+          const box = entry.boundingClientRect;
+          const coversWidth = box.width >= viewportWidth * minFraction;
+          const coversHeight = box.height >= viewportHeight * minFraction;
+          const coversArea = (box.width * box.height) / viewportArea >= minFraction;
+          if (coversWidth && coversHeight && coversArea) {
+            const match = framed.find((candidate) => candidate.element === entry.target);
+            if (match) dominant.add(match.src);
+          }
+        }
+        if (reported.size >= framed.length) finish();
+      });
+      for (const frame of framed) observer.observe(frame.element);
+      setTimeout(finish, 300);
+    });
+    const dominantIframeSrcs = [...dominant];
     const interactiveElementCount = document.querySelectorAll(
       "input, button, a[href], select, textarea",
     ).length;
-    const bodyTextLength = (document.body?.innerText || "").trim().length;
+    // textContent, not innerText: innerText forces a layout flush, textContent does not. The
+    // near-empty-DOM threshold is generous, so counting script/hidden text too costs no discrimination
+    const bodyTextLength = (document.body?.textContent || "").trim().length;
     // http-equiv="refresh" with a url=... target; the JS-redirect loop shows up as the settled URL,
     // which mainDocumentUrl already carries
     let metaRefreshUrl: string | null = null;

@@ -242,3 +242,32 @@ to round the parts to whole ms where Chrome does not.
   `"first"` and run spans stay `"sum"`. Occurrence begin/end pairing is FIFO per label
   (`breakdown-spans.ts`), which handles sequential same-label repeats but cross-pairs nested or
   overlapping same-label measures into the wrong window.
+
+## The bot-wall inspection cannot contaminate the measured counts
+
+Bot-wall detection (`browser/bot-wall.ts` `collectBotWallSignals`) reads the settled page after a
+wpd-performed navigation: the on-ramp's first load, a `--url`/`--html` host pre-navigation, and each
+hard navigation a driver module performs (`onHardNavigation`). Two of those sites can run while the
+`wpd:run` window is open, so the collector is built so its reads never add to the run span's counts or
+wall.
+
+- **Every signal read is layout-non-forcing.** Iframe viewport coverage (the dominant-challenge-frame
+  strong signal) comes from an `IntersectionObserver`, whose rects the browser hands from its own
+  post-layout rendering step, and the near-empty-DOM text signal from `textContent`. A
+  `getBoundingClientRect` or `innerText` read would force a synchronous layout flush instead.
+  **[measured]** on a page that dirties layout every task, the forcing collector adds `layout`,
+  `style`, and `invalidation` events carrying its own frame to the `--deep` event log (the raw
+  `layoutCount`/`styleCount` gain a few, swamped by the page's per-frame layouts); the non-forcing
+  collector adds none. On a settled page (every normal boot) neither adds anything: layout is clean, so
+  a `getBoundingClientRect` would have been free too.
+- **The forced-layout report was never affected either way.** The collector's `page.evaluate` frame is
+  a tool frame (`bot-wall.` is in `WPD_EVALUATE_SITES`), so `isToolFrameUrl` strips it from the
+  resolved read-site stack. `markForced` finds no user stack on any flush the collector triggers, so it
+  is never counted as a forced layout or surfaced in `blame`. **[measured]** `forcedLayoutCount` and
+  the blame list are identical with the collector on and off, on both a clean and a storming page.
+- **The on-ramp inspection runs OUTSIDE the run window.** It fires after a warmup iteration (before
+  `wpd:run:start`) or after `wpd:run:end`, never mid-window, so neither its `page.evaluate` wall (the
+  `IntersectionObserver` waits one frame, **[measured]** ~16 ms on an iframe-bearing page, ~0 with no
+  iframe) nor any read touches the run-span numbers. The driver-navigation inspection stays in-window
+  (a mid-flow navigation has no out-of-window moment), which is safe because the collector forces
+  nothing; it adds only its own idle wait to the run-aggregate wall, never a step or measure span.
