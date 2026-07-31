@@ -9,7 +9,7 @@
  * measureStep({ label, action, until })   // object form
  * - action: the interactions to measure
  * - until:  optional "done" signal (a selector string, an async fn, or a
- * promise). Omit to use the settle heuristic (rAF + idle, twice)
+ *           promise). Omit to use the settle heuristic (rAF + idle, twice)
  *
  * Each measureStep becomes one step span in the recording; drill in with
  * `query span <label>` or list them all with `query spans`

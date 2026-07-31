@@ -5,7 +5,7 @@
  * above ~200 iterations; Firefox's ~1ms floor reports a fixed ~5ms of a handful of samples). Raise
  * --iterations until the number stabilises
  * Run: node dist/cli.js record examples/probes/near-zero.mjs --bench --iterations 250
- * node dist/cli.js query cpu latest
+ *      node dist/cli.js query cpu latest
  */
 export function run() {
   console.log("near-zero probe: one log and a trivial return");
