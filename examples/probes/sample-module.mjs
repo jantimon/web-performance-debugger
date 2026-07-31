@@ -1,10 +1,11 @@
-// Example module for wpd
-//
-// Lifecycle hooks (all optional except `run`), called with a shared `ctx` object:
-//   prepare(ctx)    -> once before timed iterations  (aliases: setup, beforeAll)
-//   run(ctx)        -> the measured function (required)
-//   cleanup(ctx)    -> once after all runs            (aliases: teardown, afterAll)
-
+/**
+ * Example module for wpd
+ *
+ * Lifecycle hooks (all optional except `run`), called with a shared `ctx` object:
+ * prepare(ctx)    -> once before timed iterations  (aliases: setup, beforeAll)
+ * run(ctx)        -> the measured function (required)
+ * cleanup(ctx)    -> once after all runs            (aliases: teardown, afterAll)
+ */
 export function prepare(ctx) {
   const host = document.createElement("div");
   host.id = "perf-host";
