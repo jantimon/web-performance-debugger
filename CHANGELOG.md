@@ -1,5 +1,43 @@
 # @jantimon/web-performance-debugger
 
+## 1.4.0
+
+### Minor Changes
+
+- [#200](https://github.com/jantimon/web-performance-debugger/pull/200) [`45a2bae`](https://github.com/jantimon/web-performance-debugger/commit/45a2bae802d952857c2141904b347cd8518eb76c) - Bot-wall detection now runs on a `page.goto` a driver module performs, not only on wpd's own
+  built-in load flow. A hand-authored flow that navigates onto a Cloudflare/DataDome interstitial is
+  refused with the same evidence, screenshot, and non-zero exit as the built-in flow, instead of
+  measuring the challenge page as the site. `--allow-bot-wall` measures it anyway with the loud note.
+
+### Patch Changes
+
+- [#197](https://github.com/jantimon/web-performance-debugger/pull/197) [`d9d468e`](https://github.com/jantimon/web-performance-debugger/commit/d9d468ee1fb3c328e9ac689b6583f3d72c593ead) - Enforce two comment/naming lint rules repo-wide via oxlint JS plugins: `id-length`
+  (single-letter identifiers banned beyond the integer counters `i`/`j`/`n`) and the vendored
+  `no-comment-slop` plugin (no trailing period, em-dash, banner, foreign syntax, or jargon; JSDoc
+  for exported symbols). All findings fixed; internal only, no runtime or output change.
+
+- [#204](https://github.com/jantimon/web-performance-debugger/pull/204) [`cca0675`](https://github.com/jantimon/web-performance-debugger/commit/cca0675200a352b180d03cfb719fc6e16e5af81e) - The `no-comment-slop` lint rules now come from the released `eslint-plugin-no-comment-slop` npm
+  package, wired through `oxlint`'s `jsPlugins`, replacing the vendored copy. Comments that named the
+  `—` table placeholder had it swapped for a plain `-`, misdescribing the output; those are restored
+  to the real glyph (backtick-wrapped where needed). Internal only, no runtime or output change.
+
+- [#205](https://github.com/jantimon/web-performance-debugger/pull/205) [`b8b5334`](https://github.com/jantimon/web-performance-debugger/commit/b8b5334e0b597d373f4d8672f7625d2607b9b8e9) - Name `"traverse"` (a back/forward soft nav) in the soft-navigation `navigationType` field docs
+  alongside `"push"`/`"replace"`. The engine value was always stored verbatim, so this is a doc-only
+  correction: no runtime or output change.
+
+- [#199](https://github.com/jantimon/web-performance-debugger/pull/199) [`5c97c99`](https://github.com/jantimon/web-performance-debugger/commit/5c97c99403d66540f3de294ffccb886c3349c3d0) - Three reporting fixes for the built-in `--url` load flow:
+
+  - The record report's per-step wall table prints `—` for a step whose wall the capture mode
+    never priced (default mode), instead of a literal `0` that read as "instant".
+  - `query span <navigation-step>` now explains an absent CLS (no qualifying shift on Chrome, or
+    no layout-shift entry type on Firefox) rather than showing nothing.
+  - A commit-only step-span React block points at the run span, where the detected
+    version/build/renderer live.
+
+- [#201](https://github.com/jantimon/web-performance-debugger/pull/201) [`3f7126d`](https://github.com/jantimon/web-performance-debugger/commit/3f7126d510df61ff0234791daf0972a7d0e43a3e) - Update the vendored `no-comment-slop` lint plugin to the latest upstream: JSDoc that documents an
+  export now gets its own line budget, `@example`/fenced-code lines and `SPDX` headers stop counting,
+  and the export-doc association reaches across blank lines. Internal only, no runtime or output change.
+
 ## 1.3.2
 
 ### Patch Changes
