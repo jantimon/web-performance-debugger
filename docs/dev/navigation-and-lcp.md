@@ -254,9 +254,11 @@ Chrome ships the `layout-shift` entry type and Firefox does not (**[measured]** 
 A **soft navigation** is a same-document route change an SPA drives with `history.pushState` plus a
 DOM swap, which the platform now treats like a navigation for metrics. Status:
 
-- The WICG Soft Navigations API is **default-on from Chrome 151**. It ran as an origin trial from
-  Chrome 139 (July 2025) through a final trial in Chrome 147-149 (**[source]**, Chrome blog dated
-  2026-04-20, https://developer.chrome.com/blog/final-soft-navigations-origin-trial).
+- The WICG Soft Navigations API is **default-on from Chrome 151**, and the interface at
+  https://wicg.github.io/soft-navigations/ (**[source]**) is its settled shape. It ran as an origin
+  trial from Chrome 139 (July 2025) through a final trial in Chrome 147-149 (**[source]**, Chrome blog
+  dated 2026-04-20, https://developer.chrome.com/blog/final-soft-navigations-origin-trial); 151 ships it
+  default-on with no further API change.
 - **[measured]** on Chrome 151 (Puppeteer 25.4.0) `PerformanceObserver.supportedEntryTypes` lists
   `soft-navigation` and `interaction-contentful-paint` with **no flag**; on Chrome 150 (Puppeteer
   25.2.1) both are absent unless the browser is launched with
@@ -312,7 +314,8 @@ dispatch does not.
 
 - `soft-navigation` (`PerformanceSoftNavigation`): `name` (the new URL), `startTime` (the route's time
   origin), `duration` (the route's FCP), `navigationId` (numeric), `interactionId`, `navigationType`
-  (`"push"` or `"replace"`), and a `getLargestInteractionContentfulPaint()` method.
+  (the `NavigationType` enum: `"push"`, `"replace"`, or `"traverse"`, a back/forward soft nav), and a
+  `getLargestInteractionContentfulPaint()` method.
 - `interaction-contentful-paint` (`InteractionContentfulPaint`): `startTime`, `paintTime`,
   `presentationTime`, `navigationId`, `interactionId`, and a nested `largestContentfulPaint`. The
   paint's identity — `element`, `size`, `url`, `renderTime` — sits on that nested
@@ -325,6 +328,14 @@ dispatch does not.
   reported a populated `renderTime` (~408 ms, distinct from its `loadTime`), not the spec's 0 the
   boot-LCP section cites for Chrome 150. So the TAO/`renderTime` rule is not assumable across versions;
   re-probe before keying on `renderTime` from a soft-nav LCP.
+
+This is the settled WICG shape: `soft-navigation`/`PerformanceSoftNavigation` with `name`, `startTime`,
+`duration` (FCP), `navigationId` (numeric), `interactionId`, `navigationType`, and the
+`getLargestInteractionContentfulPaint()` **method** are exactly the interface at
+https://wicg.github.io/soft-navigations/ (**[source]**). Every field `driver.ts` reads is in that IDL,
+and `navigationType` is stored verbatim, so the enum's `"traverse"` value flows through unchanged. The
+route path depends on the LICP being a **method**: a live paint that grows after the FCP entry fires is
+read at flush time, not frozen at emission, so it is not a callback read to "simplify" back.
 
 **navigationId slices the metrics.** Boot entries and the soft-nav entry carry distinct
 `navigationId`s (one run: boot 1861, soft nav 1868), and a post-soft-nav `layout-shift` entry carries
@@ -349,8 +360,8 @@ that carries both verdicts should surface the disagreement, not silently pick on
 A driver step carries the engine's own verdict in an optional `engineSoftNav`, BESIDE `navigation` (the
 url+timeOrigin classifier), read from an in-page `soft-navigation` `PerformanceObserver` injected per
 step exactly like the INP/LoAF/LCP observers (`browser/driver.ts`). The stored shape keeps the fields
-per-soft-step metrics slice by: `{ count, navigationTypes ("push"/"replace"), navigationIds?,
-interactionIds? }` (`shapeEngineSoftNav`, `EngineSoftNav`). The paint identity on the entry's
+per-soft-step metrics slice by: `{ count, navigationTypes ("push"/"replace"/"traverse"),
+navigationIds?, interactionIds? }` (`shapeEngineSoftNav`, `EngineSoftNav`). The paint identity on the entry's
 `getLargestInteractionContentfulPaint()` is read separately for the route metrics below (`softNav`),
 off the retained live entry at the flush; the raw verdict here keeps only the ids that slice them.
 
@@ -430,6 +441,12 @@ navigation cleanly — a reload moves `timeOrigin` by far more than measurement 
 `interaction-contentful-paint` is **not** a substitute navigation signal. It is noisier than
 `soft-navigation`: it fires for pre-route typeahead paints that still carry the previous
 `navigationId`, so it flags paints that are not route changes.
+
+`interaction-contentful-paint` emits for **every** trusted interaction, not only ones that become a
+soft navigation (**[source]**, https://wicg.github.io/soft-navigations/). wpd never observes that
+stream directly: route LCP comes off the soft-nav entry's `getLargestInteractionContentfulPaint()`, so
+the standalone ICP stream neither feeds nor confuses the route path. An interaction that painted without
+changing the URL is therefore out of the route-metrics scope by construction.
 
 ## The ambiguity family
 

@@ -429,7 +429,7 @@ export function computeLayoutShift(entries: RawLayoutShiftEntry[]): LayoutShift 
 export interface RawSoftNavEntry {
   /** the route's URL (`entry.name`) */
   url: string;
-  /** "push" or "replace": the history op the engine attributed */
+  /** "push", "replace", or "traverse": the history op the engine attributed, stored verbatim */
   navigationType: string;
   /** the numeric `navigationId` per-soft-step metrics slice by */
   navigationId: number;
