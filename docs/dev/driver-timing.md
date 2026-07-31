@@ -122,6 +122,12 @@ Two facts the implementation depends on:
 8 ms. So the split is finer-grained than the INP it decomposes: a 45 ms handler reads
 `processingMs` 45.4 inside an `inpMs` of 64.
 
+**[bounded]** wpd's own capture-phase interaction listeners (`installInteractionFlag`, `passive:true`
+on pointerup/click/keydown/keyup) execute inside this `processingMs` window -- one `event.isTrusted`
+read and a boolean assign, under 0.001 ms against the 0.1 ms resolution, and `passive:true` so they
+never `preventDefault` -- so `processingMs` carries a negligible, non-blocking tool residue it cannot
+be moved by.
+
 ## It crosses engines, and it explains the INP gap
 
 **[measured]** the same 45 ms-handler probe, both engines:
@@ -208,6 +214,16 @@ to round the parts to whole ms where Chrome does not.
   when it is comparing a wall that waits for a frame against one that does not. The claim that
   survives is narrower and still worth the switch: bench prices the code, while the driver's wall is
   dominated by a frame wait that does not move when the code gets slower.
+
+  **Bench installs none of the driver's observers, and its per-iteration UserTiming misses the
+  headline wall.** The five PerformanceObservers and interaction listeners live only in `runDriver`;
+  bench runs `runHarness`, which installs none, so the JS-cost lane is machinery-free by
+  construction. The harness does emit `wpd:iter:N` marks + measures each iteration, but the headline
+  bench wall brackets `run()` alone and excludes them, the exact counts never see them (UserTiming is
+  its own `EventKind`, never layout/style/paint), and js self-time drops them (`harness.js` is a tool
+  frame -> browser slice). **[bounded]** Only the `--breakdown` reconciling bar's browser slice
+  carries the mark-creation cost -- ~microseconds per mark, sub-ms at 250 iterations -- and it scales
+  with `--iterations`, so a bench `--breakdown` bar's non-idle browser slice is not purely the page.
 - **`performance.measure` spans are the third way, for a phase *inside* `run()`.** Under
   `--breakdown` (Chrome) and automatically on Firefox, any `performance.measure(name, a, b)` the page
   emits becomes its own reconciling span with a full breakdown, keyed by the measure name. So a

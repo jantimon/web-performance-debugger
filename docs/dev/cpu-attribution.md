@@ -103,6 +103,34 @@ ENTIRE ranked set on a click-only step and leak into `byPackage` as a percent-en
 `%2Fpuppeteer-core...` bucket; the Firefox `chrome://remote/` url is stripped from `parsed.url` by the
 Gecko converter, so the drop matches it through `parsed.rawUrl`.
 
+## The driver's own live machinery is a tool frame too, so self-time never carries it
+
+**[measured]** The driver keeps five PerformanceObservers (event/LCP/layout-shift/LoAF/soft-nav), the
+settle rAFs, and the per-step `wpd:*` marks live across every measured window, yet none of it reaches
+the CPU `js` slice, the package rollup, or the hot list. The same `isToolFrameUrl` filter that drops
+automation dispatch (above) also anchors the tool's own in-page sites -- `/browser/driver.`,
+`/settle.`, `/harness.`, `/bot-wall.`, `/record/runpass.` (`WPD_EVALUATE_SITES`) -- so every frame
+they emit tiles into the `browser` slice (`computeBreakdown`, `cpuprofile.ts`) and drops out of the
+ranked functions (`raw.ts`). Read this before "optimizing" an observer on the theory that it pollutes
+self-time: it does not, and it needs no windowing fix.
+
+Probe: an on-ramp `--breakdown` driver record of a fixture that fires LCP + a layout shift + a 60 ms
+LoAF on boot, 5 iterations, a ~935 ms window.
+
+- The raw `.cpuprofile` holds the tool frames (`settleOnce`, `stepClock`, `mark`, `measure`,
+  `runDriver`, bot-wall): ~15 leaf samples, ~2 ms, ~0.2% of the window. The resolved `.cpu.json`
+  js/package/hot list holds NONE of them -- `jsSelfMs` is 300.4 ms, the fixture's own 60 ms loop
+  across 5 iterations, and the top function is the page's own script.
+- The observer CALLBACKS produced ZERO samples (absent from the raw profile entirely): their
+  per-entry cost -- shaping one object out of pre-computed entry fields -- sits below the ~150 us
+  sampler resolution.
+- Those shapers read only pre-computed entry fields (`previousRect`/`currentRect`,
+  `element.tagName`), never live geometry, so they force no layout/style/paint. The exact
+  layout/style/paint counts therefore carry zero tool work.
+
+So the machinery is clean, not contaminating: the ~0.2% residue lands in the directional
+browser/idle slice, while every exact count and every js/package/hot number is filtered clear of it.
+
 ## Sourcemap note gating
 
 The note answers "can the package rollup be believed?", which is a **different question** from "did
