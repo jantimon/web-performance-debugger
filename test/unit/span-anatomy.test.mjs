@@ -839,7 +839,7 @@ test("query span <measure>: discloses that counts are not windowed to a performa
   // Disclosure contract, token-level: `not windowed` + `performance.measure` must survive; the
   // connective prose need not
   assert.match(text, /not windowed.*performance\.measure/s, "the not-windowed disclosure prints");
-  // The bar is present with real style/layout ms while the counts table reads "-": the disclosure is
+  // The bar is present with real style/layout ms while the counts table reads "—": the disclosure is
   // the bridge, not a fabricated count
   assert.match(text, /style recalc\s+—/, "counts still read not-measured, never a fake 0");
 });

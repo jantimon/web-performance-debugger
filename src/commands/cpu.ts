@@ -115,7 +115,7 @@ export function printCpuBreakdown(model: CpuModel, iterations?: number): void {
   if (!breakdown) return;
   const { wallMs, slices } = breakdown;
   // An empty profile (no sampled window) has nothing to tile; skip rather than print an
-  // all-placeholder ("-") table that says nothing
+  // all-placeholder ("—") table that says nothing
   if (wallMs <= 0) return;
   const isNode = recordingRuntime(model.meta) === "node";
   // On the node lane the non-JS engine slice is V8 runtime/native, not a browser; label it honestly
@@ -209,7 +209,7 @@ export function printSpanBreakdowns(
       .map(([owner, ms]) => `${owner} ${num(ms, 1)}`)
       .join(" · ");
     // Fixed order: real work first, idle last, so the eye lands on the cost. paint is `Measured`:
-    // null on firefox (off-main-thread), where the row prints "-", never a fake 0
+    // null on firefox (off-main-thread), where the row prints "—", never a fake 0
     const rows: [string, number | null, string][] = [
       ["js", slices.js.ms, topPackages],
       ["style", slices.style.ms, ""],

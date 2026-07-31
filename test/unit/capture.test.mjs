@@ -166,8 +166,8 @@ test("capabilitiesAfterParse: a lost run window degrades every rendering capabil
 });
 
 // Drift guard: the not-measured NOTES must agree with capabilitiesFor and honor the Measured
-// contract. Under that contract unmeasured is `-`/null and 0 is measured-clean, so a note that tells
-// a reader "a 0 there means unmeasured" contradicts the model that already renders unmeasured as `-`
+// contract. Under that contract unmeasured is `—`/null and 0 is measured-clean, so a note that tells
+// a reader "a 0 there means unmeasured" contradicts the model that already renders unmeasured as `—`
 test("notes: the breakdown invalidation note matches capabilitiesFor and never equates 0 with unmeasured", () => {
   const caps = capabilitiesFor(captureFor(opts({ breakdown: true }), "chrome"), "chrome");
   assert.equal(caps.invalidations, false, "precondition: --breakdown drops invalidationTracking");

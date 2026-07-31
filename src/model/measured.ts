@@ -9,7 +9,7 @@
  *     cannot evaluate has not passed. A `diff` refuses to compare it rather than invent a 0 -> 45
  *     regression.
  *   - absent (undefined / the field missing entirely): the field PREDATES the reader -- an older
- *     artifact written before it existed. Readers default it at the read site (`?? 0`, `?? "-"`)
+ *     artifact written before it existed. Readers default it at the read site (`?? 0`, `?? "—"`)
  */
 export type Measured<T> = T | null;
 

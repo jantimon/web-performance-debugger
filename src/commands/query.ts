@@ -1164,7 +1164,7 @@ export async function queryBlame(file: string, query: BlameQuery): Promise<void>
       : withScope;
   };
   // The widest flush's raw event id per row (dim), so the reader can drill it with `query get <id>`
-  // "-" where the row carries no addressable id (the chrome --breakdown sampled rows, id 0)
+  // "—" where the row carries no addressable id (the chrome --breakdown sampled rows, id 0)
   const idCell = (row: { events: NormalizedEvent[] }): string => {
     const id = representativeEventId(row.events);
     return id == null ? dim("—") : dim(String(id));
