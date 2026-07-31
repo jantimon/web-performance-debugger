@@ -37,24 +37,22 @@ node dist/cli.js <...>  # run the CLI (installed bins: web-performance-debugger,
 npm run changeset       # add a changeset; CI Release workflow versions+publishes on merge to main
 ```
 
-CI (`.github/workflows/ci.yml`) runs on Node 24: `ci` (lint → format:check → build → `knip` → unit
-`test` → serial `test:measurement`, browser-free, `PUPPETEER_SKIP_DOWNLOAD`), `pack-smoke` (packs the tarball, installs it into a temp
-project, runs the bin + a `--target node` record + a root-type compile via `scripts/pack-smoke.mjs`,
-browser-free), and `e2e` (downloads Chrome, runs `test:e2e`). A final `release` job (changesets +
-OIDC publish) `needs: [ci, pack-smoke, e2e]` and runs only on a push to main, so a broken main can
-never publish. The gecko `test:e2e:firefox` suite runs nightly in `.github/workflows/firefox-e2e.yml`
-(installs Firefox, `WPD_E2E_FIREFOX_REQUIRED=1` so a missing browser is a hard failure), not on every
-PR. Four test lanes: **unit** (`test/unit/*.test.mjs`) exercises pure functions against compiled
-`dist/`, launching no browser; **measurement** (`test/measurement/`, `npm run test:measurement`, run
-serially with `--test-concurrency=1`) is the browser-free `--target node` lane that RECORDS a real CPU
-profile, so it must run alone -- a parallel unit worker competing for the CPU can inflate a near-no-op
-recording past a gate floor (docs/dev/measurement-ecosystem.md: never measure concurrently on one
-host); **chrome e2e** (`test/cli.e2e.test.mjs`) spawns the built CLI against
-real headless Chrome; **firefox e2e** (`test/firefox.e2e.test.mjs`) drives the gecko lane. Each e2e
-suite **self-skips when its browser is absent** so `npm test` and `ci` stay green without one;
-`WPD_E2E_REQUIRED=1` (chrome, set by `test:e2e`) and `WPD_E2E_FIREFOX_REQUIRED=1` (the nightly firefox
-job) make a missing browser a hard failure so the e2e jobs can't silently pass. Grep the test dirs for
-a feature's coverage; the per-feature inventory is not tracked here.
+CI (`.github/workflows/ci.yml`, Node 24) gates every PR (lint → format:check → build → knip → unit →
+serial measurement, plus a browser-free `pack-smoke` and a Chrome `e2e`); a `release` job publishes
+only on a green push to main. Firefox e2e runs nightly, not per PR. Four test lanes, and their
+semantics matter:
+
+- **unit** (`test/unit/*.test.mjs`) exercises pure functions against compiled `dist/`, no browser.
+- **measurement** (`test/measurement/`, `npm run test:measurement`) is the browser-free `--target node`
+  lane that RECORDS a real CPU profile, so it **runs serially** (`--test-concurrency=1`): a parallel
+  worker competing for the CPU can inflate a near-no-op recording past a gate floor
+  (docs/dev/measurement-ecosystem.md: never measure concurrently on one host).
+- **chrome e2e** (`test/cli.e2e.test.mjs`) spawns the built CLI against real headless Chrome.
+- **firefox e2e** (`test/firefox.e2e.test.mjs`) drives the gecko lane.
+
+Each e2e suite **self-skips when its browser is absent** so `npm test`/`ci` stay green without one;
+`WPD_E2E_REQUIRED=1` (chrome) and `WPD_E2E_FIREFOX_REQUIRED=1` (nightly firefox) make a missing browser
+a hard failure so the e2e jobs can't silently pass. Grep the test dirs for a feature's coverage.
 The broader smoke tests below stay manual (always `npm run build` first — the CLI runs `dist/`):
 
 ```bash
@@ -70,36 +68,31 @@ node dist/cli.js query span latest "add rows"                       # one span's
 
 Flow: **`record` produces a `Recording` (model/recording.ts) → `query`/`assert`/`diff` consume it.**
 `src/cli.ts` (commander) is the only entry point and wires every command; `cli-validation.ts` holds
-the one numeric-validation policy (whole-number/ms-threshold parsers that throw an
-`InvalidArgumentError` at the argument boundary before any browser launches). The model is split across
-`model/`: `recording.ts` (the `Recording`/`Span`/`Breakdown` core, and a BARREL that
-re-exports the domain files so `../model/recording.js` stays the one import path: `events.ts` (`EventKind`/
-`NormalizedEvent`/`StackFrame`), `cpu.ts` (`CpuModel`/`CpuFunction`/`CpuBreakdown`), `frames.ts`
-(`FrameSideTrack`), `attribution.ts` (`ThrashReport`/`DirtiedBy*`/`BlameSemantic`), `meta.ts`
-(`RecordingMeta`/`WorkloadIdentity`), `sourcemap-meta.ts` (`SourceMapDiagnostics`)), `driver-step.ts`
-(`DriverStep`, the driver→steps contract), `marks.ts` (the `wpd:*`
-mark namespace), `time.ts` (clock/us↔ms helpers), `host-cpu.ts` (the host-CPU index microbenchmark stamped as `meta.hostCpuIndex`, a comparability fact, never a normalizer), `measured.ts` (the `Measured<T>` not-measured-vs-0
-honesty wrapper), `reconcile.ts` (slice-sum-vs-wall residual), `span-merge.ts`
-(`mergeSpanOccurrences`: collapse a repeated `measure` label to its lower-median-by-wall occurrence,
-verbatim), `span.ts`/`spans.ts` (the stored `Span` count projection + the `query spans` adapter),
-`capture-mode.ts` (capture-mode predicates over `meta.capture` like `isFirefoxDeep`/`isGeckoCaptureMode`), `artifact.ts` (the
-schema-version + recording-shape gates every reader passes through), `query.ts` (the derived view
-shapes the `query`/`cpu-diff` verbs emit under `--format json|toon`, kept off the stored types so the
-JSON contract cannot silently drift), and `compat.ts` (`comparabilityMismatches`: the capture axes
-that make a `diff`/`cpu-diff` `--fail-on-regression` gate meaningless, so it refuses instead of
-fabricating a pass/fail), and `group.ts` (the **run-group** manifest: `RunGroup`/`GroupMember` types,
-`formationVerdict` reusing `comparabilityMismatches` to refuse an incompatible member, `pickMember`
-routing a consumption axis to the member that measured it, and `countDisagreements` surfacing both
-values when two members disagree on an exact count -- pure; the fs writer/runner is `record/group.ts`,
-the consumer primitives are `commands/group.ts`). `record` orchestration lives in
-`src/record/`: `options.ts` (`RecordOptions`, the internal flags shape `cli.ts` fills), `capture.ts`
-(`captureFor` picks the ONE capture mode + `capabilitiesFor`/`blameSemanticFor`/`countScopeNote`),
-`page-option.ts` (`PageResolution`: resolves the `--url <value>`
-host page to a live URL to navigate or a local HTML file to serve),
-`runpass.ts` (runs that one capture), `artifacts.ts`
-(serialization), `spans-build.ts` (assembles `Span[]` from the run/steps/summary), `breakdown-spans.ts`
-(per-span bar assembly, FIFO measure pairing, then `mergeSpanOccurrences`), and `notes.ts`
-(`meta.notes`).
+the one numeric-validation policy (parsers that throw `InvalidArgumentError` at the argument boundary
+before any browser launches).
+
+The model lives in `model/`, one file per domain (open the file for its types). `recording.ts` is the
+`Recording`/`Span`/`Breakdown` core AND a BARREL that re-exports the domain files (`events.ts`,
+`cpu.ts`, `frames.ts`, `attribution.ts`, `meta.ts`, `sourcemap-meta.ts`), so `../model/recording.js`
+stays the one import path. Alongside: `driver-step.ts` (the driver→steps contract), `marks.ts` (the
+`wpd:*` mark namespace), `time.ts` (clock/us↔ms helpers), `host-cpu.ts` (`meta.hostCpuIndex`, a
+comparability fact, **never a normalizer**), `measured.ts` (the `Measured<T>` not-measured-vs-0 honesty
+wrapper), `reconcile.ts` (slice-sum-vs-wall residual), `span-merge.ts` (`mergeSpanOccurrences`:
+collapse a repeated `measure` label to its lower-median-by-wall occurrence, verbatim), `span.ts`/
+`spans.ts` (stored `Span` projection + the `query spans` adapter), `capture-mode.ts` (predicates over
+`meta.capture`), `artifact.ts` (the schema-version + shape gates **every reader passes through**),
+`query.ts` (the `--format json|toon` view shapes, kept OFF the stored types so the JSON contract cannot
+silently drift), `compat.ts` (`comparabilityMismatches`: the axes that make a `diff` gate meaningless,
+so it **refuses** rather than fabricating a pass/fail), and `group.ts` (the pure **run-group** manifest
++ `formationVerdict`/`pickMember`/`countDisagreements`; the fs writer/runner is `record/group.ts`, the
+consumer primitives `commands/group.ts`).
+
+`record` orchestration lives in `src/record/`: `options.ts` (`RecordOptions`, the internal flags
+shape), `capture.ts` (`captureFor` picks the ONE capture mode + `capabilitiesFor`/`blameSemanticFor`/
+`countScopeNote`), `page-option.ts` (`PageResolution`: resolves `--url` to a URL to navigate or a local
+file to serve), `runpass.ts` (runs that one capture), `artifacts.ts` (serialization), `spans-build.ts`
+(assembles `Span[]`), `breakdown-spans.ts` (per-span bar assembly, FIFO measure pairing, then
+`mergeSpanOccurrences`), and `notes.ts` (`meta.notes`).
 
 ### Two execution modes (this is the central design fork)
 
@@ -394,11 +387,10 @@ Event Timing observer in `driver.ts`, ungated by caps, and it works. `meta.brows
 The lane is ONE gecko pass at every capture mode (`mode: "gecko"`, or `"gecko-deep"` when `--deep` adds
 the dirtied-by write report — same capture, a reporting tier over it). The CLI refuses to turn the
 profiler off here: the gecko pass is this lane's *only* source of CPU samples, layout/style markers,
-the reconciling bar, AND read-site blame, so without it every rendering count reads 0. The pass
-launches Firefox with the Gecko profiler env vars, runs the flow, closes the browser (flushing a
-shutdown dump), then `waitForGeckoDump` polls the file to stable. The dump stays a **path** on
-`PassResult` (never a retained string) and is `copyFile`d to the artifact: a 16M-entry ring buffer
-serializes to 16MB+ even for a trivial probe. `sampleIntervalUs` is read back from the dump's
+the reconciling bar, AND read-site blame, so without it every rendering count reads 0. The browser
+closes to flush a shutdown dump, which `waitForGeckoDump` polls to stable; the dump stays a **path** on
+`PassResult` (never a retained string) and is `copyFile`d to the artifact, since a 16M-entry ring
+buffer serializes to 16MB+ even for a trivial probe. `sampleIntervalUs` is read back from the dump's
 `meta.interval` (what the sampler actually ran at), never hardcoded.
 
 `profile/gecko.ts` converts the raw dump (v34) to a `RawCpuProfile` (fed to `buildCpuModel` unchanged)
@@ -530,46 +522,8 @@ attributes bench harness frames to the served host page). Fixture:
 
 ## Regenerating the README demo (`examples/demo-gif/`)
 
-The README hero is a [VHS](https://github.com/charmbracelet/vhs) terminal recording. The tape and a
-how-to live in `examples/demo-gif/` (`demo.tape` + `README.md`); the rendered `demo.gif` is
-git-ignored and hosted via a GitHub user-attachments URL (not committed, so the npm tarball stays
-lean). **See `examples/demo-gif/README.md` for the render/publish steps.** Internal notes below.
-
-What it shows: the `--target node` CPU lane attributing SSR `renderToString` self-time to
-`react-dom` vs a styling library vs your component, down to a source line, via `query cpu`. It runs
-**`examples/ssr-demo`** (in this repo, JSX-free so no build step): `react-dom` ~49% vs
-`tailwind-merge` ~28% vs `wpd-ssr-demo` (your component) ~12%, with `tailwind-merge get
-(lib/lru-cache.ts:35)` the single hottest function (~27%) as the punchline. Both the `record` and
-`query cpu` output carry the four-slice CPU breakdown bar (`js · gc · native · idle`, node's engine
-slice is `native`), and the `query cpu` headline names the per-iteration divisor (`summed over the
-whole window across 250 iterations (divide by 250 ...)`), so the GIF shows the slice split and the
-divisor alongside the package rollup.
-
-**Keep this demo runnable from a clean checkout**; that property is the point, not the exact
-percentages. A demo that depends on a pre-compiled bundle from a private repo can only be
-re-rendered by one person on one machine, and rots unnoticed until the published GIF demonstrates a
-flag that no longer exists.
-
-Tape gotchas, if you tweak `demo.tape`:
-
-- **`Sleep` must outlast the process.** VHS fires the next keystroke after the `Sleep`, not when
-  the command exits. The `record` step needs a Sleep longer than its real runtime (~a few seconds).
-- **`--iterations 250`** buys sampling stability. The node lane windows the profile to the timed
-  loop, so `post (node:inspector)` (the profiler's start-up warmup) reads **0 ms** and never ranks --
-  at 80 iterations `tailwind-merge get (lib/lru-cache.ts:35)` already leads (~23%), and 250 only
-  tightens the percentages (it leads at ~27%). Fewer iterations reads a noisier split, so keep it
-  high enough that the top rows are stable between runs.
-- **`NODE_ENV=production` is load-bearing** (hidden in the tape). Without it React resolves to its
-  development build: `react` outranks `react-dom`, and the profile shows a cost nobody ships.
-- **`FontSize 18` + `Width 1580`**: the widest line is the `query cpu` iteration-divisor headline
-  (~188 chars), which soft-wraps to two rows in the final frame at this width; the `record` report's
-  dimmed Digest path no longer sets the width bound. Report paths still print relative to cwd
-  (`displayPath`), which keeps the recorder's home directory out of the GIF (absolute paths wrap and
-  leak it).
-- The record output is wiped with a hidden `clear` before `query cpu` so the final frame focuses on
-  the result alone.
-- **Color is automatic**: VHS records in a real PTY, so `process.stdout.isTTY` is true and the
-  default `--color auto` colorizes (heat-colored `self %`, cyan packages, dimmed paths/source/`fns`,
-  bold headline). No flag in the tape, and real terminals get the same.
-- The GIF (~300K) ships as-is; `gifsicle -O3` shrinks it losslessly if ever needed (WebP saved only
-  ~10%, not worth a second artifact).
+The README hero is a [VHS](https://github.com/charmbracelet/vhs) recording of the `--target node` CPU
+lane over `examples/ssr-demo`. The tape, the render/publish steps, and the tape gotchas live in
+`examples/demo-gif/` (`demo.tape` + `README.md` + a directory `CLAUDE.md`); the rendered `demo.gif` is
+git-ignored and hosted via a GitHub user-attachments URL, so the npm tarball stays lean. **Read
+`examples/demo-gif/CLAUDE.md` before you touch the tape.**

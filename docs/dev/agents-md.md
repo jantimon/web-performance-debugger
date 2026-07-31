@@ -2,8 +2,10 @@
 
 `AGENTS.md` at the repo root is a **tool-usage manual for an agent consuming the `wpd` CLI**: how to
 drive `record`/`query` and how to read the typed output. It is not a contributor map -- that is
-`CLAUDE.md`, which is large on purpose. The two files answer different questions and obey different
-length rules.
+`CLAUDE.md`, which runs as long as the removal test allows (file routing plus load-bearing
+constraints, with directory-local guidance pushed to nested `CLAUDE.md` files like
+`examples/demo-gif/`), not by a line target. The two files answer different questions and obey
+different length rules.
 
 Evidence here is **not** engine-probed. It carries its own tiers: **[spec]** the agents.md open spec;
 **[vendor-doc]** first-party agent-vendor guidance (Anthropic, GitHub); **[practitioner]** aggregated
