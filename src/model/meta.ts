@@ -30,6 +30,7 @@ export type WorkloadLane = "driver" | "bench" | "builtin-load" | "node";
  * across it refuses instead of subtracting two programs
  */
 export interface WorkloadIdentity {
+  /** which of the four lanes ran the flow (driver/bench/builtin-load/node) */
   lane: WorkloadLane;
   /** the host page a module drove or the on-ramp loaded: a URL, a root-relative HTML path, or null
    * (blank page / node lane) */
@@ -44,13 +45,17 @@ export interface WorkloadIdentity {
  * schema epoch by the presence of that field (absent here = a plain recording)
  */
 export interface RecordingMeta {
+  /** the tool name that wrote this artifact ("wpd") */
   tool: string;
   /** the package version that wrote this artifact (e.g. "0.1.0") */
   version: string;
   /** on-disk schema epoch (major-only); see SCHEMA_VERSION. Makes artifacts self-describing */
   schemaVersion: string;
+  /** ISO timestamp the recording was written */
   createdAt: string;
+  /** how the args named the workload: a module, an HTML file, or a URL */
   mode: "module" | "html" | "url";
+  /** the recorded module/url/html path as a display string; a host page overwrites it, so read `workload` for identity */
   target: string;
   /**
    * The executed flow's structured identity (lane + host + module), so a diff distinguishes two
@@ -66,9 +71,13 @@ export interface RecordingMeta {
    * without the flag stay valid and compare as before
    */
   variant?: string;
+  /** the run() export name that was called */
   fn: string;
+  /** timed repetitions of run() (`--iterations`); a counting capture totals counts across them */
   iterations: number;
+  /** untimed run() passes before timing began (`--warmup`) */
   warmup: number;
+  /** the browser ran headless (no visible window) */
   headless: boolean;
   /** Headless frame-cadence axis, stamped when a chrome run is headless. Current runs always stamp
    * "new" (Chrome's built-in headless, ~60Hz); "shell" only appears on an older recording (~120Hz).
@@ -111,6 +120,7 @@ export interface RecordingMeta {
   /** count of classified trace events in the run window, a diagnostic: 0 fires the empty-run hint and
    * shows beside the JS-self line. Absent on lanes that capture no trace (node) */
   totalEvents?: number;
+  /** loud disclosures for the reader: incomplete counts, boot retries, fake-zero refusals */
   notes: string[];
   /**
    * Sourcemap resolution for this run: how many scripts a map was attempted for, how many
@@ -139,6 +149,7 @@ export interface RecordingMeta {
    * optional per the gate-field invariant (docs/dev/rendering-counts.md). See record/bot-wall.ts
    */
   botWall?: {
+    /** whether bot-challenge detection fired on this run */
     detected: boolean;
     /** the evidence strings that fired (BotWallVerdict.firedSignals) */
     signals: string[];

@@ -28,7 +28,7 @@ test("countsFromSummary: projects exactly the windowed counts, preserving Measur
     paintInvalidations: 4,
     styleInvalidations: null,
     longTaskCount: 1,
-    // fields the projection must ignore
+    /** fields the projection must ignore */
     wallMs: 99,
     inpMs: 40,
     jsSelfMs: 12,

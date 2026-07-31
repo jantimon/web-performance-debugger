@@ -15,6 +15,7 @@ import type { EngineSoftNav, NavigationKind } from "./recording.js";
 export type SoftNavAgreement = "agree" | "classifier-only" | "engine-only" | "none";
 
 export interface SoftNavVerdict {
+  /** which of the four reconciliation outcomes this step landed on (see SoftNavAgreement) */
   agreement: SoftNavAgreement;
   /** a compact, non-alarmist line stating both verdicts; absent for "none" (nothing to disclose) */
   note?: string;

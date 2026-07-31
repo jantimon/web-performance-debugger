@@ -400,6 +400,7 @@ export interface BreakdownSlices {
 export interface Breakdown {
   /** the span's trace window span, ms (endTs - startTs) */
   wallMs: number;
+  /** the disjoint work tiles that, with `idle`, sum to `wallMs` */
   slices: BreakdownSlices;
   /** wallMs - (Σ slices + idle); present only when the tiling did not close within float dust */
   residualMs?: number;
@@ -432,6 +433,7 @@ export interface SpanHotRef {
  * fabricating a top-N from noise; the reader raises --iterations. Per-function >= 3-sample floor
  */
 export interface SpanHot {
+  /** whether this tallied a step's iteration-0 window or pooled a measure across its occurrences */
   scope: "step-window" | "measure-pooled";
   /** pooled ranked-JS samples the ranking is built from -- the share denominator */
   pooledSamples: number;
@@ -561,7 +563,9 @@ export interface SpanScope {
  * explicit null, never a fabricated 0
  */
 export interface Span {
+  /** the span's name: a step or `performance.measure` label, or `run` for the run window */
   label: string;
+  /** which span this is (run/step/measure); identity is kind+label */
   kind: SpanKind;
   /**
    * How this span's numbers combine the timed iterations (see SpanAggregation). A `"first"` STEP span
@@ -708,8 +712,11 @@ export interface Span {
 
 /** One span's seven-slice breakdown, keyed by its label (the run, a driver step, or a user measure) */
 export interface SpanBreakdown {
+  /** the span's name this bar belongs to */
   label: string;
+  /** which span this bar describes (run/step/measure) */
   kind: SpanKind;
+  /** the seven-slice reconciling bar for this span */
   breakdown: Breakdown;
   /**
    * Off-thread compositor frame side track for this span (Chrome --breakdown only; absent
@@ -755,8 +762,11 @@ export interface SpanBreakdown {
  * default artifact digest-sized
  */
 export interface Recording {
+  /** the recording's identity and provenance */
   meta: RecordingMeta;
+  /** the run window's mark bounds on the trace/page clock */
   window: RecordingWindow;
+  /** the raw `wpd:*` timing marks the run/step windows were located from */
   marks: TimingEntry[];
   /**
    * The deep event log: resolved trace events with `.stack` frames and invalidation records. Present
@@ -779,15 +789,19 @@ export interface Recording {
  * since the whole run is one recording
  */
 export interface StepIndexEntry {
+  /** the step's position within its iteration */
   index: number;
+  /** the step's measureStep label */
   label: string;
   /** median of this step's samples under --iterations; the single sample when there is one */
   wallMs: number | null;
+  /** worst-interaction INP (ms) for this step; null when none crossed the floor */
   inpMs: number | null;
   /** in-page CWV split of inpMs: where the interaction's latency actually went */
   interaction?: InteractionTiming | null;
   /** this step's own min/median/mean/max; null below 2 samples, same contract as elsewhere */
   stats?: BenchStats | null;
+  /** the step's exact rendering counts, Measured throughout */
   headline: {
     /** Measured (see model/measured.ts): null when the capture mode captured no trace to count from */
     layoutCount: Measured<number>;

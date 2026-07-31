@@ -111,7 +111,7 @@ export function computeSpanBreakdown(
       js: { ms: jsMs, byPackage },
       style: { ms: usToMs(sliceUs.style) },
       layout: { ms: usToMs(sliceUs.layout) },
-      // Chrome measures main-thread paint (null only on firefox, where it is off-main-thread)
+      /** Chrome measures main-thread paint (null only on firefox, where it is off-main-thread) */
       paint: { ms: paintMs },
       gc: { ms: usToMs(sliceUs.gc) },
       other: { ms: usToMs(sliceUs.other) },

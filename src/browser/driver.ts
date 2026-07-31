@@ -555,7 +555,9 @@ export interface PartialRun {
 }
 
 export interface DriverResult {
+  /** every measured step across the timed iterations, in order */
   steps: DriverStep[];
+  /** the lifecycle hooks that were found and called */
   lifecycle: string[];
   /** teardown to run AFTER tracing stops, so it's kept out of the measured window */
   cleanup?: () => unknown | Promise<unknown>;
@@ -602,6 +604,7 @@ export interface DriverContext {
   /** Empty object shared across prepare/run/cleanup: stash a handle or test data in prepare, read it
    * in run */
   ctx: Record<string, unknown>;
+  /** defines one measured step inside run(); each becomes a step span */
   measureStep: MeasureStep;
   /** A `measureStep` `until` for streamed / soft-navigating transitions the default settle ends
    * before. Injected so the module imports nothing; identical to the package's `waitForStable` */
@@ -613,6 +616,7 @@ export interface DriverContext {
  * the page's own boot lands in the run window (goto-inside-a-step tracing). See docs/dev/driver-timing.md
  */
 export interface OnrampFlow {
+  /** the target the built-in load step navigates to */
   navigateUrl: string;
   /**
    * Inspect the settled page for a bot-challenge interstitial, run ONCE right after the first
@@ -749,8 +753,10 @@ export async function runDriver(
       processingEnd: event.processingEnd,
       duration: event.duration,
       interactionId: event.interactionId ?? 0,
-      // navigationId slices route INP: post-soft-nav interactions carry the new id, the triggering
-      // one the pre-nav id. NaN where the build omits it, so route INP matches nothing there
+      /**
+       * navigationId slices route INP: post-soft-nav interactions carry the new id, the triggering
+       * one the pre-nav id. NaN where the build omits it, so route INP matches nothing there
+       */
       navigationId: typeof event.navigationId === "number" ? event.navigationId : NaN,
     });
     try {
@@ -896,8 +902,10 @@ export async function runDriver(
       value: shift.value || 0,
       hadRecentInput: !!shift.hadRecentInput,
       startTimeMs: shift.startTime,
-      // navigationId slices route CLS: a shift after a soft nav carries the new id. NaN where the
-      // build omits it, so route CLS matches nothing there (absent, never folding pre-nav shifts)
+      /**
+       * navigationId slices route CLS: a shift after a soft nav carries the new id. NaN where the
+       * build omits it, so route CLS matches nothing there (absent, never folding pre-nav shifts)
+       */
       navigationId: typeof shift.navigationId === "number" ? shift.navigationId : NaN,
       sources: (shift.sources || []).map((source: any) => {
         const node = source.node;
@@ -1124,15 +1132,19 @@ export async function runDriver(
             loaf: (win.__wpdLoaf as RawLoafFrame[]) ?? [],
             lcp: (win.__wpdLcp as RawLcpEntry[]) ?? [],
             ls: (win.__wpdLs as RawLayoutShiftEntry[]) ?? [],
-            // The route LICP is read HERE (at the flush), off the retained live entries, so a paint that
-            // grew after the soft-nav entry fired is caught. `__wpdSoftNavRead` is absent where the entry
-            // type is unsupported, so the list reads [] and the step stores no route metrics
+            /**
+             * The route LICP is read HERE (at the flush), off the retained live entries, so a paint that
+             * grew after the soft-nav entry fired is caught. `__wpdSoftNavRead` is absent where the entry
+             * type is unsupported, so the list reads [] and the step stores no route metrics
+             */
             softNav:
               typeof win.__wpdSoftNavRead === "function"
                 ? (win.__wpdSoftNavRead() as RawSoftNavEntry[])
                 : [],
-            // Framework-addon per-step payload (e.g. React commit count for this step's window)
-            // Null when no addon installed the channel
+            /**
+             * Framework-addon per-step payload (e.g. React commit count for this step's window)
+             * Null when no addon installed the channel
+             */
             addonStep:
               typeof win.__wpdAddonStepRead === "function"
                 ? (win.__wpdAddonStepRead() as Record<string, unknown>)

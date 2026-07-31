@@ -40,7 +40,7 @@ function nodeProfileWithStartPrefix() {
       { id: 2, callFrame: frame("post", "node:inspector", 0), children: [] },
       { id: 3, callFrame: frame("run", "node:app", 5), children: [] },
     ],
-    // sample 0 = post at ts 9333 (prefix); samples 1..3 = run() at 9533/9733/9933
+    /** sample 0 = post at ts 9333 (prefix); samples 1..3 = run() at 9533/9733/9933 */
     samples: [2, 3, 3, 3],
     timeDeltas: [9333, 200, 200, 200],
   };

@@ -177,7 +177,7 @@ function spanBreakdown(
       layout: { ms: usToMs(sums.layout) },
       paint: null,
       gc: { ms: usToMs(sums.gc) },
-      // DOM-accessor time + Profiler self-overhead + everything non-work-classified
+      /** DOM-accessor time + Profiler self-overhead + everything non-work-classified */
       other: { ms: usToMs(sums.browser) },
       idle: { ms: usToMs(sums.idle) },
     },

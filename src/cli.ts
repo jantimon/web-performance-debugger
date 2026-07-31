@@ -424,11 +424,15 @@ program
     }
     const opts: RecordOptions = {
       module,
-      // `run` is the sole export the harness/driver look for (plus prepare/cleanup); there is no
-      // flag to name another
+      /**
+       * `run` is the sole export the harness/driver look for (plus prepare/cleanup); there is no
+       * flag to name another
+       */
       fn: "run",
-      // RecordOptions keeps browser/runtime as separate internal axes because runPass and capsFor
-      // are written against them. --target is the single user-facing axis that maps onto both
+      /**
+       * RecordOptions keeps browser/runtime as separate internal axes because runPass and capsFor
+       * are written against them. --target is the single user-facing axis that maps onto both
+       */
       browser: firefox ? "firefox" : "chrome",
       html: cmdOpts.html,
       url: cmdOpts.url,
@@ -438,11 +442,13 @@ program
       out: cmdOpts.out,
       headless: cmdOpts.headless,
       userDataDir: cmdOpts.userDataDir ? path.resolve(cmdOpts.userDataDir) : undefined,
-      // WPD_DISABLE_BROWSER_SANDBOX=1 is the env equivalent of --disable-browser-sandbox, for a CI
-      // whose runner cannot run Chrome's sandbox with trace capture; chrome-only, ignored by node/firefox
+      /**
+       * WPD_DISABLE_BROWSER_SANDBOX=1 is the env equivalent of --disable-browser-sandbox, for a CI
+       * whose runner cannot run Chrome's sandbox with trace capture; chrome-only, ignored by node/firefox
+       */
       disableSandbox:
         !!cmdOpts.disableBrowserSandbox || process.env.WPD_DISABLE_BROWSER_SANDBOX === "1",
-      // Internal default (no user flag): async paints flush before tracing stops
+      /** Internal default (no user flag): async paints flush before tracing stops */
       settleMs: 200,
       format: cmdOpts.format,
       driver: !bench && !node,
@@ -450,19 +456,23 @@ program
       runtime: node ? "node" : "chrome",
       cpuThrottle: cmdOpts.cpuThrottle,
       allowBotWall: !!cmdOpts.allowBotWall,
-      // On by default; captureFor turns it off on --deep (the sampler cannot ride a .stack trace)
-      // On firefox it is what produces counts + blame at all
+      /**
+       * On by default; captureFor turns it off on --deep (the sampler cannot ride a .stack trace)
+       * On firefox it is what produces counts + blame at all
+       */
       cpuProfile: true,
       protocolTimeoutMs: cmdOpts.protocolTimeout,
       breakdown: !!cmdOpts.breakdown,
       deep: !!cmdOpts.deep,
       alloc,
-      // Trim to a non-empty label or drop it: an empty/whitespace --variant would otherwise persist
-      // into meta and block a comparability gate while every truthiness-guarded output omitted it,
-      // so gating and disclosure would disagree
+      /**
+       * Trim to a non-empty label or drop it: an empty/whitespace --variant would otherwise persist
+       * into meta and block a comparability gate while every truthiness-guarded output omitted it,
+       * so gating and disclosure would disagree
+       */
       variant: cmdOpts.variant?.trim() || undefined,
       group: groupName,
-      // off runs zero addon code; auto (default) lets factual detection decide
+      /** off runs zero addon code; auto (default) lets factual detection decide */
       framework: cmdOpts.framework === "off" ? "off" : "auto",
     };
     try {

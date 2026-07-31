@@ -5,6 +5,7 @@ import type { SiteRelation } from "./site-relation.js";
 export interface CpuFunction {
   /** stable id = rank by self time; used by `query frame <id>` */
   id: number;
+  /** display name: the sourcemap original when resolved, else the minified V8 name */
   fn: string;
   /** resolved original "file:line" when a sourcemap was available */
   source?: string;
@@ -20,8 +21,11 @@ export interface CpuFunction {
   package: string;
   /** the minified V8 name, when `fn` is the sourcemap-resolved original (else absent) */
   minified?: string;
+  /** self time in this function alone, ms (off the profiler's own microsecond clock) */
   selfMs: number;
+  /** `selfMs` as a percent of `CpuModel.jsSelfMs` */
   selfPct: number;
+  /** this function plus everything it called, ms */
   totalMs: number;
   /**
    * URL-mechanical site relation of the script ORIGIN this function was fetched from to the measured
@@ -106,7 +110,9 @@ export interface CpuJsSlice extends CpuSlice {
 export interface CpuBreakdown {
   /** sum of the profile's time deltas, ms; equals CpuModel.totalMs */
   wallMs: number;
+  /** the disjoint tiles that sum to `wallMs` */
   slices: {
+    /** scripting self-time, split by owning package */
     js: CpuJsSlice;
     /** style recalc (Firefox: Layout-category style frames). Absent on chrome/node */
     style?: CpuSlice;
@@ -117,7 +123,9 @@ export interface CpuBreakdown {
      * Profiler self-overhead. Engine/runtime work with the profiled JS not on the stack, unsplit
      */
     browser: CpuSlice;
+    /** garbage collection */
     gc: CpuSlice;
+    /** window with no JS on the stack (chrome/node), or ~0 CPU per sample (Firefox `threadCPUDelta`) */
     idle: CpuSlice;
   };
   /** wallMs - Σ slices; present only when a node's owner resolved to null so its time landed in no
@@ -134,8 +142,11 @@ export interface CpuBreakdown {
 export interface CpuModel {
   /** path to the raw .cpuprofile */
   profile: string;
+  /** the recording identity/provenance this profile was captured under */
   meta: RecordingMeta;
+  /** number of samples the profile drew */
   sampleCount: number;
+  /** microseconds between samples, off the profiler's own clock (not `performance.now`) */
   sampleIntervalUs: number;
   /** wall span of the sampled window, ms */
   totalMs: number;
@@ -153,6 +164,7 @@ export interface CpuModel {
    * denominate on it. `jsSelfMs` is the headline; `breakdown` splits this into its slices
    */
   activeMs: number;
+  /** sampled time outside user JS: idle, gc, and V8 program/runtime */
   system: CpuSystem;
   /**
    * Reconciling decomposition of the sampled window (the slices tile it exactly): `js · browser ·

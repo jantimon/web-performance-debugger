@@ -14,7 +14,9 @@ export const REANCHOR_MAX_MARKER_SHARE = 0.05;
 
 /** The renderer main thread the counts and the breakdown bar share, plus how it was chosen */
 export interface MainThreadSelection {
+  /** the renderer process id the window's rendering ran on */
   pid: number;
+  /** the main thread id within `pid` the counts and the bar tile */
   tid: number;
   /**
    * - `marker` when `wpd:run:start` (the mark the page makes on its own main thread) named the thread

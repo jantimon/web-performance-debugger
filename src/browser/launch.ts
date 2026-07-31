@@ -5,7 +5,9 @@ import { attachTeardownFailure } from "../model/teardown.js";
 import { registerDisposer } from "./disposers.js";
 
 export interface BrowserHandle {
+  /** the launched Puppeteer browser */
   browser: Browser;
+  /** the page to drive and measure */
   page: Page;
   /** null on Firefox: WebDriver BiDi has no CDP session (guard every CDP call with the caps) */
   client: CDPSession | null;
@@ -128,6 +130,7 @@ export function sandboxLaunchError(error: Error): Error {
 
 /** Gecko profiler options for the Firefox CPU pass (dumped to `dumpPath` on browser exit) */
 export interface GeckoLaunch {
+  /** where the Gecko profiler writes the raw dump on browser exit */
   dumpPath: string;
   /** sampling interval in ms; clamped up to the ~1ms Gecko floor */
   intervalMs?: number;
@@ -141,13 +144,15 @@ function geckoEnv(base: NodeJS.ProcessEnv, gecko: GeckoLaunch): NodeJS.ProcessEn
     ...base,
     MOZ_PROFILER_STARTUP: "1",
     MOZ_PROFILER_SHUTDOWN: gecko.dumpPath,
-    // js,cpu: js gives JS stacks + UserTiming markers (windowing) + Reflow/Styles cause stacks
-    // (blame) + the DOM/Layout label frames read-site blame keys on. cpu populates the per-sample
-    // `threadCPUDelta` column, which is the honest-idle signal the reconciling breakdown needs
-    // [measured, Firefox 152, macOS] an explicit features string REPLACES the default set, so
-    // `js` alone leaves threadCPUDelta 0% populated; adding `cpu` populates it 100% and a pure-wait
-    // window reads 95.7% idle, at ~1% wall and +0.5MB dump. `cpuallthreads` is unnecessary (wpd
-    // reconciles the content main thread alone) and `stackwalk` adds zero signal, so neither is set
+    /**
+     * js,cpu: js gives JS stacks + UserTiming markers (windowing) + Reflow/Styles cause stacks
+     * (blame) + the DOM/Layout label frames read-site blame keys on. cpu populates the per-sample
+     * `threadCPUDelta` column, which is the honest-idle signal the reconciling breakdown needs
+     * [measured, Firefox 152, macOS] an explicit features string REPLACES the default set, so
+     * `js` alone leaves threadCPUDelta 0% populated; adding `cpu` populates it 100% and a pure-wait
+     * window reads 95.7% idle, at ~1% wall and +0.5MB dump. `cpuallthreads` is unnecessary (wpd
+     * reconciles the content main thread alone) and `stackwalk` adds zero signal, so neither is set
+     */
     MOZ_PROFILER_STARTUP_FEATURES: "js,cpu",
     MOZ_PROFILER_STARTUP_INTERVAL: String(intervalMs),
     MOZ_PROFILER_STARTUP_ENTRIES: String(GECKO_PROFILER_ENTRIES),
@@ -174,10 +179,12 @@ function missingBrowserMessage(error: Error, browser: BrowserName): Error {
 }
 
 export async function launchBrowser(opts: {
+  /** which backend to launch (chrome or firefox) */
   browser: BrowserName;
   /** chrome: false is headed (--no-headless); true is Chrome's built-in headless (full Chrome,
    * windowless, ~60Hz frames). See docs/dev/frame-floor.md */
   headless: boolean;
+  /** a persistent profile dir to reuse; omit for a fresh one */
   userDataDir?: string;
   /**
    * Timeout (ms) for a single protocol call, on both browsers. Raise it when a traced interaction
@@ -295,10 +302,12 @@ async function launchChrome(
   try {
     browser = await puppeteer.launch({
       headless,
-      // Persistent profile dir: reuses cookies/session across passes and runs (puppeteer
-      // ignores undefined, so this is a no-op when the flag is absent)
+      /**
+       * Persistent profile dir: reuses cookies/session across passes and runs (puppeteer
+       * ignores undefined, so this is a no-op when the flag is absent)
+       */
       userDataDir: opts.userDataDir,
-      // puppeteer ignores undefined and falls back to its 180000ms default
+      /** puppeteer ignores undefined and falls back to its 180000ms default */
       protocolTimeout: opts.protocolTimeoutMs,
       args: chromeArgs(!!opts.disableSandbox, headless),
     });

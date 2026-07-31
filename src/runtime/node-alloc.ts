@@ -172,8 +172,10 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     userDataDir: null,
     lifecycle,
     capture: "node-alloc",
-    // The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
-    // nothing. A core fact; always stamped
+    /**
+     * The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
+     * nothing. A core fact; always stamped
+     */
     framework: opts.framework ?? "auto",
     notes: [nodeAllocRuntime()],
   };
@@ -196,7 +198,7 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     inpMs: null,
     detailEvents: [],
     detailWindowStart: null,
-    // No DOM and no CPU sampler: every rendering count AND jsSelfMs is not-measured (null), never 0
+    /** No DOM and no CPU sampler: every rendering count AND jsSelfMs is not-measured (null), never 0 */
     capabilities: NO_RENDERING_CAPTURE,
     jsSelfMs: null,
   });
@@ -206,8 +208,10 @@ export async function recordAllocNode(opts: RecordOptions): Promise<{
     window: { measure: RUN_MEASURE, startTs: null, endTs: null, wallMs },
     marks: [],
     events: [],
-    // One run span; no reconciling bar (allocation has no ms-tiled window), so query spans reports it
-    // barless. The allocation attribution lives on the sibling AllocModel, read by `query alloc`
+    /**
+     * One run span; no reconciling bar (allocation has no ms-tiled window), so query spans reports it
+     * barless. The allocation attribution lives on the sibling AllocModel, read by `query alloc`
+     */
     spans: buildRecordingSpans({
       summary,
       detailEvents: [],

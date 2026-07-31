@@ -183,12 +183,14 @@ export function capabilitiesFor(
     paintCount: true,
     longTasks: true,
     invalidations: config.mode === "deep",
-    // Durations are trustworthy ONLY on the light (no-`.stack`) trace; `.stack` inflates them
+    /** Durations are trustworthy ONLY on the light (no-`.stack`) trace; `.stack` inflates them */
     durations: !hasStack,
     forced: hasStack,
-    // The forced SUBSET's duration is never honestly measurable on chrome either: the forced flag
-    // needs `.stack`, and a `.stack` trace suppresses all durations (+38%). So forcedLayoutMs is
-    // structurally not-measured across every lane; forced COUNTS remain a --deep product
+    /**
+     * The forced SUBSET's duration is never honestly measurable on chrome either: the forced flag
+     * needs `.stack`, and a `.stack` trace suppresses all durations (+38%). So forcedLayoutMs is
+     * structurally not-measured across every lane; forced COUNTS remain a --deep product
+     */
     forcedDurations: false,
   };
 }

@@ -152,9 +152,13 @@ export interface RecordingSummary {
 }
 
 export interface SummaryInputs {
+  /** the classified events windowed to the run, summed into the counts */
   detailEvents: NormalizedEvent[];
+  /** trace-clock start of the run window (us); null when it was not located */
   detailWindowStart: number | null;
+  /** the run's wall (ms); null when the capture could not price it */
   wallMs?: number | null;
+  /** worst-interaction INP (ms) for the run; null when none crossed the floor */
   inpMs?: number | null;
   /** in-page CWV split of the interaction that produced `inpMs` */
   interaction?: InteractionTiming | null;
@@ -254,30 +258,38 @@ export function buildSummary(input: SummaryInputs): RecordingSummary {
     wallMs: input.wallMs ?? null,
     inpMs: input.inpMs ?? null,
     interaction: input.interaction,
-    // Counts come from the trace, main-thread windowed (renderingWork); a capture mode with no trace reports
-    // null, never a fake 0. Durations ride Chrome's `base::TimeTicks` (wall-tier, ~1%) and are valid
-    // only on the light no-`.stack` trace, so a `--deep` (.stack) capture reports the exact counts
-    // but null durations -- a distorted number is worse than none (.stack inflates style up to +38%)
+    /**
+     * Counts come from the trace, main-thread windowed (renderingWork); a capture mode with no trace reports
+     * null, never a fake 0. Durations ride Chrome's `base::TimeTicks` (wall-tier, ~1%) and are valid
+     * only on the light no-`.stack` trace, so a `--deep` (.stack) capture reports the exact counts
+     * but null durations -- a distorted number is worse than none (.stack inflates style up to +38%)
+     */
     layoutCount: measuredIf(capabilities.counts, renderingWork.layoutCount),
     layoutMs: measuredIf(capabilities.durations, usToMs(renderingWork.layoutUs)),
     styleCount: measuredIf(capabilities.counts, renderingWork.styleCount),
     styleMs: measuredIf(capabilities.durations, usToMs(renderingWork.styleUs)),
-    // Main-thread paint chunks only; see PAINT in trace/classify.ts. There is deliberately no
-    // composite count: [measured] it tracks the settle-window duration (7x swing on a constant workload),
-    // i.e. frames elapsed, never the page's work. docs/dev/rendering-counts.md
+    /**
+     * Main-thread paint chunks only; see PAINT in trace/classify.ts. There is deliberately no
+     * composite count: [measured] it tracks the settle-window duration (7x swing on a constant workload),
+     * i.e. frames elapsed, never the page's work. docs/dev/rendering-counts.md
+     */
     paintCount: measuredIf(capabilities.paintCount, paintCount),
     paintMs: measuredIf(capabilities.paintCount && capabilities.durations, usToMs(paintUs)),
     layoutInvalidations: measuredIf(capabilities.invalidations, layoutInval),
     paintInvalidations: measuredIf(capabilities.invalidations, paintInval),
     styleInvalidations: measuredIf(capabilities.invalidations, styleInval),
-    // null (not 0) when detection did not run: the default/--breakdown capture modes drop the `.stack`
-    // category forced detection needs, so a 0 here would read as "no thrashing" instead of "not
-    // measured"
+    /**
+     * null (not 0) when detection did not run: the default/--breakdown capture modes drop the `.stack`
+     * category forced detection needs, so a 0 here would read as "no thrashing" instead of "not
+     * measured"
+     */
     forcedLayoutCount: measuredIf(capabilities.forced, forcedLayoutCount),
-    // forcedLayoutMs is structurally not-measured on every lane (forcedDurations is false everywhere):
-    // no lane can honestly price the forced SUBSET's duration. Chrome measures the subset only from
-    // `.stack`, which suppresses durations; Firefox's markers under-report it ~7x. Forced COUNTS
-    // stay; the honest total-layout duration is the reconciling bar's `layout` slice
+    /**
+     * forcedLayoutMs is structurally not-measured on every lane (forcedDurations is false everywhere):
+     * no lane can honestly price the forced SUBSET's duration. Chrome measures the subset only from
+     * `.stack`, which suppresses durations; Firefox's markers under-report it ~7x. Forced COUNTS
+     * stay; the honest total-layout duration is the reconciling bar's `layout` slice
+     */
     forcedLayoutMs: measuredIf(capabilities.forcedDurations, usToMs(forcedLayoutUs)),
     longTaskCount: measuredIf(capabilities.longTasks, longTaskCount),
     longestTaskMs: measuredIf(

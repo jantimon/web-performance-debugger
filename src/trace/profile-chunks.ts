@@ -53,6 +53,7 @@ interface ProfileGroup {
   /** the stream's own thread (pid/tid), so a sample can be matched to a same-thread flush. One stream
    * is one isolate = one thread; the main-thread flush blame must not read a worker/OOPIF sample */
   pid: number | undefined;
+  /** the stream's thread id, paired with `pid` */
   tid: number | undefined;
   /** the stream's base clock (base::TimeTicks us), shared with the trace events and wpd:* markers */
   startTime: number | undefined;
@@ -87,11 +88,13 @@ const PROFILE_CHUNK_EVENT = "ProfileChunk";
 function normalizeCallFrame(callFrame: TraceProfileNode["callFrame"]): RawCallFrame {
   return {
     functionName: callFrame.functionName ?? "",
-    // scriptId is a number in the trace; buildCpuModel keys frames on name/url/line/col, not scriptId,
-    // but the CDP-shaped type wants a string, so match it
+    /**
+     * scriptId is a number in the trace; buildCpuModel keys frames on name/url/line/col, not scriptId,
+     * but the CDP-shaped type wants a string, so match it
+     */
     scriptId: String(callFrame.scriptId ?? 0),
     url: callFrame.url ?? "",
-    // The trace uses the CDP 0-based line/column convention; -1 means "no position" (a system frame)
+    /** The trace uses the CDP 0-based line/column convention; -1 means "no position" (a system frame) */
     lineNumber: callFrame.lineNumber ?? -1,
     columnNumber: callFrame.columnNumber ?? -1,
   };
@@ -169,8 +172,10 @@ export function assembleTraceCpuProfile(
         ts: event.ts ?? 0,
         samples: data?.cpuProfile?.samples ?? [],
         timeDeltas: data?.timeDeltas ?? [],
-        // undefined (not []) when the field is absent, so a chunk that lacks lines is distinguished
-        // from one that legitimately carried an empty sample set
+        /**
+         * undefined (not []) when the field is absent, so a chunk that lacks lines is distinguished
+         * from one that legitimately carried an empty sample set
+         */
         lines: data?.lines,
       });
     }

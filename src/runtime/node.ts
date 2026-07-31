@@ -188,10 +188,12 @@ export async function recordNode(opts: RecordOptions): Promise<{
     userDataDir: null,
     lifecycle,
     capture: "node-cpu",
-    // The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
-    // nothing. A core fact; always stamped
+    /**
+     * The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
+     * nothing. A core fact; always stamped
+     */
     framework: opts.framework ?? "auto",
-    // The node lane runs in-process, so its "engine build" is this node runtime
+    /** The node lane runs in-process, so its "engine build" is this node runtime */
     browserVersion: engineVersion(process.version),
     notes: [nodeRuntime()],
   };
@@ -214,8 +216,10 @@ export async function recordNode(opts: RecordOptions): Promise<{
     inpMs: null,
     detailEvents: [],
     detailWindowStart: null,
-    // No DOM: every rendering count is not-measured (NO_RENDERING_CAPTURE default). jsSelfMs is
-    // the in-process V8 profile's JS self-time
+    /**
+     * No DOM: every rendering count is not-measured (NO_RENDERING_CAPTURE default). jsSelfMs is
+     * the in-process V8 profile's JS self-time
+     */
     jsSelfMs: cpuModel.jsSelfMs,
   });
   // Cache the CPU headline on meta (schema-5 home of jsSelfMs), so `diff`/`query` read it without the model
@@ -226,8 +230,10 @@ export async function recordNode(opts: RecordOptions): Promise<{
     window: { measure: RUN_MEASURE, startTs: null, endTs: null, wallMs },
     marks: [],
     events: [],
-    // One run span; its reconciling bar lives on CpuModel.breakdown (js/native/gc/idle), which
-    // `query spans` synthesizes the run entry from, so no bar is stored on the span itself
+    /**
+     * One run span; its reconciling bar lives on CpuModel.breakdown (js/native/gc/idle), which
+     * `query spans` synthesizes the run entry from, so no bar is stored on the span itself
+     */
     spans: buildRecordingSpans({
       summary,
       detailEvents: [],

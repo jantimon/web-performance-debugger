@@ -125,17 +125,19 @@ export function sampledForcedBlameEvents(
       dur: flush.dur,
       ph: "X",
       kind: flush.kind,
-      // A sampled annotation, not a measured flush: summarize skips it so it never inflates a count
+      /** A sampled annotation, not a measured flush: summarize skips it so it never inflates a count */
       sampled: true,
       args: {
         data: {
-          // extractStack reads `stackTrace[].url`/`lineNumber`; attachStacks maps it to local source
-          // `lineOnly`: a sample carries an executing LINE but no column, so the resolver must not map
-          // it through generated column 0 (a wrong original line on a minified single-line bundle); it
-          // maps only when the generated line is unambiguous. `fallbackLine`/`fallbackColumn` name the
-          // leaf function's column-bearing position, which the resolver retries at (the same frame the
-          // CPU model resolves) so a minified-bundle read still names the forcing function, not a
-          // bundle line
+          /**
+           * extractStack reads `stackTrace[].url`/`lineNumber`; attachStacks maps it to local source
+           * `lineOnly`: a sample carries an executing LINE but no column, so the resolver must not map
+           * it through generated column 0 (a wrong original line on a minified single-line bundle); it
+           * maps only when the generated line is unambiguous. `fallbackLine`/`fallbackColumn` name the
+           * leaf function's column-bearing position, which the resolver retries at (the same frame the
+           * CPU model resolves) so a minified-bundle read still names the forcing function, not a
+           * bundle line
+           */
           stackTrace: [
             {
               url: picked.url,

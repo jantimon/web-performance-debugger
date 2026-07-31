@@ -29,7 +29,9 @@ export interface LabelledWindow {
 
 /** A step merged across iterations: label/timing from the driver-side samples, window from the trace */
 export interface MergedStep {
+  /** the step's position within its iteration */
   index: number;
+  /** the measureStep label */
   label: string;
   /**
    * This step's wall for every timed iteration, in iteration order. Length 1 unless --iterations
@@ -44,6 +46,7 @@ export interface MergedStep {
    * page-clock sample (a lost step-end mark in one iteration) degrades the label to "page", since a
    * median over mixed clocks reconciles with nothing. Absent when wallMs is null */
   wallClock?: "trace" | "page";
+  /** worst-interaction INP (ms) medianed across iterations; null when none crossed the floor */
   inpMs: number | null;
   /** each part medianed across the iterations that measured an interaction; null if none did */
   interaction: InteractionTiming | null;
@@ -59,7 +62,9 @@ export interface MergedStep {
    * hand-built step that carried none. See NavigationKind
    */
   navigation?: NavigationKind;
+  /** `page.url()` at the step's start (iteration 0) */
   beforeUrl?: string;
+  /** `page.url()` at the step's end (iteration 0) */
   afterUrl?: string;
   /**
    * Chrome's own soft-navigation verdict from the FIRST timed iteration (iterations replay the same
@@ -86,7 +91,9 @@ export interface MergedStep {
    * no qualifying shift was observed. See LayoutShift
    */
   layoutShift?: LayoutShift;
+  /** trace-clock start of the step's window (us); null when no trace priced it */
   startTs: number | null;
+  /** trace-clock end of the step's window (us); null when no trace priced it */
   endTs: number | null;
   /**
    * Raw per-step framework-addon probe payload from the FIRST timed iteration (keyed by addon name),

@@ -387,9 +387,11 @@ function buildSpanAnatomy(
     kind: span.kind,
     aggregation: entry?.aggregation ?? span.aggregation,
     iterations,
-    // A step's headline is the MEDIAN wall (entry.wallMs), never its iteration-0 bar window; the bar
-    // window rides `windowMs` so the two are not conflated. entry.wallMs already carries the
-    // median for a step (model/spans.ts entryFromSpan); the fallback covers a capture mode with no bar
+    /**
+     * A step's headline is the MEDIAN wall (entry.wallMs), never its iteration-0 bar window; the bar
+     * window rides `windowMs` so the two are not conflated. entry.wallMs already carries the
+     * median for a step (model/spans.ts entryFromSpan); the fallback covers a capture mode with no bar
+     */
     wallMs,
     ...(frameFloor ? { frameFloor } : {}),
     ...(inpFrameFloor ? { inpFrameFloor } : {}),
@@ -611,8 +613,10 @@ async function buildGroupSpanStitch(
       const anatomy = perMember.get(member);
       if (!anatomy) return null;
       return {
-        // GroupMember.mode is the member recording's `meta.capture` verbatim (group.ts), a CaptureMode;
-        // the manifest type stores it as the wider `string`, so narrow it back at this boundary
+        /**
+         * GroupMember.mode is the member recording's `meta.capture` verbatim (group.ts), a CaptureMode;
+         * the manifest type stores it as the wider `string`, so narrow it back at this boundary
+         */
         mode: member.mode as CaptureMode,
         ...(member.variant ? { variant: member.variant } : {}),
         wallMs: anatomy.wallMs,
@@ -979,12 +983,15 @@ export async function queryEvents(file: string, query: EventsQuery): Promise<voi
 }
 
 export interface BlameQuery extends OutOpts {
+  /** filter the rows to one event kind (layout/style/paint) */
   kind?: string;
+  /** show only the synchronously-forced (thrashing) read sites */
   forced?: boolean;
   /** show every attributed source line with a `forced` column (incl. forced=0) */
   all?: boolean;
   /** firefox --deep only: the dirtied-by write report, separate from the read-site rows */
   dirtied?: boolean;
+  /** cap the number of rows shown */
   top?: number;
 }
 

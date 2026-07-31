@@ -186,19 +186,21 @@ export function closeServer(server) {
 /** Five bundles, each a different sourcemap-acquisition story */
 export async function startBundleServer() {
   const routes = {
-    // the map is announced by the conventional trailing comment
+    /** the map is announced by the conventional trailing comment */
     "/comment.js": ["function Bh(){}\n//# sourceMappingURL=comment.js.map", {}],
     "/comment.js.map": [sourcemapFor("node_modules/lodash/lodash.js", "lodashInner"), {}],
-    // no comment at all: the map is announced ONLY by the response header, as many
-    // production builds do (they strip the comment and keep the header)
+    /**
+     * no comment at all: the map is announced ONLY by the response header, as many
+     * production builds do (they strip the comment and keep the header)
+     */
     "/header.js": ["function zv(){}", { SourceMap: "/header.js.map" }],
     "/header.js.map": [sourcemapFor("node_modules/react-dom/index.js", "reactRender"), {}],
-    // resolves, but to app code outside node_modules
+    /** resolves, but to app code outside node_modules */
     "/app.js": ["function Wl(){}\n//# sourceMappingURL=app.js.map", {}],
     "/app.js.map": [sourcemapFor("src/App.tsx", "AppRoot"), {}],
-    // carries no map reference whatsoever
+    /** carries no map reference whatsoever */
     "/nomap.js": ["function Qk(){}", {}],
-    // names a map that is not deployed (404)
+    /** names a map that is not deployed (404) */
     "/brokenmap.js": ["function Xy(){}\n//# sourceMappingURL=gone.js.map", {}],
   };
   const server = createServer((request, response) => {

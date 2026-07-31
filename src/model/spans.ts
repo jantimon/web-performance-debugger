@@ -242,14 +242,18 @@ function entryFromSpan(span: BarSpan, iterations: number, meta?: FloorMeta): Spa
     kind: span.kind,
     wallMs,
     ...(isStep ? { windowMs: span.breakdown.wallMs } : {}),
-    // Derived from kind + occurrence count, identical to the `aggregation` buildRecordingSpans stored;
-    // deriving here keeps a hand-built bar (no stored aggregation) legible too
+    /**
+     * Derived from kind + occurrence count, identical to the `aggregation` buildRecordingSpans stored;
+     * deriving here keeps a hand-built bar (no stored aggregation) legible too
+     */
     aggregation: spanAggregation(span.kind, span.samples),
     iterations,
-    // A bar-carrying span still measured its exact rendering counts (chrome --breakdown windows
-    // layout/style/paint; firefox measure spans window what the gecko markers gave): project them onto
-    // the overview verbatim so `null` keeps meaning not-measured, never not-projected. The counts a
-    // consumer would otherwise have to drill each span for
+    /**
+     * A bar-carrying span still measured its exact rendering counts (chrome --breakdown windows
+     * layout/style/paint; firefox measure spans window what the gecko markers gave): project them onto
+     * the overview verbatim so `null` keeps meaning not-measured, never not-projected. The counts a
+     * consumer would otherwise have to drill each span for
+     */
     counts: span.counts,
     slices: slicesFromBreakdown(span.breakdown),
     ...(span.frames ? { frames: span.frames } : {}),
@@ -286,10 +290,12 @@ function runEntryFromCpuBreakdown(
     wallMs: cpu.wallMs,
     aggregation: spanAggregation("run"),
     iterations,
-    // The stored run span's counts, threaded through the synthesized entry so the overview reports
-    // what the recording measured (firefox layout/style marker counts) rather than dropping them with
-    // the run row. Default-chrome and node have no trace here, so those stay not-measured (null),
-    // never a fabricated 0
+    /**
+     * The stored run span's counts, threaded through the synthesized entry so the overview reports
+     * what the recording measured (firefox layout/style marker counts) rather than dropping them with
+     * the run row. Default-chrome and node have no trace here, so those stay not-measured (null),
+     * never a fabricated 0
+     */
     counts: counts ?? notMeasuredSpanCounts(),
     slices: slicesFromCpuBreakdown(cpu),
     ...(cpu.residualMs != null ? { residualMs: cpu.residualMs } : {}),

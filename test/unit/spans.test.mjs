@@ -198,7 +198,7 @@ test("buildSpans: a step entry reports the median wall, not the iteration-0 bar 
     {
       label: "add rows",
       kind: "step",
-      // The bar tiles an outlier iteration 0; the stored span wall is the median across iterations
+      /** The bar tiles an outlier iteration 0; the stored span wall is the median across iterations */
       wallMs: 16.03,
       breakdown: chromeBreakdown(2023.43),
     },

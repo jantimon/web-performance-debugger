@@ -183,9 +183,11 @@ test("remote sourcemaps resolve packages via comment AND SourceMap header; failu
       profilePath: "remote.cpuprofile",
       meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
       sampleIntervalUs: 50,
-      // Deliberately NOT the serving origin: makeSourceResolver flags a frame remote only when
-      // its url does not start with serverUrl. Passing the real origin would rewrite these to
-      // local paths and never exercise the remote path at all
+      /**
+       * Deliberately NOT the serving origin: makeSourceResolver flags a frame remote only when
+       * its url does not start with serverUrl. Passing the real origin would rewrite these to
+       * local paths and never exercise the remote path at all
+       */
       serverUrl: "http://127.0.0.1:1",
       root: os.tmpdir(),
       maps,
@@ -679,7 +681,7 @@ test("unmapped remote origins: an ephemeral (listen(0)) port is dropped, a regis
       profilePath: "remote.cpuprofile",
       meta: { tool: "wpd", version: "0.0.0", schemaVersion: "1" },
       sampleIntervalUs: DEFAULT_CPU_INTERVAL_US,
-      // wpd's own served origin, distinct from the --url host below
+      /** wpd's own served origin, distinct from the --url host below */
       serverUrl: "http://127.0.0.1:57999",
       root: os.tmpdir(),
     });

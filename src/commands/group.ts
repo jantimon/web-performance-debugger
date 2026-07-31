@@ -77,7 +77,9 @@ export interface VerbTarget {
   target: string;
   /** set when `file` resolved to a run-group and was routed to a member */
   group?: RunGroup;
+  /** absolute path to the run-group manifest, when `file` resolved to a group */
   manifestPath?: string;
+  /** the member the verb was routed to, when `file` resolved to a group */
   member?: GroupMember;
 }
 

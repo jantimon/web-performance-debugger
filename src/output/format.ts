@@ -55,6 +55,7 @@ export function extFor(format: Format): string {
 export interface StructuredOutOpts {
   /** Hidden alias of `--format json`: kept working, kept out of help. `--format` is the documented spelling */
   json?: boolean;
+  /** the requested output format name (json or toon); `--format` wins over the `--json` alias */
   format?: string;
 }
 
