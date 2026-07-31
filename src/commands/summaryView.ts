@@ -15,7 +15,7 @@ import { firefoxDirtiedBy } from "../trace/firefox-dirtied.js";
  * Where a count comes from is not what makes it trustworthy; reproducibility is (see diff.ts). Chrome counts
  * come from the trace, main-thread windowed, and are exact (bit-identical across repeated runs) --
  * but only a --breakdown/--deep capture has a trace; the default mode has none, so its counts read
- * as not-measured (-). Firefox counts Gecko Reflow/Styles markers instead: real, but batched by a
+ * as not-measured (`—`). Firefox counts Gecko Reflow/Styles markers instead: real, but batched by a
  * different engine, so calling them "authoritative" invites diffing them against Chrome's as though
  * the two counted the same thing
  */
@@ -24,7 +24,7 @@ export function countProvenance(rec: Recording): string {
     return "counts come from Gecko markers — approximate, not comparable to Chrome; durations are coarse";
   }
   const run = runSpan(rec);
-  // The default mode captures no trace, so it counts nothing: a - is not-measured, not 0
+  // The default mode captures no trace, so it counts nothing: a `—` is not-measured, not 0
   if (run?.counts.layoutCount == null) {
     return "counts NOT measured in this capture mode (no trace): shown as —, never 0. Add --breakdown or --deep; see notes";
   }
@@ -50,7 +50,7 @@ function runSliceMs(run: Span | undefined, slice: "layout" | "style" | "paint"):
  * The wall row, or nothing. The run span's `wallMs` carries a different statistic per artifact, so the
  * label names which one rather than letting "wall" stand for all three:
  *
- *   - run-level driver recording: no wall exists (see runWallMs in record.ts). No row at all: a "-"
+ *   - run-level driver recording: no wall exists (see runWallMs in record.ts). No row at all: a "—"
  *     would advertise a number as missing when it does not exist, and send a reader off to look for
  *     a flag that would bring it back.
  *   - per-step recording (`meta.step`): the MEDIAN of that step's samples, on the clock the capture
@@ -172,7 +172,7 @@ export function printSummary(rec: Recording): void {
     `browser: ${meta.browser ?? "chrome"}   capture: ${meta.capture}   driver: ${isDriverRecording(meta)}${variant}   lifecycle: ${meta.lifecycle.join("→") || "run"}${hostCpu}`,
   );
 
-  // A Measured count/ms renders as its number, or "-" when the capture mode did not measure it (never 0)
+  // A Measured count/ms renders as its number, or "—" when the capture mode did not measure it (never 0)
   const count = (value: Measured<number> | undefined): string =>
     formatMeasured(value ?? null, (measured) => String(measured));
   const ms = (value: Measured<number> | undefined): string =>
@@ -201,7 +201,7 @@ export function printSummary(rec: Recording): void {
 
   // forced is null when the run did not measure it (--breakdown drops the `.stack` category); say
   // "not measured" and point at the mode that does, never print 0 (which reads as "no thrashing"). The
-  // forced-SUBSET duration is structurally not-measured on every lane, so it always prints "- ms"
+  // forced-SUBSET duration is structurally not-measured on every lane, so it always prints "— ms"
   const forcedCell = formatMeasured(
     counts?.forcedLayoutCount ?? null,
     (forced) => `${forced}  (— ms not measured)`,

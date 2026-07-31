@@ -434,9 +434,10 @@ attributes bench harness frames to the served host page). Fixture:
   rather than a bare factor.
 - **No em-dashes or AI-prose in comments.** Use ASCII punctuation (`:`, `;`, `()`, `.`) and keep
   comments terse and technical; drop chatty tells (`à la`, `Best-guess`, `Nudge the engine`).
-  The standalone `"—"` used as a missing-value placeholder in table *output* is allowed.
-  Enforced by the vendored `no-comment-slop` oxlint plugin (`lint/no-comment-slop.ts`, upstream
-  `eslint-plugin-no-comment-slop`): no trailing period, no em-dash, no banner/separator comments,
+  The standalone `"—"` used as a missing-value placeholder in table *output* is allowed; to name
+  that glyph in a comment, wrap it in backticks or double quotes (the rule skips quoted literals).
+  Enforced by the `no-comment-slop` oxlint plugin (the released `eslint-plugin-no-comment-slop`
+  package, wired through `jsPlugins`): no trailing period, no em-dash, no banner/separator comments,
   no foreign syntax (`///`, `#region`, XML doc tags), no inflated jargon, and JSDoc (not `//`) for
   the comment documenting an export. `no-trailing-comment` runs on `src`/`scripts` only (compact
   inline annotations stay in `test`/`examples`). `max-comment-lines` runs at a repo-tuned budget

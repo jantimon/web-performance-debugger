@@ -105,7 +105,7 @@ async function loadRecording(file: string): Promise<Recording> {
  * plus the labels present on one side only. ADVISORY, directional ms (trace wall-tier on --breakdown bars, the profiler's clock on CPU-only
  * bars): these never gate the build,
  * so they are shown for signal but do not join `regressions`. A slice not measured on one side
- * prints `-` rather than inventing a delta
+ * prints `—` rather than inventing a delta
  */
 function printSliceDiff(diff: SpanSliceDiff): void {
   console.log("\nper-span slice deltas (advisory, directional ms):");

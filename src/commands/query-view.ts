@@ -416,7 +416,7 @@ export function printSpanAnatomy(
     );
   // A measure span carries a reconciling bar (real style/layout/paint slice ms) but no counts: counts
   // window to the run/steps, never to an arbitrary user-measure window. Without this the bar's slice
-  // ms beside an all-"-" counts table read as a contradiction. Gated on the rendering slices actually
+  // ms beside an all-"—" counts table read as a contradiction. Gated on the rendering slices actually
   // summing above 0, so an all-idle bar (no style/layout/paint to reconcile against) prints no note
   // rather than claiming ms it did not measure. Say it, rather than fabricate counts
   const renderingSliceMs = span.breakdown
@@ -798,7 +798,7 @@ function stitchFooterFromSources(stitch: GroupSpanStitch): string {
   return `${bar}, ${rest}. Walls are per member, never combined.`;
 }
 
-/** Print a UnifiedSlices bar (js/style/layout/paint/gc/other/idle), Measured-honest (- for not-measured) */
+/** Print a UnifiedSlices bar (js/style/layout/paint/gc/other/idle), Measured-honest (`—` for not-measured) */
 function printUnifiedSlices(slices: UnifiedSlices): void {
   const rows: [string, number | null, string][] = [
     ["js", slices.js.ms, ""],
@@ -873,7 +873,7 @@ export function printBarlessStepRows(spans: SpanCountsEntry[], hint: string): vo
  * `query spans` on a bar-less recording (default/--deep): the overview it CAN render
  * honestly -- label/kind/wall/aggregation and the Measured rendering counts -- with the reconciling
  * bar shown as not-measured. --deep leads with its exact counts here; the default mode
- * carries only the wall (counts -). Never a fabricated all-zero bar
+ * carries only the wall (counts `—`). Never a fabricated all-zero bar
  */
 export async function printBarlessSpans(
   overview: SpanCountsOverview,
