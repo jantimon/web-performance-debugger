@@ -13,7 +13,7 @@
     "no-comment-slop/no-foreign-syntax": "error",
     "no-comment-slop/no-jargon": "error",
     "no-comment-slop/prefer-jsdoc-for-exports": "error",
-    "no-comment-slop/max-comment-lines": ["error", { "max": 10, "headerMax": 10, "jsdocSectionMax": 10 }],
+    "no-comment-slop/max-comment-lines": ["error", { "max": 10, "headerMax": 10, "jsdocSectionMax": 10, "exportDescriptionMax": 10, "exportTagMax": 10 }],
     "no-comment-slop/no-trailing-comment": "off"
   },
   "env": {

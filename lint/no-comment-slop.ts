@@ -1,5 +1,6 @@
 // Vendored verbatim from eslint-plugin-no-comment-slop (MIT, Jan Nicklas):
 // https://github.com/jantimon/eslint-plugin-no-comment-slop (src/index.ts).
+// Pinned at upstream commit 22c19ebe161d98e48ee039de3811785e11cac100.
 // License text sits next to this file as no-comment-slop.LICENSE. oxlint loads
 // it through jsPlugins; Node strips the type-only imports at load time.
 
@@ -43,6 +44,7 @@ const DIRECTIVE = new RegExp(
     /^\s*(?:prettier|deno-lint|deno-fmt)-ignore/,
     /^\s*(?:istanbul|c8|v8|node|jest|vitest)\s+ignore/,
     /^\s*(?:globals?|exported)\s/,
+    /^\s*SPDX-License-Identifier/,
     /^\s*\/\s*<(?:reference|amd-module|amd-dependency)\b/,
     /^\s*webpack[A-Z]/,
   ]
@@ -195,6 +197,23 @@ function splitSections(lines: CommentLine[]): CommentLine[][] {
   return sections;
 }
 
+/** Drop fence delimiters and everything between them, so code samples never count */
+function withoutFencedCode(lines: CommentLine[]): CommentLine[] {
+  const kept: CommentLine[] = [];
+  let inFence = false;
+  for (const line of lines) {
+    if (line.text.startsWith("```")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence) kept.push(line);
+  }
+  return kept;
+}
+
+const isExampleSection = (section: CommentLine[]): boolean =>
+  /^@example\b/.test(section[0]!.text);
+
 const sectionLoc = (section: CommentLine[]): SourceLocation => ({
   start: { line: section[0]!.line, column: section[0]!.column },
   end: {
@@ -208,6 +227,16 @@ function isFileHeader(text: string, comment: CommentToken): boolean {
   return /^\s*(?:#![^\n]*\n\s*)?$/.test(text.slice(0, comment.range[0]));
 }
 
+/**
+ * True when the comment documents the export starting at `exportStart`:
+ * nothing but whitespace between them, blank lines included
+ */
+const documentsExportAt = (text: string, end: number, exportStart: number): boolean =>
+  exportStart >= end && text.slice(end, exportStart).trim() === "";
+
+/** License and copyright headers stay where they are, whatever follows them */
+const LICENSE_HEADER = /\b(?:copyright|licen[cs]e|spdx)\b|©|\(c\)/i;
+
 const docsUrl = (name: string): string =>
   `https://github.com/jantimon/eslint-plugin-no-comment-slop/blob/main/docs/rules/${name}.md`;
 
@@ -215,6 +244,8 @@ interface MaxCommentLinesOptions {
   max?: number;
   headerMax?: number;
   jsdocSectionMax?: number;
+  exportDescriptionMax?: number;
+  exportTagMax?: number;
 }
 
 const maxCommentLines: Rule.RuleModule = {
@@ -232,6 +263,8 @@ const maxCommentLines: Rule.RuleModule = {
           max: { type: "integer", minimum: 1 },
           headerMax: { type: "integer", minimum: 1 },
           jsdocSectionMax: { type: "integer", minimum: 1 },
+          exportDescriptionMax: { type: "integer", minimum: 1 },
+          exportTagMax: { type: "integer", minimum: 1 },
         },
         additionalProperties: false,
       },
@@ -248,29 +281,53 @@ const maxCommentLines: Rule.RuleModule = {
     const max = options.max ?? 3;
     const headerMax = options.headerMax ?? 5;
     const jsdocSectionMax = options.jsdocSectionMax ?? 5;
+    const exportDescriptionMax = options.exportDescriptionMax ?? 10;
+    const exportTagMax = options.exportTagMax ?? 7;
     const sourceCode = getSource(context);
     const text = sourceText(sourceCode);
+    const exportStarts: number[] = [];
+
+    const collect = (node: { range?: [number, number] | null | undefined }): void => {
+      if (node.range) exportStarts.push(node.range[0]);
+    };
 
     return {
-      Program() {
+      ExportNamedDeclaration: collect,
+      ExportDefaultDeclaration: collect,
+
+      "Program:exit"() {
         for (const block of commentBlocks(text, getComments(sourceCode))) {
           if (block.some(isDirective)) continue;
           const limit = isFileHeader(text, block[0]!) ? headerMax : max;
 
           if (isJsdoc(block[0]!)) {
-            for (const section of splitSections(commentLines(block[0]!))) {
-              if (section.length > jsdocSectionMax) {
+            const comment = block[0]!;
+            const documentsExport = exportStarts.some((start) =>
+              documentsExportAt(text, comment.range[1], start),
+            );
+            const lines = withoutFencedCode(commentLines(comment));
+            for (const section of splitSections(lines)) {
+              if (isExampleSection(section)) continue;
+              const isTag = /^@\w/.test(section[0]!.text);
+              const sectionMax = documentsExport
+                ? isTag
+                  ? exportTagMax
+                  : exportDescriptionMax
+                : jsdocSectionMax;
+              if (section.length > sectionMax) {
                 context.report({
                   loc: sectionLoc(section),
                   messageId: "sectionTooLong",
-                  data: { lines: String(section.length), max: String(jsdocSectionMax) },
+                  data: { lines: String(section.length), max: String(sectionMax) },
                 });
               }
             }
             continue;
           }
 
-          const lines = block.flatMap(commentLines).filter((line) => !line.blank);
+          const lines = withoutFencedCode(block.flatMap(commentLines)).filter(
+            (line) => !line.blank,
+          );
           if (lines.length > limit) {
             context.report({
               loc: blockLoc(block),
@@ -416,10 +473,10 @@ const preferJsdocForExports: Rule.RuleModule = {
   create(context) {
     const sourceCode = getSource(context);
     const text = sourceText(sourceCode);
-    const exports: { loc: SourceLocation }[] = [];
+    const exportStarts: number[] = [];
 
-    const collect = (node: { loc?: SourceLocation | null | undefined }): void => {
-      if (node.loc) exports.push({ loc: node.loc });
+    const collect = (node: { range?: [number, number] | null | undefined }): void => {
+      if (node.range) exportStarts.push(node.range[0]);
     };
 
     return {
@@ -427,21 +484,22 @@ const preferJsdocForExports: Rule.RuleModule = {
       ExportDefaultDeclaration: collect,
 
       "Program:exit"() {
-        if (exports.length === 0) return;
+        if (exportStarts.length === 0) return;
 
         const lineRuns = commentBlocks(text, getComments(sourceCode)).filter(
           (block) => block[0]!.type === "Line" && !isTrailing(text, block[0]!),
         );
 
-        for (const node of exports) {
-          const run = lineRuns.find(
-            (block) => block[block.length - 1]!.loc.end.line === node.loc.start.line - 1,
+        for (const exportStart of exportStarts) {
+          const run = lineRuns.find((block) =>
+            documentsExportAt(text, block[block.length - 1]!.range[1], exportStart),
           );
           if (!run || run.some(isDirective)) continue;
+          if (run.some((comment) => LICENSE_HEADER.test(comment.value))) continue;
 
           const first = run[0]!;
-          const last = run[run.length - 1]!;
           const indent = text.slice(lineStart(text, first.range[0]), first.range[0]);
+          const exportIndent = text.slice(lineStart(text, exportStart), exportStart);
           const body = run
             .map((comment) => `${indent} * ${comment.value.trim()}`.trimEnd())
             .join("\n");
@@ -451,8 +509,8 @@ const preferJsdocForExports: Rule.RuleModule = {
             messageId: "useJsdoc",
             fix: (fixer) =>
               fixer.replaceTextRange(
-                [first.range[0], last.range[1]],
-                `/**\n${body}\n${indent} */`,
+                [first.range[0], exportStart],
+                `/**\n${body}\n${indent} */\n${exportIndent}`,
               ),
           });
         }
