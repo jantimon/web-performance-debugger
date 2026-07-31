@@ -288,7 +288,7 @@ export interface LayoutShift {
 export interface EngineSoftNav {
   /** soft-navigation entries the engine fired in the step window (>= 1 when present) */
   count: number;
-  /** each entry's `navigationType` ("push"/"replace"): the history op the engine attributed */
+  /** each entry's `navigationType` ("push"/"replace"/"traverse"): the history op the engine attributed */
   navigationTypes: string[];
   /** each entry's numeric `navigationId` (Chrome 151); the id per-soft-step metrics slice by. Absent
    * on a build that did not populate it */
@@ -334,7 +334,7 @@ export interface SoftNavRouteLcp {
 export interface SoftNavRoute {
   /** the soft nav's numeric `navigationId`, the key every route metric below is sliced by */
   navigationId: number;
-  /** the history op the engine attributed ("push"/"replace") */
+  /** the history op the engine attributed ("push"/"replace"/"traverse") */
   navigationType: string;
   /** the route's URL (`entry.name`); absent when the entry carried none */
   url?: string;
