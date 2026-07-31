@@ -1,5 +1,13 @@
 # @jantimon/web-performance-debugger
 
+## 1.4.1
+
+### Patch Changes
+
+- [#207](https://github.com/jantimon/web-performance-debugger/pull/207) [`0ea5ee9`](https://github.com/jantimon/web-performance-debugger/commit/0ea5ee9ce58bbfefa06b852cfc6490df3f74e9ec) - Update `eslint-plugin-no-comment-slop` to 0.2.0, adding its two new rules at error: member comments
+  use JSDoc (not `//`), and every member of a mostly-documented type carries a one-line doc. All
+  findings fixed; internal only, no runtime or output change.
+
 ## 1.4.0
 
 ### Minor Changes
