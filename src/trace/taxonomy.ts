@@ -34,15 +34,17 @@ export const TAXONOMY: Record<EventKind, KindRow> = {
   // The style-event names Chrome 150 emits: `UpdateLayoutTree` (the recalc) and
   // `ParseAuthorStyleSheet` (parsing author CSS). Both bill to the `style` slice
 
-  // [measured] `ParseAuthorStyleSheet` is a stylesheet PARSE, not a recalc: it fires only when new
-  // author CSS is parsed inside the window (an injected/loaded `<link rel=stylesheet>`), and Blink
-  // logs it WITHOUT incrementing `RecalcStyleCount`. Inline `<style>`, `insertRule`, and DOM/class
-  // mutations never emit it. Its time is real main-thread style work, so it stays on the `style`
-  // slice (the breakdown bar bills it). The reported `styleCount` is CDP `RecalcStyleCount` (the
-  // merge prefers it), already parse-free because Blink never counts the parse. The trace-DERIVED
-  // fallback does exclude it: summing every `style` event gives recalc + parses > `RecalcStyleCount`,
-  // so `summarize` skips `STYLE_PARSE_NAMES` and sums `UpdateLayoutTree` alone
-  // See docs/dev/rendering-counts.md
+  /**
+   * [measured] `ParseAuthorStyleSheet` is a stylesheet PARSE, not a recalc: it fires only when new
+   * author CSS is parsed inside the window (an injected/loaded `<link rel=stylesheet>`), and Blink
+   * logs it WITHOUT incrementing `RecalcStyleCount`. Inline `<style>`, `insertRule`, and DOM/class
+   * mutations never emit it. Its time is real main-thread style work, so it stays on the `style`
+   * slice (the breakdown bar bills it). The reported `styleCount` is CDP `RecalcStyleCount` (the
+   * merge prefers it), already parse-free because Blink never counts the parse. The trace-DERIVED
+   * fallback does exclude it: summing every `style` event gives recalc + parses > `RecalcStyleCount`,
+   * so `summarize` skips `STYLE_PARSE_NAMES` and sums `UpdateLayoutTree` alone
+   * See docs/dev/rendering-counts.md
+   */
   style: {
     names: new Set(["UpdateLayoutTree", "ParseAuthorStyleSheet"]),
     slice: "style",
@@ -54,14 +56,16 @@ export const TAXONOMY: Record<EventKind, KindRow> = {
   // `will-change: transform` (own compositor layer) does not move it. That makes paintCount an exact
   // count of paint work, in the same trust tier as the CDP layout/style counters
 
-  // Three neighbouring names are excluded because they are not paint work you can act on:
-  //   - RasterTask/Rasterize run on RASTER WORKER threads, so their count tracks tiling and
-  //     scheduler behaviour, not the page. [measured] they fire ~35x when NOTHING is dirtied and 14x
-  //     for 40 dirtied boxes: anti-correlated with the paint work. Including them costs the count its
-  //     reproducibility (3->39 on identical work) and with it the right to gate CI
-  //   - PaintImage nests INSIDE a Paint event, so counting it double-counts the same work
-  // They stay in the event log and are reachable by name (`query events --name RasterTask`); they are
-  // just not a count anyone should gate on. See docs/dev/rendering-counts.md
+  /**
+   * Three neighbouring names are excluded because they are not paint work you can act on:
+   * - RasterTask/Rasterize run on RASTER WORKER threads, so their count tracks tiling and
+   * scheduler behaviour, not the page. [measured] they fire ~35x when NOTHING is dirtied and 14x
+   * for 40 dirtied boxes: anti-correlated with the paint work. Including them costs the count its
+   * reproducibility (3->39 on identical work) and with it the right to gate CI
+   * - PaintImage nests INSIDE a Paint event, so counting it double-counts the same work
+   * They stay in the event log and are reachable by name (`query events --name RasterTask`); they are
+   * just not a count anyone should gate on. See docs/dev/rendering-counts.md
+   */
   paint: { names: new Set(["Paint"]), slice: "paint" },
   composite: {
     names: new Set([
@@ -97,17 +101,21 @@ export const TAXONOMY: Record<EventKind, KindRow> = {
       "FireAnimationFrame",
     ]),
     slice: "js",
-    // A v8-category event with no more specific name is scripting. Checked AFTER gc in classify so a
-    // GC event whose category includes "v8" does not land here
+    /**
+     * A v8-category event with no more specific name is scripting. Checked AFTER gc in classify so a
+     * GC event whose category includes "v8" does not land here
+     */
     match: (_name, cat) => cat.includes("v8"),
   },
-  // Garbage collection on the renderer main thread. [measured, real trace] the light --breakdown
-  // category set (devtools.timeline, no v8.gc) emits `MinorGC`/`MajorGC` as complete events with a
-  // duration on the main thread; the `V8.GC*` family is mostly instant markers / background-thread
-  // work, matched by prefix defensively so any main-thread member nests as gc rather than leaking
-  // into `other`. classify() runs in every mode, so `MinorGC`/`MajorGC`/`V8.GC*` reclassify from
-  // `other` to `gc` everywhere; no rendering count derives from the gc kind, so only the kind label
-  // shifts (the seven-slice breakdown is what consumes the gc slice). See docs/dev/rendering-counts.md
+  /**
+   * Garbage collection on the renderer main thread. [measured, real trace] the light --breakdown
+   * category set (devtools.timeline, no v8.gc) emits `MinorGC`/`MajorGC` as complete events with a
+   * duration on the main thread; the `V8.GC*` family is mostly instant markers / background-thread
+   * work, matched by prefix defensively so any main-thread member nests as gc rather than leaking
+   * into `other`. classify() runs in every mode, so `MinorGC`/`MajorGC`/`V8.GC*` reclassify from
+   * `other` to `gc` everywhere; no rendering count derives from the gc kind, so only the kind label
+   * shifts (the seven-slice breakdown is what consumes the gc slice). See docs/dev/rendering-counts.md
+   */
   gc: {
     names: new Set(["MinorGC", "MajorGC"]),
     slice: "gc",
@@ -119,8 +127,10 @@ export const TAXONOMY: Record<EventKind, KindRow> = {
     slice: "other",
     match: (_name, cat) => cat.includes("blink.user_timing"),
   },
-  // The floor bucket: task remainder + anything unclassified (composite/invalidation/user-timing/
-  // other). classify falls back to this when no row above matched, so it carries no name rule
+  /**
+   * The floor bucket: task remainder + anything unclassified (composite/invalidation/user-timing/
+   * other). classify falls back to this when no row above matched, so it carries no name rule
+   */
   other: { names: new Set<string>(), slice: "other" },
 };
 

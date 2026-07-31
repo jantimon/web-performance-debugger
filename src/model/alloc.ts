@@ -7,6 +7,7 @@ import type { RecordingMeta } from "./meta.js";
 export interface AllocFunction {
   /** stable id = rank by self bytes; used by the hot list ordering */
   id: number;
+  /** display name: the sourcemap original when resolved, else the minified V8 name */
   fn: string;
   /** resolved original "file:line" when the frame carried a position */
   source?: string;
@@ -60,7 +61,9 @@ export interface AllocSamplingConfig {
 export interface AllocModel {
   /** path to the raw .heapprofile (absolute back-pointer) */
   profile: string;
+  /** the recording identity/provenance this profile was captured under */
   meta: RecordingMeta;
+  /** the heap sampler configuration the numbers came from */
   sampling: AllocSamplingConfig;
   /**
    * Total sampled bytes attributed to rankable user frames (the denominator the package/file/function

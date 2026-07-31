@@ -13,12 +13,15 @@ export type EventKind =
   | "other";
 
 export interface StackFrame {
+  /** resolved or minified function name; absent for an anonymous frame */
   functionName?: string;
   /** original (served) url from the trace */
   url?: string;
   /** url rewritten to a local file path when it came from the local module server */
   source?: string;
+  /** 1-based line in `source`/`url` */
   line?: number;
+  /** 1-based column in `source`/`url` */
   column?: number;
   /**
    * The frame carries an executing LINE but no observed column (a CPU sample's `data.lines` entry, the
@@ -37,6 +40,7 @@ export interface StackFrame {
    * it; absent everywhere else
    */
   fallbackLine?: number;
+  /** the leaf function's own callFrame column (1-based), paired with `fallbackLine` */
   fallbackColumn?: number;
   /** when source was a bundle with a sourcemap, the pre-map "file:line:col" */
   bundled?: string;
@@ -47,13 +51,17 @@ export interface StackFrame {
 }
 
 export interface NormalizedEvent {
+  /** stable within one recording; the `query get <id>` handle */
   id: number;
+  /** the raw trace event name (e.g. "Layout", "UpdateLayoutTree") */
   name: string;
   /** trace clock, microseconds */
   ts: number;
   /** microseconds (0 for instant events) */
   dur: number;
+  /** the trace phase char: `X` complete, `b`/`e` async begin/end, `I` instant */
   ph: string;
+  /** the work-slice classification `classify.ts` assigned from `name`/category */
   kind: EventKind;
   /**
    * Trace process/thread the event ran on. Populated ONLY in --breakdown mode (parseTrace keeps
@@ -61,6 +69,7 @@ export interface NormalizedEvent {
    * main-thread work from raster/compositor threads. Every other mode leaves these fields absent
    */
   pid?: number;
+  /** renderer thread id, paired with `pid`; populated only in --breakdown mode (see `pid`) */
   tid?: number;
   /**
    * The trace async-slice id (`id2.local`/`id2.global`/`id`) for a b/e async event. Populated ONLY
@@ -91,6 +100,7 @@ export interface NormalizedEvent {
    * detector. See trace/firefox-dirtied.ts
    */
   dirtiedBy?: DirtiedByWrite;
+  /** the raw trace `args` payload, untyped; `query get` surfaces it verbatim */
   args?: unknown;
 }
 

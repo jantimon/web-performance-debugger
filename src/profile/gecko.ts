@@ -27,8 +27,9 @@ interface RawStackFrame {
 }
 
 interface Table {
+  /** column-name to index map for the `data` rows */
   schema: Record<string, number>;
-  // frameTable's relevantForJS column is a boolean; the rest are numbers, strings, payloads, or null
+  /** frameTable's relevantForJS column is a boolean; the rest are numbers, strings, payloads, or null */
   data: (number | string | boolean | null | Record<string, unknown>)[][];
 }
 
@@ -57,8 +58,11 @@ interface GeckoContainer {
 
 /** Everything the two converters need, computed once so the JSON is walked a single time */
 export interface GeckoContext {
+  /** the Gecko thread the converters read (samples/markers/stacks/frames) */
   thread: GeckoThread;
+  /** the JavaScript category index: a frame on it is JS */
   jsCategory: number;
+  /** the Idle category index */
   idleCategory: number;
   /** Layout category index (covers both Reflow and style recalc frames); -1 if the dump lacks it */
   layoutCategory: number;
@@ -66,11 +70,13 @@ export interface GeckoContext {
   gcCategory: number;
   /** DOM category index (WebIDL accessor label frames land here); -1 if absent */
   domCategory: number;
+  /** sampler interval in ms, read from the dump's meta */
   intervalMs: number;
   /** unit of the samples `threadCPUDelta` column, read from meta.sampleUnits; null if not declared */
   cpuDeltaUnit: string | null;
   /** run window on the sample/marker ms clock; null when the wpd:run marks are absent */
   windowStartMs: number | null;
+  /** run window end on the sample/marker ms clock; null when the wpd:run marks are absent */
   windowEndMs: number | null;
 }
 
@@ -258,7 +264,9 @@ export function parseGecko(profile: GeckoContainer): GeckoContext {
  * uses the definition site (function-level collapsing, like V8); marker blame uses the execution
  * line so a forced layout points at the exact offending statement (Chrome-parity) */
 interface FrameInfo {
+  /** the frame runs JS (its category is the JavaScript one) */
   isJs: boolean;
+  /** the frame is the Idle pseudo-frame */
   isIdle: boolean;
   /** frameTable category index, or null when the frame carries none (unsymbolicated native leaves) */
   category: number | null;
@@ -266,9 +274,11 @@ interface FrameInfo {
   relevantForJS: boolean;
   /** raw location string, kept for the read-site property name and style/layout name split */
   rawLocation: string;
+  /** the location string split into function name + source + line/col */
   parsed: ParsedLocation;
   /** 1-based executing line/col at this sample (null when Gecko did not record them) */
   execLine: number | null;
+  /** 1-based executing column at this sample; null when Gecko did not record it */
   execColumn: number | null;
 }
 
@@ -496,8 +506,10 @@ export function geckoToRawCpuProfile(context: GeckoContext): RawCpuProfile {
     endTime: windowEndUs ?? (windowEndMs != null ? msToUs(windowEndMs) : 0),
     samples,
     timeDeltas,
-    // Only when the CPU column was populated: the reconciling breakdown needs the idle signal, and
-    // without it a firefox bar would fabricate idle. Chrome/node profiles never set this field
+    /**
+     * Only when the CPU column was populated: the reconciling breakdown needs the idle signal, and
+     * without it a firefox bar would fabricate idle. Chrome/node profiles never set this field
+     */
     gecko: cpuDeltaPopulated ? { sampleSlices } : undefined,
   };
 }
@@ -635,11 +647,13 @@ export function geckoToRenderingEvents(context: GeckoContext): NormalizedEvent[]
       dur: msToUs(durationMs),
       ph: "X",
       kind: rendering.kind,
-      // A JS cause proves this flush was synchronously forced, so it drives forcedLayoutCount. The
-      // cause names the WRITE that dirtied the DOM, not the read that forced the flush, so it is
-      // deliberately NOT surfaced as `at`: that would put write lines in `query blame --forced`,
-      // where the sampled read-site events below carry the read line instead. The write cause stays
-      // reachable via `query get`/`query events` under args.data.invalidationStack
+      /**
+       * A JS cause proves this flush was synchronously forced, so it drives forcedLayoutCount. The
+       * cause names the WRITE that dirtied the DOM, not the read that forced the flush, so it is
+       * deliberately NOT surfaced as `at`: that would put write lines in `query blame --forced`,
+       * where the sampled read-site events below carry the read line instead. The write cause stays
+       * reachable via `query get`/`query events` under args.data.invalidationStack
+       */
       forced: causeFrames.length > 0,
       args: Object.keys(argsData).length ? { data: argsData } : undefined,
     });

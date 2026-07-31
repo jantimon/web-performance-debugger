@@ -54,6 +54,7 @@ export interface AddonSpanWindow {
 /** Everything an addon needs to derive its facts post-capture, all read-only inputs. The addon mutates
  * `spans[i].addons[<name>]` in place; it never changes counts, bars, or anything the capture measured */
 export interface AddonEnrichContext {
+  /** the recording identity/provenance, read-only */
   meta: RecordingMeta;
   /** the built spans (run + steps + measures); the addon attaches facts onto their `addons` slot */
   spans: Span[];

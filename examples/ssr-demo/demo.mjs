@@ -63,7 +63,7 @@ function Row({ index }) {
           key: variant,
           variant,
           size: sizes[(index + column) % sizes.length],
-          // a caller override that conflicts with the variant, so twMerge has real work to do
+          /** a caller override that conflicts with the variant, so twMerge has real work to do */
           className: column % 2 ? "px-8 shadow-sm" : "py-4",
         },
         `Action ${index}-${column}`,

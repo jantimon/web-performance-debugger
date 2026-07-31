@@ -41,6 +41,7 @@ export const THRASH_SEQUENCE_CAP = 12;
 
 /** The full detector result over a window: the rollup plus dirtied-by writes keyed by read-site */
 export interface ThrashAnalysis {
+  /** the run window's thrash rollup (the interleave sequence plus count) */
   report: ThrashReport;
   /** dirtied-by writes per forced read-site (source line), the dual annotation for blame and the span anatomy */
   dirtiedByReadSite: Record<string, DirtiedByWrite[]>;
@@ -83,7 +84,9 @@ function topLevelTasks(ordered: NormalizedEvent[]): NormalizedEvent[] {
 }
 
 interface FlushAnnotation {
+  /** which flush this annotates: a layout or a style recalc */
   kind: "layout" | "style";
+  /** the read-site source line that forced this flush; absent when it carried no resolved stack */
   read?: string;
   /** style-kind mutation writes in this flush's gap (the surfaceable write end) */
   dirtiedBy: DirtiedByWrite[];

@@ -304,6 +304,7 @@ function unambiguousLineColumn(map: TraceMap, generatedLine: number): number | n
  * `sourceMappingURL` and fetched over the network
  */
 export class SourceMapResolver {
+  /** resolved map per script (null when its load failed), so each script loads at most once */
   private cache = new Map<string, TraceMap | null>();
   /** per attempted script: null = resolved, else why it failed. Keyed like `cache`, so each
    * script counts once no matter how many frames point at it */
@@ -330,6 +331,7 @@ export class SourceMapResolver {
   private remoteDeadline: number | null = null;
   /** Concurrency gate for remote fetches (a hand-rolled counting semaphore) */
   private activeFetches = 0;
+  /** resolvers waiting for a fetch slot, released in FIFO order */
   private fetchWaiters: (() => void)[] = [];
 
   /**
@@ -341,6 +343,7 @@ export class SourceMapResolver {
     this.pagePrivate = options.pageUrl == null || isPageUrlPrivate(options.pageUrl);
   }
 
+  /** take a fetch slot, waiting when the concurrency gate is full */
   private async acquireFetchSlot(): Promise<void> {
     if (this.activeFetches < MAX_CONCURRENT_FETCHES) {
       this.activeFetches++;
@@ -349,6 +352,7 @@ export class SourceMapResolver {
     await new Promise<void>((resolve) => this.fetchWaiters.push(resolve));
   }
 
+  /** return a fetch slot, handing it straight to the next waiter when one is queued */
   private releaseFetchSlot(): void {
     const next = this.fetchWaiters.shift();
     // Hand the slot directly to the next waiter (activeFetches unchanged); only drop the count when
@@ -368,6 +372,7 @@ export class SourceMapResolver {
     }
   }
 
+  /** read a sibling `.map` file, falling back to an inline data-URI map in the JS itself */
   private async loadLocalMap(jsFile: string): Promise<RawMap> {
     try {
       return { raw: await fs.readFile(`${jsFile}.map`, "utf8") };
@@ -418,6 +423,7 @@ export class SourceMapResolver {
     }
   }
 
+  /** fetch a remote script's map via its `sourceMappingURL` comment or `SourceMap` response header */
   private async loadRemoteMap(jsUrl: string): Promise<RawMap> {
     const script = await this.remoteFetch(jsUrl, "script");
     if (!script.ok) return { failure: script.failure };
@@ -438,6 +444,7 @@ export class SourceMapResolver {
     return fetched.ok ? { raw: fetched.text } : { failure: fetched.failure };
   }
 
+  /** cached map load, so concurrent lookups of one script share one fetch */
   private async loadMap(target: string): Promise<TraceMap | null> {
     if (this.cache.has(target)) return this.cache.get(target)!;
     const existing = this.inflight.get(target);
@@ -450,6 +457,7 @@ export class SourceMapResolver {
     return load;
   }
 
+  /** load one script's map and record the outcome (resolved, or why it failed) */
   private async loadMapUncached(target: string): Promise<TraceMap | null> {
     let map: TraceMap | null = null;
     let failure: SourceMapFailure | undefined;
@@ -604,6 +612,7 @@ export class SourceMapResolver {
     if (pos.name) frame.originalName = pos.name;
   }
 
+  /** resolve every frame of a stack in place, rewriting bundle positions to original source */
   async resolveStack(stack: StackFrame[]): Promise<void> {
     for (const frame of stack) await this.resolveFrame(frame);
   }

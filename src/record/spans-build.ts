@@ -169,7 +169,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       kind: "measure",
       aggregation: spanAggregation("measure", bar.samples),
       wallMs: bar.breakdown.wallMs,
-      // A measure's headline IS its bar's trace-clock tiled window
+      /** A measure's headline IS its bar's trace-clock tiled window */
       wallClock: "trace",
       breakdown: bar.breakdown,
       counts: notMeasuredSpanCounts(),

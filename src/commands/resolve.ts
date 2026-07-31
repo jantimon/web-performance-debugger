@@ -100,6 +100,7 @@ export async function hintTarget(absPath: string): Promise<string> {
 }
 
 export interface Consumption {
+  /** whether `path` names a plain recording or a run-group manifest */
   kind: "recording" | "group";
   /** absolute path to the recording or the run-group manifest */
   path: string;

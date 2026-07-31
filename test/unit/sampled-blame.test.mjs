@@ -47,7 +47,7 @@ test("sampledForcedBlameEvents: emits the leaf function's callFrame fallback (1-
   const events = [flush("layout", 1000, 500)];
   const stream = {
     ...streamOf([{ node: 1, ts: 1100, line: 42 }], 150, { 1: APP }),
-    // 0-based CDP callFrame position; the join shifts it +1 to the trace-stack convention
+    /** 0-based CDP callFrame position; the join shifts it +1 to the trace-stack convention */
     frameByNode: new Map([[1, { line: 7, column: 28454 }]]),
   };
   const out = sampledForcedBlameEvents(events, stream, null, null);
@@ -190,7 +190,7 @@ test("sampledForcedBlameEvents: a same-timestamp worker sample is not attributed
       [1, APP],
       [2, WORKER],
     ]),
-    // The worker sample lands FIRST inside the window; the main-thread sample follows
+    /** The worker sample lands FIRST inside the window; the main-thread sample follows */
     samples: [2, 1],
     timestampsUs: [1100, 1300],
     lines: [99, 42],

@@ -37,6 +37,7 @@ export interface GroupMember {
   cpuModel?: string;
   /** path to the raw .cpuprofile, relative to the manifest dir; absent when the mode sampled none */
   cpuProfile?: string;
+  /** ISO timestamp this member's recording was written */
   createdAt: string;
   /** the member's own workload identity (lane/host/module); the group refuses a member whose identity
    * differs from the others', so this equals the group's, kept per-member for a self-contained read */
@@ -51,14 +52,19 @@ export interface GroupMember {
  * of its own: the whole point is that no field can imply one number describes the group
  */
 export interface RunGroup {
+  /** the manifest's discriminator meta (`kind: "run-group"`) */
   meta: GroupMeta;
   /** the shared workload identity (lane/host/module), stabilized the same way compat.ts stabilizes it */
   workload?: WorkloadIdentity;
+  /** timed run() repetitions shared by every member */
   iterations: number;
+  /** untimed warmup passes shared by every member */
   warmup: number;
+  /** every member ran headless */
   headless: boolean;
   /** chrome headless flavour when headless (shell/new); absent when headed or firefox/node */
   headlessMode?: "shell" | "new";
+  /** artificial CPU slowdown shared by every member; absent when none was applied */
   throttle?: { cpuRate?: number };
   /** browser backend of every member; absent => chrome */
   browser?: "chrome" | "firefox";
@@ -71,6 +77,7 @@ export interface RunGroup {
    * Set/unioned only by the `--members` runner; absent on an ad-hoc `--group` group, which is
    * complete-by-construction (each single record is a whole member) and never reports partial */
   requested?: string[];
+  /** the recordings in this group, one per capture mode */
   members: GroupMember[];
   /** group-level disclosures: partial formation, count disagreement across members */
   notes: string[];
@@ -230,6 +237,7 @@ export type GroupCountField = (typeof GROUP_COUNT_FIELDS)[number][0];
 export interface MemberCounts {
   /** how to name this member in a disagreement note: its mode, or `mode/variant` */
   label: string;
+  /** the exact counts this member measured; null where its mode did not measure the field */
   counts: Partial<Record<GroupCountField, number | null>>;
 }
 

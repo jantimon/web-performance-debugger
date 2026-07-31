@@ -23,8 +23,7 @@ function eventsInWindow(events: NormalizedEvent[], window: AddonSpanWindow): Nor
 export const reactDevAddon: Addon = {
   name: ADDON_NAME,
 
-  // No page probe: this addon reads the stored trace event log, not the live page
-
+  /** No page probe: this addon reads the stored trace event log, not the live page */
   enrich(context: AddonEnrichContext): void {
     // Gate 1: the `react` addon must have detected a development/profiling build. A production build
     // writes no track events, so classifying an empty stream would fabricate a zero; absence is honest

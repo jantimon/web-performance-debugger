@@ -38,8 +38,11 @@ export interface RawProfileNode {
 }
 
 export interface RawCallFrame {
+  /** the function name V8 reports (minified, or empty for an anonymous frame) */
   functionName: string;
+  /** V8's script handle the frame came from */
   scriptId: string;
+  /** the script url V8 reports (a served/remote url, resolved to source later) */
   url: string;
   /** 0-based, per CDP convention */
   lineNumber: number;

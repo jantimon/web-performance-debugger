@@ -250,7 +250,7 @@ function divergentStepRec(name) {
         kind: "step",
         index: 0,
         aggregation: "first",
-        // median of the three samples; iteration 0 (2023.43) was an outlier the bar tiles
+        /** median of the three samples; iteration 0 (2023.43) was an outlier the bar tiles */
         wallMs: 16.03,
         perIteration: [15, 16.03, 2023.43],
         counts: measuredCounts,
@@ -376,7 +376,7 @@ test("query span <measure>: stored hot refs resolve to span-local shares via the
         samples: 4,
         counts: nullCounts,
         breakdown: breakdown(3),
-        // pooled 40 ranked JS samples across 4 occurrences: id 0 = 30, id 1 = 10
+        /** pooled 40 ranked JS samples across 4 occurrences: id 0 = 30, id 1 = 10 */
         hot: {
           scope: "measure-pooled",
           pooledSamples: 40,
@@ -473,7 +473,7 @@ test("query span <step>: a zero-pool tally over a JS-bearing window reports not-
         aggregation: "first",
         wallMs: 60,
         counts: measuredCounts,
-        // 40 ms of JS in the bar, but the sampler covered none of it
+        /** 40 ms of JS in the bar, but the sampler covered none of it */
         breakdown: {
           wallMs: 60,
           slices: {
@@ -587,7 +587,7 @@ test("query span: an unknown label errors, listing the available spans", async (
 
 test("query span: a wall/INP median at the frame floor surfaces the min sample and js slice", async () => {
   const file = writeRec("anatomy-floor.json", {
-    // new-headless => 16.6ms one-frame floor; the median pins to it, the min sample escapes it
+    /** new-headless => 16.6ms one-frame floor; the median pins to it, the min sample escapes it */
     meta: {
       schemaVersion: "5",
       target: "chrome",

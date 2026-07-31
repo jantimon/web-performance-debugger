@@ -148,12 +148,17 @@ async function readMemberMeta(manifestDir: string, member: GroupMember): Promise
 }
 
 export interface AppendMemberInput {
+  /** the group's name (its manifest identity) */
   name: string;
+  /** path to the `<base>.group.json` manifest to append to */
   manifestPath: string;
+  /** the artifact format (json or toon) the manifest and members use */
   format: Format;
   /** the just-written member's absolute artifact paths */
   recordingPath: string;
+  /** the member's .cpu.json path; absent when the mode sampled none */
   cpuModelPath?: string;
+  /** the member's raw .cpuprofile path; absent when the mode sampled none */
   cpuProfilePath?: string;
   /** the joining recording's meta (for formation) */
   meta: RecordingMeta;
@@ -393,11 +398,15 @@ export async function runMembers(
       breakdown: mode === "breakdown",
       deep: mode === "deep",
       group: name,
-      // Thread the full requested set so each append derives partial status structurally (a later
-      // member's failure leaves the correct "N of M, missing X" note without a separate annotate step)
+      /**
+       * Thread the full requested set so each append derives partial status structurally (a later
+       * member's failure leaves the correct "N of M, missing X" note without a separate annotate step)
+       */
       groupRequested: modes,
-      // Every member names its files + the shared manifest from this ONE stem, so the per-member append
-      // (resolveSetup) lands on the same manifest the preflight above checked
+      /**
+       * Every member names its files + the shared manifest from this ONE stem, so the per-member append
+       * (resolveSetup) lands on the same manifest the preflight above checked
+       */
       groupFileStem: fileStem,
       out: memberOutPath(dir, fileStem, mode, baseOpts.format),
     };

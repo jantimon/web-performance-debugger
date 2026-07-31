@@ -353,6 +353,7 @@ async function attributeServedOrigin(
 }
 
 export interface ResolvedFrame {
+  /** display name: the sourcemap original when resolved, else the minified V8 name */
   fn: string;
   /** the minified V8 name, when `fn` is the sourcemap-resolved original */
   minified?: string;
@@ -360,6 +361,7 @@ export interface ResolvedFrame {
   source?: string;
   /** bare file path (no line) */
   file?: string;
+  /** owning package, or a parenthesized bucket when the owner is unknown (see `unmapped`) */
   package: string;
   /**
    * True only when `package` came from `unmappedOriginBucket`, i.e. we could NOT work out whose
@@ -607,11 +609,15 @@ function computeBreakdown(
 export async function buildCpuModel(
   raw: RawCpuProfile,
   context: {
+    /** path to the raw .cpuprofile (stored as the model's back-pointer) */
     profilePath: string;
+    /** the recording identity/provenance to stamp on the model */
     meta: RecordingMeta;
+    /** microseconds between samples, off the profiler's own clock */
     sampleIntervalUs: number;
     /** served-page origin for url->local rewriting (chrome runtime); omit for node */
     serverUrl?: string;
+    /** project root, so resolved source paths store relative to it */
     root: string;
     /** "node" rewrites file:// frames to local paths; default "chrome" */
     runtime?: "chrome" | "node";
@@ -926,8 +932,10 @@ function rollup(model: CpuModel, keyOf: (fn: CpuFunction) => string): CpuGroupSt
       return {
         key,
         selfMs: entry.selfMs,
-        // Denominated by jsSelfMs (the JS-only headline), the sum these buckets tile, so the shares add
-        // to 100%. activeMs would leave them short of 100 (it also carries gc/engine/native)
+        /**
+         * Denominated by jsSelfMs (the JS-only headline), the sum these buckets tile, so the shares add
+         * to 100%. activeMs would leave them short of 100 (it also carries gc/engine/native)
+         */
         selfPct: model.jsSelfMs > 0 ? (entry.selfMs / model.jsSelfMs) * 100 : 0,
         functions: entry.functions,
         ...(relation ? { siteRelation: relation } : {}),

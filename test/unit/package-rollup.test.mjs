@@ -26,8 +26,10 @@ function bundleProfile(bundlePath) {
           functionName: "minified",
           scriptId: "1",
           url: pathToFileURL(bundlePath).href,
-          // CDP is 0-based: lineNumber 0 / columnNumber 0 -> line 1 / column 1, which is the single
-          // "AAAAA" segment sourcemapFor emits, so the frame resolves through the map
+          /**
+           * CDP is 0-based: lineNumber 0 / columnNumber 0 -> line 1 / column 1, which is the single
+           * "AAAAA" segment sourcemapFor emits, so the frame resolves through the map
+           */
           lineNumber: 0,
           columnNumber: 0,
         },

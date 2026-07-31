@@ -39,13 +39,21 @@ import type { CaptureConfig } from "./capture.js";
 import type { RecordOptions } from "./options.js";
 
 export interface PassResult {
+  /** the capture-mode name this pass ran (e.g. "breakdown", "deep", "gecko") */
   name: string;
+  /** the classified event log; empty in capture modes that store none */
   events: NormalizedEvent[];
+  /** trace-clock start of the run window (us); null when the marks were not found */
   windowStart: number | null;
+  /** trace-clock end of the run window (us); null when the marks were not found */
   windowEnd: number | null;
+  /** each timed iteration's wall (ms), in order */
   perIteration: number[];
+  /** the lifecycle hooks that were found and called */
   lifecycle: string[];
+  /** the raw `wpd:*` timing marks the windows were located from */
   marks: TimingEntry[];
+  /** the user `performance.measure` entries captured in the window */
   measures: TimingEntry[];
   /** driver mode: per-step wall time + INP */
   driverSteps?: DriverStep[];
@@ -357,8 +365,10 @@ export async function runPass(
       // module), so absModule is defined here; narrow it for toServedUrl
       if (!absModule) throw new Error("Bench mode needs a module to import inside the page.");
       const harnessArg = {
-        // Bench mode only: the module is import()ed INSIDE the page, so it must be servable
-        // Driver mode imports it in Node (see runDriver above) and needs no url
+        /**
+         * Bench mode only: the module is import()ed INSIDE the page, so it must be servable
+         * Driver mode imports it in Node (see runDriver above) and needs no url
+         */
         moduleUrl: toServedUrl(server, root, absModule),
         fnName: opts.fn,
         iterations: opts.iterations,

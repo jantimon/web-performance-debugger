@@ -12,6 +12,7 @@ export type FrameState = "presented" | "presentedPartial" | "dropped" | "noUpdat
 export interface FrameRecord {
   /** compositor `frame_sequence`: the frame's identity within the run */
   sequence: number;
+  /** the frame's terminal verdict (presented/partial/dropped/no-update) */
   state: FrameState;
   /** the frame was on the smoothness-critical path (a dropped/late one is visible jank) */
   affectsSmoothness: boolean;
@@ -32,9 +33,13 @@ export interface FrameRecord {
  * docs/dev/rendering-counts.md
  */
 export interface FrameSideTrack {
+  /** frames that presented in full */
   presented: number;
+  /** frames that presented only part of their update */
   presentedPartial: number;
+  /** frames the compositor dropped before presentation */
   dropped: number;
+  /** frames with no visual change to present */
   noUpdate: number;
   /** every frame in the span's window (presented + partial + dropped + noUpdate) */
   total: number;

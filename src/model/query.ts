@@ -52,13 +52,19 @@ export interface AllocOverview {
   profile: string;
   /** total sampled bytes attributed to rankable user frames (the share denominator) */
   totalBytes: number;
+  /** number of allocation samples the profile drew */
   sampleCount: number;
+  /** the byte interval the sampler ran at (what one sample stands for) */
   sampling: AllocSamplingConfig;
+  /** self bytes rolled up by owning package, share-denominated on `totalBytes` */
   byPackage: AllocGroupStat[];
+  /** self bytes rolled up by source file, share-denominated on `totalBytes` */
   byFile: AllocGroupStat[];
   /** top functions by self bytes (length bounded by `--top`) */
   hot: AllocFunction[];
+  /** functions below the `--top` cutoff, rolled into one row */
   dropped: AllocDropped;
+  /** advisory reader notes (never a gate input) */
   hints: string[];
 }
 
@@ -76,17 +82,25 @@ export interface CpuOverview {
   jsSelfMs: number;
   /** non-idle sampled total (js + gc + engine/native); NOT the headline, and never a share denominator */
   activeMs: number;
+  /** the whole sampled window (active + idle); NOT the headline and never a share denominator */
   totalMs: number;
+  /** number of CPU samples the profile drew */
   sampleCount: number;
+  /** microseconds between samples, off the profiler's own clock (not `performance.now`) */
   sampleIntervalUs: number;
+  /** host/runtime identity carried for comparability, never a normalizer */
   system: CpuSystem;
   /** reconciling js/browser/gc/idle bar; absent on lanes without honest idle (Firefox) or old models */
   breakdown?: CpuBreakdown;
+  /** self time rolled up by owning package, share-denominated on `jsSelfMs` */
   byPackage: CpuGroupStat[];
+  /** self time rolled up by source file, share-denominated on `jsSelfMs` */
   byFile: CpuGroupStat[];
   /** top functions by self time (length bounded by `--top`) */
   hot: CpuFunction[];
+  /** functions below the `--top` cutoff, rolled into one row */
   dropped: CpuDropped;
+  /** advisory reader notes (never a gate input) */
   hints: string[];
 }
 
@@ -118,10 +132,13 @@ export interface BlameEntry {
   line?: number;
   /** 1-based column of the read site; absent when the frame carried no column (a line-only sample) */
   column?: number;
+  /** total events sharing this read site */
   count: number;
   /** how many of `count` were synchronously forced by JS (thrashing) */
   forced: number;
+  /** summed wall (ms) of those events; wall-tier directional, not an exact cost */
   durMs: number;
+  /** the event kinds rolled into this row (layout/style/paint) */
   kinds: EventKind[];
   /**
    * The DOM properties read at this line (Firefox read-site forced blame), e.g.
@@ -221,7 +238,9 @@ export interface SpanOverviewAddons {
  * median headline)
  */
 export interface SpanEntry {
+  /** the span's name: a driver step or `performance.measure` label, or `run` for the run window */
   label: string;
+  /** which span this is; identity is kind+label, so a label alone can collide across kinds */
   kind: SpanKind;
   /**
    * Headline wall (ms). On a run span it is the trace-clock window the slices tile. On a run span
@@ -265,6 +284,7 @@ export interface SpanEntry {
    * recording already holds. See SpanCounts and model/measured.ts
    */
   counts: SpanCounts;
+  /** the reconciling bar, unified across engines: js/style/layout/paint/gc/other/idle sums the window */
   slices: UnifiedSlices;
   /** off-thread compositor frame side track (chrome --breakdown only; absent otherwise). Display-only */
   frames?: FrameSideTrack;
@@ -320,13 +340,17 @@ export interface SpanEntry {
  * the sampling capture modes carry only the wall + INP
  */
 export interface SpanCountsEntry {
+  /** the span's name: a driver step or `performance.measure` label, or `run` for the run window */
   label: string;
+  /** which span this is; identity is kind+label */
   kind: SpanKind;
   /** trace-clock window width; null when a navigating step could not be priced */
   wallMs: number | null;
+  /** how the numbers combine the timed iterations (see SpanEntry.aggregation) */
   aggregation: SpanAggregation;
   /** a step's position within its iteration; absent on run/measure spans */
   index?: number;
+  /** exact rendering counts windowed to this span; Measured, so an unobserved count is null */
   counts: SpanCounts;
   /** worst-interaction INP (ms) for a driver step; absent when none crossed the floor */
   inpMs?: number | null;
@@ -358,7 +382,9 @@ export interface SpanCountsEntry {
 export interface SpansResult {
   /** the --target axis this recording was produced on: chrome | firefox | node */
   target: TargetLane;
+  /** where the spans came from: the recording's stored per-span bars, or one run span synthesized from `CpuModel.breakdown` */
   source: "breakdowns" | "cpu-model";
+  /** the per-span breakdown rows: the run window, each driver step, and every user measure that carries a bar */
   spans: SpanEntry[];
   /**
    * Step/measure spans the capture built no reconciling bar for -- a driver step in the default
@@ -421,7 +447,9 @@ export interface SpanForced {
   line?: number;
   /** 1-based column of the read site; absent when the frame carried no column (a line-only sample) */
   column?: number;
+  /** forced flushes at this read site */
   count: number;
+  /** summed wall (ms) of those flushes; wall-tier directional, not an exact cost */
   durMs: number;
   /** id of the widest flush at this line for the `query get <eventId>` drill; absent on the chrome
    * --breakdown sampled rows (synthesized id 0, not addressable). See BlameEntry.eventId */
@@ -449,6 +477,7 @@ export interface SpanForced {
  * reconstructable at its capture-mode/kind reports `hot: null` instead of this shape
  */
 export interface SpanHotFunctions {
+  /** which windowing produced this list: the run's own window, a step's iteration-0 window, or a measure pooled across occurrences */
   scope: "run-window" | "step-window" | "measure-pooled";
   /** JS self-time the shares denominate on: `run-window` the model's jsSelfMs; else pooledSamples * interval */
   scriptingMs: number;
@@ -491,8 +520,11 @@ export interface SpanAnatomy {
   recording: string;
   /** the --target axis: chrome | firefox | node */
   target: TargetLane;
+  /** the span's name: a driver step or `performance.measure` label, or `run` for the run window */
   label: string;
+  /** which span this is; identity is kind+label, resolved by the caller when a label collides */
   kind: SpanKind;
+  /** how the numbers combine the timed iterations (see SpanEntry.aggregation) */
   aggregation: SpanAggregation;
   /** timed iterations behind this recording (`meta.iterations`) */
   iterations: number;
@@ -518,7 +550,9 @@ export interface SpanAnatomy {
   windowMs?: number;
   /** real occurrences merged into this span when `aggregation` is `"median"` (a repeated measure) */
   samples?: number;
+  /** wall (ms) of the shortest merged occurrence; disclosed with `samples` */
   wallMinMs?: number;
+  /** wall (ms) of the longest merged occurrence; disclosed with `samples` */
   wallMaxMs?: number;
   /** the reconciling bar's unified slices; null when this capture mode built no bar for the span */
   slices: UnifiedSlices | null;
@@ -576,6 +610,7 @@ export interface SpanAnatomy {
    * See docs/dev/react-attribution.md
    */
   addons?: SpanAddons;
+  /** advisory reader notes (never a gate input) */
   hints: string[];
 }
 
@@ -607,9 +642,13 @@ export interface GroupSpanSources {
  * member measured is null/absent (a loud gap), never fabricated
  */
 export interface GroupSpanStitch {
+  /** the run-group's name (its manifest identity) */
   group: string;
+  /** the --target axis: chrome | firefox | node */
   target: TargetLane;
+  /** the span's name: a driver step or `performance.measure` label, or `run` for the run window */
   label: string;
+  /** which span this is; identity is kind+label */
   kind: SpanKind;
   /** each member's own wall for this span, tagged by mode; NEVER combined into one number */
   members: GroupSpanMember[];
@@ -617,18 +656,25 @@ export interface GroupSpanStitch {
   sources: GroupSpanSources;
   /** the reconciling bar's slices (from the bar member); null when no member built one */
   slices: UnifiedSlices | null;
+  /** carried when the bar member's breakdown did not fully close (lost events/clock skew) */
   residualMs?: number;
+  /** off-thread compositor frame side track (from the bar member); display-only */
   frames?: FrameSideTrack;
   /** per-span layout/style scope distribution (from the bar member); absent when none stored */
   scope?: SpanScope;
   /** exact rendering counts (from the counts member); Measured throughout */
   counts: SpanCounts;
+  /** worst-interaction INP (ms) for a step, from the INP member; null when none crossed the floor */
   inpMs?: number | null;
+  /** in-page CWV split of `inpMs` (from the INP member); absent when no interaction was observed */
   interaction?: InteractionTiming | null;
+  /** Long Animation Frames in a step's window (from the INP member, Chrome only); absent otherwise */
   loaf?: StepLoaf;
   /** the step's navigation classification (identical across members: one workload); absent on run/measure */
   navigation?: NavigationKind;
+  /** the URL the step started on; absent on run/measure spans */
   beforeUrl?: string;
+  /** the URL the step ended on; absent on run/measure spans */
   afterUrl?: string;
   /** Chrome's own soft-navigation verdict (identical across members); absent when none fired */
   engineSoftNav?: EngineSoftNav;
@@ -654,6 +700,7 @@ export interface GroupSpanStitch {
   /** group-level disclosures (count disagreement across members, partial formation), surfaced so a
    * stitched number is never read as agreed when the members did not agree */
   notes: string[];
+  /** advisory reader notes (never a gate input) */
   hints: string[];
 }
 
@@ -682,14 +729,19 @@ export interface CpuFunctionDelta {
  * entirely gc/engine/native or sampler noise on the non-idle total cannot trip the gate
  */
 export interface CpuDiffResult {
+  /** the baseline recording's file and its JS self-time headline */
   baseline: { file: string; jsSelfMs: number };
+  /** the current recording's file and its JS self-time headline */
   current: { file: string; jsSelfMs: number };
   /** per-function deltas below this (ms) are treated as sampling noise */
   noiseMs: number;
   /** current jsSelfMs - baseline jsSelfMs; the axis `--fail-on-regression` gates */
   netJsSelfMs: number;
+  /** `netJsSelfMs` as a percent of the baseline `jsSelfMs` */
   netJsSelfPct: number;
+  /** per-package self-time movers */
   byPackage: CpuPackageDelta[];
+  /** per-function self-time movers, below-noise deltas dropped */
   functions: CpuFunctionDelta[];
   /**
    * Disclosures that qualify the gate verdict; empty in the normal case. Carries the resolving-floor

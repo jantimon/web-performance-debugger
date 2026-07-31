@@ -336,8 +336,10 @@ async function resolveSetup(opts: RecordOptions): Promise<RecordSetup> {
     capabilities,
     wantTrace,
     hostCpuIndex,
-    // Framework addons: `auto` unless the CLI passed off. Every lane accepts it; an addon no-ops where
-    // its signals are absent. Resolved once here so the pass and the post-capture enrichment agree
+    /**
+     * Framework addons: `auto` unless the CLI passed off. Every lane accepts it; an addon no-ops where
+     * its signals are absent. Resolved once here so the pass and the post-capture enrichment agree
+     */
     addons: activeAddons(opts.framework ?? "auto"),
   };
 }
@@ -663,47 +665,61 @@ function buildMeta(
       mode === "url"
         ? opts.url!
         : stableWorkloadPath(root, mode === "html" ? opts.html! : opts.module!),
-    // Host and module are separate axes: `target` collapses them (a host page overwrites the module),
-    // so the executed flow's identity lives here for the diff/cpu-diff workload check
+    /**
+     * Host and module are separate axes: `target` collapses them (a host page overwrites the module),
+     * so the executed flow's identity lives here for the diff/cpu-diff workload check
+     */
     workload: {
       lane: opts.driver ? (opts.module ? "driver" : "builtin-load") : "bench",
       host:
         mode === "url" ? opts.url! : mode === "html" ? stableWorkloadPath(root, opts.html!) : null,
       module: opts.module ? stableWorkloadPath(root, opts.module) : null,
     },
-    // Opt-in only; absent unless --variant was passed, so old recordings and unflagged runs are unchanged
+    /** Opt-in only; absent unless --variant was passed, so old recordings and unflagged runs are unchanged */
     variant: opts.variant,
     fn: opts.fn,
-    // --keep-partial salvaged a run whose later iteration failed: the recording covers only the
-    // iterations that completed, so meta.iterations is that count, not the requested one (the note
-    // below discloses the failure). Otherwise the requested count
+    /**
+     * --keep-partial salvaged a run whose later iteration failed: the recording covers only the
+     * iterations that completed, so meta.iterations is that count, not the requested one (the note
+     * below discloses the failure). Otherwise the requested count
+     */
     iterations: pass.partial ? pass.partial.completed : opts.iterations,
     warmup: opts.warmup,
     headless: opts.headless,
-    // wpd runs Chrome's built-in headless (full Chrome, ~60Hz frames). Stamp "new" on a headless
-    // chrome recording so the comparability gate still refuses a diff against an old "shell"
-    // recording (a different frame cadence, so a different wall/INP floor). Absent when headed or
-    // firefox/node, which have no shell/new distinction
+    /**
+     * wpd runs Chrome's built-in headless (full Chrome, ~60Hz frames). Stamp "new" on a headless
+     * chrome recording so the comparability gate still refuses a diff against an old "shell"
+     * recording (a different frame cadence, so a different wall/INP floor). Absent when headed or
+     * firefox/node, which have no shell/new distinction
+     */
     headlessMode: opts.headless && browserName === "chrome" ? "new" : undefined,
     cpuIntervalUs: opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
-    // Host-CPU speed scalar, measured in node before the launch (a fact beside the numbers, and the
-    // comparability gate axis that warns a cross-host self-time comparison)
+    /**
+     * Host-CPU speed scalar, measured in node before the launch (a fact beside the numbers, and the
+     * comparability gate axis that warns a cross-host self-time comparison)
+     */
     hostCpuIndex,
     userDataDir: shorterPath(root, opts.userDataDir),
     lifecycle: detail.lifecycle,
-    // The one capture that ran, by capture-mode name (there is no multi-pass plan)
+    /** The one capture that ran, by capture-mode name (there is no multi-pass plan) */
     capture: capture.mode,
-    // The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
-    // nothing (both carry no Span.addons). A core fact; always stamped
+    /**
+     * The resolved framework-addon mode, so `off` is distinguishable from an `auto` run that detected
+     * nothing (both carry no Span.addons). A core fact; always stamped
+     */
     framework: opts.framework ?? "auto",
     notes,
-    // Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome"
+    /** Omit on Chrome so existing recordings are unchanged; readers default absent => "chrome" */
     browser: browserName === "firefox" ? "firefox" : undefined,
-    // The launched browser build (chrome/firefox), parsed into raw + milestone for the comparability
-    // axis. Absent when the backend could not report it
+    /**
+     * The launched browser build (chrome/firefox), parsed into raw + milestone for the comparability
+     * axis. Absent when the backend could not report it
+     */
     browserVersion: pass.browserVersion ? engineVersion(pass.browserVersion) : undefined,
-    // Bot-challenge verdict, stamped ONLY on a detected-but-measured (--allow-bot-wall) run: a refusal
-    // throws before this. A machine-readable copy of the loud note; absent on every clean run
+    /**
+     * Bot-challenge verdict, stamped ONLY on a detected-but-measured (--allow-bot-wall) run: a refusal
+     * throws before this. A machine-readable copy of the loud note; absent on every clean run
+     */
     botWall: pass.botWallVerdict?.detected
       ? {
           detected: true,
@@ -712,21 +728,27 @@ function buildMeta(
           measuredAnyway: true,
         }
       : undefined,
-    // The read a blame line names (flush-site everywhere blame runs). On --breakdown the capture mode
-    // CAN produce sampled blame, but only when the trace carried per-sample lines; clear it when it did
-    // not, so an unavailable feature is not advertised (the breakdownBlameUnavailable note says why)
+    /**
+     * The read a blame line names (flush-site everywhere blame runs). On --breakdown the capture mode
+     * CAN produce sampled blame, but only when the trace carried per-sample lines; clear it when it did
+     * not, so an unavailable feature is not advertised (the breakdownBlameUnavailable note says why)
+     */
     blameSemantic:
       capture.mode === "breakdown" && pass.sampledBlame == null
         ? undefined
         : blameSemanticFor(capture),
-    // The main-thread selection (via + split) as a typed field, so a reader (and assert/diff) sees the
-    // cross-process split without parsing prose. Absent on a non-counting capture, where the selection
-    // is null. The prose note above (crossProcessWorkSplit) stays for humans
+    /**
+     * The main-thread selection (via + split) as a typed field, so a reader (and assert/diff) sees the
+     * cross-process split without parsing prose. Absent on a non-counting capture, where the selection
+     * is null. The prose note above (crossProcessWorkSplit) stays for humans
+     */
     mainThread: threadSelection
       ? { via: threadSelection.via, split: threadSelection.split }
       : undefined,
-    // The trace buffer overran and events were dropped: a typed carrier for the known-incomplete
-    // counts, beside the loud note above. Absent when no loss occurred
+    /**
+     * The trace buffer overran and events were dropped: a typed carrier for the known-incomplete
+     * counts, beside the loud note above. Absent when no loss occurred
+     */
     dataLoss: detail.traceDataLoss ? { trace: true } : undefined,
     throttle,
   };
@@ -801,22 +823,28 @@ function buildRecordingObject(
   // not the full trace, so the artifact stays digest-sized while `query blame --forced` still answers
   const breakdownEventLog = opts.breakdown ? (pass.sampledBlame ?? []) : [];
   const summary = buildSummary({
-    // perIteration is bench-only: it feeds computeStats, which is only meaningful over repetitions of
-    // the SAME work. Driver steps are heterogeneous ("mount" vs "inp"), so their walls go to the step
-    // spans (each its own median) and are never summarized into one median here
+    /**
+     * perIteration is bench-only: it feeds computeStats, which is only meaningful over repetitions of
+     * the SAME work. Driver steps are heterogeneous ("mount" vs "inp"), so their walls go to the step
+     * spans (each its own median) and are never summarized into one median here
+     */
     perIteration: opts.driver ? [] : timing.perIteration,
-    // In-page (bench/node): the summed timed samples. Driver: null on purpose; see runWallMs
+    /** In-page (bench/node): the summed timed samples. Driver: null on purpose; see runWallMs */
     wallMs: runWallMs,
     inpMs: overallInp,
     interaction: overallInteraction,
-    // No window => not measured (see traceWindowMissing note); don't count the whole trace
+    /** No window => not measured (see traceWindowMissing note); don't count the whole trace */
     detailEvents: traceWindowMissing ? [] : detail.events,
     detailWindowStart: detail.windowStart,
-    // What this capture mode could observe (per capture): gates each count/duration to Measured null
-    // vs a number, so the default mode reports no counts and --deep reports counts but null durations
+    /**
+     * What this capture mode could observe (per capture): gates each count/duration to Measured null
+     * vs a number, so the default mode reports no counts and --deep reports counts but null durations
+     */
     capabilities: effectiveCapabilities,
-    // jsSelfMs is patched onto meta after the CPU model is built below; null here, and stays null on
-    // --deep, which has no sampler and no model
+    /**
+     * jsSelfMs is patched onto meta after the CPU model is built below; null here, and stays null on
+     * --deep, which has no sampler and no model
+     */
     jsSelfMs: null,
   });
   // totalEvents is a diagnostic on meta (schema-5 home): 0 fires the empty-run hint in the report
@@ -831,8 +859,10 @@ function buildRecordingObject(
     },
     marks: timing.marks,
     events: storeEventLog ? detail.events : breakdownEventLog,
-    // Assembled below (buildSpanBars), once any per-span bars are built. The run/step spans carry the
-    // counts and timing this run's summary holds
+    /**
+     * Assembled below (buildSpanBars), once any per-span bars are built. The run/step spans carry the
+     * counts and timing this run's summary holds
+     */
     spans: [],
   };
 
@@ -874,7 +904,7 @@ async function buildCpuArtifacts(
     cpuModel = await buildCpuModel(cpuPass.cpuProfile, {
       profilePath: captured.cpuProfilePath,
       meta,
-      // Firefox reports the interval the Gecko sampler actually ran at; V8 honours what we asked for
+      /** Firefox reports the interval the Gecko sampler actually ran at; V8 honours what we asked for */
       sampleIntervalUs:
         cpuPass.cpuSampleIntervalUs ?? opts.cpuIntervalUs ?? DEFAULT_CPU_INTERVAL_US,
       serverUrl: server.url,

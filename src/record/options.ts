@@ -5,16 +5,23 @@ import type { FrameworkMode } from "../model/addon.js";
 export interface RecordOptions {
   /** the user's driver/bench/node module; omitted for the built-in on-ramp flow (--url only) */
   module?: string;
+  /** the run() export name to call (default "run") */
   fn: string;
   /** browser backend: "chrome" (default, full CDP) or "firefox" (BiDi + Gecko profiler) */
   browser?: BrowserName;
+  /** a local HTML file to serve as the host page; mutually exclusive with `url` */
   html?: string;
+  /** the host page a module drives, or the target the built-in on-ramp loads */
   url?: string;
   /** --url named a host with no scheme, so http:// was assumed for `url`; a note discloses it */
   urlSchemeAssumed?: boolean;
+  /** timed repetitions of run() */
   iterations: number;
+  /** untimed run() passes before timing begins */
   warmup: number;
+  /** where to write the recording; a path is derived from the module/url when omitted */
   out?: string;
+  /** run the browser headless (no visible window) */
   headless: boolean;
   /** persistent Chrome profile dir (resolved absolute); reuse one login across passes/runs */
   userDataDir?: string;
@@ -23,6 +30,7 @@ export interface RecordOptions {
   disableSandbox?: boolean;
   /** ms to wait after run() for async paints to flush; internal default 200 (no user flag) */
   settleMs: number;
+  /** on-disk/output format for the recording (json or toon) */
   format: Format;
   /** driver (puppeteer) mode: run executes in Node and receives { page, ctx } */
   driver: boolean;

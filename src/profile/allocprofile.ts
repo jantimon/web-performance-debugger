@@ -52,8 +52,11 @@ export async function buildAllocModel(
   context: {
     /** path to the raw .heapprofile (stored as the model's back-pointer) */
     profilePath: string;
+    /** the recording identity/provenance to stamp on the model */
     meta: RecordingMeta;
+    /** the heap sampler config the numbers came from */
     sampling: AllocSamplingConfig;
+    /** project root, so resolved source paths store relative to it */
     root: string;
     /** "node" rewrites file:// frames to local paths; default "chrome" */
     runtime?: "chrome" | "node";

@@ -123,6 +123,7 @@ export interface BotWallSignals {
 /** The classifier's verdict: whether the page is a challenge interstitial, the evidence that fired,
  * and the challenge vendor origins observed (a factual list, never an ownership claim) */
 export interface BotWallVerdict {
+  /** whether the page classified as a challenge interstitial */
   detected: boolean;
   /** human evidence strings, e.g. "dominant full-viewport iframe from challenges.cloudflare.com" */
   firedSignals: string[];

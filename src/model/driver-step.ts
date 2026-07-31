@@ -41,6 +41,7 @@ export interface DriverStep {
    * number whenever only one iteration ran
    */
   markIndex?: number;
+  /** the measureStep label naming this step */
   label: string;
   /**
    * The step's wall on the clock the capture mode has: the page's own `performance.now()` delta between the
@@ -58,6 +59,7 @@ export interface DriverStep {
    * meaningless). `wallMs` starts here and is upgraded to the trace-clock window when a trace exists
    */
   pageWallMs: number | null;
+  /** worst-interaction INP (ms) for this step; null when none crossed the 16ms floor */
   inpMs: number | null;
   /** in-page CWV split of `inpMs`; null when no interaction crossed the 16ms Event Timing floor */
   interaction: InteractionTiming | null;
