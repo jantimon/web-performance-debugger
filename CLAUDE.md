@@ -486,6 +486,19 @@ attributes bench harness frames to the served host page). Fixture:
   measured, what was ruled out) belongs in the PR description and the code comments, both of which
   outlive the changeset. Lead with **Breaking:** where it applies, and order a release's changesets
   breaking-first.
+- **Stacked PRs for dependent slices, not as a default.** When one task splits into dependent,
+  separately-reviewable slices -- a refactor a feature then builds on, a probe-backed fix plus the
+  feature that consumes it -- stack the PRs instead of one giant PR or a manual restack after the base
+  lands. A mini task stays one PR; unrelated changes stay independent PRs. Stack with the `gh stack`
+  extension (`gh extension install github/gh-stack`, needs gh 2.90+ and git 2.20+): `gh stack init -b
+  main`, `gh stack add <branch>` per slice, `gh stack submit` to open and link the chain -- each PR
+  targets the branch of the PR below it (github.com and the mobile app drive the same stacks). Review
+  is per layer: open any PR to see only its own diff. **Merge from the tip, squash method:** landing
+  the top PR lands every layer below it in one operation, and squash gives each PR its own clean commit
+  linked to that PR (bottom-up), so a 4-PR stack becomes 4 commits. The coordinator/maintainer merges
+  the tip once every PR in the stack is green and reviewed. Every existing rule still holds: descriptive
+  branch names, no attribution trailers, and one changeset PER PR that changes user-visible behaviour
+  (same as today).
 - **Cross-engine / profiling work**: `docs/dev/` ([index](docs/dev/README.md)) holds the measured
   facts the code depends on but cannot state itself. Read the relevant one BEFORE touching that
   code: `gecko-profile-format.md` (raw v34 schemas, marker phases, cause-stack encoding, line/col
