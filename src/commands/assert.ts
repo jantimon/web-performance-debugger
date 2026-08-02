@@ -10,6 +10,7 @@ import { pickMember, type MemberAxis } from "../model/group.js";
 import { gateMeasured, type Measured } from "../model/measured.js";
 import { countIntegrityRefusal } from "../model/count-integrity.js";
 import { gateSliceBudgets, type SliceBudgets, type SliceGateResult } from "../model/spans.js";
+import { loadAllocModel } from "../profile/allocprofile.js";
 import { loadSpanEntries } from "./spanSource.js";
 import { isSteppedRecording, stepEntry, stepSpans } from "../model/step-view.js";
 import { runSpan } from "../model/span.js";
@@ -30,6 +31,9 @@ export interface Thresholds {
   longTasks?: number;
   inp?: number;
   wall?: number;
+  /** --max-alloc-mb: the total sampled allocated MB (an --alloc recording's sidecar model, NOT a
+   * run-span count), gated on its own `alloc` axis. n/a-FAIL when the recording carries no alloc model */
+  allocMb?: number;
 }
 
 interface Metrics {
@@ -46,7 +50,11 @@ interface Metrics {
   wallMs: Measured<number>;
 }
 
-const CHECKS: { label: string; key: keyof Metrics; opt: keyof Thresholds }[] = [
+/** The count/timing threshold keys, i.e. every threshold EXCEPT the sidecar `allocMb` (which is gated
+ * off the alloc model, not a run-span field, so it never rides the CHECKS/CHECK_AXIS machinery) */
+type CheckOpt = Exclude<keyof Thresholds, "allocMb">;
+
+const CHECKS: { label: string; key: keyof Metrics; opt: CheckOpt }[] = [
   { label: "forced layout/style", key: "forcedLayoutCount", opt: "forced" },
   { label: "layouts", key: "layoutCount", opt: "layouts" },
   { label: "paints", key: "paintCount", opt: "paints" },
@@ -91,7 +99,7 @@ function fromStep(step: StepIndexEntry): Metrics {
 /** The count and count-derived thresholds: each gates a trace-derived rendering count. Kept apart
  * from the timing thresholds (inp/wall, which ride performance.now, not the trace counts) so the
  * count-integrity refusal below fires ONLY on the counts a split/data-loss run cannot be trusted for */
-const COUNT_CHECK_OPTS: ReadonlySet<keyof Thresholds> = new Set([
+const COUNT_CHECK_OPTS: ReadonlySet<CheckOpt> = new Set([
   "forced",
   "layouts",
   "paints",
@@ -151,7 +159,7 @@ function outcomeViolation(outcome: CheckOutcome, prefix: string, max: number): s
 }
 
 /** The threshold family a count/timing check gates (slice budgets are their own `slice` axis) */
-function checkAxis(opt: keyof Thresholds): AssertAxis {
+function checkAxis(opt: CheckOpt): AssertAxis {
   return COUNT_CHECK_OPTS.has(opt) ? "count" : "timing";
 }
 
@@ -222,6 +230,60 @@ function sliceRow(gate: SliceGateResult, member?: string): AssertThresholdRow {
   return row;
 }
 
+const MB = 1024 * 1024;
+
+/** Gate the total sampled allocated MB (--max-alloc-mb) against a recording's sibling alloc model
+ * (loadAllocModel). A recording with no alloc model (a chrome or node-cpu capture) is a loud n/a-fail,
+ * never a silent pass -- the Measured contract, on the allocation axis. A schema mismatch still throws
+ * (re-record), so only the "no alloc model" case (code ENOALLOCMODEL) becomes an n/a-fail. Returns the
+ * structured row, the human table row, and the violation line (null on pass) */
+async function gateAlloc(
+  recordingPath: string,
+  budgetMb: number,
+  member?: string,
+): Promise<{ row: AssertThresholdRow; humanRow: (string | number)[]; violation: string | null }> {
+  const prefix = member ? `allocation MB (${member})` : "run: allocation MB";
+  let totalMb: number | null = null;
+  try {
+    const model = await loadAllocModel(recordingPath);
+    totalMb = model.totalBytes / MB;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOALLOCMODEL") throw error;
+  }
+  if (totalMb == null) {
+    const row: AssertThresholdRow = {
+      target: "run",
+      metric: "allocation MB",
+      axis: "alloc",
+      budget: budgetMb,
+      value: null,
+      verdict: "n/a-fail",
+      reason: "no allocation model (record with --target node --alloc)",
+    };
+    if (member) row.member = member;
+    return {
+      row,
+      humanRow: ["run", "allocation MB", "n/a", budgetMb, "FAIL"],
+      violation: `${prefix} was not measured (no allocation model; record with --target node --alloc); cannot satisfy max ${budgetMb}`,
+    };
+  }
+  const ok = totalMb <= budgetMb;
+  const row: AssertThresholdRow = {
+    target: "run",
+    metric: "allocation MB",
+    axis: "alloc",
+    budget: budgetMb,
+    value: totalMb,
+    verdict: ok ? "pass" : "fail",
+  };
+  if (member) row.member = member;
+  return {
+    row,
+    humanRow: ["run", "allocation MB", num(totalMb), budgetMb, ok ? "ok" : "FAIL"],
+    violation: ok ? null : `${prefix} ${num(totalMb)} > ${budgetMb}`,
+  };
+}
+
 /** Emit the structured view, or print the human report; set exit 1 on any violation either way. The
  * exit code is identical across both outputs, so a JSON consumer and a table reader gate the same */
 function finishAssert(
@@ -237,7 +299,7 @@ function finishAssert(
 /** Which member axis measures a given count/timing threshold, for a run-group's cross-member routing:
  * forced -> the deep member, the exact counts -> the counts member (deep preferred), INP/wall -> any
  * driver member (every member shares the group's lane) */
-const CHECK_AXIS: Record<keyof Thresholds, MemberAxis> = {
+const CHECK_AXIS: Record<CheckOpt, MemberAxis> = {
   forced: "forced",
   layouts: "counts",
   paints: "counts",
@@ -289,9 +351,9 @@ export async function assertCmd(
 
   const active = CHECKS.filter((check) => thresholds[check.opt] != null);
   const sliceBudgetKeys = Object.keys(sliceBudgets);
-  if (!active.length && !sliceBudgetKeys.length)
+  if (!active.length && !sliceBudgetKeys.length && thresholds.allocMb == null)
     throw new Error(
-      "No thresholds given. Try --max-forced 0 --max-layouts 50 --max-slice js=5 etc.",
+      "No thresholds given. Try --max-forced 0 --max-layouts 50 --max-slice js=5 --max-alloc-mb 20 etc.",
     );
 
   // A cross-process split or a trace-buffer overflow leaves the counts known-incomplete: the count
@@ -344,6 +406,16 @@ export async function assertCmd(
     }
   }
 
+  // The allocation budget gates the whole run's total sampled MB, from the sibling alloc model (not a
+  // run-span field). n/a-FAIL on a recording with no alloc model, so --max-alloc-mb on the wrong
+  // capture is a loud FAIL, not a silent pass
+  if (thresholds.allocMb != null) {
+    const gate = await gateAlloc(abs, thresholds.allocMb);
+    rows.push(gate.humanRow);
+    thresholdRows.push(gate.row);
+    if (gate.violation) violations.push(gate.violation);
+  }
+
   const view: AssertView = {
     target: abs,
     kind: "recording",
@@ -385,9 +457,9 @@ async function assertGroup(
   const group = await loadGroup(manifestPath);
   const active = CHECKS.filter((check) => thresholds[check.opt] != null);
   const sliceBudgetKeys = Object.keys(sliceBudgets);
-  if (!active.length && !sliceBudgetKeys.length)
+  if (!active.length && !sliceBudgetKeys.length && thresholds.allocMb == null)
     throw new Error(
-      "No thresholds given. Try --max-forced 0 --max-layouts 50 --max-slice js=5 etc.",
+      "No thresholds given. Try --max-forced 0 --max-layouts 50 --max-slice js=5 --max-alloc-mb 20 etc.",
     );
 
   const violations: string[] = [];
@@ -507,6 +579,27 @@ async function assertGroup(
           );
       }
     }
+  }
+
+  // A run-group is a multi-capture of one browser/node workload; allocation is the node --alloc lane,
+  // never a group member mode, so no member measures it. --max-alloc-mb on a group is a loud n/a-FAIL,
+  // never a silent pass
+  if (thresholds.allocMb != null) {
+    const budget = thresholds.allocMb;
+    violations.push(
+      `allocation MB: no member measures this axis (allocation is the --target node --alloc lane); cannot satisfy max ${budget}`,
+    );
+    rows.push(["allocation MB", "(none)", "n/a", budget, "FAIL"]);
+    thresholdRows.push({
+      target: "run",
+      metric: "allocation MB",
+      axis: "alloc",
+      budget,
+      value: null,
+      verdict: "n/a-fail",
+      reason:
+        "no member measures allocation (the --target node --alloc lane is not a group member)",
+    });
   }
 
   const view: AssertView = {

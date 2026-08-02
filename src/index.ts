@@ -90,6 +90,9 @@ export type { CaptureMode } from "./record/capture.js";
 export type {
   AllocDropped,
   AllocOverview,
+  AllocPackageDelta,
+  AllocFunctionDelta,
+  AllocDiffResult,
   CpuDropped,
   CpuOverview,
   CpuEdgeRef,

@@ -809,21 +809,25 @@ comes from `--breakdown` and forced counts from `--deep`, so record each capture
 each threshold on the capture mode that measured it:
 
 ```bash
-wpd record probe.mjs --bench --breakdown --out runs/after.json
-wpd record probe.mjs --bench --deep      --out runs/after.deep.json
+wpd record probe.mjs --bench --breakdown  --out runs/after.json
+wpd record probe.mjs --bench --deep        --out runs/after.deep.json
+wpd record probe.mjs --target node --alloc --out runs/after.alloc.json
 
-wpd assert   runs/after.json      --max-layouts 120 --max-slice layout=2  # --breakdown: counts + slice ms
-wpd assert   runs/after.deep.json --max-forced 0                          # --deep: forced counts
-wpd diff     runs/before.json runs/after.json --fail-on-regression        # same capture mode on both sides
-wpd cpu-diff runs/before.json runs/after.json --fail-on-regression        # per-function self-time deltas
+wpd assert     runs/after.json       --max-layouts 120 --max-slice layout=2  # --breakdown: counts + slice ms
+wpd assert     runs/after.deep.json  --max-forced 0                          # --deep: forced counts
+wpd assert     runs/after.alloc.json --max-alloc-mb 20                       # --alloc: allocation budget
+wpd diff       runs/before.json runs/after.json --fail-on-regression         # same capture mode on both sides
+wpd cpu-diff   runs/before.json runs/after.json --fail-on-regression         # per-function self-time deltas
+wpd alloc-diff runs/before.alloc.json runs/after.alloc.json --fail-on-regression  # per-package byte deltas
 ```
 
 `assert` gates the exact counts (`--max-forced`, `--max-layouts`, `--max-paints`,
-`--max-layout-invalidations`, `--max-style-invalidations`, `--max-long-tasks`) plus directional timing
-and slice budgets (`--max-inp`, `--max-wall`, and `--max-slice <name>=<ms>`, repeatable, defaulting to
-the run span; `--label` targets another span). A budget on a metric the capture mode didn't measure —
-`--max-slice layout` in the default mode, or `--max-forced` on a `--breakdown` recording — is a **loud
-FAIL** (`n/a`), never a silent pass:
+`--max-layout-invalidations`, `--max-style-invalidations`, `--max-long-tasks`) plus directional timing,
+slice, and allocation budgets (`--max-inp`, `--max-wall`, `--max-slice <name>=<ms>` repeatable
+defaulting to the run span with `--label` for another, and `--max-alloc-mb` for an `--alloc`
+recording's total). A budget on a metric the capture mode didn't measure — `--max-slice layout` in the
+default mode, `--max-forced` on a `--breakdown` recording, or `--max-alloc-mb` on a non-`--alloc` one —
+is a **loud FAIL** (`n/a`), never a silent pass:
 
 ```
 target  metric               value  max
@@ -844,16 +848,29 @@ all passed, 1 = any failed), so a `--format json` gate fails the build exactly a
 On `diff`, only the exact counts gate `--fail-on-regression`; wall, INP and JS self-time are
 directional, so they print but never fail the build. `cpu-diff --fail-on-regression` gates on **net JS
 self-time** (the JS-only headline the per-function and per-package rows sum to), so a change that is
-entirely GC/native or sampler noise does not trip it. Its noise floor **scales with the workload** --
-the net must clear `max(--noise-floor ms, --noise-pct% of the baseline)`, default `max(0.5 ms, 15%)` --
-so byte-identical code stays green at any `--iterations` count while a real 30%+ regression still fails
-(widen `--noise-pct` on a noisier host, tighten it to gate a large stable workload finer; the JSON
-carries the effective `gateFloorMs`). And a gate **refuses** across an incompatible
-capture rather than fabricate a regression: a different
+entirely GC/native or sampler noise does not trip it. `alloc-diff --fail-on-regression` is the same on
+the allocation axis: it gates on **net allocated bytes**, so a GC-pressure regression that allocates
+hard but costs little CPU (which `cpu-diff` misses) still fails the build. Both gates scale their noise
+floor with the workload -- the net must clear `max(--noise-floor, --noise-pct% of the baseline)`,
+default `max(0.5 ms, 15%)` for CPU and `max(1 MB, 25%)` for allocation -- so byte-identical code stays
+green at any `--iterations` count while a real 30%+ regression still fails (widen `--noise-pct` on a
+noisier host, tighten it to gate a large stable workload finer; the JSON carries the effective
+`gateFloorMs`). And a gate **refuses** across an incompatible capture rather than fabricate a
+regression: a different
 browser/runtime/capture-mode/workload/`--iterations`/`--warmup`/headless flavour/`--cpu-throttle`
 names the mismatch and declines to gate. The **workload** is the executed flow (lane + host page +
 module), not just the target string, so a different module — or the built-in load flow — against the
 *same* host page is a different workload and refuses.
+
+**Baselines.** Commit the recordings you gate against under a directory in your repo (e.g.
+`perf-baselines/`) so every PR compares against a reviewed bar, and refresh them from a job on your
+default branch. Keep them lean: an absolute gate (`assert --max-forced 0`, `--max-alloc-mb`) runs on the
+PR side and needs no committed baseline at all; a `diff`/`cpu-diff`/`alloc-diff` needs only the small
+model artifacts (the `.json` recording, the `.cpu.json`/`.alloc.json` model), not the raw `.cpuprofile`
+/`.heapprofile` or a `--deep` event log, which are large — `.gitignore` those. A wpd major bumps
+`meta.schemaVersion` and old recordings then refuse to open, so re-record committed baselines after such
+an upgrade (see [Stability and versioning](#stability-and-versioning)); a pinned-Chrome bump can move a
+directional number, which the comparability check **warns** on (not blocks), a soft nudge to refresh.
 
 Never run two measurement processes at once on the same machine: concurrent runs contend for the CPU
 and contaminate self-time and wall alike, so scale a CI matrix across machines, not across cores on one
@@ -1112,7 +1129,9 @@ const rec: Recording = JSON.parse(await readFile("run.json", "utf8"));
 | `query span` | `SpanAnatomy`, or `GroupSpanStitch` on a run-group |
 | `query cpu` / `frame` / `blame` | `CpuOverview` / `FrameQueryResult` / `BlameEntry[]` |
 | `query get` / `events` | `NormalizedEvent` / `NormalizedEvent[]` |
+| `query alloc` | `AllocOverview` |
 | `cpu-diff` | `CpuDiffResult` |
+| `alloc-diff` | `AllocDiffResult` |
 | `assert` | `AssertView` (thresholds: `AssertThresholdRow`) |
 
 **The one extract you probably want.** For a first/third-party cost read, take the per-package rollup

@@ -32,6 +32,8 @@ const DOCUMENTED_ROOT_TYPES = [
   "CpuDiffResult",
   "AssertView",
   "AssertThresholdRow",
+  "AllocOverview",
+  "AllocDiffResult",
   // run-group manifest + stitched group-query outputs (the D5 additions)
   "RunGroup",
   "GroupMeta",

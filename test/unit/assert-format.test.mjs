@@ -215,3 +215,43 @@ test("assert --format json on a run-group: kind group, the routed member on each
   assert.equal(view.passed, false);
   assert.equal(status, 1);
 });
+
+// The --max-alloc-mb axis: gated off the recording's sibling .alloc.json, its own `alloc` axis. A
+// recording with no alloc model is a loud n/a-fail (never a silent pass); a real total gates pass/fail
+const MB = 1024 * 1024;
+function writeAllocSibling(dir, base, totalMb) {
+  const model = {
+    profile: `${base}.heapprofile`,
+    meta: { tool: "wpd", version: "0", schemaVersion: "5", capture: "node-alloc", runtime: "node", iterations: 20, target: "a.mjs" },
+    sampling: { samplingIntervalBytes: 32768, includeMajorGC: true, includeMinorGC: true },
+    totalBytes: Math.round(totalMb * MB),
+    sampleCount: 400,
+    functions: [{ id: 0, fn: "run", source: "a.mjs:1", file: "a.mjs", package: "app", selfBytes: Math.round(totalMb * MB), selfPct: 100 }],
+  };
+  writeFileSync(path.join(dir, `${base}.alloc.json`), JSON.stringify(model));
+}
+
+test("assert --max-alloc-mb: gates the sibling alloc model total on the alloc axis", () => {
+  const dir = makeDir();
+  const rec = writeRec(dir, "rec.json"); // rec.json + rec.alloc.json sibling
+  writeAllocSibling(dir, "rec", 24);
+  const { view, status } = runJson([rec, "--max-alloc-mb", "20"]);
+  const alloc = rowFor(view, "allocation MB");
+  assert.equal(alloc.axis, "alloc");
+  assert.equal(alloc.budget, 20);
+  assert.equal(alloc.value, 24, "the total sampled MB rides the row");
+  assert.equal(alloc.verdict, "fail", "24 MB > 20 MB budget fails");
+  assert.equal(view.passed, false);
+  assert.equal(status, 1);
+});
+
+test("assert --max-alloc-mb: a recording with no alloc model is a loud n/a-fail, exit 1", () => {
+  const dir = makeDir();
+  const rec = writeRec(dir, "rec.json"); // no sibling .alloc.json
+  const { view, status } = runJson([rec, "--max-alloc-mb", "20"]);
+  const alloc = rowFor(view, "allocation MB");
+  assert.equal(alloc.value, null, "no alloc model is null, never a fabricated 0");
+  assert.equal(alloc.verdict, "n/a-fail");
+  assert.match(alloc.reason, /--target node --alloc/, "the reason names the fix");
+  assert.equal(status, 1, "an unmeasured allocation budget FAILs, it does not silently pass");
+});
