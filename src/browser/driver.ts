@@ -96,6 +96,15 @@ export interface RawLcpEntry {
  * a ~40ms page), not real; suppress it rather than print it as fact. Generous, so real variance passes */
 export const LCP_STARTTIME_SLACK_MS = 1000;
 
+/** Read a whole positive-millisecond override from `name`, or null when unset, empty, or not a
+ * positive integer. Backs the slow-host ceilings below without pulling in the CLI's argument parsers */
+function positiveIntEnv(name: string): number | null {
+  const raw = process.env[name];
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 /**
  * How long (ms) the end-of-step flush waits IN-PAGE for a racing boot-LCP entry on a hard-nav step
  * whose paint happened but whose entry has not reached the observer yet (a slow compositor queues the
@@ -118,8 +127,12 @@ export const LCP_ENTRY_WAIT_MS = 500;
  * floor produces no entry at all, so its flush waits the whole budget and ends empty -- bounded, and
  * AFTER the step's end mark, so absence stays absence and the wait never grows the measured window
  * (same shape as the LCP wait)
+ *
+ * A genuinely slow host delivers the entry LATER (its paint and the following task both slip under
+ * load), so `WPD_INP_ENTRY_WAIT_MS` (whole ms) raises this bounded ceiling for that host. The default
+ * stays tight so a no-interaction step on normal hardware does not pay a longer empty wait every step
  */
-export const INP_ENTRY_WAIT_MS = 250;
+export const INP_ENTRY_WAIT_MS = positiveIntEnv("WPD_INP_ENTRY_WAIT_MS") ?? 250;
 
 /**
  * Shape the largest observed `largest-contentful-paint` entry into the stored `StepLcp`, keeping only
