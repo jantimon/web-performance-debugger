@@ -836,6 +836,11 @@ run     layouts              500    50   FAIL
   ✗ run: layouts 500 > 50
 ```
 
+`assert --format json` (or `toon`) emits the same result as a typed `AssertView` — a row per threshold
+(`axis`, `budget`, measured `value` or `null`, `verdict`), the overall `passed`, and the `violations` —
+so a PR-comment script consumes the verdict without scraping the table. The exit code is unchanged (0 =
+all passed, 1 = any failed), so a `--format json` gate fails the build exactly as the human one does.
+
 On `diff`, only the exact counts gate `--fail-on-regression`; wall, INP and JS self-time are
 directional, so they print but never fail the build. `cpu-diff --fail-on-regression` gates on **net JS
 self-time** (the JS-only headline the per-function and per-package rows sum to), so a change that is
@@ -1104,6 +1109,7 @@ const rec: Recording = JSON.parse(await readFile("run.json", "utf8"));
 | `query cpu` / `frame` / `blame` | `CpuOverview` / `FrameQueryResult` / `BlameEntry[]` |
 | `query get` / `events` | `NormalizedEvent` / `NormalizedEvent[]` |
 | `cpu-diff` | `CpuDiffResult` |
+| `assert` | `AssertView` (thresholds: `AssertThresholdRow`) |
 
 **The one extract you probably want.** For a first/third-party cost read, take the per-package rollup
 straight off `query cpu --format json` — no spelunking through the raw `.cpu.json`:

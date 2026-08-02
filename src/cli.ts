@@ -635,6 +635,10 @@ program
     [] as string[],
   )
   .option("--label <label>", "span the --max-slice budgets gate, by label (default the run span)")
+  // --json is the hidden alias of --format json (same policy as the query/diff verbs); the exit code
+  // is unchanged, so a JSON consumer and a table reader gate on the same verdict
+  .addOption(new Option("--json").hideHelp())
+  .option("--format <fmt>", "structured output: json | toon")
   .action((file, opts) => {
     let sliceBudgets: SliceBudgets;
     try {
@@ -652,7 +656,10 @@ program
       inp: opts.maxInp,
       wall: opts.maxWall,
     };
-    return assertCmd(file, thresholds, sliceBudgets, opts.label).catch((error) => {
+    return assertCmd(file, thresholds, sliceBudgets, opts.label, {
+      json: opts.json,
+      format: opts.format,
+    }).catch((error) => {
       emitFailure(error.message, error);
       process.exitCode = 1;
     });
