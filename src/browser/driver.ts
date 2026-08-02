@@ -1290,10 +1290,11 @@ export async function runDriver(
   phase = "timed";
   timedIndexBase = indexInIteration;
 
-  // Bot-wall detection runs ONCE, right after the first navigation lands (the built-in load step's
-  // goto), before any timed measurement. A wall throws a BotWallError that propagates out of runDriver
-  // to abort the whole record. The first navigation is the first run() call: a warmup iteration when
-  // --warmup > 0, else timed iteration 0
+  // Bot-wall detection runs ONCE for the on-ramp, always OUTSIDE the measured run window: after a
+  // warmup iteration when --warmup > 0 (before wpd:run:start), else after wpd:run:end. A wall throws a
+  // BotWallError that propagates out of runDriver to abort the whole record. Keeping it out of the
+  // window is what lets the collector read the settled page freely: its own wall and any layout it
+  // touches never land in the run span's counts or wall
   let onrampInspected = false;
   const inspectOnrampOnce = async () => {
     if (!onramp?.afterFirstLoad || onrampInspected) return;
@@ -1359,11 +1360,13 @@ export async function runDriver(
       };
       break;
     }
-    // After iteration 0's navigation settled: refuse a bot-wall before more iterations run (a no-op
-    // once warmup already inspected). A BotWallError propagates out to abort the record
-    if (iteration === 0) await inspectOnrampOnce();
   }
   await mark("wpd:run:end");
+
+  // Inspect the settled on-ramp page for a bot wall now the window has closed, so the collector's read
+  // (and its wall) stays out of the run-span counts. A no-op when a warmup iteration already inspected.
+  // A BotWallError propagates out to abort the record before any artifact is written
+  await inspectOnrampOnce();
 
   // Don't run cleanup here; return it so record.ts can call it after tracing stops,
   // keeping teardown work out of the measured window

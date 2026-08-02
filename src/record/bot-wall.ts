@@ -104,7 +104,8 @@ export interface BotWallSignals {
   iframeSrcs: string[];
   /** interactive elements (input/button/a/select/textarea) in the rendered body */
   interactiveElementCount: number;
-  /** trimmed visible body text length */
+  /** trimmed `document.body.textContent` length (textContent, not innerText: the collector reads it
+   * inside the measured window and innerText would force a layout flush) */
   bodyTextLength: number;
   /** an http-equiv="refresh" / JS-redirect target, when one names a challenge URL; else null */
   metaRefreshUrl: string | null;

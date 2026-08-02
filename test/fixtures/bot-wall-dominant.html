@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>store</title>
+    <style>
+      html, body { margin: 0; }
+      /* A full-viewport challenge overlay: position:fixed inset:0 covers the whole viewport, so the
+         collector's IntersectionObserver reads it as a DOMINANT iframe. */
+      iframe { position: fixed; inset: 0; width: 100vw; height: 100vh; border: 0; }
+    </style>
+  </head>
+  <body>
+    <!-- A full paragraph of real text (>512 chars) and a neutral title, so the near-empty-DOM weak
+         signal and the challenge-title weak signal both stay OFF. The ONLY thing that can trip the
+         classifier here is the dominant full-viewport vendor iframe, a STRONG signal that depends on
+         the collector reading the iframe's viewport coverage. So this fixture regresses the
+         IntersectionObserver dominance path specifically: if coverage were mis-read as non-dominant,
+         a lone non-dominant challenge iframe is one weak signal, below the two-weak threshold, and the
+         record would NOT refuse. -->
+    <p>
+      Welcome to the store. Browse the full catalogue of products across every department, compare
+      prices, read detailed descriptions and customer reviews, add items to your basket, and check out
+      securely. Our team ships worldwide with tracked delivery and a thirty day returns policy on every
+      order. Sign in to your account to see personalised recommendations, saved wish lists, and your
+      complete order history at a glance whenever you want it. New arrivals land every week across
+      clothing, electronics, home and garden, sport, beauty and groceries, with seasonal sales and
+      member-only discounts running throughout the year for shoppers who subscribe to our newsletter.
+    </p>
+    <iframe src="https://challenges.cloudflare.com/turnstile/if/ov2/av0/rcv/fixture"></iframe>
+  </body>
+</html>

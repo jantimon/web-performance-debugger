@@ -564,6 +564,36 @@ e2e("driver --deep --iterations repeats the flow: per-step medians, per-step cou
   assert.ok(many.steps[0].stats?.samples === 5, "the step span exposes the spread");
 });
 
+// Bot-wall detection through the real collector, isolating the dominant-iframe geometry signal: the
+// fixture has a full DOM (real body text, neutral title) so the near-empty-DOM and challenge-title
+// weak signals stay OFF, and its ONLY challenge signal is a dominant full-viewport vendor iframe. The
+// collector reads that coverage via IntersectionObserver (no forced layout); a non-dominant read would
+// leave one weak signal, below the threshold, so the refusal proves dominance detection fired. Refusal
+// is the wpd:bot-wall marker + a non-zero exit + no artifact; the pure classifier is unit-covered
+e2e("bot-wall: a dominant challenge iframe is refused, --allow-bot-wall measures it with a loud note", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
+  const html = path.join(repoRoot, "test", "fixtures", "bot-wall-dominant.html");
+  assert.ok(existsSync(html), "bot-wall-dominant.html is committed, so this test cannot silently skip");
+  const refusedOut = path.join(dir, "refused");
+  // runCli throws with the child's stderr in the message on a non-zero exit, so this asserts both the
+  // refusal marker AND the named vendor origin the IntersectionObserver-measured dominant iframe carried
+  assert.throws(
+    () => runCli(["record", "--url", html, "--deep", "--out", refusedOut]),
+    /wpd:bot-wall[\s\S]*challenges\.cloudflare\.com/,
+    "a dominant challenge iframe must refuse with the bot-wall marker and name the vendor origin",
+  );
+  assert.ok(!existsSync(refusedOut), "a refused record writes no artifact");
+
+  // --allow-bot-wall turns the refusal into a measured run carrying the loud note
+  const allowedOut = path.join(dir, "allowed");
+  runCli(["record", "--url", html, "--deep", "--allow-bot-wall", "--out", allowedOut]);
+  const rec = JSON.parse(readFileSync(allowedOut, "utf8"));
+  assert.ok(
+    (rec.meta.notes || []).some((note) => /matched bot-challenge interstitial signals/.test(note)),
+    "an allowed bot-wall run stamps the measured-anyway note",
+  );
+});
+
 // Synthetic web vitals: the built-in on-ramp boots a fixture that forces two input-free layout shifts
 // and paints a text LCP. The boot (a hard navigation) must carry ONE LCP render-time sample per
 // iteration (not a single object that hides a run-to-run swing) and a CLS whose session-window max is
