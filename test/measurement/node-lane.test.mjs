@@ -68,11 +68,10 @@ test("node lane: a near-no-op --target node run gates stable under cpu-diff (B-0
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-node-e2e-"));
   const probe = path.join(examples, "probes", "near-zero.mjs");
   const base = path.join(dir, "base.json");
-  // Record ONCE and self-diff. Recording twice made this flaky: two near-zero captures each land a
-  // handful of samples, and sampler quantization jitters jsSelfMs 0.16-1.21ms between them against a
-  // 0.5ms gate floor (~2.5 samples), so identical code tripped --fail-on-regression ~3% of runs
-  // Self-diffing pins netJsSelfMs=0 by construction, so the gate's exit-0 path stays covered without
-  // depending on where two independent runs' samples fell
+  // Record ONCE and self-diff. Recording twice is flaky here: two near-zero captures each land a
+  // handful of samples, and sampler quantization jitters jsSelfMs 0.16-1.21ms between them, a swing a
+  // near-zero baseline cannot price. Self-diffing pins netJsSelfMs=0 by construction, so the gate's
+  // exit-0 path stays covered without depending on where two independent runs' samples fell
   runCli(["record", probe, "--target", "node", "--iterations", "20", "--out", base]);
 
   const baseModel = JSON.parse(readFileSync(`${base.replace(/\.json$/, "")}.cpu.json`, "utf8"));

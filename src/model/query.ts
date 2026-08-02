@@ -733,8 +733,14 @@ export interface CpuDiffResult {
   baseline: { file: string; jsSelfMs: number };
   /** the current recording's file and its JS self-time headline */
   current: { file: string; jsSelfMs: number };
-  /** per-function deltas below this (ms) are treated as sampling noise */
+  /** per-function/package rows below this (ms) are hidden as sampling noise (a DISPLAY filter, not the gate) */
   noiseMs: number;
+  /** the gate's relative floor term: percent of the baseline jsSelfMs the net must clear (--noise-pct) */
+  noisePct: number;
+  /** the effective gate floor (ms): `max(--noise-floor, --noise-pct% of baseline)`. The net must exceed
+   * this AND clear the resolving floor to count as a regression, so a consumer gating off the JSON
+   * reproduces the exit code without re-deriving the floor */
+  gateFloorMs: number;
   /** current jsSelfMs - baseline jsSelfMs; the axis `--fail-on-regression` gates */
   netJsSelfMs: number;
   /** `netJsSelfMs` as a percent of the baseline `jsSelfMs` */

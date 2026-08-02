@@ -102,29 +102,49 @@ slice, never a ranked function or a package row, so it cannot become a hot funct
 per-function/package `cpu-diff` row. Its only reach was the non-idle total, which `jsSelfMs` gating
 now excludes.
 
+### The cpu-diff gate floor scales with the workload
+
+**[measured, --target node]** The run-to-run net JS self-time delta on byte-identical code is set by
+sampling jitter, and its two faces move in opposite directions with workload size. On a ~5ms workload
+(18 samples at the 200us interval) the net jitter is **~0.5ms absolute / ~11% relative**; on the same
+loop at `--iterations 20` (~220ms) it is **~6ms absolute / ~3% relative**. Absolute jitter GROWS with
+self-time (more iterations sum more self-time, so more absolute net-noise); relative jitter SHRINKS (a
+bigger sample count quantizes finer). A single fixed absolute floor cannot fit both ends: a 0.5ms floor
+false-reds **~2%** of identical pairs at 5ms but **~40%** at 220ms.
+
+So the `--fail-on-regression` gate floor has two terms and fires only when the net clears BOTH:
+`max(--noise-floor ms, --noise-pct% of the baseline)`, default **`max(0.5ms, 15%)`**. The percentage
+term tracks the absolute jitter as it grows, so the flap does not worsen with `--iterations`; the
+absolute term keeps a small workload (or a 0ms baseline, where a percentage of zero would blind the
+gate) from gating on a fraction of a sample. The default 15% sits above the worst measured
+identical-pair relative jitter (~11% at 5ms, the noisiest size above the resolving floor) with margin,
+so byte-identical code gates green **>=95%** of runs at every iteration count (measured: 66/66 green at
+5ms, 45/45 at 220ms), while a real **30% regression on a 5ms workload** (+1.5ms) still clears its 0.75ms
+floor by 2x (measured: 64/64 caught across an 8x8 base-vs-current cross-product; a single pair misses
+only when the baseline recording itself over-samples high, a baseline-quality artifact the
+committed-once baseline avoids). Both terms are user-settable for a team on a noisier host
+(`--noise-pct 25`) or one gating a large stable workload finer (`--noise-pct 5`); the JSON carries the
+effective `gateFloorMs` and `noisePct` so a consumer reproduces the exit code without re-deriving it.
+The per-function/package movers table keeps its own fixed 0.5ms display filter (`noiseMs`), a separate
+axis from the gate.
+
 ### The cpu-diff resolving floor
 
-**[measured]** Even with the prefix windowed out, a near-zero workload lands only a handful of samples,
-and where they fall is quantization. On the `examples/probes/near-zero.mjs` probe (a `console.log`, `--target
-node`), `jsSelfMs` jitters **0.16-1.21ms** run to run on identical code. The `cpu-diff
---fail-on-regression` noise floor is 0.5ms (~2.5 samples at the 200us interval), narrower than that
-jitter, so two identical runs could net a delta above the floor and trip the gate ~3% of the time --
-a false regression from where the samples landed, not from a code change.
-
-So the JS-self gate carries a resolving floor: when BOTH sides' `jsSelfMs` sit below
-`RESOLVING_FLOOR_SAMPLES` samples (10, ~2ms at 200us, derived from the interval so it scales), a net
-delta is quantization, not signal, and the gate does not fire whatever the delta. 10 is the smallest
-whole-sample floor that clears the measured jitter: ~2ms at the default interval sits above the
-**0.16-1.21ms** worst run-to-run swing, whereas the 0.5ms `--fail-on-regression` noise floor is only
-~2.5 samples and sits *inside* that swing (which is why the floor is a sample count, not the same
-0.5ms). Fewer samples would re-admit the false regression; more would blind the gate to a real
-small-workload change it could still resolve. The human output and
-JSON carry a disclosure note ("both sides below the sampler's resolving floor (~Xms at the recorded
-interval); the JS-self net gate is not evaluable at this scale"), and the exit stays 0 unless another
-gated axis fires. The floor is per-model from the RECORDED `sampleIntervalUs` (they can differ: chrome
-default 200us, the ~150us breakdown stream, firefox ~1ms), and the larger implied floor wins. Below
-resolving power a net delta is noise; "two identical runs must gate green" is the promise. Per-function
-and per-package rows and every other axis are unchanged.
+**[measured]** Below the gate floor sits a second guard for the near-zero regime. A near-zero workload
+lands only a handful of samples, and where they fall is quantization. On the `examples/probes/near-zero.mjs`
+probe (a `console.log`, `--target node`), `jsSelfMs` jitters **0.16-1.21ms** run to run on identical
+code -- a swing wider than the percentage floor can price when the baseline itself is sub-sample. So
+when BOTH sides' `jsSelfMs` sit below `RESOLVING_FLOOR_SAMPLES` samples (10, ~2ms at 200us, derived from
+the interval so it scales), a net delta is quantization, not signal, and the gate does not fire whatever
+the delta. 10 is the smallest whole-sample floor that clears the measured jitter: ~2ms at the default
+interval sits above the **0.16-1.21ms** worst run-to-run swing. Fewer samples would re-admit the false
+regression; more would blind the gate to a real small-workload change it could still resolve. The human
+output and JSON carry a disclosure note ("both sides below the sampler's resolving floor (~Xms at the
+recorded interval); the JS-self net gate is not evaluable at this scale"), and the exit stays 0 unless
+another gated axis fires. The floor is per-model from the RECORDED `sampleIntervalUs` (they can differ:
+chrome default 200us, the ~150us breakdown stream, firefox ~1ms), and the larger implied floor wins.
+Below resolving power a net delta is noise; "two identical runs must gate green" is the promise.
+Per-function and per-package rows and every other axis are unchanged.
 
 ## The capture modes
 

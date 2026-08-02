@@ -13,16 +13,37 @@ import {
 import { comparabilityMismatches, CPU_DIFF_BLOCKING_AXES } from "../model/compat.js";
 import { resolveVerbTarget } from "./group.js";
 
-/** Self-time deltas below this are treated as sampling noise */
+/** Per-function/package rows whose delta is below this (ms) are hidden as sampling noise. A DISPLAY
+ * filter for the movers table, NOT the gate: the gate floor scales with the workload (see below) */
 const NOISE_MS = 0.5;
 const TOP_FUNCTIONS = 25;
 
 /**
+ * The regression gate's noise floor has TWO terms and trips only when the net JS self-time delta
+ * clears BOTH: `max(absoluteMs, pct% of the baseline)`. Sampling jitter scales with the workload, so a
+ * fixed absolute floor cannot fit every size at once. [measured, --target node] the run-to-run net
+ * delta on byte-identical code is ~0.5ms absolute / ~11% relative at a ~5ms workload (18 samples), and
+ * ~6ms absolute / ~3% relative at a ~220ms workload (--iterations 20): absolute jitter GROWS with
+ * self-time while relative jitter SHRINKS. A fixed 0.5ms floor false-reds ~2% of identical pairs at
+ * 5ms but ~40% at 220ms (more --iterations sums more self-time, so the absolute net-noise grows past
+ * a fixed floor). The percentage term tracks the absolute jitter as it grows; the absolute term keeps
+ * a small-workload delta (or a 0ms baseline) from gating on a fraction of a millisecond.
+ *
+ * The default 15% sits above the worst measured identical-pair relative jitter (~11% at 5ms, the
+ * noisiest size above the resolving floor) with margin, so byte-identical code passes >=95% of runs at
+ * every iteration count, while a real 30% regression on a 5ms workload (+1.5ms) still clears the 15%
+ * floor (0.75ms) by 2x. Both terms are user-settable (--noise-floor, --noise-pct) for a team on a
+ * noisier host or one that wants a tighter gate on a large stable workload. See docs/dev/cpu-profiling.md
+ */
+const DEFAULT_GATE_FLOOR_MS = 0.5;
+const DEFAULT_NOISE_PCT = 15;
+
+/**
  * The sampler's resolving power, in samples. Below this many samples of JS self-time on BOTH sides, a
  * net delta is quantization, not signal, so the JS-self gate does not fire. At the 200us default
- * interval that is ~2ms, while the 0.5ms noise floor is ~2.5 samples: two identical near-zero runs can
- * jitter their net delta wider than that floor purely from where the samples landed (measured jitter
- * 0.16-1.21ms on a near-zero probe). "Two identical runs must gate green" is the promise, so below
+ * interval that is ~2ms, while the 0.5ms absolute floor term is ~2.5 samples: two identical near-zero
+ * runs can jitter their net delta wider than that floor purely from where the samples landed (measured
+ * jitter 0.16-1.21ms on a near-zero probe). "Two identical runs must gate green" is the promise, so below
  * resolving power the gate reports the delta as not evaluable rather than fabricating a regression.
  * Derived from the interval so it scales if the interval changes. See docs/dev/cpu-profiling.md
  */
@@ -58,7 +79,12 @@ function functionsByJoinKey(functions: CpuFunction[]): Map<string, CpuFunction> 
 }
 
 interface DiffOpts extends StructuredOutOpts {
+  /** exit 1 when the net JS self-time clears the gate floor (a regression); off = report only */
   failOnRegression?: boolean;
+  /** absolute floor term (ms), --noise-floor; defaults to DEFAULT_GATE_FLOOR_MS */
+  noiseFloorMs?: number;
+  /** relative floor term (percent of baseline), --noise-pct; defaults to DEFAULT_NOISE_PCT */
+  noisePct?: number;
 }
 
 /** Compare two CPU models: per-package and per-function self-time deltas, noise-filtered */
@@ -158,7 +184,15 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
     ? `both sides below the sampler's resolving floor (~${num(floorMs, 1)}ms at the recorded interval); ` +
       `the JS-self net gate is not evaluable at this scale`
     : undefined;
-  const jsSelfGateFires = jsSelfDelta > NOISE_MS && !belowResolvingFloor;
+
+  // The gate floor scales with the workload: `max(absolute ms, pct% of the baseline)`. The percentage
+  // term absorbs the sampling jitter that grows with self-time (so more --iterations does not manufacture
+  // a regression); the absolute term keeps a small or 0ms baseline from gating on a fraction of a
+  // sample. Above the resolving floor, a net delta over this floor is the regression the gate fires on
+  const noiseFloorMs = opts.noiseFloorMs ?? DEFAULT_GATE_FLOOR_MS;
+  const noisePct = opts.noisePct ?? DEFAULT_NOISE_PCT;
+  const gateFloorMs = Math.max(noiseFloorMs, (noisePct / 100) * baseModel.jsSelfMs);
+  const jsSelfGateFires = jsSelfDelta > gateFloorMs && !belowResolvingFloor;
 
   const fmt = structuredFormat(opts);
   if (fmt) {
@@ -166,6 +200,8 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
       baseline: { file: baseline, jsSelfMs: baseModel.jsSelfMs },
       current: { file: current, jsSelfMs: currentModel.jsSelfMs },
       noiseMs: NOISE_MS,
+      noisePct,
+      gateFloorMs,
       netJsSelfMs: jsSelfDelta,
       netJsSelfPct: jsSelfPct,
       byPackage: packageRows,
@@ -181,6 +217,10 @@ export async function cpuDiffCmd(baseline: string, current: string, opts: DiffOp
   console.log(
     `baseline: ${baseline}  (${num(baseModel.jsSelfMs, 1)} ms JS self-time)\ncurrent:  ${current}  (${num(currentModel.jsSelfMs, 1)} ms JS self-time)\nfilter floor: ${NOISE_MS} ms self (smaller per-function deltas are hidden). Sampling jitter runs a few % per function, so treat small deltas as noise; trust the net and the large movers.\n`,
   );
+  if (opts.failOnRegression)
+    console.log(
+      `gate floor: net > ${num(gateFloorMs, 1)} ms to regress (max of ${num(noiseFloorMs, 1)} ms and ${num(noisePct, 0)}% of baseline; --noise-floor / --noise-pct to change).\n`,
+    );
   console.log("package self-time delta:");
   console.log(
     packageRows.length
