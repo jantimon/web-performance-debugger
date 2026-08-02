@@ -839,7 +839,11 @@ run     layouts              500    50   FAIL
 On `diff`, only the exact counts gate `--fail-on-regression`; wall, INP and JS self-time are
 directional, so they print but never fail the build. `cpu-diff --fail-on-regression` gates on **net JS
 self-time** (the JS-only headline the per-function and per-package rows sum to), so a change that is
-entirely GC/native or sampler noise does not trip it. And a gate **refuses** across an incompatible
+entirely GC/native or sampler noise does not trip it. Its noise floor **scales with the workload** --
+the net must clear `max(--noise-floor ms, --noise-pct% of the baseline)`, default `max(0.5 ms, 15%)` --
+so byte-identical code stays green at any `--iterations` count while a real 30%+ regression still fails
+(widen `--noise-pct` on a noisier host, tighten it to gate a large stable workload finer; the JSON
+carries the effective `gateFloorMs`). And a gate **refuses** across an incompatible
 capture rather than fabricate a regression: a different
 browser/runtime/capture-mode/workload/`--iterations`/`--warmup`/headless flavour/`--cpu-throttle`
 names the mismatch and declines to gate. The **workload** is the executed flow (lane + host page +

@@ -263,3 +263,64 @@ test("cpu-diff resolving floor: differing intervals use the LARGER implied floor
   assert.equal(result.notes.length, 1, "the disclosure note is carried");
   assert.match(result.notes[0], /~10ms at the recorded interval/, "the note reports the larger implied floor");
 });
+
+// The gate floor scales: net must clear max(--noise-floor ms, --noise-pct% of baseline). A fixed
+// absolute floor false-reds on a large workload, where the same relative jitter is a bigger absolute
+// net; the percentage term tracks it (docs/dev/cpu-profiling.md: the scaling noise floor)
+test("cpu-diff gate floor: a large-workload delta within the percentage floor does not gate", async () => {
+  // 220 -> 227ms is +7ms (well over the 0.5ms absolute floor) but only +3.2%, inside the 15% floor
+  // (33ms) that a 220ms baseline earns. This is the iterations-scaling flap the fixed floor caused
+  const base = writeModelAt("cpudiff-pct-large-base.cpu.json", 220, 200);
+  const current = writeModelAt("cpudiff-pct-large-cur.cpu.json", 227, 200);
+  const { code, result } = await runDiff(base, current);
+  assert.equal(code, undefined, "a +3.2% delta on a 220ms workload is within the scaling floor");
+  assert.equal(result.gateFloorMs, 33, "the gate floor is 15% of the 220ms baseline");
+  assert.equal(result.noisePct, 15, "the default relative floor is reported");
+});
+
+test("cpu-diff gate floor: a large-workload delta past the percentage floor gates", async () => {
+  // 220 -> 260ms is +40ms = +18%, past the 15% (33ms) floor: a real regression, not jitter
+  const base = writeModelAt("cpudiff-pct-real-base.cpu.json", 220, 200);
+  const current = writeModelAt("cpudiff-pct-real-cur.cpu.json", 260, 200);
+  const { code } = await runDiff(base, current);
+  assert.equal(code, 1, "a +18% delta clears the 15% floor and gates");
+});
+
+test("cpu-diff gate floor: a 30% regression on a small (5ms) workload still gates", async () => {
+  // The floor must not blind the dogfood's target case: 5 -> 6.5ms is +1.5ms = +30%, and the floor is
+  // max(0.5, 15% of 5) = 0.75ms, which +1.5ms clears 2x
+  const base = writeModelAt("cpudiff-pct-small-base.cpu.json", 5, 200);
+  const current = writeModelAt("cpudiff-pct-small-cur.cpu.json", 6.5, 200);
+  const { code, result } = await runDiff(base, current);
+  assert.equal(code, 1, "a +30% regression on a 5ms workload clears the 0.75ms floor");
+  assert.equal(result.gateFloorMs, 0.75, "the floor is 15% of the 5ms baseline, above the 0.5ms absolute term");
+});
+
+test("cpu-diff gate floor: a 0ms baseline gates on the absolute term (percentage cannot blind it)", async () => {
+  // base 0ms would make 15%-of-baseline 0, so a pure percentage floor would never fire; the absolute
+  // term keeps a real 0 -> 10ms regression gating. base 0 is below the resolving floor but current 10
+  // is above, so the gate is evaluable
+  const base = writeModelAt("cpudiff-pct-zero-base.cpu.json", 0, 200);
+  const current = writeModelAt("cpudiff-pct-zero-cur.cpu.json", 10, 200);
+  const { code, result } = await runDiff(base, current);
+  assert.equal(code, 1, "a 0 -> 10ms regression gates on the 0.5ms absolute floor");
+  assert.equal(result.gateFloorMs, 0.5, "the floor falls back to the absolute term when the baseline is 0");
+});
+
+test("cpu-diff gate floor: --noise-pct widens the relative floor for a noisier host", async () => {
+  // The same +18% delta that gated at the 15% default passes at --noise-pct 25 (55ms floor)
+  const base = writeModelAt("cpudiff-pct-knob-base.cpu.json", 220, 200);
+  const current = writeModelAt("cpudiff-pct-knob-cur.cpu.json", 260, 200);
+  const { code, result } = await runDiff(base, current, { noisePct: 25 });
+  assert.equal(code, undefined, "a +18% delta is within a widened 25% floor");
+  assert.equal(result.gateFloorMs, 55, "the floor is 25% of the 220ms baseline");
+});
+
+test("cpu-diff gate floor: --noise-floor widens the absolute term for a tiny workload", async () => {
+  // At --noise-floor 2, the small-workload floor is max(2, 0.75) = 2ms, so the +1.5ms delta passes
+  const base = writeModelAt("cpudiff-abs-knob-base.cpu.json", 5, 200);
+  const current = writeModelAt("cpudiff-abs-knob-cur.cpu.json", 6.5, 200);
+  const { code, result } = await runDiff(base, current, { noiseFloorMs: 2 });
+  assert.equal(code, undefined, "a +1.5ms delta is within a widened 2ms absolute floor");
+  assert.equal(result.gateFloorMs, 2, "the absolute term wins when it exceeds the percentage term");
+});

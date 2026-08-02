@@ -684,12 +684,24 @@ program
     "--fail-on-regression",
     "exit 1 if net JS self-time increased (gc/native/idle changes and sampler noise do not count)",
   )
+  // The gate floor scales with the workload: net must clear max(--noise-floor ms, --noise-pct% of
+  // baseline). Sampling jitter grows with self-time, so a fixed absolute floor false-reds on a large
+  // (or high --iterations) workload; the percentage term tracks it. Defaults (0.5ms, 15%) pass
+  // byte-identical code >=95% of runs at any size while catching a 30% regression on a 5ms workload
+  .option("--noise-floor <ms>", "gate: absolute noise floor (ms) the net must clear", toFloat)
+  .option(
+    "--noise-pct <n>",
+    "gate: relative noise floor (percent of baseline) the net must clear",
+    toFloat,
+  )
   // --json is the hidden alias of --format json: kept working, kept out of help
   .addOption(new Option("--json").hideHelp())
   .option("--format <fmt>", "structured output: json | toon")
   .action((baseline, current, opts) =>
     cpuDiffCmd(baseline, current, {
       failOnRegression: !!opts.failOnRegression,
+      noiseFloorMs: opts.noiseFloor,
+      noisePct: opts.noisePct,
       json: opts.json,
       format: opts.format,
     }).catch((error) => {
