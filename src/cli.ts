@@ -13,6 +13,7 @@ import { assertCmd, type Thresholds } from "./commands/assert.js";
 import { diffCmd } from "./commands/diff.js";
 import { parseSliceBudgets, SLICE_NAMES, type SliceBudgets } from "./model/spans.js";
 import { cpuDiffCmd } from "./commands/cpudiff.js";
+import { allocDiffCmd } from "./commands/allocdiff.js";
 import { setColorEnabled } from "./output/color.js";
 import { toFloat, toInt, toNonNegativeInt, toPositiveInt } from "./cli-validation.js";
 import { docLinksEpilog } from "./doc-links.js";
@@ -635,6 +636,9 @@ program
     [] as string[],
   )
   .option("--label <label>", "span the --max-slice budgets gate, by label (default the run span)")
+  // The total sampled allocated MB from an --alloc recording's sidecar model. n/a-FAIL (loud) on a
+  // recording with no alloc model, so a --max-alloc-mb on the wrong capture never silently passes
+  .option("--max-alloc-mb <mb>", "max total sampled allocated MB (--target node --alloc)", toFloat)
   // --json is the hidden alias of --format json (same policy as the query/diff verbs); the exit code
   // is unchanged, so a JSON consumer and a table reader gate on the same verdict
   .addOption(new Option("--json").hideHelp())
@@ -655,6 +659,7 @@ program
       longTasks: opts.maxLongTasks,
       inp: opts.maxInp,
       wall: opts.maxWall,
+      allocMb: opts.maxAllocMb,
     };
     return assertCmd(file, thresholds, sliceBudgets, opts.label, {
       json: opts.json,
@@ -708,6 +713,41 @@ program
     cpuDiffCmd(baseline, current, {
       failOnRegression: !!opts.failOnRegression,
       noiseFloorMs: opts.noiseFloor,
+      noisePct: opts.noisePct,
+      json: opts.json,
+      format: opts.format,
+    }).catch((error) => {
+      emitFailure(error.message, error);
+      process.exitCode = 1;
+    }),
+  );
+
+program
+  .command("alloc-diff <baseline> <current>")
+  .description(
+    "compare two allocation models (--target node --alloc): per-package + per-function byte deltas",
+  )
+  .option(
+    "--fail-on-regression",
+    "exit 1 if net allocated bytes increased past the noise floor (a GC-pressure regression)",
+  )
+  // The gate floor scales with the workload, the same shape as cpu-diff: net must clear
+  // max(--noise-floor MB, --noise-pct% of baseline). Byte totals are sampled (~10-20% directional), so
+  // the default is percentage-led (1 MB, 25%): byte-identical code stays green while a real allocation
+  // regression fails. Widen --noise-pct on a noisier host, tighten it on a large stable workload
+  .option("--noise-floor <mb>", "gate: absolute noise floor (MB) the net must clear", toFloat)
+  .option(
+    "--noise-pct <n>",
+    "gate: relative noise floor (percent of baseline) the net must clear",
+    toFloat,
+  )
+  // --json is the hidden alias of --format json: kept working, kept out of help
+  .addOption(new Option("--json").hideHelp())
+  .option("--format <fmt>", "structured output: json | toon")
+  .action((baseline, current, opts) =>
+    allocDiffCmd(baseline, current, {
+      failOnRegression: !!opts.failOnRegression,
+      noiseFloorMb: opts.noiseFloor,
       noisePct: opts.noisePct,
       json: opts.json,
       format: opts.format,

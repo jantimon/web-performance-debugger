@@ -68,6 +68,55 @@ export interface AllocOverview {
   hints: string[];
 }
 
+/** Per-package self-byte delta in an alloc diff */
+export interface AllocPackageDelta {
+  package: string;
+  baseBytes: number;
+  currentBytes: number;
+  delta: number;
+}
+
+/** Per-function self-byte delta in an alloc diff */
+export interface AllocFunctionDelta {
+  fn: string;
+  source?: string;
+  file?: string;
+  package: string;
+  baseBytes: number;
+  currentBytes: number;
+  delta: number;
+}
+
+/**
+ * `alloc-diff` output: the net allocated-bytes delta plus per-package and per-function movers. The
+ * gated axis is `netBytes` (the total allocated bytes, the allocation analog of cpu-diff's net JS
+ * self-time). Byte totals are sampled and directional (~10-20%), so the gate floor is percentage-led
+ * (`gateFloorBytes`); the per-package/per-function shares are the trustworthy signal a reader trusts
+ */
+export interface AllocDiffResult {
+  /** the baseline model's file and its total allocated bytes */
+  baseline: { file: string; totalBytes: number };
+  /** the current model's file and its total allocated bytes */
+  current: { file: string; totalBytes: number };
+  /** per-function/package rows below this (bytes) are hidden as sampling noise (a DISPLAY filter, not the gate) */
+  noiseBytes: number;
+  /** the gate's relative floor term: percent of the baseline total the net must clear (--noise-pct) */
+  noisePct: number;
+  /** the effective gate floor (bytes): `max(--noise-floor MB, --noise-pct% of baseline)`. The net must
+   * exceed this to count as a regression, so a consumer gating off the JSON reproduces the exit code */
+  gateFloorBytes: number;
+  /** current totalBytes - baseline totalBytes; the axis `--fail-on-regression` gates */
+  netBytes: number;
+  /** `netBytes` as a percent of the baseline total */
+  netPct: number;
+  /** per-package allocation movers */
+  byPackage: AllocPackageDelta[];
+  /** per-function allocation movers, below-noise deltas dropped */
+  functions: AllocFunctionDelta[];
+  /** disclosures that qualify the gate verdict; empty in the normal case */
+  notes: string[];
+}
+
 /** Functions below the `--top` cutoff in a CPU overview, rolled up */
 export interface CpuDropped {
   frames: number;
@@ -865,8 +914,9 @@ export type DiffOutput = DiffView | GroupDiffView;
 /** The verdict for one asserted threshold: passed, over budget, or not evaluable (a loud n/a FAIL) */
 export type AssertVerdict = "pass" | "fail" | "n/a-fail";
 
-/** Which family a threshold gates: an exact trace count, a wall-tier timing, or a breakdown slice ms */
-export type AssertAxis = "count" | "timing" | "slice";
+/** Which family a threshold gates: an exact trace count, a wall-tier timing, a breakdown slice ms, or
+ * the total sampled allocated bytes (--alloc) */
+export type AssertAxis = "count" | "timing" | "slice" | "alloc";
 
 /**
  * One asserted threshold's structured result. `value` keeps the Measured contract's `null` when the

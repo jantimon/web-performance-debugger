@@ -12,6 +12,7 @@
 · [the split is interval-independent](#the-package-split-is-interval-independent)
 · [allocation inverts the CPU story](#allocation-inverts-the-cpu-story)
 · [trust tiers](#trust-tiers)
+· [gating allocation: the noise floor](#gating-allocation-alloc-diff-and-the-noise-floor)
 
 **Sources.** All numbers below are `[measured]` on Node 24.13, macOS/arm64. The sampler-behaviour
 figures (flags, estimator, interval sweep, co-ride contamination) are from the probe scripts
@@ -131,3 +132,28 @@ is kept and honest as "time under allocation sampling" (systematic ~+10% overhea
 alloc-vs-alloc; the comparability gate refuses a `diff`/`cpu-diff` between an `--alloc` recording and any
 other capture mode on the `capture-mode` axis (`node-alloc` vs anything), so no cross-mode number is
 ever gated.
+
+## Gating allocation: alloc-diff and the noise floor
+
+`alloc-diff <baseline> <current> --fail-on-regression` gates on the net TOTAL allocated bytes (the
+allocation analog of `cpu-diff`'s net JS self-time), and `assert --max-alloc-mb <mb>` gates the total
+against an absolute budget. A GC-pressure regression that allocates hard but costs little CPU (large
+buffers, retained churn) sails through every count/timing/CPU gate, so this closes that hole.
+
+**[measured, --target node --alloc]** The gate floor is percentage-led, because the absolute byte total
+is the directional tier. On a ~14 MB workload (`examples/probes/allocates.mjs` at `--iterations 20`,
+same module path both sides so the workload identity matches) the run-to-run net on byte-identical code
+is **~15-20% relative** (p50 6%, p95 15%, max 20%) / ~1-2 MB absolute. A real allocation regression (a
++50% per-row array) reads **+33..78%** net. So the gate trips only when the net clears
+`max(--noise-floor MB, --noise-pct% of the baseline)`, default **`max(1 MB, 25%)`**. 25% sits above the
+20% identical-code ceiling with margin: measured **0/90 identical pairs false-red (100% green)** and
+**80/80 +50% regression pairs caught (100%)**. The percentage term tracks the ~15-20% jitter as the
+workload scales (a fixed absolute floor would false-red a bigger workload); the absolute 1 MB term keeps
+a tiny-allocation workload from gating on a fraction of a sample. Both terms are user-settable
+(`--noise-floor`, `--noise-pct`) for a noisier host or a large stable workload. The comparability gate
+refuses across an incompatible workload/lane/capture, the same as `cpu-diff`.
+
+`assert --max-alloc-mb` reads the recording's sibling `.alloc.json`; a recording with no alloc model (a
+chrome or node-cpu capture) is a loud `n/a`-FAIL, never a silent pass. A run-group carries no `--alloc`
+member (allocation is a dedicated node lane, not a group member mode), so `--max-alloc-mb` on a group is
+an `n/a`-FAIL too.
