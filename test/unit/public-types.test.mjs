@@ -30,6 +30,8 @@ const DOCUMENTED_ROOT_TYPES = [
   "FrameQueryResult",
   "BlameEntry",
   "CpuDiffResult",
+  "AssertView",
+  "AssertThresholdRow",
   // run-group manifest + stitched group-query outputs (the D5 additions)
   "RunGroup",
   "GroupMeta",

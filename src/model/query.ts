@@ -861,3 +861,59 @@ export interface GroupDiffView {
  * branches on it rather than guessing
  */
 export type DiffOutput = DiffView | GroupDiffView;
+
+/** The verdict for one asserted threshold: passed, over budget, or not evaluable (a loud n/a FAIL) */
+export type AssertVerdict = "pass" | "fail" | "n/a-fail";
+
+/** Which family a threshold gates: an exact trace count, a wall-tier timing, or a breakdown slice ms */
+export type AssertAxis = "count" | "timing" | "slice";
+
+/**
+ * One asserted threshold's structured result. `value` keeps the Measured contract's `null` when the
+ * capture mode did not observe the metric (or a known-incomplete count refused, or no group member
+ * measured the axis), which is a loud `n/a-fail`, never a silent pass. `reason` words that non-pass
+ * when it is not a plain over-budget. `member` names the run-group member that answered the axis
+ * (absent for a plain recording). `target` is the gated unit: "run", a driver step ("step 0 \"sort\""),
+ * or the metric label in a group
+ */
+export interface AssertThresholdRow {
+  /** the gated unit: "run", a driver step label, or the metric label in a group */
+  target: string;
+  /** the threshold's metric name, e.g. "forced layout/style", "wall ms", or a slice name ("js") */
+  metric: string;
+  /** which family the threshold gates: an exact count, a wall-tier timing, or a breakdown slice ms */
+  axis: AssertAxis;
+  /** the budget the value is gated against (the --max-* argument) */
+  budget: number;
+  /** the measured value, or null when the metric was not measured / not gateable (an n/a-fail) */
+  value: number | null;
+  /** pass (<= budget), fail (over budget), or n/a-fail (not measured / not gateable / no member) */
+  verdict: AssertVerdict;
+  /** the run-group member that answered this axis; absent for a plain recording */
+  member?: string;
+  /** why a non-pass fired when it is not a plain over-budget (not measured, known-incomplete, no member) */
+  reason?: string;
+}
+
+/**
+ * `assert` output: the per-threshold rows plus the process verdict, so a CI script renders a PR
+ * comment ("layout slice 6 ms > 4 ms budget") from structure instead of scraping the ASCII table. The
+ * exit code is unchanged: `passed` is true exactly when the process exits 0. `violations` carries the
+ * same human lines the report prints (one per failing/n-a row). `notes` carries a run-group's
+ * disclosures (count disagreement across members, partial formation); empty for a plain recording. The
+ * `kind` discriminates a single-recording gate from a run-group gate
+ */
+export interface AssertView {
+  /** the gated recording path or run-group name */
+  target: string;
+  /** whether `target` is a single recording or a run-group */
+  kind: "recording" | "group";
+  /** one row per evaluated threshold (count/timing/slice), in evaluation order */
+  thresholds: AssertThresholdRow[];
+  /** the process verdict: true = every threshold passed (exit 0), false = at least one failed (exit 1) */
+  passed: boolean;
+  /** the human violation lines, one per failing/n-a-fail threshold, the same text the report prints */
+  violations: string[];
+  /** run-group disclosures (count disagreement, partial formation); empty for a plain recording */
+  notes: string[];
+}

@@ -119,6 +119,10 @@ export type {
   GroupDiffMember,
   GroupDiffView,
   DiffOutput,
+  AssertVerdict,
+  AssertAxis,
+  AssertThresholdRow,
+  AssertView,
 } from "./model/query.js";
 
 /**

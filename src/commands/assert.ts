@@ -1,14 +1,15 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { deserialize } from "../output/format.js";
+import { deserialize, emit, structuredFormat, type StructuredOutOpts } from "../output/format.js";
 import { assertRecordingArtifact } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
+import type { AssertAxis, AssertThresholdRow, AssertView } from "../model/query.js";
 import { resolveConsumption } from "./resolve.js";
 import { loadGroup, memberLabel, memberRecordingPath } from "./group.js";
 import { pickMember, type MemberAxis } from "../model/group.js";
 import { gateMeasured, type Measured } from "../model/measured.js";
 import { countIntegrityRefusal } from "../model/count-integrity.js";
-import { gateSliceBudgets, type SliceBudgets } from "../model/spans.js";
+import { gateSliceBudgets, type SliceBudgets, type SliceGateResult } from "../model/spans.js";
 import { loadSpanEntries } from "./spanSource.js";
 import { isSteppedRecording, stepEntry, stepSpans } from "../model/step-view.js";
 import { runSpan } from "../model/span.js";
@@ -149,6 +150,90 @@ function outcomeViolation(outcome: CheckOutcome, prefix: string, max: number): s
   }
 }
 
+/** The threshold family a count/timing check gates (slice budgets are their own `slice` axis) */
+function checkAxis(opt: keyof Thresholds): AssertAxis {
+  return COUNT_CHECK_OPTS.has(opt) ? "count" : "timing";
+}
+
+/** The structured row for a count/timing outcome: the JSON mirror of `outcomeCells`/`outcomeViolation`
+ * (value null on an n/a/refuse, the verdict three-way). `member` is set only for a run-group */
+function outcomeRow(
+  target: string,
+  metric: string,
+  axis: AssertAxis,
+  budget: number,
+  outcome: CheckOutcome,
+  member?: string,
+): AssertThresholdRow {
+  const row: AssertThresholdRow = (() => {
+    switch (outcome.kind) {
+      case "ok":
+        return { target, metric, axis, budget, value: outcome.value, verdict: "pass" };
+      case "fail":
+        return { target, metric, axis, budget, value: outcome.value, verdict: "fail" };
+      case "na":
+        return {
+          target,
+          metric,
+          axis,
+          budget,
+          value: null,
+          verdict: "n/a-fail",
+          reason: "not measured",
+        };
+      case "refuse":
+        return {
+          target,
+          metric,
+          axis,
+          budget,
+          value: null,
+          verdict: "n/a-fail",
+          reason: outcome.reason,
+        };
+    }
+  })();
+  if (member) row.member = member;
+  return row;
+}
+
+/** The structured row for a slice-budget gate (`--max-slice`): its own `slice` axis, value null when
+ * the capture mode did not build a bar for the slice (a loud n/a-fail) */
+function sliceRow(gate: SliceGateResult, member?: string): AssertThresholdRow {
+  const row: AssertThresholdRow = gate.measured
+    ? {
+        target: gate.target,
+        metric: gate.slice,
+        axis: "slice",
+        budget: gate.max,
+        value: gate.value!,
+        verdict: gate.ok ? "pass" : "fail",
+      }
+    : {
+        target: gate.target,
+        metric: gate.slice,
+        axis: "slice",
+        budget: gate.max,
+        value: null,
+        verdict: "n/a-fail",
+        reason: gate.reason,
+      };
+  if (member) row.member = member;
+  return row;
+}
+
+/** Emit the structured view, or print the human report; set exit 1 on any violation either way. The
+ * exit code is identical across both outputs, so a JSON consumer and a table reader gate the same */
+function finishAssert(
+  view: AssertView,
+  humanReport: () => void,
+  fmt: ReturnType<typeof structuredFormat>,
+): void {
+  if (fmt) emit(view, fmt);
+  else humanReport();
+  if (!view.passed) process.exitCode = 1;
+}
+
 /** Which member axis measures a given count/timing threshold, for a run-group's cross-member routing:
  * forced -> the deep member, the exact counts -> the counts member (deep preferred), INP/wall -> any
  * driver member (every member shares the group's lane) */
@@ -174,12 +259,14 @@ export async function assertCmd(
   thresholds: Thresholds,
   sliceBudgets: SliceBudgets = {},
   label?: string,
+  opts: StructuredOutOpts = {},
 ): Promise<void> {
+  const fmt = structuredFormat(opts);
   // A run-group routes each threshold to the member that measured its axis; a plain recording gates
   // itself. The n/a-FAIL rule extends: no member measures the axis -> a loud FAIL, never a silent pass
   const consumption = await resolveConsumption(file);
   if (consumption.kind === "group")
-    return assertGroup(consumption.path, thresholds, sliceBudgets, label);
+    return assertGroup(consumption.path, thresholds, sliceBudgets, label, fmt);
   const abs = consumption.path;
   const obj = deserialize(await fs.readFile(abs, "utf8"), path.extname(abs).toLowerCase()) as any;
   assertRecordingArtifact(obj, abs);
@@ -214,6 +301,7 @@ export async function assertCmd(
 
   const violations: string[] = [];
   const rows: (string | number)[][] = [];
+  const thresholdRows: AssertThresholdRow[] = [];
   for (const target of targets) {
     for (const check of active) {
       const max = thresholds[check.opt]!;
@@ -230,6 +318,7 @@ export async function assertCmd(
       const violation = outcomeViolation(outcome, `${target.label}: ${check.label}`, max);
       if (violation) violations.push(violation);
       rows.push([target.label, check.label, cells.value, max, cells.verdict]);
+      thresholdRows.push(outcomeRow(target.label, check.label, checkAxis(check.opt), max, outcome));
     }
   }
 
@@ -247,6 +336,7 @@ export async function assertCmd(
         gate.max,
         gate.ok ? "ok" : "FAIL",
       ]);
+      thresholdRows.push(sliceRow(gate));
       if (!gate.measured)
         violations.push(`${gate.target}: --max-slice ${gate.slice}=${gate.max}: ${gate.reason}`);
       else if (!gate.ok)
@@ -254,14 +344,27 @@ export async function assertCmd(
     }
   }
 
-  console.log(table(["target", "metric", "value", "max", ""], rows));
-  if (violations.length) {
-    console.log(`\n✗ ${violations.length} assertion(s) failed:`);
-    for (const violation of violations) console.log(`  ✗ ${violation}`);
-    process.exitCode = 1;
-  } else {
-    console.log("\n✓ all assertions passed");
-  }
+  const view: AssertView = {
+    target: abs,
+    kind: "recording",
+    thresholds: thresholdRows,
+    passed: violations.length === 0,
+    violations,
+    notes: [],
+  };
+  finishAssert(
+    view,
+    () => {
+      console.log(table(["target", "metric", "value", "max", ""], rows));
+      if (violations.length) {
+        console.log(`\n✗ ${violations.length} assertion(s) failed:`);
+        for (const violation of violations) console.log(`  ✗ ${violation}`);
+      } else {
+        console.log("\n✓ all assertions passed");
+      }
+    },
+    fmt,
+  );
 }
 
 /**
@@ -277,6 +380,7 @@ async function assertGroup(
   thresholds: Thresholds,
   sliceBudgets: SliceBudgets,
   label?: string,
+  fmt: ReturnType<typeof structuredFormat> = null,
 ): Promise<void> {
   const group = await loadGroup(manifestPath);
   const active = CHECKS.filter((check) => thresholds[check.opt] != null);
@@ -288,6 +392,7 @@ async function assertGroup(
 
   const violations: string[] = [];
   const rows: (string | number)[][] = [];
+  const thresholdRows: AssertThresholdRow[] = [];
   // Read a member's recording at most once, so a group with several thresholds routed to it does not
   // re-parse it. The full recording (not just the summary): a stepped driver member gates PER STEP,
   // and meta.mainThread/dataLoss drive the count-integrity refusal
@@ -313,6 +418,15 @@ async function assertGroup(
         `${check.label}: no member measures this axis (${CHECK_AXIS[check.opt]}); cannot satisfy max ${max}`,
       );
       rows.push([check.label, "(none)", "n/a", max, "FAIL"]);
+      thresholdRows.push({
+        target: "run",
+        metric: check.label,
+        axis: checkAxis(check.opt),
+        budget: max,
+        value: null,
+        verdict: "n/a-fail",
+        reason: `no member measures this axis (${CHECK_AXIS[check.opt]})`,
+      });
       continue;
     }
     const rec = await recOf(memberRecordingPath(manifestPath, member));
@@ -340,6 +454,16 @@ async function assertGroup(
       const violation = outcomeViolation(outcome, prefix, max);
       if (violation) violations.push(violation);
       rows.push([metricCell, name, cells.value, max, cells.verdict]);
+      thresholdRows.push(
+        outcomeRow(
+          stepped ? target.label : "run",
+          check.label,
+          checkAxis(check.opt),
+          max,
+          outcome,
+          name,
+        ),
+      );
     }
   }
 
@@ -352,6 +476,15 @@ async function assertGroup(
           `${targetLabel}: --max-slice ${slice}=${max}: no member of this group built a reconciling bar`,
         );
         rows.push([`slice ${slice}`, "(none)", "n/a", max, "FAIL"]);
+        thresholdRows.push({
+          target: targetLabel,
+          metric: slice,
+          axis: "slice",
+          budget: max,
+          value: null,
+          verdict: "n/a-fail",
+          reason: "no member of this group built a reconciling bar",
+        });
       }
     } else {
       const spans = await loadSpanEntries(memberRecordingPath(manifestPath, barMember));
@@ -363,6 +496,7 @@ async function assertGroup(
           gate.max,
           gate.ok ? "ok" : "FAIL",
         ]);
+        thresholdRows.push(sliceRow(gate, memberLabel(barMember)));
         if (!gate.measured)
           violations.push(
             `${gate.target} (${memberLabel(barMember)}): --max-slice ${gate.slice}=${gate.max}: ${gate.reason}`,
@@ -375,18 +509,31 @@ async function assertGroup(
     }
   }
 
-  console.log(
-    `run-group '${group.meta.name}' (each threshold routed to the member that measures it)\n`,
+  const view: AssertView = {
+    target: group.meta.name,
+    kind: "group",
+    thresholds: thresholdRows,
+    passed: violations.length === 0,
+    violations,
+    notes: group.notes,
+  };
+  finishAssert(
+    view,
+    () => {
+      console.log(
+        `run-group '${group.meta.name}' (each threshold routed to the member that measures it)\n`,
+      );
+      console.log(table(["metric", "member", "value", "max", ""], rows));
+      // Group-level disclosures (count disagreement across members, partial formation): a CI reader must
+      // see them, since a routed threshold gates ONE member's number while the members may have disagreed
+      for (const note of group.notes) console.log(`\n${note}`);
+      if (violations.length) {
+        console.log(`\n✗ ${violations.length} assertion(s) failed:`);
+        for (const violation of violations) console.log(`  ✗ ${violation}`);
+      } else {
+        console.log("\n✓ all assertions passed");
+      }
+    },
+    fmt,
   );
-  console.log(table(["metric", "member", "value", "max", ""], rows));
-  // Group-level disclosures (count disagreement across members, partial formation): a CI reader must
-  // see them, since a routed threshold gates ONE member's number while the members may have disagreed
-  for (const note of group.notes) console.log(`\n${note}`);
-  if (violations.length) {
-    console.log(`\n✗ ${violations.length} assertion(s) failed:`);
-    for (const violation of violations) console.log(`  ✗ ${violation}`);
-    process.exitCode = 1;
-  } else {
-    console.log("\n✓ all assertions passed");
-  }
 }
