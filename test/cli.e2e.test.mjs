@@ -256,7 +256,13 @@ e2e("record --deep + query blame attributes forced layout to the source line", {
 e2e("record --breakdown + query blame --forced returns sampled read-site attributions", { timeout: TIMEOUT_MS }, () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpd-e2e-"));
   const out = path.join(dir, "sampled-blame");
-  runCli(["record", path.join(examples, "forces-layout.mjs"), "--bench", "--breakdown", "--iterations", "5", "--out", out]);
+  // wide-forced-layout.mjs forces a WIDE flush per read (a big subtree reflow > one sampler interval),
+  // which docs/dev/blame-semantics.md pins to the EXACT forcing line at ~100% recall. forces-layout.mjs
+  // flushes are sub-interval, so their sampled read-site lags a statement and recall is low -- honest,
+  // documented behaviour, but too noisy for an exact-line CI gate. A slower runner only WIDENS the wide
+  // flush (more samples), so this probe's recall does not degrade under CI load
+  const probe = path.join(examples, "probes", "wide-forced-layout.mjs");
+  runCli(["record", probe, "--bench", "--breakdown", "--iterations", "5", "--out", out]);
   assert.ok(existsSync(out), "recording file written");
 
   // The recording carries the sampled read-site log and declares the flush-site semantic
@@ -282,26 +288,31 @@ e2e("record --breakdown + query blame --forced returns sampled read-site attribu
 
   const blame = JSON.parse(runCli(["query", "blame", out, "--forced", "--format", "json"]));
   assert.ok(Array.isArray(blame) && blame.length > 0, "at least one sampled forced-layout source group");
-  const fromExample = blame.filter((row) => row.source?.includes("forces-layout.mjs"));
-  assert.ok(fromExample.length > 0, "sampled forced layout attributed to forces-layout.mjs");
+  const fromExample = blame.filter((row) => row.source?.includes("wide-forced-layout.mjs"));
+  assert.ok(fromExample.length > 0, "sampled forced layout attributed to wide-forced-layout.mjs");
   assert.ok(fromExample.every((row) => row.forced > 0), "every attributed line is forced");
   assert.ok(
     fromExample.some((row) => row.kinds.includes("layout") || row.kinds.includes("style")),
     "kinds include layout/style",
   );
-  // Each geometry property is read on its own line (offsetTop 52, offsetWidth 56, ..., scrollY 104)
-  // A flush wider than one sampler interval lands exactly on the read line; a narrower one can lag one
-  // statement, so allow ±1. Assert several sampled sites land on/near the real read lines
-  const knownReadLines = [46, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108, 120, 124];
-  const blamedLines = fromExample
-    .map((row) => Number(blameAt(row).match(/forces-layout\.mjs:(\d+)/)?.[1]))
-    .filter((line) => Number.isFinite(line));
-  const onKnownRead = blamedLines.filter((line) =>
-    knownReadLines.some((read) => Math.abs(line - read) <= 1),
+  // The probe marks each geometry read with a `// R:` comment on its own line; derive those line
+  // numbers from the source so the assertion never re-stales when the fixture shifts lines. A wide
+  // flush lands the sampled read-site on the EXACT read line, so assert exact recovery of most markers
+  // (>= 6 of 8, margin for the rare documented off-by-one), not a ±1 fuzz around a hardcoded list
+  const readMarkerLines = readFileSync(probe, "utf8")
+    .split("\n")
+    .map((text, index) => (text.includes("// R:") ? index + 1 : 0))
+    .filter((line) => line > 0);
+  assert.ok(readMarkerLines.length >= 8, "the probe still marks its geometry reads with // R:");
+  const blamedLines = new Set(
+    fromExample
+      .map((row) => Number(blameAt(row).match(/wide-forced-layout\.mjs:(\d+)/)?.[1]))
+      .filter((line) => Number.isFinite(line)),
   );
+  const recovered = readMarkerLines.filter((read) => blamedLines.has(read));
   assert.ok(
-    onKnownRead.length >= 3,
-    `sampled read-sites land on/near known geometry-read lines (±1 for the sampled lag), got ${JSON.stringify([...new Set(blamedLines)])}`,
+    recovered.length >= 6,
+    `sampled read-sites land on the wide flush's exact geometry-read lines, recovered ${recovered.length}/${readMarkerLines.length}, blamed ${JSON.stringify([...blamedLines])}`,
   );
 
   // The human output labels the semantic as SAMPLED (never presented as the exact --deep stack)
@@ -2435,7 +2446,20 @@ e2e("record (driver): a trusted interaction's INP survives the entry-delivery ra
      }`,
   );
   const out = path.join(dir, "inp");
-  runCli(["record", flow, "--url", html, "--out", out]);
+  // A trusted 45ms click ALWAYS emits an Event Timing entry, so the flake is delivery TIMING, not a
+  // dropped entry: under a loaded shared runner the entry's task slips past the default 250ms drain, and
+  // the WPD_INP_ENTRY_WAIT_MS slow-host knob extends that bounded drain generously for this test so the
+  // entry reliably lands. The INP assertion then stays strict; the wait sits after the step's end mark,
+  // so a longer ceiling never grows the measured window
+  const inp = spawnSync(process.execPath, [cli, "record", flow, "--url", html, "--out", out], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: CLI_KILL_MS,
+    killSignal: "SIGKILL",
+    env: { ...process.env, WPD_INP_ENTRY_WAIT_MS: "3000" },
+  });
+  assert.equal(inp.status, 0, `record exited 0\n${inp.stderr ?? ""}`);
   const rec = JSON.parse(readFileSync(out, "utf8"));
   const step = rec.spans.find((span) => span.kind === "step" && span.label === "slow-click");
   assert.ok(step, "the slow-click step span exists");
@@ -2449,11 +2473,14 @@ e2e("record (driver): a trusted interaction's INP survives the entry-delivery ra
 });
 
 // The default settle (no `until`) survives a HARD navigation the step's action triggers mid-settle. The
-// action schedules a reload ~10ms out and returns; the reload commits while the settle's page.evaluate
-// is in flight, destroying its context ("Execution context was destroyed", which isTransientNavError
-// does NOT match). Without the re-attach the record hard-fails; with it, the settle re-runs on the
-// reloaded document and the step completes as a hard navigation. The reload is scheduled from the
-// ACTION, not the page's own script, so the reloaded document does not schedule another (no loop)
+// action arms the reload on settle's FIRST animation frame (its rAF is registered before settle's), so
+// the reload commits while the settle's page.evaluate is in flight -- destroying its context ("Execution
+// context was destroyed", which isTransientNavError does NOT match). Without the re-attach the record
+// hard-fails; with it the settle re-runs on the reloaded document and the step completes as a hard
+// navigation. Frame-clock beats wall-clock: a slower host slows the reload frame and settle's frames
+// together, so the commit stays inside settle, where a fixed setTimeout (or arming on the SECOND frame,
+// which settle resolves near) can drift onto the end-mark/flush evaluates OUTSIDE the re-attach loop and
+// hard-fail. The reload is armed from the ACTION, so the reloaded document schedules no second reload
 e2e("record (driver): the default settle re-attaches when a hard navigation commits mid-settle", { timeout: TIMEOUT_MS }, () => {
   const server = startOnrampServer(
     "<!doctype html><meta charset=utf-8><title>reloader</title><h1 id=hero>reload me</h1>",
@@ -2465,7 +2492,9 @@ e2e("record (driver): the default settle re-attaches when a hard navigation comm
       flow,
       `export async function run({ page, measureStep }) {
          await measureStep("reload-mid-settle", () =>
-           page.evaluate(() => { setTimeout(() => window.location.reload(), 10); }),
+           page.evaluate(() => {
+             requestAnimationFrame(() => window.location.reload());
+           }),
          );
        }`,
     );

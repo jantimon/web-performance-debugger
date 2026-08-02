@@ -77,12 +77,18 @@ test("node lane: a near-no-op --target node run gates stable under cpu-diff (B-0
 
   const baseModel = JSON.parse(readFileSync(`${base.replace(/\.json$/, "")}.cpu.json`, "utf8"));
   assert.ok(baseModel.jsSelfMs < 5, `a near-no-op reports ~0 JS self-time, got ${baseModel.jsSelfMs}`);
-  // No `post (node:inspector)` prefix frame should top the list; the windowing removed it. The probe's
-  // console.log is load-bearing here: a bare-return probe lands `post` as functions[0]
-  const topFn = baseModel.functions[0];
+  // The `post (node:inspector)` profiler-start prefix (~9-30ms of sampler warmup before the first
+  // run()) is windowed out, so it carries at most a stray in-window sample -- never the multi-ms
+  // prefix. Assert its self-time stays far under the 9ms warmup floor; if windowing regressed, the
+  // prefix would land here at ~9-30ms and trip this. A rank check ("post is not functions[0]") is noise
+  // on a near-no-op: every function holds ~one sample so which sorts first is random. The windowing
+  // PROPERTY is post's cost, not its rank
+  const postFrame = baseModel.functions.find(
+    (fn) => fn.fn === "post" && (fn.file ?? "").includes("inspector"),
+  );
   assert.ok(
-    !topFn || !(topFn.fn === "post" && (topFn.file ?? "").includes("inspector")),
-    `the profiler-start prefix must not be the hottest function, got ${topFn?.fn}`,
+    !postFrame || postFrame.selfMs < 5,
+    `the profiler-start prefix is windowed out (post self-time far under the 9ms warmup floor), got ${postFrame?.selfMs}`,
   );
 
   // --fail-on-regression must exit 0: runCli throws on a non-zero exit, so no throw is the assertion
