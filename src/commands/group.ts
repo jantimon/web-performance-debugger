@@ -15,7 +15,7 @@ import {
   type MemberAxis,
   type RunGroup,
 } from "../model/group.js";
-import { resolveConsumption } from "./resolve.js";
+import { displayPath, requireArtifact, resolveConsumption } from "./resolve.js";
 import type { Recording } from "../model/recording.js";
 
 /**
@@ -35,8 +35,21 @@ export async function loadGroup(manifestPath: string): Promise<RunGroup> {
 }
 
 /** A member's recording path, absolute (its manifest stores it relative to the manifest dir) */
-export function memberRecordingPath(manifestPath: string, member: GroupMember): string {
+function memberRecordingPath(manifestPath: string, member: GroupMember): string {
   return path.resolve(path.dirname(manifestPath), member.recording);
+}
+
+/**
+ * A member's recording path, refusing one whose file is gone: a manifest outlives its members (a
+ * deleted recording, a cleaned temp dir), so name the member and the fix instead of letting the
+ * reader's errno out. EVERY member read goes through this, so no verb leaks the bare filesystem error
+ */
+export function requireMemberRecording(manifestPath: string, member: GroupMember): Promise<string> {
+  return requireArtifact(
+    memberRecordingPath(manifestPath, member),
+    `The recording for run-group member '${memberLabel(member)}'`,
+    "Re-record the member, or pass an explicit recording path.",
+  );
 }
 
 /** Verify a loaded member recording still holds the capture mode the manifest recorded for it. A
@@ -48,7 +61,7 @@ export function assertMemberMode(rec: Recording, member: GroupMember, abs: strin
   const fileMode = rec.meta.capture;
   if (fileMode !== member.mode)
     throw new Error(
-      `Run-group member '${memberLabel(member)}' points at ${abs}, but that recording is a ` +
+      `Run-group member '${memberLabel(member)}' points at ${displayPath(abs)}, but that recording is a ` +
         `'${fileMode}' capture, not '${member.mode}'. The member file was overwritten by another ` +
         `capture mode (two members sharing one --out). Re-record each member to a distinct --out, or ` +
         `use \`--members <modes> --group <name>\` to auto-name them.`,
@@ -60,7 +73,7 @@ export async function loadMemberRecording(
   manifestPath: string,
   member: GroupMember,
 ): Promise<Recording> {
-  const abs = memberRecordingPath(manifestPath, member);
+  const abs = await requireMemberRecording(manifestPath, member);
   const rec = deserialize(
     await fs.readFile(abs, "utf8"),
     path.extname(abs).toLowerCase(),
@@ -105,7 +118,7 @@ export async function resolveVerbTarget(
         `Record a member that does (e.g. --deep for forced-layout blame, --breakdown for the bar).`,
     );
   return {
-    target: memberRecordingPath(consumption.path, member),
+    target: await requireMemberRecording(consumption.path, member),
     group,
     manifestPath: consumption.path,
     member,

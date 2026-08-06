@@ -9,7 +9,7 @@ import {
 import { assertRecordingArtifact } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
 import { resolveTarget, resolveConsumption } from "./resolve.js";
-import { loadGroup, loadMemberRecording, memberLabel, memberRecordingPath } from "./group.js";
+import { loadGroup, loadMemberRecording, memberLabel, requireMemberRecording } from "./group.js";
 import { formatMeasured, type Measured } from "../model/measured.js";
 import { diffSpanSlices, type SpanSliceDiff } from "../model/spans.js";
 import { comparabilityMismatches } from "../model/compat.js";
@@ -414,8 +414,8 @@ async function diffGroups(
     }
     comparedAny = true;
     const view = await pairDiffView(
-      memberRecordingPath(baselineManifest, baselineMember),
-      memberRecordingPath(currentManifest, currentMember),
+      await requireMemberRecording(baselineManifest, baselineMember),
+      await requireMemberRecording(currentManifest, currentMember),
       failOnRegression,
     );
     if (view.failed) anyFailed = true;
