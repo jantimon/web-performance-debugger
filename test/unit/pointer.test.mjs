@@ -20,6 +20,8 @@ test("latest pointer: cwd-keyed under XDG_STATE_HOME, no recordings/ in cwd, leg
     // Record into a temp --out from workDir: the pointer lands in the state dir, not the cwd
     process.chdir(workDir);
     const recording = path.join(workDir, "out", "run.json");
+    mkdirSync(path.dirname(recording), { recursive: true });
+    writeFileSync(recording, "{}", "utf8");
     await writePointer({ recording, digest: path.join(workDir, "out", "run.digest.json") });
 
     assert.ok(!existsSync(path.join(workDir, "recordings")), "no recordings/ dir written into cwd");

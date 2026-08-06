@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -227,6 +227,10 @@ test("resolveConsumption: filename detection for explicit paths, pointer.group f
     process.chdir(workDir);
     const recording = path.join(workDir, "out", "run.json");
     const manifest = path.join(workDir, "out", "perf.group.json");
+    // Both artifacts exist: `latest` refuses a pointer whose target is gone, which is its own test
+    mkdirSync(path.join(workDir, "out"), { recursive: true });
+    writeFileSync(recording, "{}", "utf8");
+    writeFileSync(manifest, "{}", "utf8");
     await writePointer({ recording, group: manifest });
     const group = await resolveConsumption("latest");
     assert.equal(group.kind, "group", "latest -> group when the pointer has one");

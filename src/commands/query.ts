@@ -65,7 +65,7 @@ import {
   loadGroup,
   loadMemberRecording,
   memberLabel,
-  memberRecordingPath,
+  requireMemberRecording,
   resolveVerbTarget,
   routingNote,
 } from "./group.js";
@@ -553,7 +553,7 @@ async function buildGroupSpanStitch(
   // member would report -- the stitch only chooses which member's panel to surface
   const perMember = new Map<GroupMember, SpanAnatomy>();
   for (const member of group.members) {
-    const abs = memberRecordingPath(manifestPath, member);
+    const abs = await requireMemberRecording(manifestPath, member);
     const rec = await loadMemberRecording(manifestPath, member);
     const matches = rec.spans.filter(
       (span) => span.label === wantedLabel && (wantedKind == null || span.kind === wantedKind),
@@ -726,7 +726,7 @@ export async function querySpans(file: string, query: SpansQuery): Promise<void>
         `No member of run-group '${group.meta.name}' has a bar or exact counts to overview ` +
           `(members: ${group.members.map((entry) => memberLabel(entry)).join(", ")}).`,
       );
-    abs = memberRecordingPath(consumption.path, overviewMember);
+    abs = await requireMemberRecording(consumption.path, overviewMember);
     overviewMemberForCheck = overviewMember;
     const deepMember = pickMember(group, "forced");
     groupCtx = {

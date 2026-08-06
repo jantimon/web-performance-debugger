@@ -5,7 +5,7 @@ import { assertRecordingArtifact } from "../model/artifact.js";
 import { num, table } from "../output/ascii.js";
 import type { AssertAxis, AssertThresholdRow, AssertView } from "../model/query.js";
 import { resolveConsumption } from "./resolve.js";
-import { loadGroup, memberLabel, memberRecordingPath } from "./group.js";
+import { loadGroup, memberLabel, requireMemberRecording } from "./group.js";
 import { pickMember, type MemberAxis } from "../model/group.js";
 import { gateMeasured, type Measured } from "../model/measured.js";
 import { countIntegrityRefusal } from "../model/count-integrity.js";
@@ -501,7 +501,7 @@ async function assertGroup(
       });
       continue;
     }
-    const rec = await recOf(memberRecordingPath(manifestPath, member));
+    const rec = await recOf(await requireMemberRecording(manifestPath, member));
     const name = memberLabel(member);
     const isCount = COUNT_CHECK_OPTS.has(check.opt);
     const integrityRefusal = countIntegrityRefusal(rec.meta);
@@ -559,7 +559,7 @@ async function assertGroup(
         });
       }
     } else {
-      const spans = await loadSpanEntries(memberRecordingPath(manifestPath, barMember));
+      const spans = await loadSpanEntries(await requireMemberRecording(manifestPath, barMember));
       for (const gate of gateSliceBudgets(spans, sliceBudgets, targetLabel)) {
         rows.push([
           `slice ${gate.slice}`,

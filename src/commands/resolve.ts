@@ -82,6 +82,40 @@ export function displayPath(absPath: string): string {
     : absPath;
 }
 
+/** The recovery line every missing-artifact message ends with, for an artifact a pointer named */
+const POINTER_FIX = "Run `record` again, or pass an explicit file path.";
+
+/** The `subject` of the stale-pointer message for the recording the pointer names */
+const POINTER_RECORDING = "The last recording for this directory";
+
+/**
+ * An artifact a stored path names can be gone by the time a verb reads it: the file was deleted, or
+ * it lived in a temp dir that has since been cleaned. Name the artifact and the fix rather than let
+ * the filesystem's own errno reach the caller, which says nothing about what to do next.
+ *
+ * Only the not-there family (`ENOENT`/`ENOTDIR`) is rewritten: a permission or IO failure keeps its
+ * own error, and so does every path the user typed
+ */
+export async function requireArtifact(
+  absPath: string,
+  subject: string,
+  fix: string,
+): Promise<string> {
+  try {
+    await fs.access(absPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+    throw new Error(`${subject} no longer exists at ${displayPath(absPath)}. ${fix}`);
+  }
+  return absPath;
+}
+
+/** The pointer-target form of `requireArtifact`: `latest` resolved to this path, and it is gone */
+function requirePointerTarget(absPath: string, subject: string): Promise<string> {
+  return requireArtifact(absPath, subject, POINTER_FIX);
+}
+
 /**
  * A paste-ready target token for a copy-pasteable drill-in hint: the bare literal `latest` when this
  * path IS the current cwd's `latest` pointer target, else the `displayPath` DOUBLE-QUOTED so a path
@@ -124,8 +158,18 @@ function looksLikeGroupPath(file: string): boolean {
 export async function resolveConsumption(file: string): Promise<Consumption> {
   if (file === "latest") {
     const pointer = await readPointer();
-    if (pointer.group) return { kind: "group", path: path.resolve(pointer.group) };
-    return { kind: "recording", path: path.resolve(pointer.recording) };
+    if (pointer.group)
+      return {
+        kind: "group",
+        path: await requirePointerTarget(
+          path.resolve(pointer.group),
+          "The last run-group manifest for this directory",
+        ),
+      };
+    return {
+      kind: "recording",
+      path: await requirePointerTarget(path.resolve(pointer.recording), POINTER_RECORDING),
+    };
   }
   const abs = path.resolve(file);
   return { kind: looksLikeGroupPath(abs) ? "group" : "recording", path: abs };
@@ -153,7 +197,11 @@ export async function resolveTarget(
         `Latest run has no allocation profile. Re-run \`record <module> --target node --alloc\`.${hint}`,
       );
     }
-    return path.resolve(target);
+    const subject =
+      kind === "alloc-model"
+        ? "The latest run's allocation model"
+        : "The latest run's raw allocation profile";
+    return requirePointerTarget(path.resolve(target), subject);
   }
   if (kind === "cpu-model" || kind === "cpu-profile") {
     const target = kind === "cpu-model" ? pointer.cpuModel : pointer.cpuProfile;
@@ -166,9 +214,11 @@ export async function resolveTarget(
         `Latest run has no CPU profile. Re-run \`record\` in a capture mode that samples CPU (the default or --breakdown, not --deep).${hint}`,
       );
     }
-    return path.resolve(target);
+    const subject =
+      kind === "cpu-model" ? "The latest run's CPU model" : "The latest run's raw CPU profile";
+    return requirePointerTarget(path.resolve(target), subject);
   }
   // One artifact kind: the recording carries the spans, so the `recording` and `auto` targets both
   // resolve to it and every span/count view is derived by the verb
-  return path.resolve(pointer.recording);
+  return requirePointerTarget(path.resolve(pointer.recording), POINTER_RECORDING);
 }
