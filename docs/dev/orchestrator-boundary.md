@@ -20,8 +20,8 @@ run-group case the third test below turns on.
 classification flag and the doctor/init/compare/HTML-report asks that all stay out. The
 surfaces-evaluated register at the end adds [measured] tooling facts (the pre-commit and knip timings,
 the sandbox/trace deadlock) whose detail lives in the technical home cited there, plus two addon
-verdicts (Next.js, GTM) backed by capture probes with the load-bearing numbers stated inline. Stated
-throughout as present-tense scope.
+verdicts (Next.js, GTM) backed by capture probes with the load-bearing numbers stated inline, and a
+CLI-framework verdict (AXI) probed against the built CLI. Stated throughout as present-tense scope.
 
 ## What wpd is, and what it is not
 
@@ -149,6 +149,25 @@ reopen one needs a new fact, not a re-argument.
   split, and duplicates a named `measureStep`. A genuinely heavy tag already surfaces: an external tag
   script is named at URL granularity by LoAF and the hot list, and an inline Custom-HTML tag lands in
   `(native)` with LoAF blaming the dispatching listener: evaluated, not adopted.
+- **No AXI conformance.** AXI ([axi.md](https://axi.md/)) is a ten-principle design framework for
+  agent-facing CLIs (MIT, one author, ~1.8k stars, four months old at evaluation). It is a framework,
+  not a file convention: there is no `axi.md` file to add, and nothing discovers tools by the label —
+  listing is one line in a `catalog.yaml` with no conformance test or spec version, and no established
+  CLI ships it. wpd meets six of the ten principles by its own route: TOON on every structured verb,
+  pre-computed rollups, definitive empty states with a disclosed hidden count, `--top`/`--filter`
+  truncation, next-step hints on every written artifact, per-subcommand `--help`. Three are declined.
+  **Session hooks** would have wpd write a `SessionStart` hook into the caller's agent config, spending
+  tokens in every session of every project whether or not a measurement is wanted; the shipped
+  `AGENTS.md` plus the absolute-path `--help` epilog deliver the same discovery at the moment of use
+  with nothing standing — the git-hook argument again: wpd does not install itself into shared state
+  it does not own. **A bare `wpd` showing live data** needs ambient state wpd has none of (`latest` is
+  a cwd-keyed pointer, empty in most directories), so the command list plus Quick start is the honest
+  answer. **A `--fields` projection** re-exposes what the JSON already carries, and a projection that
+  drops a `null` lets a caller read not-measured as measured-clean. One principle names a real defect,
+  and it is taken: exit 1 means a blown gate, a bad flag, and a missing file alike, so an agent gating
+  on `assert` cannot tell a regression from its own typo; usage errors move to exit 2 in the 2.0 batch
+  ([#173](https://github.com/jantimon/web-performance-debugger/issues/173)). The label itself:
+  evaluated, not adopted.
 
 **Adopted process gates.**
 
