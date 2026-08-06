@@ -1,5 +1,53 @@
 # @jantimon/web-performance-debugger
 
+## 1.5.0
+
+### Minor Changes
+
+- [#215](https://github.com/jantimon/web-performance-debugger/pull/215) [`85054d1`](https://github.com/jantimon/web-performance-debugger/commit/85054d1bc766892f4b63e59d0808305ad66f9a1d) - Add the allocation gate. A GC-pressure regression that allocates hard but costs little CPU passed every
+  gate before; now `alloc-diff <baseline> <current> --fail-on-regression` gates on net allocated bytes
+  (mirroring `cpu-diff`), and `assert --max-alloc-mb <mb>` gates the total against a budget. Both read an
+  `--target node --alloc` recording; a recording with no allocation model is a loud n/a-FAIL, never a
+  silent pass, and an alloc-diff refuses across an incompatible workload/lane/capture.
+
+  The gate floor scales with the workload, the same as `cpu-diff`: `max(--noise-floor MB, --noise-pct% of
+the baseline)`, default `max(1 MB, 25%)`, since sampled byte totals are ~15-20% directional. New view
+  `AllocDiffResult`.
+
+- [#213](https://github.com/jantimon/web-performance-debugger/pull/213) [`d62f653`](https://github.com/jantimon/web-performance-debugger/commit/d62f653d5181ea94bfe7670575181b7075aa32fe) - `assert` gains `--format json|toon`, emitting a typed `AssertView`: a row per threshold (`axis`,
+  `budget`, measured `value` or `null`, `verdict` pass/fail/n-a-fail, plus the routed `member` on a
+  run-group), the overall `passed`, and the `violations`. A CI PR-comment script now consumes the gate
+  verdict structurally instead of scraping the ASCII table. The exit code is unchanged (0 = passed, 1 =
+  any failed), so a `--format json` gate fails the build exactly as the human report does.
+
+- [#212](https://github.com/jantimon/web-performance-debugger/pull/212) [`1af338b`](https://github.com/jantimon/web-performance-debugger/commit/1af338b9152832ff440a7896ba269ca6066c8510) - `cpu-diff --fail-on-regression`: the noise floor now scales with the workload. The net JS self-time
+  must clear `max(--noise-floor ms, --noise-pct% of the baseline)`, default `max(0.5 ms, 15%)`. The old
+  fixed 0.5 ms floor false-reds byte-identical code more as the workload grows (measured ~2% at a 5 ms
+  workload, ~40% at 220 ms / `--iterations 20`), because summed self-time grows while the floor stays
+  absolute; the percentage term tracks it, so identical code stays green at any iteration count while a
+  30%+ regression on a small workload still fails.
+
+  New flags `--noise-floor <ms>` and `--noise-pct <n>` widen (or tighten) the two terms; `CpuDiffResult`
+  JSON now carries `noisePct` and the effective `gateFloorMs`.
+
+### Patch Changes
+
+- [#209](https://github.com/jantimon/web-performance-debugger/pull/209) [`ec6a66e`](https://github.com/jantimon/web-performance-debugger/commit/ec6a66e66f3dbb53257ee3659262bc2f8b82c295) - Bot-wall detection no longer forces a layout flush while it inspects a page. The collector reads
+  iframe viewport coverage through an `IntersectionObserver` and the near-empty-DOM signal through
+  `textContent`, instead of `getBoundingClientRect`/`innerText`, and the on-ramp inspection runs outside
+  the `wpd:run` window. On a page that keeps layout dirty this drops a few spurious layout/style counts
+  that the inspection previously added to the run span. Detection results are unchanged.
+
+- [#211](https://github.com/jantimon/web-performance-debugger/pull/211) [`2b6eaef`](https://github.com/jantimon/web-performance-debugger/commit/2b6eaef64b3b1962d32e779ef0d289c9eb77e4cd) - Add `WPD_INP_ENTRY_WAIT_MS` to raise the bounded in-page drain that a step waits for a trusted
+  interaction's Event Timing entry. The default stays 250ms; a genuinely slow host, where the entry's
+  task slips later, can extend it (whole ms) so per-step INP still lands. No change to default behaviour
+  or output.
+
+- [#217](https://github.com/jantimon/web-performance-debugger/pull/217) [`f541c48`](https://github.com/jantimon/web-performance-debugger/commit/f541c4863f77d35b7ce72f51ab6a6ada6292af67) - A stale `latest` now explains itself instead of surfacing a raw `ENOENT` on an internal path. When the
+  artifact the pointer names has been deleted, every consumer verb says which one is gone (recording,
+  CPU/allocation profile, or run-group manifest), shows its path the way the reports do, and names the
+  fix: record again, or pass an explicit path. A deleted run-group member names the member.
+
 ## 1.4.1
 
 ### Patch Changes
