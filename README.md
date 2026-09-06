@@ -1170,6 +1170,23 @@ profile bar covers. Keep `timing.stats.medianMs` distinct from `wallMs` and
 WPD does not combine samples from different captures. `query spans` stays a compact
 overview; drill into `query span` for the sample series.
 
+Repeated named measures expose `timing.sampleUnit: "occurrence"` with a boundary of
+`performance-measure`. Their `samplesMs` list contains every recorded occurrence
+in capture order. A label can occur several times within one iteration, so this
+sample count need not match `iterations`. For example:
+
+```bash
+wpd query span latest measure:work --format json | jq '.timing'
+```
+
+The measure's profile bar describes the occurrence with the lower-median profiled
+wall time. The timing samples use each measure's start and end; Firefox's sampled
+profile window can differ from those bounds. `timing.stats.medianMs` also uses the
+arithmetic midpoint for an even sample count, so it can differ from the bar's
+`wallMs`. WPD does not average profile slices. A
+measure without a stored occurrence series returns `timing: null`, including an
+unrepeated measure; its individual wall remains available as `wallMs`.
+
 Recordings are self-describing: `meta.schemaVersion` stamps the on-disk schema epoch (currently
 `"5"`), and a reader **rejects** any artifact from another epoch with a "recorded by an older wpd;
 re-record" message rather than mis-parsing it into silent nulls. Numbers are rounded to 4 decimals on

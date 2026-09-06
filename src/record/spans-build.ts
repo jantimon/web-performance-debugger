@@ -174,6 +174,7 @@ export function buildRecordingSpans(input: SpansBuildInput): Span[] {
       breakdown: bar.breakdown,
       counts: notMeasuredSpanCounts(),
       ...(bar.samples != null ? { samples: bar.samples } : {}),
+      ...(bar.occurrenceWallMs ? { occurrenceWallMs: bar.occurrenceWallMs } : {}),
       ...(bar.wallMinMs != null ? { wallMinMs: bar.wallMinMs } : {}),
       ...(bar.wallMaxMs != null ? { wallMaxMs: bar.wallMaxMs } : {}),
       ...(bar.frames ? { frames: bar.frames } : {}),

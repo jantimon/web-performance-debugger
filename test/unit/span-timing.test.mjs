@@ -108,3 +108,29 @@ test("the Node record and query CLI return one timing sample per timed call", { 
   assert.ok(result.timing.samplesMs.every((sample) => Number.isFinite(sample) && sample >= 0));
   assert.equal(result.timing.stats.samples, 3);
 });
+
+
+test("measure timing keeps occurrence order and distinguishes its median from the profile bar", async () => {
+  const file = recording("measure.json", [span("measure", {
+    occurrenceWallMs: [8, 2, 6, 4], samples: 4, aggregation: "median", wallClock: "trace",
+    wallMs: 4, breakdown: bar(4), wallMinMs: 2, wallMaxMs: 8,
+  })]);
+  for (const format of ["json", "toon"]) {
+    const result = await query(file, "measure:work", format);
+    assert.equal(result.iterations, 3);
+    assert.equal(result.wallMs, 4);
+    assert.equal(result.samples, 4);
+    assert.deepEqual(result.timing, {
+      sampleUnit: "occurrence", boundary: "performance-measure", clock: "trace",
+      samplesMs: [8, 2, 6, 4],
+      stats: { samples: 4, minMs: 2, medianMs: 5, meanMs: 5, maxMs: 8 },
+    });
+  }
+});
+
+test("a measure without its recorded series does not invent samples from its median or spread", async () => {
+  const file = recording("measure-no-series.json", [span("measure", {
+    samples: 4, aggregation: "median", wallMs: 4, wallMinMs: 2, wallMaxMs: 8, breakdown: bar(4),
+  })]);
+  assert.equal((await query(file, "measure:work")).timing, null);
+});

@@ -557,10 +557,10 @@ export interface SpanHotFunctions {
 
 /** Recorded timing samples and the scope each sample measures */
 export interface SpanTiming {
-  /** Recorded call or step durations in capture order; unmeasured steps are omitted */
-  sampleUnit: "iteration";
-  /** Start/end scope of each sample; excludes work outside these calls or step marks */
-  boundary: "run-call" | "driver-step";
+  /** Recorded durations in capture order; unmeasured step repetitions are omitted */
+  sampleUnit: "iteration" | "occurrence";
+  /** Start/end scope of each sample: a run call, driver step, or named measure */
+  boundary: "run-call" | "driver-step" | "performance-measure";
   /** `page` denotes performance.now() in the page or Node runtime; null means unspecified */
   clock: "page" | "trace" | null;
   /** Recorded durations in milliseconds; independent of the profiled bar window */

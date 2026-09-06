@@ -19,7 +19,8 @@ function lowerMedianIndex(count: number): number {
  * occurrence whose `breakdown.wallMs` is the lower median across all occurrences -- a real sample, so
  * `Σ slices + idle = wall` holds byte-for-byte (averaging slices independently would fabricate a bar
  * that no occurrence ever produced). The merged entry discloses the merge: `samples` (occurrence
- * count) and the wall spread (`wallMinMs`/`wallMaxMs`).
+ * count), each wall time in capture order (`occurrenceWallMs`), and the wall spread
+ * (`wallMinMs`/`wallMaxMs`).
  *
  * run/step spans and single-occurrence measures pass through UNCHANGED, with no disclosure fields, so
  * an unrepeated flow and old recordings stay byte-identical. Input order is preserved by first
@@ -51,9 +52,14 @@ export function mergeSpanOccurrences(spans: SpanBreakdown[]): SpanBreakdown[] {
     }
     const byWall = [...group].sort((left, right) => left.breakdown.wallMs - right.breakdown.wallMs);
     const picked = byWall[lowerMedianIndex(byWall.length)];
+    const timings = group.map((span) => span.occurrenceTimingMs);
+    const hasTimings = timings.every(
+      (value): value is number => value != null && Number.isFinite(value) && value >= 0,
+    );
     merged.push({
       ...picked,
       samples: group.length,
+      ...(hasTimings ? { occurrenceWallMs: timings } : {}),
       wallMinMs: byWall[0].breakdown.wallMs,
       wallMaxMs: byWall[byWall.length - 1].breakdown.wallMs,
     });

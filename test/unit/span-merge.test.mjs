@@ -18,7 +18,7 @@ const bar = (wallMs, mark) => ({
   },
   mark,
 });
-const measure = (label, wallMs, mark) => ({ label, kind: "measure", breakdown: bar(wallMs, mark) });
+const measure = (label, wallMs, mark) => ({ label, kind: "measure", breakdown: bar(wallMs, mark), occurrenceTimingMs: wallMs });
 
 test("mergeSpanOccurrences: odd count keeps the true-median-by-wall occurrence, verbatim", () => {
   const walls = [5, 1, 3]; // median wall is 3
@@ -26,6 +26,7 @@ test("mergeSpanOccurrences: odd count keeps the true-median-by-wall occurrence, 
   assert.equal(merged.length, 1, "one bar per label");
   const kept = merged[0];
   assert.equal(kept.samples, 3, "samples counts real occurrences");
+  assert.deepEqual(kept.occurrenceWallMs, walls, "wall samples retain capture order");
   assert.equal(kept.breakdown.wallMs, 3, "the median-wall occurrence is picked");
   assert.equal(kept.breakdown.mark, "s2", "the KEPT bar is that occurrence VERBATIM (its own mark survives)");
   assert.equal(kept.wallMinMs, 1, "spread min is the shortest occurrence");
@@ -38,6 +39,7 @@ test("mergeSpanOccurrences: even count takes the LOWER median, so the bar stays 
   const merged = mergeSpanOccurrences(walls.map((wall, at) => measure("work", wall, `s${at}`)));
   assert.equal(merged[0].breakdown.wallMs, 4, "the lower of the two middles (not their average of 5)");
   assert.equal(merged[0].samples, 4);
+  assert.deepEqual(merged[0].occurrenceWallMs, walls);
   assert.equal(merged[0].wallMinMs, 2);
   assert.equal(merged[0].wallMaxMs, 8);
 });
@@ -55,6 +57,7 @@ test("mergeSpanOccurrences: a single occurrence passes through with NO disclosur
   assert.equal(merged.length, 1);
   assert.equal(merged[0], only, "the exact object passes through");
   assert.equal(merged[0].samples, undefined, "no samples field on a single occurrence");
+  assert.equal(merged[0].occurrenceWallMs, undefined);
   assert.equal(merged[0].wallMinMs, undefined);
   assert.equal(merged[0].wallMaxMs, undefined);
 });
@@ -121,7 +124,28 @@ test("mergeSpanOccurrences: distinct labels are merged independently, frames of 
   // "a": walls 5,1 lower-median 1 -> frames.total 1 (the picked occurrence's own side track)
   assert.equal(spanA.breakdown.wallMs, 1);
   assert.equal(spanA.frames.total, 1, "the kept bar keeps ITS occurrence's frame side track");
+  assert.deepEqual(spanA.occurrenceWallMs, [5, 1]);
   // "b": walls 2,4 lower-median 2
   assert.equal(spanB.breakdown.wallMs, 2);
   assert.equal(spanB.frames.total, 2);
+  assert.deepEqual(spanB.occurrenceWallMs, [2, 4]);
+});
+
+test("mergeSpanOccurrences: zero and tied wall times retain every occurrence without changing input", () => {
+  const input = [measure("work", 3, "a"), measure("work", 0, "b"), measure("work", 3, "c")];
+  const original = structuredClone(input);
+  const [merged] = mergeSpanOccurrences(input);
+  assert.deepEqual(merged.occurrenceWallMs, [3, 0, 3]);
+  assert.equal(merged.samples, 3);
+  assert.equal(merged.breakdown, input[0].breakdown, "ties retain the first matching real bar");
+  assert.deepEqual(input, original);
+});
+
+test("mergeSpanOccurrences: missing measure bounds do not become sampled timing values", () => {
+  const first = measure("work", 3, "a");
+  delete first.occurrenceTimingMs;
+  const [merged] = mergeSpanOccurrences([first, measure("work", 7, "b")]);
+  assert.equal(merged.occurrenceWallMs, undefined);
+  assert.equal(merged.samples, 2);
+  assert.equal(merged.breakdown.wallMs, 3);
 });

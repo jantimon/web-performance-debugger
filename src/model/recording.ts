@@ -585,7 +585,7 @@ export interface Span {
    *   - step: the MEDIAN of the step's per-iteration samples (`perIteration`/`stats` hold the spread),
    *     priced on the clock `wallClock` names (the trace window between its marks, else the page's
    *     performance.now delta).
-   *   - measure: the merged occurrence's own window (a `performance.measure`, page clock).
+   *   - measure: the merged occurrence's own window (a `performance.measure`, trace clock).
    *
    * Null only when there is genuinely no such wall (a driver run, or a step that navigated in a
    * no-trace capture). The trace-clock window a reconciling bar TILES is `breakdown.wallMs`, a distinct
@@ -678,6 +678,8 @@ export interface Span {
    * unrepeated measure. When present (> 1), `aggregation` is `"median"`
    */
   samples?: number;
+  /** Wall times (ms) of merged measure occurrences in capture order; absent on unrepeated spans */
+  occurrenceWallMs?: number[];
   /** wall (ms) of the shortest merged occurrence; disclosed with `samples` (`wallMinMs <= wallMs <= wallMaxMs`) */
   wallMinMs?: number;
   /** wall (ms) of the longest merged occurrence; disclosed with `samples` */
@@ -718,6 +720,8 @@ export interface SpanBreakdown {
   kind: SpanKind;
   /** the seven-slice reconciling bar for this span */
   breakdown: Breakdown;
+  /** Measure end minus start on the capture clock; assembly-only, independent of sampled bar width */
+  occurrenceTimingMs?: number;
   /**
    * Off-thread compositor frame side track for this span (Chrome --breakdown only; absent
    * otherwise, and on spans whose window caught no frame). DISPLAY-ONLY: never summed into
@@ -733,6 +737,8 @@ export interface SpanBreakdown {
    * `"median"`
    */
   samples?: number;
+  /** Wall times (ms) of merged measure occurrences in capture order; absent on unrepeated spans */
+  occurrenceWallMs?: number[];
   /** wall (ms) of the shortest merged occurrence; disclosed with `samples`, so a reader sees the spread */
   wallMinMs?: number;
   /** wall (ms) of the longest merged occurrence; disclosed with `samples` */

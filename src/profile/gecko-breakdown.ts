@@ -242,6 +242,7 @@ export function buildGeckoSpanBreakdowns(
     spans.push({
       label: measure.label,
       kind: "measure",
+      occurrenceTimingMs: usToMs(measure.endTs - measure.startTs),
       breakdown: spanBreakdown(raw, packageByNode, bounds.from, bounds.to),
       ...(scope ? { scope } : {}),
     });
