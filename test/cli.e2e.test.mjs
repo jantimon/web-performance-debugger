@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
+  copyFileSync,
   existsSync,
   mkdtempSync,
   readdirSync,
@@ -1393,6 +1394,32 @@ e2e("record --breakdown: a repeated performance.measure merges to a median bar (
   assert.equal(measureSpan.breakdown.residualMs, undefined, "a real reconciling sample carries no residual");
   // The work inside the measure is a JS loop, so its js slice must be the dominant one
   assert.ok(measureSpan.breakdown.slices.js.ms > 0, "the measured JS work lands in the js slice");
+});
+
+e2e("query span: repeated measure timing exposes every occurrence within each iteration", { timeout: TIMEOUT_MS }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wpd-occurrence-query-"));
+  const out = path.join(dir, "capture.json");
+  const fixture = path.join(dir, "user-measure-occurrences.mjs");
+  copyFileSync(path.join(repoRoot, "test", "fixtures", "user-measure-occurrences.mjs"), fixture);
+  runCli([
+    "record", "./user-measure-occurrences.mjs",
+    "--bench", "--breakdown", "--iterations", "3", "--warmup", "0", "--out", out,
+  ], dir);
+  const result = JSON.parse(runCli(["query", "span", out, "measure:batch", "--format", "json"], dir));
+  assert.equal(result.iterations, 3);
+  assert.equal(result.samples, 6);
+  assert.equal(result.timing.sampleUnit, "occurrence");
+  assert.equal(result.timing.boundary, "performance-measure");
+  assert.equal(result.timing.clock, "trace");
+  const samples = result.timing.samplesMs;
+  assert.equal(samples.length, 6);
+  assert.ok(samples.every((value) => Number.isFinite(value) && value >= 0));
+  const sorted = [...samples].sort((left, right) => left - right);
+  assert.equal(result.wallMs, sorted[2], "the bar keeps the actual lower-median occurrence");
+  assert.equal(result.wallMinMs, sorted[0]);
+  assert.equal(result.wallMaxMs, sorted[5]);
+  assert.ok(Math.abs(result.timing.stats.medianMs - (sorted[2] + sorted[3]) / 2) < 0.0001);
+  assert.equal(result.timing.stats.samples, 6);
 });
 
 // `query spans`: the unified per-span surface. On chrome --breakdown it sources the stored

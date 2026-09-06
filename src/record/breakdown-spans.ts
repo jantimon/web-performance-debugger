@@ -155,6 +155,7 @@ export async function buildBreakdowns(
     breakdowns.push({
       label: span.label,
       kind: span.kind,
+      ...(span.kind === "measure" ? { occurrenceTimingMs: usToMs(span.endTs - span.startTs) } : {}),
       breakdown: computeSpanBreakdown(windowEvents, windowSamples, {
         startTs: span.startTs,
         endTs: span.endTs,
