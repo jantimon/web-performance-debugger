@@ -106,6 +106,7 @@ export type {
   SpanForced,
   SpanHotFunctions,
   SpanAnatomy,
+  SpanTiming,
   GroupSpanMember,
   GroupSpanSources,
   GroupSpanStitch,

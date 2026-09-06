@@ -39,6 +39,7 @@ import {
   blameRowLowConfidence,
 } from "../model/capture-mode.js";
 import { runSpan } from "../model/span.js";
+import { spanTiming } from "../model/span-timing.js";
 import { dim } from "../output/color.js";
 import { num, table, middleEllipsis, SOURCE_COL_MAX } from "../output/ascii.js";
 import { analyzeThrash } from "../trace/thrash.js";
@@ -382,6 +383,7 @@ function buildSpanAnatomy(
 
   return {
     recording: recordingPath,
+    timing: spanTiming(span),
     target,
     label: span.label,
     kind: span.kind,
@@ -619,6 +621,7 @@ async function buildGroupSpanStitch(
          */
         mode: member.mode as CaptureMode,
         ...(member.variant ? { variant: member.variant } : {}),
+        timing: anatomy.timing,
         wallMs: anatomy.wallMs,
         aggregation: anatomy.aggregation,
         iterations: anatomy.iterations,

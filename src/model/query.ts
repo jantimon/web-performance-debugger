@@ -3,6 +3,7 @@
 // call sites can be annotated and the JSON contract cannot silently drift
 
 import type {
+  BenchStats,
   CpuBreakdown,
   CpuFunction,
   CpuGroupStat,
@@ -554,6 +555,20 @@ export interface SpanHotFunctions {
   functions?: (Omit<CpuFunction, "totalMs"> & { totalMs?: number })[];
 }
 
+/** Recorded timing samples and the scope each sample measures */
+export interface SpanTiming {
+  /** Recorded call or step durations in capture order; unmeasured steps are omitted */
+  sampleUnit: "iteration";
+  /** Start/end scope of each sample; excludes work outside these calls or step marks */
+  boundary: "run-call" | "driver-step";
+  /** `page` denotes performance.now() in the page or Node runtime; null means unspecified */
+  clock: "page" | "trace" | null;
+  /** Recorded durations in milliseconds; independent of the profiled bar window */
+  samplesMs: number[];
+  /** Statistics over these samples; null for fewer than two samples */
+  stats: BenchStats | null;
+}
+
 /**
  * `query span <label>` output: one span's full anatomy. `slices` is the reconciling bar's unified
  * shape when the capture mode built one, else null (capture-mode-honest, never fabricated). `counts` are Measured
@@ -565,6 +580,8 @@ export interface SpanHotFunctions {
  * silent join
  */
 export interface SpanAnatomy {
+  /** Timed samples and their boundaries; null when no valid sample series is stored */
+  timing: SpanTiming | null;
   /** absolute back-pointer to the recording this anatomy was read from */
   recording: string;
   /** the --target axis: chrome | firefox | node */
@@ -666,6 +683,8 @@ export interface SpanAnatomy {
 /** One member's own numbers for a stitched span, tagged by its capture mode. Walls are shown PER
  * member and never combined -- a group holds N captures of one workload, not one measurement */
 export interface GroupSpanMember {
+  /** This member's own timing samples; captures are never pooled */
+  timing: SpanTiming | null;
   mode: CaptureMode;
   variant?: string;
   wallMs: number | null;
