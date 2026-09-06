@@ -26,6 +26,7 @@ const DOCUMENTED_ROOT_TYPES = [
   "SpanEntry",
   "UnifiedSlices",
   "SpanAnatomy",
+  "SpanTiming",
   "CpuOverview",
   "FrameQueryResult",
   "BlameEntry",

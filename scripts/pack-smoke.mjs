@@ -110,6 +110,7 @@ try {
     "SpanEntry",
     "UnifiedSlices",
     "SpanAnatomy",
+    "SpanTiming",
     "CpuOverview",
     "FrameQueryResult",
     "BlameEntry",

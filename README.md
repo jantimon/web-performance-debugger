@@ -1148,6 +1148,28 @@ split lives at `byPackage[]` (`key`/`selfMs`/`selfPct`, plus `siteRelation` on a
 For per-span numbers, `query spans --format json` gives one `UnifiedSlices` shape (`js.byPackage`,
 `style`, `layout`, …) across chrome/firefox/node — read that, never the multi-MB recording.
 
+Read a run or driver step's timing samples through `query span`:
+
+```bash
+wpd query span latest run --format json | jq '.timing'
+```
+
+`SpanAnatomy.timing` is a `SpanTiming` block with `samplesMs` in capture order,
+`stats` (min/median/mean/max), `sampleUnit: "iteration"`, a `boundary` of `run-call`
+or `driver-step`, and a `clock` of `page`, `trace`, or `null` when unspecified.
+The `page` clock uses `performance.now()` in a browser page or Node runtime.
+Unmeasured step repetitions are omitted, so the sample count can differ from the
+requested iteration count. Statistics use the stored samples and are `null` below
+two samples. The whole block
+is `null` when no valid sample series is stored; WPD does not infer samples from a
+profile window or an aggregate wall. Capture overhead still applies to these timings.
+
+These samples measure each call or step, independently of the window that the
+profile bar covers. Keep `timing.stats.medianMs` distinct from `wallMs` and
+`windowMs`. For a run-group, each `members[]` entry carries its own `timing` block;
+WPD does not combine samples from different captures. `query spans` stays a compact
+overview; drill into `query span` for the sample series.
+
 Recordings are self-describing: `meta.schemaVersion` stamps the on-disk schema epoch (currently
 `"5"`), and a reader **rejects** any artifact from another epoch with a "recorded by an older wpd;
 re-record" message rather than mis-parsing it into silent nulls. Numbers are rounded to 4 decimals on
