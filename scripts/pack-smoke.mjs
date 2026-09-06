@@ -41,13 +41,19 @@ try {
   writeFileSync(
     path.join(work, "package.json"),
     JSON.stringify(
-      { name: "wpd-pack-smoke-fixture", version: "0.0.0", private: true, type: "module" },
+      {
+        name: "wpd-pack-smoke-fixture",
+        version: "0.0.0",
+        private: true,
+        type: "module",
+        allowScripts: { puppeteer: false },
+      },
       null,
       2,
     ),
   );
-  // puppeteer is a runtime dependency, so its postinstall would fetch Chrome; skip that here so the
-  // smoke stays browser-free whatever the caller's environment (CI sets this at the job level too)
+  // Deny Puppeteer's browser download script. The env flag also skips downloads on npm versions
+  // that do not read allowScripts
   run("npm", ["install", "--no-audit", "--no-fund", "--no-save", tarball, "typescript@6"], {
     cwd: work,
     env: { ...process.env, PUPPETEER_SKIP_DOWNLOAD: "true" },
