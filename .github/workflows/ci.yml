@@ -18,8 +18,8 @@ jobs:
       # Lint/format/build/unit tests don't launch a browser, so skip the Chromium download.
       PUPPETEER_SKIP_DOWNLOAD: "true"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -44,8 +44,8 @@ jobs:
     env:
       PUPPETEER_SKIP_DOWNLOAD: "true"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -58,8 +58,8 @@ jobs:
     # a wedged job fails fast instead of burning toward the 6h ceiling (normal runs finish well under half this)
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -89,21 +89,14 @@ jobs:
     env:
       PUPPETEER_SKIP_DOWNLOAD: "true" # publishing never launches a browser
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      # Node 24 includes npm with trusted publishing support (>= 11.5.1).
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
           registry-url: https://registry.npmjs.org
-
-      # Trusted Publishing (OIDC) needs a recent npm (>= 11.5.1). The npm bundled
-      # with Node 24 is older, so pull a current one through corepack.
-      - name: Upgrade npm for trusted publishing
-        run: |
-          corepack enable npm
-          corepack prepare npm@latest --activate
-          npm --version
 
       - run: npm ci
 
